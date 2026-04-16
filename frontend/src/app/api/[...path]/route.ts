@@ -4,7 +4,9 @@ function normalizedTarget(value?: string | null): string | null {
   if (!value) return null;
   const trimmed = value.trim();
   if (!trimmed) return null;
-  return trimmed.replace(/\/+$/, "");
+  const withoutTrailing = trimmed.replace(/\/+$/, "");
+  // Accept env values that may include /api and normalize to host root.
+  return withoutTrailing.replace(/\/api(?:\/v1)?$/i, "");
 }
 
 const backendCandidates = Array.from(
@@ -46,6 +48,9 @@ function buildResponseHeaders(upstreamResponse: Response): Headers {
   headers.delete("connection");
   headers.delete("keep-alive");
   headers.delete("transfer-encoding");
+  // Body is read into memory and re-emitted by NextResponse, so preserve only compatible headers.
+  headers.delete("content-encoding");
+  headers.delete("content-length");
   return headers;
 }
 
@@ -62,12 +67,32 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
     requestInit.body = await request.arrayBuffer();
   }
 
+  const requestOrigin = request.nextUrl.origin;
+  const safeCandidates = backendCandidates.filter((target) => {
+    try {
+      return new URL(target).origin !== requestOrigin;
+    } catch {
+      return false;
+    }
+  });
+
+  const fallbackCandidates = safeCandidates.length > 0 ? safeCandidates : ["http://127.0.0.1:8000"];
   const failureDetails: Array<{ upstream: string; reason: string }> = [];
 
-  for (const target of backendCandidates) {
+  for (const target of fallbackCandidates) {
     const upstreamUrl = buildBackendUrl(target, request, path);
     try {
       const upstreamResponse = await fetch(upstreamUrl, requestInit);
+      // Some candidates can be syntactically valid but point to wrong upstreams.
+      // Skip known transport-like statuses and continue trying next candidate.
+      if ([404, 405, 502, 503, 504].includes(upstreamResponse.status)) {
+        failureDetails.push({
+          upstream: upstreamUrl,
+          reason: `upstream responded with ${upstreamResponse.status}`,
+        });
+        continue;
+      }
+
       const responseHeaders = buildResponseHeaders(upstreamResponse);
       const location = responseHeaders.get("location");
 
