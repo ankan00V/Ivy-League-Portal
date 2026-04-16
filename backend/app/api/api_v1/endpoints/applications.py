@@ -11,6 +11,7 @@ from app.models.opportunity import Opportunity
 from app.models.profile import Profile
 from app.models.user import User
 from app.services.auto_apply import auto_apply_with_playwright, serialize_automation_log
+from app.services.interaction_service import interaction_service
 
 router = APIRouter()
 
@@ -99,6 +100,13 @@ async def apply_to_opportunity(
     )
     
     await application.insert()
+
+    await interaction_service.log_event(
+        user_id=current_user.id,
+        opportunity_id=opp.id,
+        interaction_type="apply",
+        ranking_mode="semantic",
+    )
     
     return ApplicationResponse(
         id=application.id,

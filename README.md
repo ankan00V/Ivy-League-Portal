@@ -1,117 +1,151 @@
-# VidyaVerse - Ivy League Opportunity Intelligence
+# VidyaVerse - AI Opportunity Intelligence Platform
 
-VidyaVerse is a production-grade, full-stack web application designed as a Real-Time Ivy League Opportunity Intelligence & Student Competency Network for students focusing on elite academic and professional opportunities.
+## Problem
+Students discover internships, scholarships, research roles, and hackathons across fragmented portals. Most feeds are keyword-filtered, hard to prioritize, and weakly personalized.
 
-## 🚀 Key Features
-- **AI-Powered Opportunity Feed**: Real-time opportunity scraping, categorized by NLP zero-shot classification (HuggingFace).
-- **Resilient Live Scraping**: Continuous ingestion with retries, dedupe, deadline-based expiry cleanup, and runtime status for Ivy RSS, Unstop, Naukri, Internshala, Hack2Skill, Freshersworld, and best-effort Indeed India sources.
-- **InCoScore Ranking Engine**: Ranks students based on achievements and parsed resumes (spaCy NER).
-- **Smart Automated Applications**: Playwright-based form autofill with optional real submit.
-- **Academic Social Network**: Connect with researchers and innovators in specialized domain groups.
-- **Premium SaaS UI**: Responsive, glassmorphic dark theme built with Next.js and Vanilla CSS.
+## Solution (AI System Overview)
+VidyaVerse is a production-style FastAPI + Next.js system that combines scraping, semantic retrieval, ranking intelligence, and LLM-assisted shortlisting.
 
----
+### Core Upgrades Implemented
+- Semantic ranking with embeddings (`sentence-transformers` primary, OpenAI fallback).
+- Intent classification (`internships`, `research`, `scholarships`, `hackathons`).
+- NER extraction for deadlines, locations, companies, eligibility signals.
+- RAG pipeline for “Ask AI” shortlisting and reasoning.
+- Personalization weighting via profile + interaction history.
+- A/B-ready ranking modes: `baseline`, `semantic`, `ab`.
+- Interaction telemetry + CTR analytics by ranking mode.
+- Evaluation endpoints for Precision@K, Recall@K, and LLM output quality.
+- Semantic deduplication during scraper ingestion using embedding similarity.
 
-## 🏗️ Architecture Stack
-- **Backend:** FastAPI, Python 3.12, Beanie ODM, MongoDB Atlas
-- **AI Engine:** spaCy (NER parsing), HuggingFace Transformers (distilbart-mnli-12-3 zero-shot tracking)
-- **Frontend:** Next.js (App Router), React, Vanilla CSS
-
----
-
-## ⚙️ Running Locally
-
-### 1. Database Setup
-The backend uses MongoDB. Configure your database URL in `backend/.env`:
-```bash
-MONGODB_URL=mongodb+srv://<username>:<password>@<cluster>/?appName=vidyaverse
-MONGODB_DB_NAME=vidyaverse
+## Architecture
+```mermaid
+flowchart LR
+    A[Scrapers: Ivy + Job Platforms] --> B[Ingestion Layer]
+    B --> C[Semantic Dedup]
+    C --> D[(MongoDB Opportunities)]
+    D --> E[Vector Index Service<br/>FAISS if available / NumPy fallback]
+    F[User Query] --> G[Embedding + Intent + NER]
+    G --> E
+    E --> H[Top-K Retrieval]
+    H --> I[LLM Insight Layer]
+    I --> J[Structured JSON for UI]
+    D --> K[Recommendation Engine]
+    L[Profile + Interactions] --> K
+    K --> M[Personalized Feed + Shortlist]
+    M --> N[Interaction Tracking + CTR]
+    M --> O[Evaluation: Precision@K / Recall@K]
 ```
 
-### 2. Backend Setup
-Navigate to the `backend` directory, activate the virtual environment, and run the FastAPI server:
+## Backend Modules
+- `backend/app/services/embedding_service.py`
+  - Embedding provider abstraction with local sentence-transformers and OpenAI fallback.
+- `backend/app/services/nlp_service.py`
+  - Intent classification + NER extraction.
+- `backend/app/services/vector_service.py`
+  - Vector search with FAISS acceleration when installed; NumPy cosine fallback otherwise.
+- `backend/app/services/rag_service.py`
+  - Query retrieval + structured LLM insights.
+- `backend/app/services/recommendation_service.py`
+  - Baseline + semantic + behavior-weighted ranking and A/B mode.
+- `backend/app/services/interaction_service.py`
+  - Click/view/apply/impression tracking and CTR analytics.
+- `backend/app/services/evaluation_service.py`
+  - Ranking and response quality evaluation.
+
+## API Additions
+### Opportunities
+- `GET /api/v1/opportunities/recommended/me?ranking_mode=baseline|semantic|ab&query=...`
+- `GET /api/v1/opportunities/shortlist/me?ranking_mode=baseline|semantic|ab&query=...`
+- `POST /api/v1/opportunities/ask-ai`
+- `POST /api/v1/opportunities/interactions`
+- `GET /api/v1/opportunities/experiments/ctr` (admin)
+- `POST /api/v1/opportunities/evaluate-ranking`
+- `POST /api/v1/opportunities/evaluate-llm`
+
+## ML Techniques Used
+- Sentence embeddings for semantic retrieval/ranking.
+- Cosine similarity for query-opportunity relevance.
+- Lightweight intent classification with embedding label matching.
+- spaCy-driven NER + regex enrichment.
+- Hybrid ranking:
+  - Baseline profile-opportunity score.
+  - Semantic relevance score.
+  - Behavioral preference score from interactions.
+- RAG orchestration: retrieve → reason → structured JSON output.
+
+## Results & Evaluation
+Use the built-in endpoints to measure ranking and response quality.
+
+### Ranking Quality
+`POST /api/v1/opportunities/evaluate-ranking`
+- Returns `Precision@K` and `Recall@K` for both baseline and semantic ranking.
+
+### LLM Output Quality
+`POST /api/v1/opportunities/evaluate-llm`
+- Returns keyword coverage and optional semantic similarity vs expected output.
+
+## Running Locally
+### 1. Backend
 ```bash
 cd backend
+python3 -m venv venv
 source venv/bin/activate
-# Install requirements if not done: pip install -r requirements.txt
-
-# Install browser engine for Playwright auto-application
+pip install -r requirements.txt
 playwright install chromium
-
-# Start Uvicorn Dev Server
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
-Backend will be live at `http://localhost:8000`. API docs available at `http://localhost:8000/docs`.
 
-Optional scraper tuning in `backend/.env`:
+Auto-update scheduler defaults to every 30 minutes. Configure in `backend/.env`:
 ```bash
+SCRAPER_AUTORUN_ENABLED=true
 SCRAPER_INTERVAL_MINUTES=30
-SCRAPER_TIMEOUT_SECONDS=20
-SCRAPER_HTTP_RETRIES=4
-SCRAPER_RETRY_BACKOFF=0.8
-SCRAPER_UNSTOP_MAX_ITEMS=60
-SCRAPER_NAUKRI_MAX_ITEMS=25
-SCRAPER_INTERNSHALA_MAX_ITEMS=30
-SCRAPER_HACK2SKILL_MAX_ITEMS=24
-SCRAPER_FRESHERSWORLD_MAX_ITEMS=30
-SCRAPER_INDEED_MAX_ITEMS=20
+SCRAPER_MAX_STALENESS_MINUTES=30
+SCRAPER_ON_DEMAND_REFRESH_ENABLED=true
 ```
 
-Scraper runtime endpoints:
-- `GET /api/v1/opportunities/scraper-status`
-- `POST /api/v1/opportunities/trigger-scraper`
+For daily updates instead:
+```bash
+SCRAPER_INTERVAL_MINUTES=1440
+SCRAPER_MAX_STALENESS_MINUTES=1440
+```
 
-### 3. Frontend Setup
-Navigate to the `frontend` directory and run the Next.js development server:
+### 2. Frontend
 ```bash
 cd frontend
-# Install dependencies
 npm install
-
-# Optional: override backend base URL (default is http://127.0.0.1:8000)
-echo "NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000" > .env.local
-
-# Optional: choose Puter Claude model for Vidya Chat
-echo "NEXT_PUBLIC_PUTER_MODEL=claude-sonnet-4-6" >> .env.local
-
-# Run the dev server
 npm run dev
 ```
-Frontend will be live at `http://localhost:3000`.
 
-### 3.1 AI Chat via Puter.js
-- The frontend loads Puter.js automatically from `https://js.puter.com/v2/`.
-- Vidya Chat uses `puter.ai.chat(...)` directly (no OpenRouter key needed in frontend).
-- Default model: `claude-sonnet-4-6` (override with `NEXT_PUBLIC_PUTER_MODEL`).
-
-### 4. Optional Auto-Submit Mode
-By default, application automation opens pages and fills forms without clicking submit.
-To enable real submit attempts:
+### 3. Host Local Web Apps with Slim (Required Workflow)
+Install Slim:
 ```bash
-AUTO_SUBMIT_ENABLED=true
+curl -sL https://slim.sh/install.sh | sh
 ```
 
-### 5. OTP Auth (Signup / Signin)
-- OTPs are now stored in MongoDB (`otp_codes` collection) with expiration (TTL).
-- `/api/v1/auth/send-otp` supports `purpose: "signup" | "signin"`.
-- `/api/v1/auth/verify-otp` validates OTP and issues JWT.
-- OTP delivery is strict email-only (no debug/demo OTP fallback).
-- For real email delivery, configure SMTP in `backend/.env`:
+Expose frontend with HTTPS local domain:
 ```bash
-SMTP_SERVER=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=your_email@example.com
-SMTP_PASSWORD=your_app_password
-SMTP_FROM_EMAIL=your_email@example.com
+slim start web --port 3000
+# https://web.test -> localhost:3000
 ```
 
----
+Expose backend with local domain:
+```bash
+slim start api --port 8000
+# https://api.test -> localhost:8000
+```
 
-## 🛠️ Project Structure
-- `backend/app` - Contains the FastAPI application, database connections, and AI Engine.
-  - `services/ai_engine.py` - Core NLP classification and Resume parsing logic.
-  - `services/scraper.py` - Web scraper logic simulation.
-  - `models/` - Beanie document models (User, Profile, Opportunity, Application, Post, Comment).
-- `backend/alembic` - Legacy migration setup (not used in current MongoDB flow).
-- `frontend/src/app` - Next.js App router containing UI (Landing, Dashboard, Social, Opportunities).
-- `frontend/src/app/globals.css` - Custom premium CSS aesthetics including glassmorphism tokens.
+Public sharing when needed:
+```bash
+slim share --port 3000 --subdomain demo
+# https://demo.slim.show -> localhost:3000
+```
+
+## Resume-Grade Summary
+Built a production-grade AI recommendation system using RAG, embeddings, and LLM-driven insights, with semantic ranking, interaction-based personalization, and evaluation instrumentation (Precision@K/Recall@K + response quality checks) over a continuously ingested multi-source opportunity pipeline.
+
+## Future Improvements
+- Persisted vector DB backend (ChromaDB or managed vector store) for multi-node scaling.
+- Re-ranking with cross-encoders for higher precision at low K.
+- Learned-to-rank from click/apply outcomes.
+- Continuous offline benchmark set and automated regression gates.
+- Feature-store style user embeddings for deeper personalization.

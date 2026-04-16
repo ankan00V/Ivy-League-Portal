@@ -98,13 +98,20 @@ export default function OpportunitiesPage() {
                     scraperTriggerAttemptedRef.current = false;
                     setNotice((current) =>
                         current === "Refreshing live opportunities..." ||
-                        current === "Live opportunities are temporarily unavailable. Retrying..." ? null : current
+                        current === "Live opportunities are temporarily unavailable. Retrying..." ||
+                        current === "Backend API is unavailable. Retrying..." ? null : current
                     );
                 }
                 return;
             }
 
-            setNotice("Live opportunities are temporarily unavailable. Retrying...");
+            const errorPayload = await res.json().catch(() => null);
+            const errorDetail =
+                typeof errorPayload?.detail === "string" ? errorPayload.detail : "";
+            const nextNotice = errorDetail.includes("Upstream backend unavailable")
+                ? "Backend API is unavailable. Retrying..."
+                : "Live opportunities are temporarily unavailable. Retrying...";
+            setNotice(nextNotice);
             if (!scraperTriggerAttemptedRef.current) {
                 scraperTriggerAttemptedRef.current = true;
                 void triggerLiveRefresh();
@@ -112,7 +119,7 @@ export default function OpportunitiesPage() {
         } catch (error) {
             const message = error instanceof Error ? error.message : "unknown error";
             console.warn(`[Opportunities] Fetch failed: ${message}`);
-            setNotice("Live opportunities are temporarily unavailable. Retrying...");
+            setNotice("Backend API is unavailable. Retrying...");
             if (!scraperTriggerAttemptedRef.current) {
                 scraperTriggerAttemptedRef.current = true;
                 void triggerLiveRefresh();

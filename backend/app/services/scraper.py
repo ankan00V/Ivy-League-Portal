@@ -10,6 +10,7 @@ from typing import Any, Iterable
 from urllib.parse import urljoin, urlparse
 import xml.etree.ElementTree as ET
 
+import numpy as np
 import pymongo
 import requests
 from bs4 import BeautifulSoup
@@ -22,13 +23,12 @@ from app.core.config import settings
 
 IVY_LEAGUE_FEEDS: list[tuple[str, str]] = [
     ("Harvard University", "https://news.harvard.edu/gazette/feed/"),
-    ("Yale University", "https://news.yale.edu/rss.xml"),
-    ("Princeton University", "https://www.princeton.edu/news/rss.xml"),
-    ("Columbia University", "https://news.columbia.edu/rss"),
+    ("Yale University", "https://news.yale.edu/news-rss"),
+    ("Princeton University", "https://www.princeton.edu/feed/"),
+    ("Columbia University", "https://news.columbia.edu/feed"),
     ("University of Pennsylvania", "https://penntoday.upenn.edu/rss.xml"),
-    ("Brown University", "https://www.brown.edu/news/rss.xml"),
-    ("Dartmouth College", "https://home.dartmouth.edu/news/rss.xml"),
-    ("Cornell University", "https://news.cornell.edu/rss"),
+    # Brown/Dartmouth primary news pages currently do not expose stable public RSS URLs.
+    ("Cornell University", "https://news.cornell.edu/taxonomy/term/81/feed"),
 ]
 
 OPPORTUNITY_KEYWORDS = {
@@ -1009,7 +1009,14 @@ _scraper_runtime_state: dict[str, Any] = {
 
 
 def get_scraper_runtime_status() -> dict[str, Any]:
-    return copy.deepcopy(_scraper_runtime_state)
+    snapshot = copy.deepcopy(_scraper_runtime_state)
+    snapshot["auto_update"] = {
+        "enabled": bool(settings.SCRAPER_AUTORUN_ENABLED),
+        "interval_minutes": max(1, int(settings.SCRAPER_INTERVAL_MINUTES)),
+        "stale_refresh_minutes": max(1, int(settings.SCRAPER_MAX_STALENESS_MINUTES)),
+        "on_demand_refresh_enabled": bool(settings.SCRAPER_ON_DEMAND_REFRESH_ENABLED),
+    }
+    return snapshot
 
 
 def _new_source_report(source: str) -> dict[str, Any]:
@@ -1068,6 +1075,7 @@ async def _insert_and_broadcast(
     inserted_count = 0
     updated_count = 0
     failed_count = 0
+    semantic_threshold = max(0.0, min(1.0, float(settings.SEMANTIC_DEDUP_THRESHOLD)))
 
     normalized_records: list[dict[str, Any]] = []
     seen_urls: set[str] = set()
@@ -1087,12 +1095,39 @@ async def _insert_and_broadcast(
         normalized_payload["source"] = opp_data.get("source") or source_name.lower().replace(" ", "_")
         normalized_records.append(normalized_payload)
 
+    if len(normalized_records) > 1:
+        from app.services.embedding_service import embedding_service
+
+        semantic_texts = [
+            f"{record.get('title', '')} {record.get('description', '')} {record.get('opportunity_type', '')}".strip()
+            for record in normalized_records
+        ]
+        semantic_vectors = await embedding_service.embed_texts(semantic_texts)
+        keep_indexes: list[int] = []
+
+        for idx, vector in enumerate(semantic_vectors):
+            is_duplicate = False
+            for kept_idx in keep_indexes:
+                similarity = float(np.dot(vector, semantic_vectors[kept_idx]))
+                if similarity >= semantic_threshold:
+                    is_duplicate = True
+                    break
+            if not is_duplicate:
+                keep_indexes.append(idx)
+
+        normalized_records = [normalized_records[idx] for idx in keep_indexes]
+
     existing_by_url: dict[str, Any] = {}
     if normalized_records:
         existing_records = await Opportunity.find_many(
             In(Opportunity.url, [record["url"] for record in normalized_records])
         ).to_list()
         existing_by_url = {record.url: record for record in existing_records}
+
+    from app.services.vector_service import opportunity_vector_service
+
+    if normalized_records:
+        await opportunity_vector_service.rebuild()
 
     for normalized_payload in normalized_records:
         url = normalized_payload["url"]
@@ -1115,6 +1150,25 @@ async def _insert_and_broadcast(
                     updated_count += 1
                 await existing.save()
                 continue
+
+            semantic_text = (
+                f"{normalized_payload.get('title', '')} {normalized_payload.get('description', '')} "
+                f"{normalized_payload.get('opportunity_type', '')}"
+            ).strip()
+            semantic_duplicates = await opportunity_vector_service.find_semantic_duplicates(
+                semantic_text,
+                threshold=semantic_threshold,
+                top_k=1,
+                exclude_urls=[url],
+            )
+            if semantic_duplicates:
+                duplicate_url = semantic_duplicates[0].get("url")
+                duplicate = await Opportunity.find_one(Opportunity.url == duplicate_url)
+                if duplicate:
+                    duplicate.last_seen_at = now_naive
+                    await duplicate.save()
+                    updated_count += 1
+                    continue
 
             opportunity = Opportunity(
                 **normalized_payload,
@@ -1139,6 +1193,9 @@ async def _insert_and_broadcast(
         except Exception as exc:
             failed_count += 1
             print(f"[ScraperInsert] Failed to upsert '{normalized_payload.get('title', 'unknown')}': {exc}")
+
+    if inserted_count or updated_count:
+        await opportunity_vector_service.rebuild(force=True)
 
     return {"inserted": inserted_count, "updated": updated_count, "failed": failed_count}
 

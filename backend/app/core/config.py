@@ -24,7 +24,10 @@ class Settings(BaseSettings):
     AUTO_APPLY_SCREENSHOT_DIR: str = "/tmp/vidyaverse-auto-apply"
 
     # Scraper reliability controls
+    SCRAPER_AUTORUN_ENABLED: bool = True
     SCRAPER_INTERVAL_MINUTES: int = 30
+    SCRAPER_MAX_STALENESS_MINUTES: int = 30
+    SCRAPER_ON_DEMAND_REFRESH_ENABLED: bool = True
     SCRAPER_TIMEOUT_SECONDS: int = 20
     SCRAPER_HTTP_RETRIES: int = 4
     SCRAPER_RETRY_BACKOFF: float = 0.8
@@ -61,6 +64,13 @@ class Settings(BaseSettings):
     # AI Chatbot / OpenRouter
     OPENROUTER_API_KEY: Optional[str] = None
     OPENROUTER_MODEL: str = "meta-llama/llama-3-8b-instruct:free"
+
+    # Embeddings / semantic ranking
+    EMBEDDING_PROVIDER: str = "sentence_transformers"  # sentence_transformers | openai | auto
+    EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
+    OPENAI_API_KEY: Optional[str] = None
+    OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
+    SEMANTIC_DEDUP_THRESHOLD: float = 0.9
     
     model_config = SettingsConfigDict(
         env_file=ENV_FILE,
