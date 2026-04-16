@@ -118,38 +118,43 @@ export default function DashboardPage() {
     const fetchDashboardData = async () => {
         try {
             const token = localStorage.getItem("access_token");
-            const headers = {
-                "Authorization": `Bearer ${token}`
-            };
+            const authHeaders = token ? { Authorization: `Bearer ${token}` } : undefined;
 
-            // 1. Fetch Profile
-            const profileRes = await fetch(apiUrl("/api/v1/users/me/profile"), { headers });
-            if (profileRes.ok) {
-                const pData = await profileRes.json();
-                setProfile(pData);
+            // 1. Fetch Profile + Applications only when authenticated
+            if (authHeaders) {
+                const profileRes = await fetch(apiUrl("/api/v1/users/me/profile"), { headers: authHeaders });
+                if (profileRes.ok) {
+                    const pData = await profileRes.json();
+                    setProfile(pData);
+                }
+
+                const appsRes = await fetch(apiUrl("/api/v1/applications/"), { headers: authHeaders });
+                if (appsRes.ok) {
+                    const aData = await appsRes.json();
+                    setAppCount(aData.length);
+                }
             }
 
-            // 2. Fetch Applications
-            const appsRes = await fetch(apiUrl("/api/v1/applications/"), { headers });
-            if (appsRes.ok) {
-                const aData = await appsRes.json();
-                setAppCount(aData.length);
+            // 2. Personalized opportunities when authenticated, else public fallback
+            let recommendationLoaded = false;
+            if (authHeaders) {
+                const oppsRes = await fetch(apiUrl("/api/v1/opportunities/recommended/me?limit=3"), { headers: authHeaders });
+                if (oppsRes.ok) {
+                    const oData: OpportunityCard[] = await oppsRes.json();
+                    setRecommended(
+                        oData.map((item, idx) => ({
+                            ...item,
+                            ranking_mode: item.ranking_mode || "baseline",
+                            experiment_key: item.experiment_key || "ranking_mode",
+                            experiment_variant: item.experiment_variant || item.ranking_mode || "baseline",
+                            rank_position: item.rank_position ?? idx + 1,
+                        }))
+                    );
+                    recommendationLoaded = true;
+                }
             }
 
-            // 3. Fetch Personalized Opportunities (Top 3)
-            const oppsRes = await fetch(apiUrl("/api/v1/opportunities/recommended/me?limit=3"), { headers });
-            if (oppsRes.ok) {
-                const oData: OpportunityCard[] = await oppsRes.json();
-                setRecommended(
-                    oData.map((item, idx) => ({
-                        ...item,
-                        ranking_mode: item.ranking_mode || "baseline",
-                        experiment_key: item.experiment_key || "ranking_mode",
-                        experiment_variant: item.experiment_variant || item.ranking_mode || "baseline",
-                        rank_position: item.rank_position ?? idx + 1,
-                    }))
-                );
-            } else {
+            if (!recommendationLoaded) {
                 const fallback = await fetch(apiUrl("/api/v1/opportunities/?limit=3"));
                 if (fallback.ok) {
                     const fallbackData: OpportunityCard[] = await fallback.json();
@@ -165,8 +170,11 @@ export default function DashboardPage() {
                 }
             }
 
-            // 4. Fetch Network Posts (Top 2)
-            const postsRes = await fetch(apiUrl("/api/v1/social/posts?limit=2"), { headers });
+            // 3. Network posts are public; include auth only when available.
+            const postsRes = await fetch(
+                apiUrl("/api/v1/social/posts?limit=2"),
+                authHeaders ? { headers: authHeaders } : undefined,
+            );
             if (postsRes.ok) {
                 const pData = await postsRes.json();
                 setPosts(pData);

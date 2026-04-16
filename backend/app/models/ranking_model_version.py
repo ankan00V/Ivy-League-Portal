@@ -29,6 +29,7 @@ class RankingModelVersion(Document):
     label_window_hours: int = 72
 
     baselines: dict[str, Any] = Field(default_factory=dict)
+    lifecycle: dict[str, Any] = Field(default_factory=dict)
     notes: Optional[str] = None
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -40,4 +41,3 @@ class RankingModelVersion(Document):
             "is_active",
             "name",
         ]
-

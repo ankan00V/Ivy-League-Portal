@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useState, useEffect } from "react";
+import BrandLogo from "@/components/BrandLogo";
 
 export default function Navbar() {
     const [scrolled, setScrolled] = useState(false);
@@ -27,9 +28,7 @@ export default function Navbar() {
             }}
         >
             <div style={{ maxWidth: 1200, margin: "0 auto", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <Link href="/" style={{ fontSize: "1.5rem", fontWeight: 700, fontFamily: "var(--font-outfit)" }}>
-                    Vidya<span className="text-gradient">Verse</span>
-                </Link>
+                <BrandLogo size="sm" />
                 <div style={{ display: "flex", gap: "2rem", alignItems: "center" }}>
                     <Link href="#features" style={{ fontSize: "0.95rem", color: "var(--text-secondary)" }}>Features</Link>
                     <Link href="#incoscore" style={{ fontSize: "0.95rem", color: "var(--text-secondary)" }}>InCoScore</Link>

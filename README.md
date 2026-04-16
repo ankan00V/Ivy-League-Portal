@@ -51,7 +51,7 @@ Students discover internships, research roles, scholarships, and hackathons acro
 ## What Is Still Missing (High Impact Next)
 - Production experiment traffic in live environments (real user behavior) to validate lift outside synthetic/bootstrap data.
 - Real-time observability dashboard (p95 latency trend, scrape freshness SLA, experiment significance).
-- Ongoing model governance (promotion policy + rollback playbook) after initial bootstrap/activation.
+- Automated rollback playbook with pager/on-call escalation for sustained drift or conversion regressions.
 
 ## Architecture Diagram
 ```mermaid
@@ -126,6 +126,32 @@ Interpretation:
 - The benchmark fixture now contains hard negatives where lexical overlap ties are common.
 - Semantic ranking is measurably separated, and CI enforces both metric-regression and latency budgets.
 
+## Model Lifecycle Results
+Auto-publish command:
+```bash
+python backend/scripts/publish_model_metadata.py
+```
+
+<!-- MODEL_VERSION_METADATA:START -->
+
+Updated: **2026-04-16T00:00:00**
+
+Policy: `guarded` (auto_activate=False, min_auc_gain=0.0, min_positive_rate=0.005, max_weight_shift=0.35)
+Schedule: retrain every `24h`, drift check every `6h`, drift-triggered retrain=`True`
+Alerts: enabled=`True`, cooldown=`120m`
+
+Active model: `n/a`
+
+Recent model versions:
+
+| id | created_at | active | rows | auc_default | auc_learned | auc_gain | positive_rate | activation_reason |
+|---|---|---:|---:|---:|---:|---:|---:|---|
+| `n/a` | n/a | no | 0 | n/a | n/a | n/a | n/a | n/a |
+
+Latest drift report: `n/a`
+
+<!-- MODEL_VERSION_METADATA:END -->
+
 ## Simulated Traffic Benchmark (Persona-Based)
 Transparency label: **Simulated traffic benchmark (persona-based)**  
 Artifact: `backend/benchmarks/simulated/persona_traffic_report.json`
@@ -188,6 +214,7 @@ From live `ranking_mode` experiment (baseline vs ml), 14-day window:
 - `POST /api/v1/mlops/retrain`
 - `GET /api/v1/mlops/models`
 - `GET /api/v1/mlops/drift`
+- `GET /api/v1/mlops/lifecycle`
 
 ## Local Run
 ### Backend

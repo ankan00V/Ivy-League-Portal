@@ -13,6 +13,7 @@ class ModelDriftReport(Document):
     window_end: datetime
     metrics: dict[str, Any] = Field(default_factory=dict)
     alert: bool = False
+    alert_notified_at: Optional[datetime] = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     class Settings:
@@ -21,5 +22,5 @@ class ModelDriftReport(Document):
             "created_at",
             "model_version_id",
             "alert",
+            "alert_notified_at",
         ]
-

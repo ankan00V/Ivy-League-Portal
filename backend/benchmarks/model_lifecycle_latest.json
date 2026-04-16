@@ -1,0 +1,18 @@
+{
+  "generated_at": "2026-04-16T00:00:00",
+  "policy": {
+    "mode": "guarded",
+    "auto_activate": false,
+    "min_auc_gain": 0.0,
+    "min_positive_rate": 0.005,
+    "max_weight_shift": 0.35,
+    "retrain_interval_hours": 24,
+    "drift_check_interval_hours": 6,
+    "drift_retrain_on_alert": true,
+    "alerts_enabled": true,
+    "alert_cooldown_minutes": 120
+  },
+  "active_model": null,
+  "recent_models": [],
+  "latest_drift": null
+}

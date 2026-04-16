@@ -54,7 +54,7 @@ const buildOpportunitiesSignature = (items: Opportunity[]): string =>
         )
         .join("|");
 
-export default function OpportunitiesPage() {
+export default function InternshipsJobsPage() {
     const [activeTab, setActiveTab] = useState("All");
     const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
     const [loading, setLoading] = useState(true);
@@ -190,7 +190,7 @@ export default function OpportunitiesPage() {
                 matchScore: opportunity.match_score ?? null,
                 modelVersionId: opportunity.model_version_id ?? null,
                 features: {
-                    surface: "opportunities_page",
+                    surface: "internships_jobs_page",
                     active_tab: activeTab,
                 },
             });
@@ -259,7 +259,7 @@ export default function OpportunitiesPage() {
     }, [filtered]);
 
     const visibleOpportunities = useMemo(
-        () => [...grouped.competitive, ...grouped.other],
+        () => grouped.career,
         [grouped]
     );
 
@@ -846,10 +846,10 @@ export default function OpportunitiesPage() {
             <main className="main-content">
                 <header style={{ marginBottom: '3rem' }}>
                     <h1 style={{ fontSize: '3rem', marginBottom: '0.75rem', fontWeight: 400, fontFamily: 'var(--font-serif)', color: 'var(--text-primary)', lineHeight: 1.1 }}>
-                        Discover <span style={{ background: 'var(--brand-accent)', padding: '0.2rem 0.5rem', border: '2px solid var(--border-subtle)', boxShadow: 'var(--shadow-sm)', display: 'inline-block', transform: 'rotate(-2deg)' }}>Opportunities</span>
+                        Discover <span style={{ background: 'var(--brand-accent)', padding: '0.2rem 0.5rem', border: '2px solid var(--border-subtle)', boxShadow: 'var(--shadow-sm)', display: 'inline-block', transform: 'rotate(-2deg)' }}>Internships/Jobs</span>
                     </h1>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '1.25rem', maxWidth: '600px', fontWeight: 600 }}>
-                        Compete in hackathons, quizzes, workshops, and other non-hiring tracks from top universities and global companies.
+                        Track internship and job openings from top universities, startups, and global companies.
                     </p>
                 </header>
 
@@ -910,20 +910,14 @@ export default function OpportunitiesPage() {
                 ) : (
                     <>
                         {renderSection(
-                            "Challenges & Competitions",
-                            "Hackathons, quizzes, buildathons, workshops, and other event-driven opportunities.",
-                            grouped.competitive,
-                            "competitive"
-                        )}
-                        {renderSection(
-                            "Other Opportunities",
-                            "Everything that does not clearly fit the event or hiring tracks.",
-                            grouped.other,
-                            "other"
+                            "Jobs & Internships",
+                            "Hiring-focused roles, internships, and career-track openings.",
+                            grouped.career,
+                            "career"
                         )}
                         {!visibleOpportunities.length && (
                             <div className="card-panel" style={{ padding: "1.5rem" }}>
-                                <strong>No non-hiring opportunities match this filter right now.</strong>
+                                <strong>No internships or jobs match this filter right now.</strong>
                             </div>
                         )}
                     </>

@@ -12,6 +12,7 @@ from beanie.odm.operators.find.comparison import In
 from app.core.config import settings
 from app.models.opportunity_interaction import OpportunityInteraction
 from app.models.ranking_model_version import RankingModelVersion
+from app.services.mlops.activation_policy import evaluate_activation_policy
 from app.services.ranking_model_service import DEFAULT_RANKING_WEIGHTS, ranking_model_service
 
 
@@ -60,6 +61,7 @@ class TrainingResult:
     weights: dict[str, float]
     metrics: dict[str, float]
     baselines: dict[str, Any]
+    lifecycle: dict[str, Any]
     training_rows: int
     window_start: datetime
     window_end: datetime
@@ -208,7 +210,10 @@ class RetrainingService:
         min_rows: int = 200,
         grid_step: float = 0.05,
         auto_activate: bool = False,
+        activation_policy: str = settings.MLOPS_ACTIVATION_POLICY,
         min_auc_gain_for_activation: float = float(settings.MLOPS_AUTO_ACTIVATE_MIN_AUC_GAIN),
+        min_positive_rate_for_activation: float = float(settings.MLOPS_AUTO_ACTIVATE_MIN_POSITIVE_RATE),
+        max_weight_shift_for_activation: float = float(settings.MLOPS_AUTO_ACTIVATE_MAX_WEIGHT_SHIFT),
         notes: Optional[str] = None,
     ) -> TrainingResult:
         window_end = datetime.utcnow()
@@ -267,21 +272,38 @@ class RetrainingService:
         )
         await version.insert()
 
-        safe_min_gain = float(min_auc_gain_for_activation)
-        should_activate = bool(auto_activate) and (auc_gain >= safe_min_gain)
-        activation_reason = "auto_activate_disabled"
-        if auto_activate and not should_activate:
-            activation_reason = f"auc_gain_below_threshold:{auc_gain:.6f}<{safe_min_gain:.6f}"
-        elif should_activate:
+        decision = evaluate_activation_policy(
+            auto_activate=bool(auto_activate),
+            policy=activation_policy,
+            auc_gain=auc_gain,
+            min_auc_gain=float(min_auc_gain_for_activation),
+            positive_rate=positive_rate,
+            min_positive_rate=float(min_positive_rate_for_activation),
+            learned_weights=learned,
+            baseline_weights=baseline_weights,
+            max_weight_shift=float(max_weight_shift_for_activation),
+        )
+        should_activate = bool(decision.should_activate)
+        activation_reason = decision.reason
+        if should_activate:
             await ranking_model_service.activate(model_id=str(version.id))
-            activation_reason = "activated"
 
         metrics["auto_activated"] = 1.0 if should_activate else 0.0
+        lifecycle = {
+            "evaluated_at": datetime.utcnow().isoformat(),
+            "activation_policy": decision.policy,
+            "activation_reason": activation_reason,
+            "activated": bool(should_activate),
+            "diagnostics": decision.diagnostics,
+        }
+        version.lifecycle = lifecycle
+        await version.save()
 
         return TrainingResult(
             weights=learned,
             metrics=metrics,
             baselines=baselines,
+            lifecycle=lifecycle,
             training_rows=training_rows,
             window_start=window_start,
             window_end=window_end,

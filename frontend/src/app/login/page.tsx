@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { apiUrl } from '@/lib/api';
+import BrandLogo from '@/components/BrandLogo';
 
 export default function LoginPage() {
     const router = useRouter();
@@ -91,9 +92,7 @@ export default function LoginPage() {
                 <div style={{ position: 'absolute', bottom: '-20%', left: '-10%', width: '600px', height: '600px', borderRadius: '50%', background: 'rgba(249, 115, 22, 0.2)', filter: 'blur(60px)' }} />
 
                 <div style={{ position: 'relative', zIndex: 10 }}>
-                    <Link href="/" style={{ fontSize: '2rem', fontWeight: 800, fontFamily: 'var(--font-outfit)', letterSpacing: '-0.02em', color: '#ffffff' }}>
-                        VidyaVerse
-                    </Link>
+                    <BrandLogo size="md" />
                 </div>
 
                 <div style={{ position: 'relative', zIndex: 10, maxWidth: '500px' }}>
@@ -117,9 +116,7 @@ export default function LoginPage() {
                 <div className="animate-fade-up" style={{ width: '100%', maxWidth: '440px' }}>
                     <div style={{ textAlign: 'left', marginBottom: '2.5rem' }}>
                         <div className="block lg:hidden" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '2rem' }}>
-                            <Link href="/" style={{ fontSize: '1.75rem', fontWeight: 800, fontFamily: 'var(--font-outfit)' }}>
-                                Vidya<span className="text-gradient">Verse</span>
-                            </Link>
+                            <BrandLogo size="md" />
                         </div>
 
                         <h1 style={{ fontSize: '2rem', marginBottom: '0.75rem', letterSpacing: '-0.02em', color: 'var(--text-primary)' }}>Welcome Back</h1>

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
+import io
+import logging
 import re
 import struct
 from typing import Iterable
@@ -14,6 +17,7 @@ from app.core.config import settings
 from app.core.metrics import CACHE_HITS_TOTAL, CACHE_MISSES_TOTAL
 
 TOKEN_PATTERN = re.compile(r"[A-Za-z0-9+#]+")
+logger = logging.getLogger(__name__)
 
 
 class EmbeddingService:
@@ -29,6 +33,8 @@ class EmbeddingService:
         self._local_model = None
         self._label_dim = 384
         self._openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY) if settings.OPENAI_API_KEY else None
+        self._local_model_disabled = False
+        self._local_model_failure_logged = False
 
     @property
     def dimension(self) -> int:
@@ -42,12 +48,31 @@ class EmbeddingService:
         return vectors / norms
 
     def _ensure_local_model(self):
+        if self._local_model_disabled:
+            raise RuntimeError("Local sentence-transformers model is disabled due to previous init failure.")
+
         if self._local_model is not None:
             return self._local_model
 
+        try:
+            from huggingface_hub.utils import disable_progress_bars
+
+            disable_progress_bars()
+        except Exception:
+            pass
+
+        try:
+            from transformers.utils import logging as transformers_logging
+
+            transformers_logging.set_verbosity_error()
+        except Exception:
+            pass
+
         from sentence_transformers import SentenceTransformer
 
-        self._local_model = SentenceTransformer(self.local_model_name)
+        # Model initialization can emit verbose progress / advisory output; keep startup logs clean.
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self._local_model = SentenceTransformer(self.local_model_name)
         return self._local_model
 
     def _hash_embed_text(self, text: str) -> np.ndarray:
@@ -86,7 +111,13 @@ class EmbeddingService:
                 self._label_dim = int(vectors.shape[1])
                 return vectors
             except Exception as exc:
-                print(f"[EmbeddingService] sentence-transformers unavailable, falling back to hash embedding: {exc}")
+                self._local_model_disabled = True
+                if not self._local_model_failure_logged:
+                    logger.warning(
+                        "[EmbeddingService] sentence-transformers unavailable; falling back to hash embedding: %s",
+                        exc,
+                    )
+                    self._local_model_failure_logged = True
 
         vectors = np.asarray([self._hash_embed_text(value) for value in values], dtype=np.float32)
         if vectors.ndim == 1:

@@ -1,176 +1,220 @@
 "use client";
-import { useEffect, useRef } from "react";
 import Link from "next/link";
 import Navbar from "@/components/Navbar";
+import Spline from "@splinetool/react-spline";
+import { useCallback, useEffect } from "react";
 
 export default function Home() {
-  const mainRef = useRef<HTMLElement | null>(null);
+  const hideSplineBranding = useCallback(() => {
+    const brandedAnchors = Array.from(
+      document.querySelectorAll<HTMLAnchorElement>('a[href*="spline.design"], a[href*="splinetool"]')
+    );
 
-  useEffect(() => {
-    const node = mainRef.current;
-    if (!node) {
-      return;
-    }
+    brandedAnchors.forEach((anchor) => {
+      const content = (anchor.textContent || "").toLowerCase();
+      const href = (anchor.getAttribute("href") || "").toLowerCase();
+      const isSplineBadge = content.includes("built with spline") || href.includes("spline.design");
 
-    if (window.matchMedia("(pointer: coarse)").matches) {
-      return;
-    }
-
-    let raf = 0;
-    let nextX = 0;
-    let nextY = 0;
-    let hasPendingFrame = false;
-
-    const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
-
-    const resetPointer = () => {
-      node.style.setProperty("--landing-cursor-x", "50%");
-      node.style.setProperty("--landing-cursor-y", "50%");
-      node.style.setProperty("--landing-pointer-x", "0");
-      node.style.setProperty("--landing-pointer-y", "0");
-    };
-
-    const applyPointerState = () => {
-      raf = 0;
-      if (!hasPendingFrame) {
+      if (!isSplineBadge) {
         return;
       }
 
-      const rect = node.getBoundingClientRect();
-      if (!rect.width || !rect.height) {
-        return;
-      }
-
-      const xRatio = clamp((nextX - rect.left) / rect.width, 0, 1);
-      const yRatio = clamp((nextY - rect.top) / rect.height, 0, 1);
-      const xNormalized = (xRatio * 2 - 1).toFixed(3);
-      const yNormalized = (yRatio * 2 - 1).toFixed(3);
-
-      node.style.setProperty("--landing-cursor-x", `${(xRatio * 100).toFixed(2)}%`);
-      node.style.setProperty("--landing-cursor-y", `${(yRatio * 100).toFixed(2)}%`);
-      node.style.setProperty("--landing-pointer-x", xNormalized);
-      node.style.setProperty("--landing-pointer-y", yNormalized);
-      hasPendingFrame = false;
-    };
-
-    const queuePointerUpdate = () => {
-      if (raf) {
-        return;
-      }
-      raf = window.requestAnimationFrame(applyPointerState);
-    };
-
-    const onPointerMove = (event: PointerEvent | MouseEvent) => {
-      nextX = event.clientX;
-      nextY = event.clientY;
-      hasPendingFrame = true;
-      queuePointerUpdate();
-    };
-
-    resetPointer();
-
-    const hasPointerEvents = "PointerEvent" in window;
-    if (hasPointerEvents) {
-      node.addEventListener("pointermove", onPointerMove as EventListener, { passive: true });
-    } else {
-      node.addEventListener("mousemove", onPointerMove as EventListener, { passive: true });
-    }
-    node.addEventListener("pointerleave", resetPointer);
-
-    return () => {
-      if (hasPointerEvents) {
-        node.removeEventListener("pointermove", onPointerMove as EventListener);
-      } else {
-        node.removeEventListener("mousemove", onPointerMove as EventListener);
-      }
-      node.removeEventListener("pointerleave", resetPointer);
-      if (raf) {
-        window.cancelAnimationFrame(raf);
-      }
-    };
+      const fixedContainer = anchor.closest<HTMLElement>("div[style*='position: fixed']");
+      const target = fixedContainer ?? anchor;
+      target.style.display = "none";
+      target.style.visibility = "hidden";
+      target.style.pointerEvents = "none";
+      target.style.opacity = "0";
+    });
   }, []);
 
+  const handleSplineLoad = useCallback(
+    (app: unknown) => {
+      const splineApp = app as {
+        _renderer?: { pipeline?: { setWatermark?: (texture: unknown) => void } };
+      };
+
+      const pipeline = splineApp?._renderer?.pipeline;
+      if (pipeline && typeof pipeline.setWatermark === "function") {
+        pipeline.setWatermark(null);
+      }
+
+      window.setTimeout(hideSplineBranding, 0);
+      window.setTimeout(hideSplineBranding, 500);
+      window.setTimeout(hideSplineBranding, 1500);
+    },
+    [hideSplineBranding]
+  );
+
+  useEffect(() => {
+    hideSplineBranding();
+
+    const observer = new MutationObserver(() => {
+      hideSplineBranding();
+    });
+
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [hideSplineBranding]);
+
   return (
-    <main ref={mainRef} className="landing-main">
-      <div className="landing-bg-layer" aria-hidden>
-        <div className="landing-cursor-glow" />
-        <div className="landing-grid" />
-        <div className="landing-blob landing-blob-one" />
-        <div className="landing-blob landing-blob-two" />
-        <div className="landing-blob landing-blob-three" />
+    <main
+      style={{
+        position: "relative",
+        height: "100vh",
+        overflow: "hidden",
+        background: "var(--bg-base)",
+      }}
+    >
+      <div
+        aria-hidden
+        style={{
+          position: "fixed",
+          inset: 0,
+          zIndex: 0,
+          touchAction: "pan-y",
+        }}
+      >
+        <Spline
+          scene="https://prod.spline.design/h-vDP210ADjhpfEB/scene.splinecode"
+          onLoad={handleSplineLoad}
+        />
       </div>
-
-      <Navbar />
-
-      <section className="layout-container" style={{ alignItems: "center", justifyContent: "center", textAlign: "center", paddingTop: "8rem" }}>
-        <div style={{ maxWidth: 800, padding: "2rem" }} className="animate-fade-up landing-hero-parallax">
+      <div
+        aria-hidden
+        style={{
+          position: "fixed",
+          inset: 0,
+          zIndex: 1,
+          pointerEvents: "none",
+          background:
+            "linear-gradient(180deg, color-mix(in srgb, var(--bg-base) 8%, transparent) 0%, color-mix(in srgb, var(--bg-base) 4%, transparent) 48%, color-mix(in srgb, var(--bg-base) 10%, transparent) 100%)",
+        }}
+      />
+      <div style={{ position: "relative", zIndex: 2 }}>
+        <Navbar />
+      </div>
+      <section
+        className="layout-container"
+        style={{
+          alignItems: "center",
+          justifyContent: "center",
+          textAlign: "center",
+          minHeight: "100vh",
+          padding: "7.5rem 1.5rem 2rem 1.5rem",
+          position: "relative",
+          zIndex: 2,
+          pointerEvents: "none",
+        }}
+      >
+        <div
+          style={{
+            maxWidth: 800,
+            padding: "1.5rem 2rem",
+          }}
+          className="animate-fade-up"
+        >
           <div style={{
             display: "inline-block",
-            padding: "0.5rem 1rem",
-            background: "var(--landing-kicker-bg)",
-            border: "1px solid var(--border-subtle)",
+            padding: "0.55rem 1.1rem",
+            background:
+              "linear-gradient(120deg, color-mix(in srgb, var(--landing-kicker-bg) 70%, #0b1d39 30%) 0%, color-mix(in srgb, var(--landing-kicker-bg) 84%, #4ec8ff 16%) 52%, color-mix(in srgb, var(--landing-kicker-bg) 70%, #0b1d39 30%) 100%)",
+            border: "2px solid color-mix(in srgb, var(--landing-kicker-text) 55%, #ffffff 45%)",
             borderRadius: "var(--radius-full)",
             color: "var(--landing-kicker-text)",
             fontSize: "0.85rem",
             fontWeight: 700,
             marginBottom: "2rem",
             letterSpacing: "0.05em",
-            textTransform: "uppercase"
+            textTransform: "uppercase",
+            boxShadow:
+              "0 8px 22px color-mix(in srgb, var(--landing-kicker-text) 24%, transparent), inset 0 1px 0 color-mix(in srgb, #ffffff 35%, transparent)",
+            textShadow: "0 0 12px color-mix(in srgb, var(--landing-kicker-text) 35%, transparent)",
           }}>
             AI-Powered Intelligence Network
           </div>
 
-          <h1 style={{ fontSize: "4rem", lineHeight: 1.1, marginBottom: "1.5rem" }}>
+          <h1
+            style={{
+              fontSize: "4rem",
+              lineHeight: 1.1,
+              marginBottom: "1.5rem",
+              color: "color-mix(in srgb, var(--text-primary) 92%, #ffffff 8%)",
+              textShadow:
+                "0 2px 0 color-mix(in srgb, #000000 55%, transparent), 0 14px 34px color-mix(in srgb, #000000 48%, transparent)",
+              WebkitTextStroke: "0.45px color-mix(in srgb, #000000 45%, transparent)",
+            }}
+          >
             Bridge the Gap to <br />
-            <span className="text-gradient">Ivy League Opportunities</span>
+            <span
+              style={{
+                background:
+                  "linear-gradient(120deg, color-mix(in srgb, var(--brand-primary) 90%, #ffffff 10%) 0%, color-mix(in srgb, var(--brand-primary) 65%, #c08a00 35%) 45%, color-mix(in srgb, var(--brand-primary) 88%, #ffffff 12%) 100%)",
+                WebkitBackgroundClip: "text",
+                backgroundClip: "text",
+                color: "transparent",
+                WebkitTextFillColor: "transparent",
+                textShadow:
+                  "0 0 18px color-mix(in srgb, var(--brand-primary) 36%, transparent), 0 6px 20px color-mix(in srgb, #000000 45%, transparent)",
+              }}
+            >
+              Ivy League Opportunities
+            </span>
           </h1>
 
-          <p style={{ fontSize: "1.2rem", color: "var(--text-secondary)", marginBottom: "3rem", padding: "0 2rem" }}>
+          <p
+            style={{
+              fontSize: "1.2rem",
+              color: "color-mix(in srgb, var(--text-secondary) 78%, #ffffff 22%)",
+              marginBottom: "3rem",
+              padding: "0 2rem",
+              textShadow: "0 3px 14px color-mix(in srgb, #000000 48%, transparent)",
+            }}
+          >
             Real-time tracking of hackathons, research internships, and scholarships.
-            Rank yourself with the global <strong style={{ color: "var(--landing-strong-text)" }}>InCoScore</strong> and auto-apply with AI.
+            Rank yourself with the global{" "}
+            <strong
+              style={{
+                color: "color-mix(in srgb, var(--landing-strong-text) 90%, #ffffff 10%)",
+                textShadow: "0 2px 12px color-mix(in srgb, #000000 55%, transparent)",
+              }}
+            >
+              InCoScore
+            </strong>{" "}
+            and auto-apply with AI.
           </p>
 
-          <div style={{ display: "flex", gap: "1rem", justifyContent: "center" }}>
-            <Link href="/register" className="btn-primary" style={{ padding: "1rem 2.5rem", fontSize: "1.1rem" }}>
+          <div style={{ display: "flex", gap: "1rem", justifyContent: "center", pointerEvents: "auto" }}>
+            <Link
+              href="/register"
+              className="btn-primary"
+              style={{
+                padding: "1rem 2.5rem",
+                fontSize: "1.1rem",
+                background:
+                  "linear-gradient(135deg, color-mix(in srgb, var(--brand-primary) 88%, #ffffff 12%) 0%, color-mix(in srgb, var(--brand-primary) 70%, #9a6f00 30%) 100%)",
+                boxShadow:
+                  "0 12px 28px color-mix(in srgb, var(--brand-primary) 28%, transparent), var(--shadow-sm)",
+              }}
+            >
               Start Your Journey
             </Link>
-            <Link href="/dashboard" className="btn-secondary" style={{ padding: "1rem 2.5rem", fontSize: "1.1rem" }}>
+            <Link
+              href="/dashboard"
+              className="btn-secondary"
+              style={{
+                padding: "1rem 2.5rem",
+                fontSize: "1.1rem",
+                background:
+                  "linear-gradient(135deg, color-mix(in srgb, #0b1022 78%, var(--bg-surface) 22%) 0%, color-mix(in srgb, #18284f 82%, var(--bg-surface) 18%) 100%)",
+                border: "2px solid color-mix(in srgb, #ffffff 78%, var(--border-subtle) 22%)",
+                color: "color-mix(in srgb, #ffffff 90%, var(--text-primary) 10%)",
+                boxShadow:
+                  "0 12px 28px color-mix(in srgb, #5a8bff 22%, transparent), var(--shadow-sm)",
+              }}
+            >
               View Dashboard
             </Link>
-          </div>
-        </div>
-      </section>
-
-      {/* Features Grid */}
-      <section style={{ padding: "6rem 2rem", maxWidth: 1200, margin: "0 auto" }}>
-        <h2 style={{ fontSize: "2.5rem", textAlign: "center", marginBottom: "4rem" }}>Intelligent Architecture</h2>
-
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "2rem" }}>
-          {/* Card 1 */}
-          <div className="glass-panel" style={{ padding: "2rem" }}>
-            <div style={{ width: 48, height: 48, borderRadius: 12, background: "rgba(99,102,241,0.2)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "1.5rem" }}>
-              <span style={{ fontSize: "1.5rem" }}>🧠</span>
-            </div>
-            <h3 style={{ fontSize: "1.25rem", marginBottom: "1rem" }}>AI Classification</h3>
-            <p style={{ color: "var(--text-secondary)", fontSize: "0.95rem" }}>Zero-shot NLP models automatically categorize every scraped opportunity into domains like AI, Law, and Biomed.</p>
-          </div>
-
-          {/* Card 2 */}
-          <div className="glass-panel" style={{ padding: "2rem" }}>
-            <div style={{ width: 48, height: 48, borderRadius: 12, background: "rgba(6,182,212,0.2)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "1.5rem" }}>
-              <span style={{ fontSize: "1.5rem" }}>📈</span>
-            </div>
-            <h3 style={{ fontSize: "1.25rem", marginBottom: "1rem" }}>InCoScore Ranking</h3>
-            <p style={{ color: "var(--text-secondary)", fontSize: "0.95rem" }}>Our proprietary Intelligent Competency Score evaluates your parsed resume, achievements, and technical prowess.</p>
-          </div>
-
-          {/* Card 3 */}
-          <div className="glass-panel" style={{ padding: "2rem" }}>
-            <div style={{ width: 48, height: 48, borderRadius: 12, background: "rgba(168,85,247,0.2)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "1.5rem" }}>
-              <span style={{ fontSize: "1.5rem" }}>⚡</span>
-            </div>
-            <h3 style={{ fontSize: "1.25rem", marginBottom: "1rem" }}>Automated System</h3>
-            <p style={{ color: "var(--text-secondary)", fontSize: "0.95rem" }}>One-click smart form submissions and a dedicated application tracking dashboard.</p>
           </div>
         </div>
       </section>

@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 import numpy as np
 
+from app.core.config import settings
 from app.models.model_drift_report import ModelDriftReport
 from app.models.opportunity_interaction import OpportunityInteraction
 from app.models.ranking_model_version import RankingModelVersion
@@ -37,10 +38,10 @@ class DriftService:
     async def run(
         self,
         *,
-        lookback_days: int = 7,
+        lookback_days: int = settings.MLOPS_DRIFT_LOOKBACK_DAYS,
         feature_keys: tuple[str, ...] = ("semantic_score", "baseline_score", "behavior_score"),
-        psi_alert_threshold: float = 0.25,
-        z_alert_threshold: float = 3.0,
+        psi_alert_threshold: float = settings.MLOPS_DRIFT_PSI_ALERT_THRESHOLD,
+        z_alert_threshold: float = settings.MLOPS_DRIFT_Z_ALERT_THRESHOLD,
     ) -> ModelDriftReport:
         now = datetime.utcnow()
         window_start = now - timedelta(days=max(1, int(lookback_days)))
@@ -94,8 +95,11 @@ class DriftService:
             "window_end": window_end.isoformat(),
             "impressions": int(len(impressions)),
             "query_bucket_psi": float(round(query_bucket_psi, 6)),
+            "psi_alert_threshold": float(round(psi_alert_threshold, 6)),
+            "z_alert_threshold": float(round(z_alert_threshold, 6)),
             "recent_feature_means": recent_means,
             "feature_mean_z": z_scores,
+            "max_feature_mean_z": float(round(max(z_scores.values()) if z_scores else 0.0, 6)),
             "baseline_available": bool(active and bool(baselines)),
         }
 
@@ -117,4 +121,3 @@ class DriftService:
 
 
 drift_service = DriftService()
-

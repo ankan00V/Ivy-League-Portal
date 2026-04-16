@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from typing import Any, Awaitable, Callable, Optional
 
 from pymongo import ReturnDocument
+from beanie.odm.operators.find.comparison import In
 
 from app.core.config import settings
 from app.core.metrics import (
@@ -56,7 +57,7 @@ class JobRunner:
         if dedupe_key:
             existing = await BackgroundJob.find_one(
                 BackgroundJob.dedupe_key == dedupe_key,
-                BackgroundJob.status.in_(["pending", "running", "retry"]),
+                In(BackgroundJob.status, ["pending", "running", "retry"]),
             )
             if existing:
                 return existing
@@ -246,13 +247,27 @@ async def _job_scraper(_: dict[str, Any]) -> dict[str, Any]:
 async def _job_mlops_retrain(payload: dict[str, Any]) -> dict[str, Any]:
     from app.services.mlops.retraining_service import retraining_service
 
+    def _payload_or_default(key: str, default: Any) -> Any:
+        value = payload.get(key)
+        return default if value is None else value
+
     result = await retraining_service.retrain_and_register(
-        lookback_days=int(payload.get("lookback_days") or settings.MLOPS_RETRAIN_LOOKBACK_DAYS),
-        label_window_hours=int(payload.get("label_window_hours") or settings.MLOPS_LABEL_WINDOW_HOURS),
-        min_rows=int(payload.get("min_rows") or settings.MLOPS_MIN_TRAINING_ROWS),
-        grid_step=float(payload.get("grid_step") or settings.MLOPS_TRAIN_GRID_STEP),
-        auto_activate=bool(payload.get("auto_activate") if payload.get("auto_activate") is not None else settings.MLOPS_AUTO_ACTIVATE),
-        notes=str(payload.get("notes") or "scheduled"),
+        lookback_days=int(_payload_or_default("lookback_days", settings.MLOPS_RETRAIN_LOOKBACK_DAYS)),
+        label_window_hours=int(_payload_or_default("label_window_hours", settings.MLOPS_LABEL_WINDOW_HOURS)),
+        min_rows=int(_payload_or_default("min_rows", settings.MLOPS_MIN_TRAINING_ROWS)),
+        grid_step=float(_payload_or_default("grid_step", settings.MLOPS_TRAIN_GRID_STEP)),
+        auto_activate=bool(_payload_or_default("auto_activate", settings.MLOPS_AUTO_ACTIVATE)),
+        activation_policy=str(_payload_or_default("activation_policy", settings.MLOPS_ACTIVATION_POLICY)),
+        min_auc_gain_for_activation=float(
+            _payload_or_default("min_auc_gain_for_activation", settings.MLOPS_AUTO_ACTIVATE_MIN_AUC_GAIN)
+        ),
+        min_positive_rate_for_activation=float(
+            _payload_or_default("min_positive_rate_for_activation", settings.MLOPS_AUTO_ACTIVATE_MIN_POSITIVE_RATE)
+        ),
+        max_weight_shift_for_activation=float(
+            _payload_or_default("max_weight_shift_for_activation", settings.MLOPS_AUTO_ACTIVATE_MAX_WEIGHT_SHIFT)
+        ),
+        notes=str(_payload_or_default("notes", "scheduled")),
     )
     return {
         "window_start": result.window_start.isoformat(),
@@ -260,6 +275,9 @@ async def _job_mlops_retrain(payload: dict[str, Any]) -> dict[str, Any]:
         "training_rows": result.training_rows,
         "weights": result.weights,
         "metrics": result.metrics,
+        "lifecycle": result.lifecycle,
+        "auto_activated": bool(result.auto_activated),
+        "activation_reason": result.activation_reason,
     }
 
 
@@ -269,16 +287,69 @@ async def _job_mlops_drift(payload: dict[str, Any]) -> dict[str, Any]:
     report = await drift_service.run(
         lookback_days=int(payload.get("lookback_days") or settings.MLOPS_DRIFT_LOOKBACK_DAYS)
     )
+    alert_job_id: str | None = None
+    retrain_enqueued = False
+
+    if report.alert:
+        if settings.MLOPS_ALERTS_ENABLED:
+            alert_job = await job_runner.enqueue(
+                job_type="mlops.alert",
+                payload={"kind": "drift", "report_id": str(report.id)},
+                dedupe_key=f"mlops.alert:{str(report.id)}",
+            )
+            alert_job_id = str(alert_job.id)
+
+        if settings.MLOPS_TRIGGER_RETRAIN_ON_DRIFT_ALERT:
+            await job_runner.enqueue(
+                job_type="mlops.retrain",
+                payload={
+                    "lookback_days": settings.MLOPS_RETRAIN_LOOKBACK_DAYS,
+                    "label_window_hours": settings.MLOPS_LABEL_WINDOW_HOURS,
+                    "min_rows": settings.MLOPS_MIN_TRAINING_ROWS,
+                    "grid_step": settings.MLOPS_TRAIN_GRID_STEP,
+                    "auto_activate": settings.MLOPS_AUTO_ACTIVATE,
+                    "activation_policy": settings.MLOPS_ACTIVATION_POLICY,
+                    "min_auc_gain_for_activation": settings.MLOPS_AUTO_ACTIVATE_MIN_AUC_GAIN,
+                    "min_positive_rate_for_activation": settings.MLOPS_AUTO_ACTIVATE_MIN_POSITIVE_RATE,
+                    "max_weight_shift_for_activation": settings.MLOPS_AUTO_ACTIVATE_MAX_WEIGHT_SHIFT,
+                    "notes": f"drift_alert:{str(report.id)}",
+                },
+                dedupe_key="mlops.retrain",
+            )
+            retrain_enqueued = True
+
     return {
         "id": str(report.id),
         "model_version_id": report.model_version_id,
         "alert": bool(report.alert),
         "metrics": report.metrics,
+        "alert_job_id": alert_job_id,
+        "retrain_enqueued": bool(retrain_enqueued),
         "created_at": report.created_at.isoformat(),
     }
+
+
+async def _job_mlops_alert(payload: dict[str, Any]) -> dict[str, Any]:
+    from app.models.model_drift_report import ModelDriftReport
+    from app.services.mlops.alerting_service import mlops_alerting_service
+
+    kind = str(payload.get("kind") or "drift").strip().lower()
+    if kind != "drift":
+        raise ValueError(f"unsupported_alert_kind:{kind}")
+
+    report_id = str(payload.get("report_id") or "").strip()
+    if not report_id:
+        raise ValueError("missing_report_id")
+
+    report = await ModelDriftReport.get(report_id)
+    if report is None:
+        raise ValueError("drift_report_not_found")
+
+    return await mlops_alerting_service.notify_drift_alert(report=report)
 
 
 def register_default_jobs() -> None:
     job_runner.register("scraper.run", _job_scraper)
     job_runner.register("mlops.retrain", _job_mlops_retrain)
     job_runner.register("mlops.drift", _job_mlops_drift)
+    job_runner.register("mlops.alert", _job_mlops_alert)

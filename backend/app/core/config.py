@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     SCRAPER_HACK2SKILL_MAX_ITEMS: int = 24
     SCRAPER_FRESHERSWORLD_MAX_ITEMS: int = 30
     SCRAPER_INDEED_MAX_ITEMS: int = 20
+    SCRAPER_GENERIC_PORTAL_MAX_ITEMS: int = 12
     
     # Celery & Redis
     REDIS_URL: str = "redis://localhost:6379/0"
@@ -117,11 +118,21 @@ class Settings(BaseSettings):
     MLOPS_LABEL_WINDOW_HOURS: int = 72
     MLOPS_MIN_TRAINING_ROWS: int = 200
     MLOPS_TRAIN_GRID_STEP: float = 0.05
+    MLOPS_ACTIVATION_POLICY: str = "guarded"  # manual | auc_gain | guarded
     MLOPS_AUTO_ACTIVATE: bool = False
     MLOPS_AUTO_ACTIVATE_MIN_AUC_GAIN: float = 0.0
+    MLOPS_AUTO_ACTIVATE_MIN_POSITIVE_RATE: float = 0.005
+    MLOPS_AUTO_ACTIVATE_MAX_WEIGHT_SHIFT: float = 0.35
     MLOPS_BOOTSTRAP_ACTIVE_MODEL_ON_STARTUP: bool = True
     MLOPS_DRIFT_CHECK_INTERVAL_HOURS: int = 6
     MLOPS_DRIFT_LOOKBACK_DAYS: int = 7
+    MLOPS_DRIFT_PSI_ALERT_THRESHOLD: float = 0.25
+    MLOPS_DRIFT_Z_ALERT_THRESHOLD: float = 3.0
+    MLOPS_ALERTS_ENABLED: bool = True
+    MLOPS_ALERT_WEBHOOK_URL: Optional[str] = None
+    MLOPS_ALERT_WEBHOOK_TIMEOUT_SECONDS: float = 8.0
+    MLOPS_ALERT_COOLDOWN_MINUTES: int = 120
+    MLOPS_TRIGGER_RETRAIN_ON_DRIFT_ALERT: bool = True
     
     model_config = SettingsConfigDict(
         env_file=ENV_FILE,

@@ -1,5 +1,6 @@
 "use client";
 import React, { createContext, useContext, useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 
 type Theme = "light" | "dark";
 
@@ -11,6 +12,7 @@ interface ThemeContextType {
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
+    const pathname = usePathname();
     const [theme, setTheme] = useState<Theme>(() => {
         if (typeof window === "undefined") {
             return "light";
@@ -25,9 +27,15 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     });
 
     useEffect(() => {
-        document.documentElement.setAttribute("data-theme", theme);
-        localStorage.setItem("vidyaverse-theme", theme);
-    }, [theme]);
+        const isLandingPage = pathname === "/";
+        const appliedTheme: Theme = isLandingPage ? "dark" : theme;
+
+        document.documentElement.setAttribute("data-theme", appliedTheme);
+
+        if (!isLandingPage) {
+            localStorage.setItem("vidyaverse-theme", theme);
+        }
+    }, [theme, pathname]);
 
     const toggleTheme = () => {
         setTheme((prevTheme) => (prevTheme === "light" ? "dark" : "light"));

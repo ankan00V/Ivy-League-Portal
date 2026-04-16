@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import logging
 import re
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -19,6 +20,8 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 IVY_LEAGUE_FEEDS: list[tuple[str, str]] = [
@@ -80,6 +83,236 @@ INDEED_INDIA_LISTINGS: list[tuple[str, str]] = [
         "Job",
     ),
 ]
+
+GENERIC_PORTAL_LISTINGS: list[dict[str, Any]] = [
+    {
+        "source": "linkedin",
+        "label": "LinkedIn",
+        "default_type": "Job",
+        "default_university": "LinkedIn Recruiters",
+        "listings": [
+            "https://www.linkedin.com/jobs/search/?keywords=internship%20OR%20fresher%20OR%20entry%20level&location=India",
+        ],
+    },
+    {
+        "source": "glassdoor",
+        "label": "Glassdoor",
+        "default_type": "Job",
+        "default_university": "Glassdoor Employers",
+        "listings": [
+            "https://www.glassdoor.co.in/Job/india-internship-jobs-SRCH_IL.0,5_IN115_KO6,16.htm",
+        ],
+    },
+    {
+        "source": "foundit",
+        "label": "Foundit",
+        "default_type": "Job",
+        "default_university": "Foundit Recruiters",
+        "listings": [
+            "https://www.foundit.in/srp/results?query=internship&locations=India",
+        ],
+    },
+    {
+        "source": "devfolio",
+        "label": "Devfolio",
+        "default_type": "Hackathon",
+        "default_university": "Devfolio",
+        "listings": [
+            "https://devfolio.co/hackathons",
+        ],
+    },
+    {
+        "source": "hackerearth",
+        "label": "HackerEarth",
+        "default_type": "Competition",
+        "default_university": "HackerEarth",
+        "listings": [
+            "https://www.hackerearth.com/challenges/hackathon/",
+            "https://www.hackerearth.com/challenges/competitive/",
+        ],
+    },
+    {
+        "source": "devpost",
+        "label": "Devpost",
+        "default_type": "Hackathon",
+        "default_university": "Devpost",
+        "listings": [
+            "https://devpost.com/hackathons",
+        ],
+    },
+    {
+        "source": "techgig",
+        "label": "TechGig",
+        "default_type": "Competition",
+        "default_university": "TechGig",
+        "listings": [
+            "https://www.techgig.com/challenge",
+        ],
+    },
+    {
+        "source": "reskilll",
+        "label": "Reskilll",
+        "default_type": "Hackathon",
+        "default_university": "Reskilll",
+        "listings": [
+            "https://reskilll.com/hackathons",
+        ],
+    },
+    {
+        "source": "aicte_internship",
+        "label": "AICTE Internship Portal",
+        "default_type": "Internship",
+        "default_university": "AICTE",
+        "listings": [
+            "https://internship.aicte-india.org/",
+        ],
+    },
+    {
+        "source": "smartinternz",
+        "label": "SmartInternz",
+        "default_type": "Internship",
+        "default_university": "SmartInternz",
+        "listings": [
+            "https://smartinternz.com/internships",
+        ],
+    },
+    {
+        "source": "makeintern",
+        "label": "MakeIntern",
+        "default_type": "Internship",
+        "default_university": "MakeIntern",
+        "listings": [
+            "https://www.makeintern.com/",
+        ],
+    },
+    {
+        "source": "letsintern",
+        "label": "LetsIntern",
+        "default_type": "Internship",
+        "default_university": "LetsIntern",
+        "listings": [
+            "https://www.letsintern.com/",
+        ],
+    },
+    {
+        "source": "handshake",
+        "label": "Handshake",
+        "default_type": "Internship",
+        "default_university": "Handshake",
+        "listings": [
+            "https://joinhandshake.com/students/",
+        ],
+    },
+    {
+        "source": "wellfound",
+        "label": "Wellfound",
+        "default_type": "Job",
+        "default_university": "Wellfound Startups",
+        "listings": [
+            "https://wellfound.com/jobs",
+        ],
+    },
+    {
+        "source": "ycombinator_jobs",
+        "label": "Y Combinator Jobs",
+        "default_type": "Job",
+        "default_university": "Y Combinator Startups",
+        "listings": [
+            "https://www.ycombinator.com/jobs",
+        ],
+    },
+    {
+        "source": "wayup",
+        "label": "WayUp",
+        "default_type": "Internship",
+        "default_university": "WayUp Employers",
+        "listings": [
+            "https://www.wayup.com/s/internships/",
+        ],
+    },
+    {
+        "source": "chegg_internships",
+        "label": "Chegg Internships",
+        "default_type": "Internship",
+        "default_university": "Chegg",
+        "listings": [
+            "https://www.chegg.com/internships",
+        ],
+    },
+    {
+        "source": "kaggle",
+        "label": "Kaggle",
+        "default_type": "Competition",
+        "default_university": "Kaggle",
+        "listings": [
+            "https://www.kaggle.com/competitions",
+        ],
+    },
+    {
+        "source": "codeforces",
+        "label": "Codeforces",
+        "default_type": "Competition",
+        "default_university": "Codeforces",
+        "listings": [
+            "https://codeforces.com/contests",
+        ],
+    },
+    {
+        "source": "geeksforgeeks_jobs",
+        "label": "GeeksforGeeks Jobs",
+        "default_type": "Job",
+        "default_university": "GeeksforGeeks",
+        "listings": [
+            "https://www.geeksforgeeks.org/jobs/",
+        ],
+    },
+    {
+        "source": "promilo",
+        "label": "Promilo",
+        "default_type": "Job",
+        "default_university": "Promilo",
+        "listings": [
+            "https://promilo.com/",
+        ],
+    },
+]
+
+GENERIC_OPPORTUNITY_KEYWORDS = {
+    "job",
+    "jobs",
+    "hiring",
+    "career",
+    "internship",
+    "intern",
+    "hackathon",
+    "competition",
+    "contest",
+    "challenge",
+    "event",
+    "fellowship",
+    "opening",
+    "opportunity",
+    "round",
+}
+
+GENERIC_NON_OPPORTUNITY_ANCHORS = {
+    "about",
+    "about us",
+    "contact",
+    "careers",
+    "pricing",
+    "help",
+    "privacy",
+    "terms",
+    "sign in",
+    "signin",
+    "log in",
+    "login",
+    "register",
+    "sign up",
+    "home",
+    "learn more",
+}
 
 
 def _utcnow() -> datetime:
@@ -148,6 +381,24 @@ def _dedupe_by_url(records: Iterable[dict]) -> list[dict]:
         seen.add(url)
         deduped.append(record)
     return deduped
+
+
+def _extract_deadline_from_text(text: str) -> datetime | None:
+    if not text:
+        return None
+    patterns = [
+        r"(?:deadline|apply by|applications? close(?:s)?|registration ends?)[:\s-]+([A-Za-z]{3,9}\s+\d{1,2},\s+\d{4})",
+        r"(?:deadline|apply by|applications? close(?:s)?|registration ends?)[:\s-]+(\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4})",
+    ]
+    lowered = _collapse_whitespace(text).lower()
+    for pattern in patterns:
+        match = re.search(pattern, lowered, re.IGNORECASE)
+        if not match:
+            continue
+        parsed = _parse_datetime(match.group(1))
+        if parsed:
+            return parsed
+    return None
 
 
 def is_opportunity_active(opportunity: Any, now: datetime | None = None) -> bool:
@@ -268,7 +519,12 @@ class IvyLeagueRSSConnector:
                 response.raise_for_status()
                 entries = self._parse_feed(response.text)
             except Exception as exc:
-                print(f"[IvyConnector] Failed feed for {school_name} ({feed_url}): {exc}")
+                logger.debug(
+                    "[IvyConnector] Failed feed for %s (%s): %s",
+                    school_name,
+                    feed_url,
+                    exc,
+                )
                 continue
 
             school_count = 0
@@ -390,9 +646,7 @@ class UnstopScraper:
                 errors.append(f"{url}: {exc}")
 
         if errors and not opportunities:
-            print("[Unstop] All fetch attempts failed:")
-            for err in errors:
-                print(f"[Unstop] {err}")
+            logger.debug("[Unstop] All fetch attempts failed: %s", "; ".join(errors))
 
         return _dedupe_by_url(opportunities)[:max_items]
 
@@ -496,7 +750,7 @@ class NaukriScraper:
         try:
             from playwright.sync_api import sync_playwright
         except Exception as exc:
-            print(f"[Naukri] Playwright fallback unavailable: {exc}")
+            logger.debug("[Naukri] Playwright fallback unavailable: %s", exc)
             return []
 
         opportunities: list[dict] = []
@@ -538,10 +792,10 @@ class NaukriScraper:
                         if len(opportunities) >= max_items:
                             break
                     except Exception as exc:
-                        print(f"[Naukri] Playwright URL failed {search_url}: {exc}")
+                        logger.debug("[Naukri] Playwright URL failed %s: %s", search_url, exc)
                 browser.close()
         except Exception as exc:
-            print(f"[Naukri] Playwright fallback failed: {exc}")
+            logger.debug("[Naukri] Playwright fallback failed: %s", exc)
 
         return _dedupe_by_url(opportunities)[:max_items]
 
@@ -583,7 +837,7 @@ class NaukriScraper:
                 if len(opportunities) >= max_items:
                     break
             except Exception as exc:
-                print(f"[Naukri] Failed fetch from {search_url}: {exc}")
+                logger.debug("[Naukri] Failed fetch from %s: %s", search_url, exc)
 
         if not opportunities and settings.SCRAPER_NAUKRI_ENABLE_PLAYWRIGHT_FALLBACK:
             opportunities.extend(self._extract_with_playwright(max_items=max_items))
@@ -679,7 +933,7 @@ class InternshalaScraper:
                 if len(opportunities) >= max_items:
                     break
             except Exception as exc:
-                print(f"[Internshala] Failed fetch from {listing_url}: {exc}")
+                logger.debug("[Internshala] Failed fetch from %s: %s", listing_url, exc)
 
         return _dedupe_by_url(opportunities)[:max_items]
 
@@ -769,7 +1023,7 @@ class Hack2SkillScraper:
                 if len(opportunities) >= max_items:
                     break
             except Exception as exc:
-                print(f"[Hack2Skill] Failed fetch from {listing_url}: {exc}")
+                logger.debug("[Hack2Skill] Failed fetch from %s: %s", listing_url, exc)
 
         return _dedupe_by_url(opportunities)[:max_items]
 
@@ -869,7 +1123,7 @@ class FreshersworldScraper:
                 if len(opportunities) >= max_items:
                     break
             except Exception as exc:
-                print(f"[Freshersworld] Failed fetch from {listing_url}: {exc}")
+                logger.debug("[Freshersworld] Failed fetch from %s: %s", listing_url, exc)
 
         return _dedupe_by_url(opportunities)[:max_items]
 
@@ -987,6 +1241,230 @@ class IndeedIndiaScraper:
         return _dedupe_by_url(opportunities)[:max_items]
 
 
+class GenericOpportunityPortalScraper:
+    def __init__(
+        self,
+        session: requests.Session | None = None,
+        source_configs: list[dict[str, Any]] | None = None,
+    ) -> None:
+        self.session = session or _build_retry_session()
+        self.source_configs = {
+            str(config.get("source") or "").strip().lower(): config
+            for config in (source_configs or GENERIC_PORTAL_LISTINGS)
+            if str(config.get("source") or "").strip()
+        }
+        self.headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+
+    def _walk_json(self, node: Any) -> Iterable[dict]:
+        if isinstance(node, dict):
+            yield node
+            for value in node.values():
+                yield from self._walk_json(value)
+        elif isinstance(node, list):
+            for value in node:
+                yield from self._walk_json(value)
+
+    def _extract_from_ld_json(
+        self,
+        soup: BeautifulSoup,
+        listing_url: str,
+        source_name: str,
+        default_type: str,
+        default_university: str,
+    ) -> list[dict]:
+        opportunities: list[dict] = []
+        scripts = soup.find_all("script", attrs={"type": "application/ld+json"})
+        for script in scripts:
+            raw = script.string or script.get_text()
+            if not raw or not raw.strip():
+                continue
+            try:
+                parsed = json.loads(raw)
+            except Exception:
+                continue
+
+            for node in self._walk_json(parsed):
+                node_type = str(node.get("@type") or "").strip()
+                if node_type == "ListItem" and isinstance(node.get("item"), dict):
+                    node = node["item"]
+                    node_type = str(node.get("@type") or "").strip()
+
+                if node_type not in {"JobPosting", "Event"}:
+                    continue
+
+                title = _collapse_whitespace(str(node.get("title") or node.get("name") or ""))
+                url = _collapse_whitespace(str(node.get("url") or ""))
+                if not title or not url:
+                    continue
+                if not url.startswith("http"):
+                    url = urljoin(listing_url, url)
+
+                description = _strip_html(str(node.get("description") or ""))
+                if node_type == "Event":
+                    start_raw = str(node.get("startDate") or "")
+                    end_raw = str(node.get("endDate") or "")
+                    deadline = _parse_datetime(end_raw) or _parse_datetime(start_raw)
+                else:
+                    valid_through = str(node.get("validThrough") or "")
+                    deadline = _parse_datetime(valid_through) or _extract_deadline_from_text(description)
+
+                organization = default_university
+                hiring_org = node.get("hiringOrganization")
+                if isinstance(hiring_org, dict):
+                    organization = _collapse_whitespace(str(hiring_org.get("name") or organization))
+                organizer = node.get("organizer")
+                if isinstance(organizer, dict):
+                    organization = _collapse_whitespace(str(organizer.get("name") or organization))
+
+                final_description = _collapse_whitespace(description)
+                if not final_description:
+                    final_description = f"Opportunity indexed from {source_name.replace('_', ' ').title()}."
+
+                opportunities.append(
+                    {
+                        "title": title[:220],
+                        "description": final_description[:700],
+                        "url": url,
+                        "opportunity_type": default_type or _infer_opportunity_type(title, final_description),
+                        "university": organization or default_university,
+                        "deadline": deadline,
+                        "source": source_name,
+                    }
+                )
+        return opportunities
+
+    def _looks_like_candidate(self, title: str, url: str) -> bool:
+        if not title or not url:
+            return False
+        normalized_title = title.strip().lower()
+        if normalized_title in GENERIC_NON_OPPORTUNITY_ANCHORS:
+            return False
+        if len(normalized_title) < 8 or len(normalized_title) > 220:
+            return False
+
+        if normalized_title.count(" ") <= 1 and len(normalized_title) < 18:
+            return False
+
+        lowered_url = url.lower()
+        meaningful_path_tokens = (
+            "/job",
+            "/jobs",
+            "/career",
+            "/intern",
+            "/fellow",
+            "/hackathon",
+            "/challenge",
+            "/competition",
+            "/contest",
+            "/event",
+            "/opportunit",
+            "/round",
+        )
+        keyword_hit = any(keyword in normalized_title for keyword in GENERIC_OPPORTUNITY_KEYWORDS)
+        path_hit = any(token in lowered_url for token in meaningful_path_tokens)
+        return keyword_hit or path_hit
+
+    def _extract_from_anchors(
+        self,
+        soup: BeautifulSoup,
+        listing_url: str,
+        source_name: str,
+        default_type: str,
+        default_university: str,
+    ) -> list[dict]:
+        opportunities: list[dict] = []
+        seen_urls: set[str] = set()
+
+        for anchor in soup.select("a[href]"):
+            href = (anchor.get("href") or "").strip()
+            if not href or href.startswith(("#", "javascript:", "mailto:")):
+                continue
+            url = href if href.startswith("http") else urljoin(listing_url, href)
+            url = url.split("#", 1)[0].strip()
+            title = _collapse_whitespace(anchor.get_text(" ", strip=True))
+            if not self._looks_like_candidate(title, url):
+                continue
+            if url in seen_urls:
+                continue
+            seen_urls.add(url)
+
+            container = anchor.find_parent(["article", "li", "section", "div"])
+            context_text = _collapse_whitespace(container.get_text(" ", strip=True) if container else "")
+            context_text = context_text.replace(title, "", 1).strip() if context_text.startswith(title) else context_text
+            description = context_text[:700] if context_text else f"Opportunity indexed from {source_name}."
+            deadline = _extract_deadline_from_text(context_text)
+
+            opportunities.append(
+                {
+                    "title": title[:220],
+                    "description": description[:700],
+                    "url": url,
+                    "opportunity_type": default_type or _infer_opportunity_type(title, description),
+                    "university": default_university,
+                    "deadline": deadline,
+                    "source": source_name,
+                }
+            )
+
+        return opportunities
+
+    def fetch_live_opportunities(self, source_name: str, max_items: int = 12) -> list[dict]:
+        normalized_source = source_name.strip().lower()
+        source_config = self.source_configs.get(normalized_source)
+        if not source_config:
+            raise ValueError(f"Unsupported source: {source_name}")
+
+        opportunities: list[dict] = []
+        errors: list[str] = []
+        listing_urls = source_config.get("listings") or []
+        default_type = str(source_config.get("default_type") or "Opportunity")
+        default_university = str(source_config.get("default_university") or source_config.get("label") or "Various")
+
+        for listing_url in listing_urls:
+            try:
+                response = self.session.get(
+                    listing_url,
+                    headers=self.headers,
+                    timeout=settings.SCRAPER_TIMEOUT_SECONDS,
+                )
+                response.raise_for_status()
+                soup = BeautifulSoup(response.text, "html.parser")
+
+                parsed = self._extract_from_ld_json(
+                    soup=soup,
+                    listing_url=listing_url,
+                    source_name=normalized_source,
+                    default_type=default_type,
+                    default_university=default_university,
+                )
+                parsed.extend(
+                    self._extract_from_anchors(
+                        soup=soup,
+                        listing_url=listing_url,
+                        source_name=normalized_source,
+                        default_type=default_type,
+                        default_university=default_university,
+                    )
+                )
+                opportunities.extend(parsed)
+                if len(opportunities) >= max_items:
+                    break
+            except Exception as exc:
+                errors.append(f"{listing_url}: {exc}")
+
+        opportunities = _dedupe_by_url(opportunities)[:max_items]
+        if errors and not opportunities:
+            raise RuntimeError("; ".join(errors))
+        return opportunities
+
+
 ivy_connector = IvyLeagueRSSConnector()
 unstop_scraper = UnstopScraper()
 naukri_scraper = NaukriScraper()
@@ -994,6 +1472,7 @@ internshala_scraper = InternshalaScraper()
 hack2skill_scraper = Hack2SkillScraper()
 freshersworld_scraper = FreshersworldScraper()
 indeed_india_scraper = IndeedIndiaScraper()
+generic_portal_scraper = GenericOpportunityPortalScraper()
 
 _scraper_lock = asyncio.Lock()
 _scraper_runtime_state: dict[str, Any] = {
@@ -1205,8 +1684,10 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
     Resilient background job for live opportunity data ingestion:
     1) Ivy League feeds
     2) Unstop opportunities
-    3) Indian opportunity boards including Naukri, Internshala, Hack2Skill,
-       Freshersworld, and a best-effort Indeed India fetch.
+    3) Core Indian opportunity boards (Naukri, Internshala, Hack2Skill,
+       Freshersworld, and a best-effort Indeed India fetch)
+    4) Additional student opportunity platforms (jobs, internships, hackathons,
+       coding challenges, and global boards).
 
     Returns a structured run report with per-source stats.
     """
@@ -1238,7 +1719,7 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
             system_user = await User.find_one(User.is_admin == True)  # noqa: E712
             system_user_id = system_user.id if system_user else None
 
-            print("[ScraperEngine] Running resilient live fetch for Ivy + Indian opportunity platforms...")
+            print("[ScraperEngine] Running resilient live fetch for Ivy + core + extended opportunity platforms...")
 
             async def fetch_unstop_batch() -> tuple[list[dict], list[str]]:
                 errors: list[str] = []
@@ -1262,7 +1743,7 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
                     errors,
                 )
 
-            fetch_results = await asyncio.gather(
+            base_fetch_results = await asyncio.gather(
                 asyncio.to_thread(ivy_connector.fetch_ivy_league_opportunities, 10),
                 fetch_unstop_batch(),
                 asyncio.to_thread(
@@ -1287,6 +1768,25 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
                 ),
                 return_exceptions=True,
             )
+            portal_specs: list[tuple[str, str]] = [
+                (
+                    str(config.get("source") or "").strip().lower(),
+                    str(config.get("label") or config.get("source") or "Platform").strip(),
+                )
+                for config in GENERIC_PORTAL_LISTINGS
+                if str(config.get("source") or "").strip()
+            ]
+            portal_fetch_results = await asyncio.gather(
+                *[
+                    asyncio.to_thread(
+                        generic_portal_scraper.fetch_live_opportunities,
+                        source_name,
+                        max(1, settings.SCRAPER_GENERIC_PORTAL_MAX_ITEMS),
+                    )
+                    for source_name, _ in portal_specs
+                ],
+                return_exceptions=True,
+            )
 
             (
                 ivy_result,
@@ -1296,155 +1796,95 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
                 hack2skill_result,
                 freshersworld_result,
                 indeed_india_result,
-            ) = fetch_results
+            ) = base_fetch_results
 
-            ivy_report = _new_source_report("ivy_rss")
-            try:
-                if isinstance(ivy_result, Exception):
-                    raise ivy_result
-                ivy_opportunities = ivy_result
-                ivy_report["fetched"] = len(ivy_opportunities)
-                insert_stats = await _insert_and_broadcast(
-                    opportunities=ivy_opportunities,
-                    source_name="Ivy League Feed",
-                    system_user_id=system_user_id,
-                    ai_system=ai_system,
-                    Opportunity=Opportunity,
-                    Post=Post,
-                )
-                ivy_report.update(insert_stats)
-            except Exception as exc:
-                ivy_report["errors"].append(str(exc))
-            report_sources.append(ivy_report)
+            async def _process_source_result(
+                *,
+                source_key: str,
+                source_label: str,
+                result: Any,
+                empty_message: str | None = None,
+                result_has_errors_tuple: bool = False,
+            ) -> None:
+                source_report = _new_source_report(source_key)
+                try:
+                    if isinstance(result, Exception):
+                        raise result
 
-            unstop_report = _new_source_report("unstop")
-            try:
-                if isinstance(unstop_result, Exception):
-                    raise unstop_result
-                unstop_opportunities, unstop_errors = unstop_result
-                unstop_report["errors"].extend(unstop_errors)
-                unstop_report["fetched"] = len(unstop_opportunities)
-                if unstop_report["fetched"] == 0 and not unstop_report["errors"]:
-                    unstop_report["errors"].append("No opportunities parsed from Unstop.")
-                insert_stats = await _insert_and_broadcast(
-                    opportunities=unstop_opportunities,
-                    source_name="Unstop",
-                    system_user_id=system_user_id,
-                    ai_system=ai_system,
-                    Opportunity=Opportunity,
-                    Post=Post,
-                )
-                unstop_report.update(insert_stats)
-            except Exception as exc:
-                unstop_report["errors"].append(str(exc))
-            report_sources.append(unstop_report)
+                    source_errors: list[str] = []
+                    opportunities = result
+                    if result_has_errors_tuple:
+                        opportunities, source_errors = result
+                        source_report["errors"].extend(source_errors)
 
-            naukri_report = _new_source_report("naukri")
-            try:
-                if isinstance(naukri_result, Exception):
-                    raise naukri_result
-                naukri_opportunities = naukri_result
-                naukri_report["fetched"] = len(naukri_opportunities)
-                if naukri_report["fetched"] == 0 and not naukri_report["errors"]:
-                    naukri_report["errors"].append("No opportunities parsed from Naukri.")
-                insert_stats = await _insert_and_broadcast(
-                    opportunities=naukri_opportunities,
-                    source_name="Naukri",
-                    system_user_id=system_user_id,
-                    ai_system=ai_system,
-                    Opportunity=Opportunity,
-                    Post=Post,
-                )
-                naukri_report.update(insert_stats)
-            except Exception as exc:
-                naukri_report["errors"].append(str(exc))
-            report_sources.append(naukri_report)
+                    source_report["fetched"] = len(opportunities)
+                    if source_report["fetched"] == 0 and not source_report["errors"] and empty_message:
+                        source_report["errors"].append(empty_message)
 
-            internshala_report = _new_source_report("internshala")
-            try:
-                if isinstance(internshala_result, Exception):
-                    raise internshala_result
-                internshala_opportunities = internshala_result
-                internshala_report["fetched"] = len(internshala_opportunities)
-                if internshala_report["fetched"] == 0 and not internshala_report["errors"]:
-                    internshala_report["errors"].append("No opportunities parsed from Internshala.")
-                insert_stats = await _insert_and_broadcast(
-                    opportunities=internshala_opportunities,
-                    source_name="Internshala",
-                    system_user_id=system_user_id,
-                    ai_system=ai_system,
-                    Opportunity=Opportunity,
-                    Post=Post,
-                )
-                internshala_report.update(insert_stats)
-            except Exception as exc:
-                internshala_report["errors"].append(str(exc))
-            report_sources.append(internshala_report)
-
-            hack2skill_report = _new_source_report("hack2skill")
-            try:
-                if isinstance(hack2skill_result, Exception):
-                    raise hack2skill_result
-                hack2skill_opportunities = hack2skill_result
-                hack2skill_report["fetched"] = len(hack2skill_opportunities)
-                if hack2skill_report["fetched"] == 0 and not hack2skill_report["errors"]:
-                    hack2skill_report["errors"].append("No opportunities parsed from Hack2Skill.")
-                insert_stats = await _insert_and_broadcast(
-                    opportunities=hack2skill_opportunities,
-                    source_name="Hack2Skill",
-                    system_user_id=system_user_id,
-                    ai_system=ai_system,
-                    Opportunity=Opportunity,
-                    Post=Post,
-                )
-                hack2skill_report.update(insert_stats)
-            except Exception as exc:
-                hack2skill_report["errors"].append(str(exc))
-            report_sources.append(hack2skill_report)
-
-            freshersworld_report = _new_source_report("freshersworld")
-            try:
-                if isinstance(freshersworld_result, Exception):
-                    raise freshersworld_result
-                freshersworld_opportunities = freshersworld_result
-                freshersworld_report["fetched"] = len(freshersworld_opportunities)
-                if freshersworld_report["fetched"] == 0 and not freshersworld_report["errors"]:
-                    freshersworld_report["errors"].append("No opportunities parsed from Freshersworld.")
-                insert_stats = await _insert_and_broadcast(
-                    opportunities=freshersworld_opportunities,
-                    source_name="Freshersworld",
-                    system_user_id=system_user_id,
-                    ai_system=ai_system,
-                    Opportunity=Opportunity,
-                    Post=Post,
-                )
-                freshersworld_report.update(insert_stats)
-            except Exception as exc:
-                freshersworld_report["errors"].append(str(exc))
-            report_sources.append(freshersworld_report)
-
-            indeed_india_report = _new_source_report("indeed_india")
-            try:
-                if isinstance(indeed_india_result, Exception):
-                    raise indeed_india_result
-                indeed_india_opportunities = indeed_india_result
-                indeed_india_report["fetched"] = len(indeed_india_opportunities)
-                if indeed_india_report["fetched"] == 0 and not indeed_india_report["errors"]:
-                    indeed_india_report["errors"].append(
-                        "No opportunities parsed from Indeed India."
+                    insert_stats = await _insert_and_broadcast(
+                        opportunities=opportunities,
+                        source_name=source_label,
+                        system_user_id=system_user_id,
+                        ai_system=ai_system,
+                        Opportunity=Opportunity,
+                        Post=Post,
                     )
-                insert_stats = await _insert_and_broadcast(
-                    opportunities=indeed_india_opportunities,
-                    source_name="Indeed India",
-                    system_user_id=system_user_id,
-                    ai_system=ai_system,
-                    Opportunity=Opportunity,
-                    Post=Post,
+                    source_report.update(insert_stats)
+                except Exception as exc:
+                    source_report["errors"].append(str(exc))
+
+                report_sources.append(source_report)
+
+            await _process_source_result(
+                source_key="ivy_rss",
+                source_label="Ivy League Feed",
+                result=ivy_result,
+            )
+            await _process_source_result(
+                source_key="unstop",
+                source_label="Unstop",
+                result=unstop_result,
+                empty_message="No opportunities parsed from Unstop.",
+                result_has_errors_tuple=True,
+            )
+            await _process_source_result(
+                source_key="naukri",
+                source_label="Naukri",
+                result=naukri_result,
+                empty_message="No opportunities parsed from Naukri.",
+            )
+            await _process_source_result(
+                source_key="internshala",
+                source_label="Internshala",
+                result=internshala_result,
+                empty_message="No opportunities parsed from Internshala.",
+            )
+            await _process_source_result(
+                source_key="hack2skill",
+                source_label="Hack2Skill",
+                result=hack2skill_result,
+                empty_message="No opportunities parsed from Hack2Skill.",
+            )
+            await _process_source_result(
+                source_key="freshersworld",
+                source_label="Freshersworld",
+                result=freshersworld_result,
+                empty_message="No opportunities parsed from Freshersworld.",
+            )
+            await _process_source_result(
+                source_key="indeed_india",
+                source_label="Indeed India",
+                result=indeed_india_result,
+                empty_message="No opportunities parsed from Indeed India.",
+            )
+
+            for (source_name, source_label), source_result in zip(portal_specs, portal_fetch_results):
+                await _process_source_result(
+                    source_key=source_name,
+                    source_label=source_label,
+                    result=source_result,
+                    empty_message=f"No opportunities parsed from {source_label}.",
                 )
-                indeed_india_report.update(insert_stats)
-            except Exception as exc:
-                indeed_india_report["errors"].append(str(exc))
-            report_sources.append(indeed_india_report)
 
             cleanup_report = await _cleanup_inactive_opportunities(Opportunity)
 

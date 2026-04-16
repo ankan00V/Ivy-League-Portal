@@ -65,6 +65,27 @@ def _source_trust(opportunity: Opportunity) -> float:
             "internshala": 0.8,
             "naukri": 0.75,
             "indeed": 0.75,
+            "linkedin": 0.86,
+            "glassdoor": 0.78,
+            "foundit": 0.76,
+            "devfolio": 0.82,
+            "hackerearth": 0.8,
+            "devpost": 0.8,
+            "techgig": 0.74,
+            "reskilll": 0.7,
+            "aicte": 0.84,
+            "smartinternz": 0.74,
+            "makeintern": 0.68,
+            "letsintern": 0.67,
+            "handshake": 0.78,
+            "wellfound": 0.82,
+            "ycombinator_jobs": 0.88,
+            "wayup": 0.74,
+            "chegg": 0.72,
+            "kaggle": 0.83,
+            "codeforces": 0.8,
+            "geeksforgeeks": 0.75,
+            "promilo": 0.65,
             "hack2skill": 0.7,
             "freshersworld": 0.65,
         }
@@ -168,4 +189,3 @@ def skills_overlap_score(*, profile: Profile, opportunity: Opportunity) -> float
         return 0.0
     overlap = len(skill_tokens.intersection(opp_tokens))
     return float(overlap / max(1, len(skill_tokens)))
-

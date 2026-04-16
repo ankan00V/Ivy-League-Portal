@@ -3,6 +3,7 @@ import { Space_Grotesk, Instrument_Serif } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/context/ThemeContext";
 import VidyaChat from "@/components/VidyaChat";
+import ThemeToggleButton from "@/components/ThemeToggleButton";
 
 const spaceGrotesk = Space_Grotesk({
   subsets: ["latin"],
@@ -32,6 +33,7 @@ export default function RootLayout({
       <body className={`${spaceGrotesk.variable} ${instrumentSerif.variable} antialiased`}>
         <ThemeProvider>
           {children}
+          <ThemeToggleButton />
           <VidyaChat />
         </ThemeProvider>
       </body>
