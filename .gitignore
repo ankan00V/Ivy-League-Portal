@@ -3,3 +3,4 @@ backend/venv/
 __pycache__/
 *.pyc
 .env
+backend/benchmarks/results.json

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timedelta
-from hashlib import md5
 from typing import Any, Optional
 
 from beanie.odm.operators.find.comparison import In
@@ -10,7 +9,11 @@ from beanie.odm.operators.find.comparison import In
 from app.models.opportunity import Opportunity
 from app.models.opportunity_interaction import OpportunityInteraction
 from app.models.profile import Profile
+from app.services.experiment_service import experiment_service
 from app.services.intelligence import score_opportunity_match
+from app.services.personalization.feature_builder import build_ranker_features, skills_overlap_score
+from app.services.personalization.learned_ranker import learned_ranker
+from app.services.ranking_model_service import ranking_model_service
 from app.services.vector_service import opportunity_vector_service
 
 
@@ -29,11 +32,6 @@ def _profile_query(profile: Profile) -> str:
         profile.achievements or "",
     ]
     return " ".join(value for value in values if value).strip()
-
-
-def _stable_mode(user_id: str) -> str:
-    bucket = int(md5(user_id.encode("utf-8")).hexdigest(), 16) % 2
-    return "baseline" if bucket == 0 else "semantic"
 
 
 class RecommendationService:
@@ -95,6 +93,17 @@ class RecommendationService:
 
         return round((0.65 * domain_score) + (0.35 * type_score), 3)
 
+    def _behavior_prefs(
+        self, opportunity: Opportunity, behavior_map: dict[str, dict[str, float]]
+    ) -> tuple[float, float]:
+        domain_map = behavior_map.get("domain", {})
+        type_map = behavior_map.get("type", {})
+
+        domain_key = (opportunity.domain or "").lower()
+        type_key = (opportunity.opportunity_type or "").lower()
+
+        return float(domain_map.get(domain_key, 0.0)), float(type_map.get(type_key, 0.0))
+
     async def rank(
         self,
         *,
@@ -105,13 +114,33 @@ class RecommendationService:
         min_score: float = 0.0,
         ranking_mode: str = "semantic",
         query: Optional[str] = None,
-    ) -> tuple[list[dict[str, Any]], str]:
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         if not opportunities:
-            return [], "semantic"
+            return [], {"mode": "semantic"}
+
+        active_model = await ranking_model_service.get_active()
+        weights = active_model.weights
 
         effective_mode = ranking_mode
         if ranking_mode == "ab":
-            effective_mode = _stable_mode(str(user_id))
+            decision = await experiment_service.assign(user_id=user_id, experiment_key="ranking_mode")
+            if decision:
+                effective_mode = decision.variant
+                meta = {
+                    "mode": effective_mode,
+                    "experiment_key": decision.experiment_key,
+                    "variant": decision.variant,
+                    "bucket": decision.bucket,
+                    "assigned_at": decision.assigned_at,
+                }
+            else:
+                effective_mode = "semantic"
+                meta = {"mode": effective_mode}
+        else:
+            meta = {"mode": effective_mode}
+
+        meta["model_version_id"] = active_model.model_version_id
+        meta["weights"] = dict(weights)
 
         behavior_map = await self._build_behavior_map(user_id)
         semantic_scores: dict[str, float] = {}
@@ -132,14 +161,50 @@ class RecommendationService:
             baseline_score, baseline_reasons = score_opportunity_match(profile, opportunity)
             semantic_score = round(float(semantic_scores.get(str(opportunity.id), 0.0)), 3)
             behavior_score = self._behavior_score(opportunity, behavior_map)
+            behavior_domain_pref, behavior_type_pref = self._behavior_prefs(opportunity, behavior_map)
+            overlap_score = skills_overlap_score(profile=profile, opportunity=opportunity)
 
             if effective_mode == "baseline":
                 final_score = baseline_score
                 reasons = baseline_reasons
+            elif effective_mode == "ml":
+                features = build_ranker_features(
+                    profile=profile,
+                    opportunity=opportunity,
+                    semantic_score=semantic_score,
+                    skills_overlap_score=overlap_score,
+                    baseline_score=baseline_score,
+                    behavior_score=behavior_score,
+                    behavior_domain_pref=behavior_domain_pref,
+                    behavior_type_pref=behavior_type_pref,
+                )
+                ranker_result = learned_ranker.score(features)
+                if ranker_result is None:
+                    final_score = round(
+                        (weights["semantic"] * semantic_score)
+                        + (weights["baseline"] * baseline_score)
+                        + (weights["behavior"] * behavior_score),
+                        3,
+                    )
+                    reasons = list(baseline_reasons)
+                    reasons.append("Learned ranker unavailable; used heuristic blend.")
+                    ml_raw_score: float | None = None
+                else:
+                    # Keep raw score for later per-request normalization to 0-100.
+                    ml_raw_score = float(ranker_result.score)
+                    final_score = ml_raw_score
+                    reasons = list(baseline_reasons)
+                    reasons.append(f"Learned ranker: {ranker_result.model}")
+                    if semantic_score > 0:
+                        reasons.append(f"Semantic similarity: {semantic_score:.1f}")
+                    if overlap_score > 0:
+                        reasons.append(f"Skills overlap: {overlap_score:.2f}")
             else:
                 # Personalization = content similarity + profile compatibility + behavior weighting.
                 final_score = round(
-                    (0.55 * semantic_score) + (0.30 * baseline_score) + (0.15 * behavior_score),
+                    (weights["semantic"] * semantic_score)
+                    + (weights["baseline"] * baseline_score)
+                    + (weights["behavior"] * behavior_score),
                     3,
                 )
                 reasons = list(baseline_reasons)
@@ -148,7 +213,8 @@ class RecommendationService:
                 if behavior_score > 0:
                     reasons.append(f"Behavioral preference boost: {behavior_score:.1f}")
 
-            if final_score < min_score:
+            # For ML scoring, normalize after collecting all raw scores.
+            if effective_mode != "ml" and final_score < min_score:
                 continue
 
             ranked.append(
@@ -159,9 +225,30 @@ class RecommendationService:
                     "baseline_score": round(baseline_score, 3),
                     "semantic_score": round(semantic_score, 3),
                     "behavior_score": round(behavior_score, 3),
+                    "skills_overlap_score": round(float(overlap_score), 6),
+                    "behavior_domain_pref": round(float(behavior_domain_pref), 6),
+                    "behavior_type_pref": round(float(behavior_type_pref), 6),
                     "ranking_mode": effective_mode,
+                    "model_version_id": active_model.model_version_id,
+                    "weights": dict(weights),
+                    "ml_raw_score": ml_raw_score if effective_mode == "ml" else None,
                 }
             )
+
+        if effective_mode == "ml" and ranked:
+            raw_scores = [float(item.get("ml_raw_score")) for item in ranked if item.get("ml_raw_score") is not None]
+            if raw_scores:
+                lo = min(raw_scores)
+                hi = max(raw_scores)
+                denom = (hi - lo) if (hi - lo) > 1e-9 else None
+                for item in ranked:
+                    raw = item.get("ml_raw_score")
+                    if raw is None:
+                        continue
+                    scaled = 50.0 if denom is None else ((float(raw) - lo) / denom) * 100.0
+                    item["match_score"] = round(float(scaled), 3)
+
+            ranked = [item for item in ranked if float(item.get("match_score") or 0.0) >= float(min_score)]
 
         ranked.sort(
             key=lambda item: (
@@ -171,7 +258,7 @@ class RecommendationService:
             reverse=True,
         )
 
-        return ranked[: max(1, min(limit, 50))], effective_mode
+        return ranked[: max(1, min(limit, 50))], meta
 
 
 recommendation_service = RecommendationService()

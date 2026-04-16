@@ -41,6 +41,34 @@ class Settings(BaseSettings):
     
     # Celery & Redis
     REDIS_URL: str = "redis://localhost:6379/0"
+
+    # Caching (Redis-backed)
+    CACHE_ENABLED: bool = True
+    CACHE_EMBEDDINGS_ENABLED: bool = True
+    CACHE_SEARCH_ENABLED: bool = True
+    CACHE_EMBEDDING_TTL_SECONDS: int = 60 * 60 * 24  # 24h
+    CACHE_SEARCH_TTL_SECONDS: int = 60  # 1m
+    CACHE_MAX_TEXT_LENGTH: int = 1200
+
+    # Observability / Metrics
+    METRICS_ENABLED: bool = True
+    METRICS_REQUIRE_AUTH: bool = True
+
+    # Rate limiting (Redis-backed)
+    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_REQUESTS_PER_MINUTE: int = 240
+    RATE_LIMIT_AUTH_REQUESTS_PER_MINUTE: int = 30
+
+    # Background jobs (Mongo-backed queue + retry + DLQ)
+    JOBS_ENABLED: bool = True
+    JOBS_POLL_INTERVAL_SECONDS: float = 0.8
+    JOBS_LOCK_TIMEOUT_SECONDS: int = 60 * 10
+    JOBS_RETRY_BASE_SECONDS: float = 2.0
+    JOBS_RETRY_MAX_SECONDS: float = 10 * 60.0
+
+    # Mongo TLS controls (keep local dev easy, prod strict)
+    MONGODB_TLS_FORCE: bool = False
+    MONGODB_TLS_ALLOW_INVALID_CERTS: bool = False
     
     # Production configs
     ENVIRONMENT: str = "local"
@@ -65,12 +93,35 @@ class Settings(BaseSettings):
     OPENROUTER_API_KEY: Optional[str] = None
     OPENROUTER_MODEL: str = "meta-llama/llama-3-8b-instruct:free"
 
+    # Quality / safety evaluation (optional)
+    LLM_JUDGE_ENABLED: bool = False
+    LLM_JUDGE_MODEL: Optional[str] = None
+    LLM_JUDGE_MIN_SCORE: float = 0.55  # 0..1 gate when enabled
+
     # Embeddings / semantic ranking
     EMBEDDING_PROVIDER: str = "sentence_transformers"  # sentence_transformers | openai | auto
     EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
     OPENAI_API_KEY: Optional[str] = None
     OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
     SEMANTIC_DEDUP_THRESHOLD: float = 0.9
+
+    # Learned ranker (LightGBM/XGBoost) for real personalization
+    LEARNED_RANKER_ENABLED: bool = False
+    LEARNED_RANKER_MODEL_PATH: str = ""
+    LEARNED_RANKER_FEATURES: list[str] = []
+
+    # Data + MLOps (ranking weights)
+    MLOPS_AUTORUN_ENABLED: bool = True
+    MLOPS_RETRAIN_INTERVAL_HOURS: int = 24
+    MLOPS_RETRAIN_LOOKBACK_DAYS: int = 90
+    MLOPS_LABEL_WINDOW_HOURS: int = 72
+    MLOPS_MIN_TRAINING_ROWS: int = 200
+    MLOPS_TRAIN_GRID_STEP: float = 0.05
+    MLOPS_AUTO_ACTIVATE: bool = False
+    MLOPS_AUTO_ACTIVATE_MIN_AUC_GAIN: float = 0.0
+    MLOPS_BOOTSTRAP_ACTIVE_MODEL_ON_STARTUP: bool = True
+    MLOPS_DRIFT_CHECK_INTERVAL_HOURS: int = 6
+    MLOPS_DRIFT_LOOKBACK_DAYS: int = 7
     
     model_config = SettingsConfigDict(
         env_file=ENV_FILE,

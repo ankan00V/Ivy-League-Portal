@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Optional
 
 import numpy as np
 
+from app.core.cache import cache_get_json, cache_key, cache_set_json
 from app.models.opportunity import Opportunity
 from app.services.embedding_service import embedding_service
+from app.core.config import settings
+from app.core.metrics import CACHE_HITS_TOTAL, CACHE_MISSES_TOTAL
 
 try:
     import faiss  # type: ignore
@@ -156,10 +160,38 @@ class OpportunityVectorService:
         if not self._metas:
             return []
 
-        query_vector = await embedding_service.embed_text(query)
+        safe_top_k = max(1, min(top_k, 200))
+
+        cache_enabled = bool(settings.CACHE_ENABLED and settings.CACHE_SEARCH_ENABLED)
+        cache_version = ""
+        if self._last_build_at is not None:
+            cache_version = f"{self._last_build_at.isoformat()}:{self._last_build_count}"
+        filter_key = ""
+        try:
+            filter_key = json.dumps(filters or {}, sort_keys=True, separators=(",", ":"))
+        except Exception:
+            filter_key = str(filters or {})
+
+        cache_key_value = cache_key(
+            "vector_search",
+            cache_version,
+            str(safe_top_k),
+            filter_key,
+            (query or "").strip().lower(),
+        )
+
+        if cache_enabled:
+            cached = await cache_get_json(cache_key_value)
+            if cached and isinstance(cached.get("results"), list):
+                if CACHE_HITS_TOTAL is not None:
+                    CACHE_HITS_TOTAL.labels(cache="vector_search").inc()
+                return list(cached["results"])
+            if CACHE_MISSES_TOTAL is not None:
+                CACHE_MISSES_TOTAL.labels(cache="vector_search").inc()
+
+        query_vector = await embedding_service.embed_query(query)
         query_vector = np.asarray(query_vector, dtype=np.float32).reshape(1, -1)
 
-        safe_top_k = max(1, min(top_k, 200))
         shortlist = min(max(safe_top_k * 4, 25), len(self._metas))
 
         if self._index is not None:
@@ -184,6 +216,12 @@ class OpportunityVectorService:
             if len(results) >= safe_top_k:
                 break
 
+        if cache_enabled:
+            await cache_set_json(
+                cache_key_value,
+                {"results": results},
+                ttl_seconds=int(settings.CACHE_SEARCH_TTL_SECONDS),
+            )
         return results
 
     async def find_semantic_duplicates(

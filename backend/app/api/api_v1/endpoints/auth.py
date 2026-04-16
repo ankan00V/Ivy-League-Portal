@@ -15,6 +15,13 @@ from app.schemas.user import Token, UserCreate, UserResponse
 
 router = APIRouter()
 
+
+def _scopes_for_user(user: User) -> list[str]:
+    scopes = ["user"]
+    if bool(getattr(user, "is_admin", False)):
+        scopes.extend(["admin", "metrics:read", "jobs:read", "jobs:write", "scraper:trigger"])
+    return scopes
+
 @router.post("/register", response_model=UserResponse)
 async def register_user(
     user_in: UserCreate
@@ -54,7 +61,9 @@ async def login_access_token(
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     return {
         "access_token": create_access_token(
-            str(user.id), expires_delta=access_token_expires
+            str(user.id),
+            expires_delta=access_token_expires,
+            scopes=_scopes_for_user(user),
         ),
         "token_type": "bearer",
     }
@@ -221,7 +230,9 @@ async def verify_otp(
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     return {
         "access_token": create_access_token(
-            str(user.id), expires_delta=access_token_expires
+            str(user.id),
+            expires_delta=access_token_expires,
+            scopes=_scopes_for_user(user),
         ),
         "token_type": "bearer",
     }

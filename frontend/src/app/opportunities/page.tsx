@@ -19,6 +19,7 @@ interface Opportunity {
     updated_at?: string;
     last_seen_at?: string;
     deadline?: string;
+    ranking_mode?: string;
 }
 
 const FEED_REFRESH_MS = 60 * 1000;
@@ -76,9 +77,30 @@ export default function OpportunitiesPage() {
 
     const fetchOpportunities = useEffectEvent(async () => {
         try {
-            const res = await fetch(apiUrl("/api/v1/opportunities/"), {
-                credentials: "include",
-            });
+            const token = localStorage.getItem("access_token");
+            if (token) {
+                const personalizedRes = await fetch(
+                    apiUrl("/api/v1/opportunities/recommended/me?limit=100&ranking_mode=ab"),
+                    {
+                        headers: { Authorization: `Bearer ${token}` },
+                    }
+                );
+                if (personalizedRes.ok) {
+                    const data: Opportunity[] = await personalizedRes.json();
+                    const nextSignature = buildOpportunitiesSignature(data);
+                    if (nextSignature !== opportunitiesSignatureRef.current) {
+                        opportunitiesSignatureRef.current = nextSignature;
+                        startTransition(() => {
+                            setOpportunities(data);
+                        });
+                    }
+                    scraperTriggerAttemptedRef.current = false;
+                    setNotice(null);
+                    return;
+                }
+            }
+
+            const res = await fetch(apiUrl("/api/v1/opportunities/"), { credentials: "include" });
             if (res.ok) {
                 const data: Opportunity[] = await res.json();
                 const nextSignature = buildOpportunitiesSignature(data);
@@ -128,6 +150,31 @@ export default function OpportunitiesPage() {
             setLoading(false);
         }
     });
+
+    const logInteraction = async (opportunity: Opportunity, interactionType: "click") => {
+        const token = localStorage.getItem("access_token");
+        if (!token) return;
+        try {
+            const rankingMode = opportunity.ranking_mode;
+            await fetch(apiUrl("/api/v1/opportunities/interactions"), {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    opportunity_id: opportunity.id,
+                    interaction_type: interactionType,
+                    ranking_mode: rankingMode || null,
+                    experiment_key: rankingMode ? "ranking_mode" : null,
+                    experiment_variant: rankingMode || null,
+                }),
+            });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "unknown error";
+            console.warn(`[Opportunities] Interaction log failed: ${message}`);
+        }
+    };
 
     useEffect(() => {
         void fetchOpportunities();
@@ -460,6 +507,7 @@ export default function OpportunitiesPage() {
                                 rel="noreferrer"
                                 className="btn-secondary"
                                 style={{ padding: "0.7rem 0.95rem", fontSize: "0.9rem", display: "flex", alignItems: "center", gap: "0.3rem", border: "2px solid var(--border-subtle)" }}
+                                onClick={() => void logInteraction(opp, "click")}
                             >
                                 Event Page <ExternalLink size={14} />
                             </a>
@@ -635,6 +683,7 @@ export default function OpportunitiesPage() {
                             rel="noreferrer"
                             className="btn-secondary"
                             style={{ padding: "0.7rem 0.95rem", fontSize: "0.9rem", display: "flex", alignItems: "center", gap: "0.3rem", border: "2px solid var(--border-subtle)" }}
+                            onClick={() => void logInteraction(opp, "click")}
                         >
                             Job Page <ExternalLink size={14} />
                         </a>

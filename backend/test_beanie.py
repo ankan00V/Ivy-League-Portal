@@ -34,4 +34,5 @@ async def main():
     except Exception as e:
         print("Initialization Failed:", e)
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

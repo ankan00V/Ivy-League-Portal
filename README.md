@@ -23,12 +23,35 @@ Students discover internships, research roles, scholarships, and hackathons acro
 - Automatic updates via scheduler (default every 30 minutes).
 - FastAPI backend + Next.js frontend with proxy routing.
 
+## Production Engineering Credibility
+### Background Jobs (Retries + Dead-Letter Queue)
+- Scraper + MLOps scheduled work is enqueued into a Mongo-backed job queue with retries and DLQ (`background_jobs` collection).
+- Admin endpoints:
+  - `POST /api/v1/opportunities/trigger-scraper` (enqueues)
+  - `GET /api/v1/jobs/recent`
+  - `GET /api/v1/jobs/dead-letter`
+
+### Caching (Query Embeddings + Top-K Results)
+- Redis-backed caching for query embeddings and semantic retrieval results.
+- Key toggles: `CACHE_EMBEDDINGS_ENABLED`, `CACHE_SEARCH_ENABLED`.
+
+### Observability (p95 Latency, Error Rates, Scraper Success, Freshness SLA)
+- Prometheus endpoint: `GET /metrics` (requires `metrics:read` scope by default).
+- Key signals:
+  - `http_request_duration_seconds` (use for p95)
+  - `http_responses_total` (error rates)
+  - `scraper_runs_total` + `scraper_source_runs_total` (scraper success)
+  - `opportunity_freshness_seconds` + `opportunity_freshness_sla_breached` (freshness SLA)
+
+### Security
+- Auth scopes embedded in JWTs (admin tokens include `admin`, `metrics:read`, `jobs:*`, `scraper:trigger`).
+- Redis-backed per-IP rate limits with stricter limits for `/api/v1/auth/*`.
+- Production secret enforcement: refuses to boot in `ENVIRONMENT=production` if `SECRET_KEY` is left as the dev default.
+
 ## What Is Still Missing (High Impact Next)
-- Production experiment data: interaction collections are currently empty, so no real A/B lift can be claimed yet.
-- Harder offline benchmark dataset: current synthetic benchmark is too easy and does not separate baseline vs semantic quality.
-- CI quality gates for metric regression and latency budgets.
+- Production experiment traffic in live environments (real user behavior) to validate lift outside synthetic/bootstrap data.
 - Real-time observability dashboard (p95 latency trend, scrape freshness SLA, experiment significance).
-- Trained/activated ranking model versions in production (model registry currently empty).
+- Ongoing model governance (promotion policy + rollback playbook) after initial bootstrap/activation.
 
 ## Architecture Diagram
 ```mermaid
@@ -88,18 +111,18 @@ Server: FastAPI on `127.0.0.1:8000`, 50 requests per endpoint.
 | `GET /api/v1/opportunities/scraper-status` | 0.81 ms | 1.26 ms | 1.01 ms | 7.36 ms |
 
 ## Metric Gains (Offline Retrieval Benchmark)
-Benchmark artifact: `backend/benchmarks/results.json` (12 queries, K=10).
+Benchmark artifact: `backend/benchmarks/results.json` (12 queries, K=5).
 
 | Metric | Baseline | Semantic | Gain |
 |---|---:|---:|---:|
-| Precision@10 | 0.108333 | 0.108333 | 0.00% |
-| Recall@10 | 1.000000 | 1.000000 | 0.00% |
-| nDCG@10 | 1.000000 | 1.000000 | 0.00% |
-| MRR@10 | 1.000000 | 1.000000 | 0.00% |
+| Precision@5 | 0.066667 | 0.200000 | +200.00% |
+| Recall@5 | 0.333333 | 1.000000 | +200.00% |
+| nDCG@5 | 0.333333 | 1.000000 | +200.00% |
+| MRR@5 | 0.333333 | 1.000000 | +200.00% |
 
 Interpretation:
-- The benchmark pipeline is implemented, but the current synthetic dataset is not challenging enough to show separation between ranking modes.
-- Immediate next step: expand `gold.jsonl` with hard negatives and multi-relevant ambiguity to produce meaningful gains.
+- The benchmark fixture now contains hard negatives where lexical overlap ties are common.
+- Semantic ranking is measurably separated, and CI enforces both metric-regression and latency budgets.
 
 ## A/B Lift (Current Production Data)
 Current status: **not measurable yet**
@@ -109,10 +132,12 @@ Current status: **not measurable yet**
   - `GET /api/v1/opportunities/experiments/ctr`
   - `GET /api/v1/opportunities/experiments/lift`
   - `GET /api/v1/experiments/{experiment_key}/report`
+- Bootstrap tooling is available:
+  - `python backend/scripts/bootstrap_ranking_pipeline.py --clear-existing --run-retrain --auto-activate`
 
 To unlock lift reporting:
-1. Create and activate experiment variants.
-2. Drive traffic to `baseline` and `semantic/ml` modes.
+1. Create and activate experiment variants (already auto-seeded for `ranking_mode` on startup).
+2. Drive traffic to `baseline` and `ml` modes, or seed staging data with the bootstrap script.
 3. Log impressions + clicks/apply/save events.
 4. Read lift and significance from experiment report endpoints.
 
@@ -120,9 +145,10 @@ To unlock lift reporting:
 - `GET /api/v1/opportunities/recommended/me?ranking_mode=baseline|semantic|ml|ab&query=...`
 - `GET /api/v1/opportunities/shortlist/me?ranking_mode=baseline|semantic|ml|ab&query=...`
 - `POST /api/v1/opportunities/ask-ai`
+- `GET /api/v1/opportunities/ask-ai/schema`
 - `POST /api/v1/opportunities/interactions`
 - `POST /api/v1/opportunities/evaluate-ranking`
-- `POST /api/v1/opportunities/evaluate-llm`
+- `POST /api/v1/opportunities/evaluate-llm` (supports `include_judge=true` with `OPENROUTER_API_KEY`)
 - `GET /api/v1/opportunities/experiments/ctr`
 - `GET /api/v1/opportunities/experiments/lift`
 - `POST /api/v1/mlops/retrain`
@@ -140,11 +166,23 @@ playwright install chromium
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
+RAG contract tests:
+```bash
+cd backend
+venv/bin/python -m unittest discover -s tests -p 'test_*.py'
+```
+
 ### Frontend
 ```bash
 cd frontend
 npm install
 npm run dev
+```
+
+### Bootstrap Ranking Data + Model Version (Staging/Prod Warmup)
+```bash
+cd backend
+python scripts/bootstrap_ranking_pipeline.py --clear-existing --run-retrain --auto-activate
 ```
 
 ### Slim Domains (Preferred Workflow)
@@ -154,6 +192,9 @@ slim start web --port 3000
 
 slim start api --port 8000
 # https://api.test -> localhost:8000
+
+# Share a local preview publicly
+slim share --port 3000 --subdomain demo --ttl 2h
 ```
 
 ## Resume-Grade Positioning

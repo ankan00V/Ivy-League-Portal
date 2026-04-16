@@ -62,6 +62,7 @@ async def list_my_applications(
 @router.post("/{opportunity_id}", response_model=ApplicationResponse)
 async def apply_to_opportunity(
     opportunity_id: PydanticObjectId,
+    ranking_mode: Optional[str] = None,
     current_user: User = Depends(get_current_active_user)
 ) -> Any:
     """Automated application submission using Playwright browser automation."""
@@ -105,7 +106,7 @@ async def apply_to_opportunity(
         user_id=current_user.id,
         opportunity_id=opp.id,
         interaction_type="apply",
-        ranking_mode="semantic",
+        ranking_mode=ranking_mode,
     )
     
     return ApplicationResponse(

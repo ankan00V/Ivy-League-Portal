@@ -22,7 +22,14 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
         user_id: str = payload.get("sub")
         if user_id is None:
             raise credentials_exception
-        token_data = TokenData(id=user_id)
+        raw_scopes = payload.get("scopes") or []
+        if isinstance(raw_scopes, str):
+            scopes = [raw_scopes]
+        elif isinstance(raw_scopes, list):
+            scopes = [str(scope) for scope in raw_scopes if scope]
+        else:
+            scopes = []
+        token_data = TokenData(id=user_id, scopes=scopes)
     except JWTError:
         raise credentials_exception
         
@@ -33,6 +40,8 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     
     if user is None:
         raise credentials_exception
+    # Attach token scopes for downstream dependencies.
+    setattr(user, "_token_scopes", list(token_data.scopes or []))
     return user
 
 async def get_current_active_user(
@@ -45,6 +54,20 @@ async def get_current_active_user(
 async def get_current_admin_user(
     current_user: User = Depends(get_current_user),
 ) -> User:
-    if not current_user.is_admin:
+    scopes = set(getattr(current_user, "_token_scopes", []) or [])
+    if "admin" not in scopes and not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Not enough privileges")
     return current_user
+
+
+def require_scopes(required: list[str]):
+    required_set = {str(scope) for scope in required if scope}
+
+    async def _dependency(current_user: User = Depends(get_current_user)) -> User:
+        scopes = set(getattr(current_user, "_token_scopes", []) or [])
+        missing = [scope for scope in required_set if scope not in scopes]
+        if missing:
+            raise HTTPException(status_code=403, detail="Missing required scopes")
+        return current_user
+
+    return _dependency

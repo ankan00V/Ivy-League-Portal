@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from beanie import PydanticObjectId
 from fastapi import APIRouter, Depends, HTTPException
@@ -14,6 +14,7 @@ from app.models.application import Application
 from app.models.opportunity import Opportunity
 from app.models.profile import Profile
 from app.models.user import User
+from app.schemas.rag import RAGAskResponse
 from app.services.ai_engine import ai_system
 from app.services.evaluation_service import evaluation_service
 from app.services.interaction_service import interaction_service
@@ -57,7 +58,13 @@ class InteractionEventCreate(BaseModel):
     opportunity_id: PydanticObjectId
     interaction_type: str = Field(default="click")
     ranking_mode: Optional[str] = None
+    experiment_key: Optional[str] = None
+    experiment_variant: Optional[str] = None
     query: Optional[str] = None
+    model_version_id: Optional[str] = None
+    rank_position: Optional[int] = None
+    match_score: Optional[float] = None
+    features: Optional[dict[str, Any]] = None
 
 
 class AskAIRequest(BaseModel):
@@ -75,6 +82,8 @@ class LLMEvaluationRequest(BaseModel):
     generated_text: str
     expected_keywords: list[str] = Field(default_factory=list)
     expected_output: Optional[str] = None
+    include_judge: bool = False
+    rubric: Optional[str] = None
 
 
 def _to_recommended_response(payload: dict[str, Any]) -> RecommendedOpportunityResponse:
@@ -132,6 +141,7 @@ async def _load_active_opportunities(
 
 async def _ensure_live_feed_if_stale() -> None:
     from app.services.scraper import get_scraper_runtime_status, run_scheduled_scrapers
+    from app.services.job_runner import job_runner
 
     if not settings.SCRAPER_ON_DEMAND_REFRESH_ENABLED:
         return
@@ -142,17 +152,26 @@ async def _ensure_live_feed_if_stale() -> None:
 
     latest_items = await Opportunity.find_many().sort("-last_seen_at").limit(1).to_list()
     if not latest_items:
-        asyncio.create_task(run_scheduled_scrapers())
+        if settings.JOBS_ENABLED:
+            await job_runner.enqueue(job_type="scraper.run", dedupe_key="scraper.run")
+        else:
+            asyncio.create_task(run_scheduled_scrapers())
         return
 
     latest_seen = latest_items[0].last_seen_at or latest_items[0].updated_at or latest_items[0].created_at
     if latest_seen is None:
-        asyncio.create_task(run_scheduled_scrapers())
+        if settings.JOBS_ENABLED:
+            await job_runner.enqueue(job_type="scraper.run", dedupe_key="scraper.run")
+        else:
+            asyncio.create_task(run_scheduled_scrapers())
         return
 
     stale_after = timedelta(minutes=max(1, settings.SCRAPER_MAX_STALENESS_MINUTES))
     if latest_seen < datetime.utcnow() - stale_after:
-        asyncio.create_task(run_scheduled_scrapers())
+        if settings.JOBS_ENABLED:
+            await job_runner.enqueue(job_type="scraper.run", dedupe_key="scraper.run")
+        else:
+            asyncio.create_task(run_scheduled_scrapers())
 
 
 async def _get_or_create_profile(user_id: PydanticObjectId) -> Profile:
@@ -182,19 +201,19 @@ async def read_opportunities(
 @router.get("/recommended/me", response_model=list[RecommendedOpportunityResponse])
 async def get_personalized_recommendations(
     limit: int = 10,
-    ranking_mode: str = "semantic",
+    ranking_mode: Literal["baseline", "semantic", "ml", "ab"] = "semantic",
     query: Optional[str] = None,
     current_user: User = Depends(get_current_active_user),
 ) -> Any:
     """
     Personalized recommendations with baseline + semantic + behavior-aware scoring.
-    ranking_mode: baseline | semantic | ab
+    ranking_mode: baseline | semantic | ml | ab
     """
     safe_limit = max(1, min(limit, 50))
     profile = await _get_or_create_profile(current_user.id)
     opportunities = _filter_active_opportunities(await Opportunity.find_many().to_list())
 
-    ranked, effective_mode = await recommendation_service.rank(
+    ranked, meta = await recommendation_service.rank(
         user_id=current_user.id,
         profile=profile,
         opportunities=opportunities,
@@ -202,13 +221,32 @@ async def get_personalized_recommendations(
         ranking_mode=ranking_mode,
         query=query,
     )
+    effective_mode = str(meta.get("mode") or "semantic")
 
     if ranked:
         await interaction_service.log_impressions(
             user_id=current_user.id,
-            opportunity_ids=[item["opportunity"].id for item in ranked],
-            ranking_mode=effective_mode,
-            query=query,
+            impressions=[
+                {
+                    "opportunity_id": item["opportunity"].id,
+                    "ranking_mode": effective_mode,
+                    "experiment_key": meta.get("experiment_key"),
+                    "experiment_variant": meta.get("variant"),
+                    "query": query,
+                    "model_version_id": meta.get("model_version_id"),
+                    "rank_position": idx + 1,
+                    "match_score": item.get("match_score"),
+                    "features": {
+                        "baseline_score": item.get("baseline_score"),
+                        "semantic_score": item.get("semantic_score"),
+                        "behavior_score": item.get("behavior_score"),
+                        "skills_overlap_score": item.get("skills_overlap_score"),
+                        "behavior_domain_pref": item.get("behavior_domain_pref"),
+                        "behavior_type_pref": item.get("behavior_type_pref"),
+                    },
+                }
+                for idx, item in enumerate(ranked)
+            ],
         )
 
     return [_to_recommended_response(item) for item in ranked]
@@ -218,7 +256,7 @@ async def get_personalized_recommendations(
 async def get_smart_shortlist(
     limit: int = 10,
     min_score: float = 35.0,
-    ranking_mode: str = "semantic",
+    ranking_mode: Literal["baseline", "semantic", "ml", "ab"] = "semantic",
     query: Optional[str] = None,
     current_user: User = Depends(get_current_active_user),
 ) -> Any:
@@ -234,7 +272,7 @@ async def get_smart_shortlist(
     opportunities = _filter_active_opportunities(await Opportunity.find_many().to_list())
     opportunities = [item for item in opportunities if str(item.id) not in applied_ids]
 
-    ranked, effective_mode = await recommendation_service.rank(
+    ranked, meta = await recommendation_service.rank(
         user_id=current_user.id,
         profile=profile,
         opportunities=opportunities,
@@ -243,13 +281,32 @@ async def get_smart_shortlist(
         ranking_mode=ranking_mode,
         query=query,
     )
+    effective_mode = str(meta.get("mode") or "semantic")
 
     if ranked:
         await interaction_service.log_impressions(
             user_id=current_user.id,
-            opportunity_ids=[item["opportunity"].id for item in ranked],
-            ranking_mode=effective_mode,
-            query=query,
+            impressions=[
+                {
+                    "opportunity_id": item["opportunity"].id,
+                    "ranking_mode": effective_mode,
+                    "experiment_key": meta.get("experiment_key"),
+                    "experiment_variant": meta.get("variant"),
+                    "query": query,
+                    "model_version_id": meta.get("model_version_id"),
+                    "rank_position": idx + 1,
+                    "match_score": item.get("match_score"),
+                    "features": {
+                        "baseline_score": item.get("baseline_score"),
+                        "semantic_score": item.get("semantic_score"),
+                        "behavior_score": item.get("behavior_score"),
+                        "skills_overlap_score": item.get("skills_overlap_score"),
+                        "behavior_domain_pref": item.get("behavior_domain_pref"),
+                        "behavior_type_pref": item.get("behavior_type_pref"),
+                    },
+                }
+                for idx, item in enumerate(ranked)
+            ],
         )
 
     return [_to_recommended_response(item) for item in ranked]
@@ -264,7 +321,7 @@ async def log_opportunity_interaction(
     if not opportunity:
         raise HTTPException(status_code=404, detail="Opportunity not found")
 
-    allowed_types = {"impression", "view", "click", "apply"}
+    allowed_types = {"impression", "view", "click", "apply", "save"}
     if payload.interaction_type not in allowed_types:
         raise HTTPException(status_code=400, detail="Invalid interaction_type")
 
@@ -273,7 +330,13 @@ async def log_opportunity_interaction(
         opportunity_id=payload.opportunity_id,
         interaction_type=payload.interaction_type,
         ranking_mode=payload.ranking_mode,
+        experiment_key=payload.experiment_key,
+        experiment_variant=payload.experiment_variant,
         query=payload.query,
+        model_version_id=payload.model_version_id,
+        rank_position=payload.rank_position,
+        match_score=payload.match_score,
+        features=payload.features,
     )
 
     return {
@@ -291,7 +354,27 @@ async def get_ctr_by_mode(
     return await interaction_service.ctr_by_mode(days=days)
 
 
-@router.post("/ask-ai", response_model=dict)
+@router.get("/experiments/lift", response_model=dict)
+async def get_lift_vs_baseline(
+    days: int = 30,
+    baseline_mode: str = "baseline",
+    _: User = Depends(get_current_admin_user),
+) -> Any:
+    """
+    Computes CTR/apply_rate/save_rate per ranking mode + lift vs baseline.
+    """
+    return await interaction_service.lift_vs_baseline(days=days, baseline_mode=baseline_mode)
+
+
+@router.get("/ask-ai/schema", response_model=dict)
+async def ask_ai_schema() -> Any:
+    """
+    Returns the strict JSON schema contract for the Ask-AI RAG response.
+    """
+    return RAGAskResponse.model_json_schema()
+
+
+@router.post("/ask-ai", response_model=RAGAskResponse)
 async def ask_ai_shortlist(
     request: AskAIRequest,
     current_user: User = Depends(get_current_active_user),
@@ -325,6 +408,8 @@ async def evaluate_llm_quality(
         generated_text=request.generated_text,
         expected_keywords=request.expected_keywords,
         expected_output=request.expected_output,
+        include_judge=request.include_judge,
+        rubric=request.rubric,
     )
 
 
@@ -350,22 +435,26 @@ async def create_opportunity(
 
 
 @router.post("/trigger-scraper", response_model=dict)
-async def trigger_scraper() -> Any:
+async def trigger_scraper(
+    _: User = Depends(get_current_admin_user),
+) -> Any:
     """
     Trigger the resilient scraper manually to fetch remote opportunities (Unstop, Naukri) and insert into DB.
     """
-    from app.services.scraper import run_scheduled_scrapers
+    from app.services.job_runner import job_runner
 
-    report = await run_scheduled_scrapers()
+    job = await job_runner.enqueue(job_type="scraper.run", dedupe_key="scraper.run.manual")
 
     return {
-        "message": "Scraper triggered successfully.",
-        "report": report,
+        "message": "Scraper job enqueued.",
+        "job_id": str(job.id),
     }
 
 
 @router.get("/scraper-status", response_model=dict)
-async def scraper_status() -> Any:
+async def scraper_status(
+    _: User = Depends(get_current_active_user),
+) -> Any:
     """
     Returns scraper runtime status and latest source-level ingestion report.
     """

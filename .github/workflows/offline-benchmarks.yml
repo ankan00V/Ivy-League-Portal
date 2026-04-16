@@ -1,0 +1,33 @@
+name: Offline ML Benchmarks
+
+on:
+  pull_request:
+  push:
+    branches: ["main", "master"]
+
+jobs:
+  offline-benchmarks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: backend/benchmarks/requirements.txt
+
+      - name: Install benchmark dependencies
+        run: pip install -r backend/benchmarks/requirements.txt
+
+      - name: Run offline retrieval regression gate
+        run: >
+          python backend/benchmarks/run_offline_benchmarks.py
+          --gate
+          --k 5
+          --out /tmp/offline-benchmark-results.json
+          --semantic-p95-ms-budget 25
+          --semantic-mean-ms-budget 12

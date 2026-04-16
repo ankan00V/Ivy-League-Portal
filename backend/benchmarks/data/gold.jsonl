@@ -1,0 +1,12 @@
+{"query": "nlp nlp nlp nlp transformer tokenization ranking", "relevant_ids": ["a_nlp_rel"]}
+{"query": "security security security threat hunting detection", "relevant_ids": ["a_security_rel"]}
+{"query": "accessibility accessibility accessibility react performance web", "relevant_ids": ["a_frontend_rel"]}
+{"query": "genomics genomics genomics sequence alignment variant", "relevant_ids": ["a_genomics_rel"]}
+{"query": "kubernetes kubernetes kubernetes observability devops", "relevant_ids": ["a_devops_rel"]}
+{"query": "risk risk risk quantitative modeling finance", "relevant_ids": ["a_quant_rel"]}
+{"query": "control control control robotics reinforcement learning", "relevant_ids": ["a_robotics_rel"]}
+{"query": "geospatial geospatial geospatial satellite climate modeling", "relevant_ids": ["a_climate_rel"]}
+{"query": "full tuition scholarship stem undergraduate", "relevant_ids": ["easy_scholarship_rel"]}
+{"query": "web3 blockchain hackathon smart contracts defi", "relevant_ids": ["easy_hackathon_rel"]}
+{"query": "growth marketing internship seo analytics", "relevant_ids": ["easy_marketing_rel"]}
+{"query": "bioinformatics fellowship computational biology genomics", "relevant_ids": ["easy_bio_rel"]}

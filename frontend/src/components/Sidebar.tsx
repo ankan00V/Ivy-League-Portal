@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useTheme } from '@/context/ThemeContext';
-import { LayoutDashboard, Target, FileText, Globe, Trophy, Sun, Moon } from 'lucide-react';
+import { LayoutDashboard, Target, FileText, Globe, Trophy, Sun, Moon, BarChart3 } from 'lucide-react';
 import { useSyncExternalStore } from 'react';
 
 export default function Sidebar() {
@@ -20,6 +20,7 @@ export default function Sidebar() {
         { name: 'Applications', href: '/applications', icon: <FileText size={20} /> },
         { name: 'Social Network', href: '/social', icon: <Globe size={20} /> },
         { name: 'Leaderboard', href: '/leaderboard', icon: <Trophy size={20} /> },
+        { name: 'Experiments', href: '/experiments', icon: <BarChart3 size={20} /> },
     ];
 
     return (

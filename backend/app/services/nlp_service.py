@@ -53,7 +53,7 @@ class NLPService:
             }
 
         await self._ensure_intent_embeddings()
-        query_embedding = await embedding_service.embed_text(cleaned_query)
+        query_embedding = await embedding_service.embed_query(cleaned_query)
         scores = np.dot(self._intent_embeddings, query_embedding).tolist() if self._intent_embeddings is not None else []
 
         score_map = {

@@ -3,12 +3,15 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import re
+import struct
 from typing import Iterable
 
 import numpy as np
 from openai import AsyncOpenAI
 
+from app.core.cache import cache_get_bytes, cache_key, cache_set_bytes
 from app.core.config import settings
+from app.core.metrics import CACHE_HITS_TOTAL, CACHE_MISSES_TOTAL
 
 TOKEN_PATTERN = re.compile(r"[A-Za-z0-9+#]+")
 
@@ -115,6 +118,55 @@ class EmbeddingService:
     async def embed_text(self, text: str) -> np.ndarray:
         vectors = await self.embed_texts([text])
         return vectors[0] if len(vectors) else np.zeros((self._label_dim,), dtype=np.float32)
+
+    async def embed_query(self, text: str) -> np.ndarray:
+        """
+        Cached embeddings for short user queries.
+        """
+        cleaned = (text or "").strip()
+        if not cleaned:
+            return np.zeros((self._label_dim,), dtype=np.float32)
+
+        if (
+            not settings.CACHE_ENABLED
+            or not settings.CACHE_EMBEDDINGS_ENABLED
+            or len(cleaned) > int(settings.CACHE_MAX_TEXT_LENGTH)
+        ):
+            return await self.embed_text(cleaned)
+
+        key = cache_key(
+            "embedding",
+            self.provider,
+            self.local_model_name,
+            self.openai_model,
+            cleaned.lower(),
+        )
+        cached = await cache_get_bytes(key)
+        if cached:
+            try:
+                (dim,) = struct.unpack("<I", cached[:4])
+                vector = np.frombuffer(cached[4:], dtype=np.float32, count=int(dim))
+                if vector.size == int(dim):
+                    if CACHE_HITS_TOTAL is not None:
+                        CACHE_HITS_TOTAL.labels(cache="embedding").inc()
+                    return vector
+            except Exception:
+                pass
+
+        if CACHE_MISSES_TOTAL is not None:
+            CACHE_MISSES_TOTAL.labels(cache="embedding").inc()
+
+        vector = await self.embed_text(cleaned)
+        try:
+            payload = struct.pack("<I", int(vector.size)) + vector.astype(np.float32, copy=False).tobytes()
+            await cache_set_bytes(
+                key,
+                payload,
+                ttl_seconds=int(settings.CACHE_EMBEDDING_TTL_SECONDS),
+            )
+        except Exception:
+            pass
+        return vector
 
 
 embedding_service = EmbeddingService()
