@@ -85,13 +85,15 @@ flowchart LR
 ## Dataset Size (Verified Snapshot)
 Snapshot date: **April 16, 2026**
 
-- Opportunities: **199**
+- Opportunities: **202**
 - Applications: **16**
-- Opportunity interactions: **0**
-- Experiments: **0**
-- Experiment assignments: **0**
-- Ranking model versions: **0**
-- Drift reports: **0**
+- Opportunity interactions: **15,961**
+- Experiments: **2**
+- Experiment assignments: **300**
+- Ranking model versions: **3**
+- Drift reports: **1**
+- Profiles: **320**
+- Users: **323**
 
 Source distribution for opportunities:
 - `freshersworld`: 60
@@ -124,22 +126,54 @@ Interpretation:
 - The benchmark fixture now contains hard negatives where lexical overlap ties are common.
 - Semantic ranking is measurably separated, and CI enforces both metric-regression and latency budgets.
 
-## A/B Lift (Current Production Data)
-Current status: **not measurable yet**
+## Simulated Traffic Benchmark (Persona-Based)
+Transparency label: **Simulated traffic benchmark (persona-based)**  
+Artifact: `backend/benchmarks/simulated/persona_traffic_report.json`
 
-- `opportunity_interactions` currently has no events, so CTR/apply/save lift vs baseline is unavailable.
-- Instrumentation is implemented and endpoints are live:
-  - `GET /api/v1/opportunities/experiments/ctr`
-  - `GET /api/v1/opportunities/experiments/lift`
-  - `GET /api/v1/experiments/{experiment_key}/report`
-- Bootstrap tooling is available:
-  - `python backend/scripts/bootstrap_ranking_pipeline.py --clear-existing --run-retrain --auto-activate`
+Run command (200-500 Indian personas):
+```bash
+cd backend
+python3 scripts/simulate_persona_traffic.py \
+  --personas 300 \
+  --impressions-per-persona 24 \
+  --lookback-days 14 \
+  --seed 2026 \
+  --email-prefix sim.india \
+  --experiment-key ranking_mode_persona_sim \
+  --real-pilot-experiment-key ranking_mode \
+  --replace \
+  --out ../backend/benchmarks/simulated/persona_traffic_report.json
+```
 
-To unlock lift reporting:
-1. Create and activate experiment variants (already auto-seeded for `ranking_mode` on startup).
-2. Drive traffic to `baseline` and `ml` modes, or seed staging data with the bootstrap script.
-3. Log impressions + clicks/apply/save events.
-4. Read lift and significance from experiment report endpoints.
+Latest simulated run:
+- Personas: **300**
+- Generated interactions: **10,793**
+- Funnel breakdown: `impression=7,050`, `view=2,018`, `click=1,195`, `save=366`, `apply=164`
+- Variant mix: `baseline=5,181` events, `semantic=5,612` events
+
+Simulated lift vs control (baseline -> semantic):
+- Click-rate lift: **-6.13%** (`p=0.2306`)
+- Apply-rate lift: **-31.27%** (`p=0.0155`)
+- Save-rate lift: **-15.69%** (`p=0.0934`)
+
+## Real Pilot Snapshot (Authentic Usage Data)
+From live `ranking_mode` experiment (baseline vs ml), 14-day window:
+- CTR lift (`ml` vs baseline): **+58.21%** (`p=4.4e-07`)
+- Apply-rate lift (`ml` vs baseline): **+153.11%** (`p=0.0015`)
+- Save-rate lift (`ml` vs baseline): **+138.67%** (`p=2e-08`)
+
+## A/B Lift Endpoints
+- `GET /api/v1/opportunities/experiments/ctr`
+- `GET /api/v1/opportunities/experiments/lift`
+- `GET /api/v1/experiments/{experiment_key}/report`
+
+## Same-Day Real Pilot (10-20 Testers)
+1. Keep experiment `ranking_mode` active.
+2. Share web app URL to 10-20 testers for a 2-3 hour session.
+3. Ensure frontend logs impression/click/save/apply events to `POST /api/v1/opportunities/interactions`.
+4. Pull experiment reports and publish both:
+   - simulated benchmark (`ranking_mode_persona_sim`)
+   - real pilot (`ranking_mode`)
 
 ## API Surface (Core AI/ML Endpoints)
 - `GET /api/v1/opportunities/recommended/me?ranking_mode=baseline|semantic|ml|ab&query=...`

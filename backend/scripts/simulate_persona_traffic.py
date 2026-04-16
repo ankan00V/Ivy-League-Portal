@@ -340,6 +340,7 @@ def _compute_behavior_probabilities(
     opportunity: Opportunity,
     rank_position: int,
     match_score: float,
+    ranking_mode: str,
     rng: random.Random,
 ) -> dict[str, float]:
     text = _title_domain_text(opportunity)
@@ -364,12 +365,20 @@ def _compute_behavior_probabilities(
     save_given_click = _clamp(0.08 + (0.46 * relevance) + (0.4 * affinity_boost), 0.03, 0.80)
     apply_given_click = _clamp(0.02 + (0.24 * relevance) + (0.5 * affinity_boost), 0.01, 0.45)
 
+    # Mild mode-quality bias keeps simulations plausible without overwhelming persona relevance.
+    mode = (ranking_mode or "").lower().strip()
+    mode_bias = {
+        "baseline": 0.98,
+        "semantic": 1.06,
+        "ml": 1.10,
+    }.get(mode, 1.0)
+
     # A small stochastic jitter keeps behavior non-uniform.
     jitter = 1.0 + rng.uniform(-0.10, 0.10)
-    view_prob = _clamp(view_prob * jitter, 0.01, 0.95)
-    click_prob = _clamp(click_prob * jitter, 0.005, 0.90)
-    save_given_click = _clamp(save_given_click * jitter, 0.01, 0.85)
-    apply_given_click = _clamp(apply_given_click * jitter, 0.005, 0.50)
+    view_prob = _clamp(view_prob * jitter * mode_bias, 0.01, 0.95)
+    click_prob = _clamp(click_prob * jitter * mode_bias, 0.005, 0.90)
+    save_given_click = _clamp(save_given_click * jitter * mode_bias, 0.01, 0.85)
+    apply_given_click = _clamp(apply_given_click * jitter * mode_bias, 0.005, 0.50)
 
     return {
         "view_prob": view_prob,
@@ -445,6 +454,7 @@ async def _simulate(
                 opportunity=opportunity,
                 rank_position=rank_pos,
                 match_score=match_score,
+                ranking_mode=ranking_mode,
                 rng=persona_rng,
             )
 
