@@ -36,6 +36,20 @@ type ExperimentReport = {
   comparisons: ComparisonRow[];
 };
 
+type SideBySideBundle = {
+  label: "real" | "simulated";
+  experiment_key: string;
+  status: "ok" | "missing";
+  reports: Record<string, ExperimentReport>;
+};
+
+type SideBySideReport = {
+  days: number;
+  conversion_types: string[];
+  real: SideBySideBundle;
+  simulated: SideBySideBundle;
+};
+
 function formatPct(value: number | null | undefined): string {
   if (value === null || value === undefined) return "—";
   return `${(value * 100).toFixed(2)}%`;
@@ -47,9 +61,36 @@ function formatP(value: number | null | undefined): string {
   return value.toFixed(4);
 }
 
+function formatLift(value: number | null | undefined): string {
+  if (value === null || value === undefined) return "—";
+  const pct = value * 100;
+  const prefix = pct > 0 ? "+" : "";
+  return `${prefix}${pct.toFixed(1)}%`;
+}
+
+function reportSummary(report?: ExperimentReport) {
+  if (!report) return null;
+  const control = report.variants.find((variant) => variant.is_control) ?? report.variants[0];
+  const best = [...report.variants].sort((a, b) => b.conversion_rate - a.conversion_rate)[0];
+  const totalImpressions = report.variants.reduce((sum, variant) => sum + variant.impressions, 0);
+  const totalConversions = report.variants.reduce((sum, variant) => sum + variant.conversions, 0);
+  const bestLift =
+    control && best && best.name !== control.name && control.conversion_rate > 0
+      ? (best.conversion_rate - control.conversion_rate) / control.conversion_rate
+      : null;
+  return {
+    control,
+    best,
+    totalImpressions,
+    totalConversions,
+    bestLift,
+  };
+}
+
 export default function ExperimentsPage() {
   const [days, setDays] = useState<number>(30);
   const [reports, setReports] = useState<ExperimentReport[]>([]);
+  const [sideBySide, setSideBySide] = useState<SideBySideReport | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -66,22 +107,42 @@ export default function ExperimentsPage() {
         if (!token) {
           setError("Sign in as an admin to view experiment reports.");
           setReports([]);
+          setSideBySide(null);
           return;
         }
 
-        const res = await fetch(apiUrl(`/api/v1/experiments/reports?days=${days}&conversion=click`), {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const data = await res.json().catch(() => null);
-        if (!res.ok) {
-          const detail = typeof data?.detail === "string" ? data.detail : "Could not load experiment reports.";
+        const [reportsRes, sideBySideRes] = await Promise.all([
+          fetch(apiUrl(`/api/v1/experiments/reports?days=${days}&conversion=click`), {
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+          fetch(apiUrl(`/api/v1/experiments/reports/side-by-side?days=${days}&conversion=click,apply,save`), {
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+        ]);
+
+        const reportsData = await reportsRes.json().catch(() => null);
+        if (!reportsRes.ok) {
+          const detail =
+            typeof reportsData?.detail === "string" ? reportsData.detail : "Could not load experiment reports.";
           throw new Error(detail);
         }
-        setReports(Array.isArray(data) ? (data as ExperimentReport[]) : []);
+
+        const sideBySideData = await sideBySideRes.json().catch(() => null);
+        if (!sideBySideRes.ok) {
+          const detail =
+            typeof sideBySideData?.detail === "string"
+              ? sideBySideData.detail
+              : "Could not load side-by-side experiment reports.";
+          throw new Error(detail);
+        }
+
+        setReports(Array.isArray(reportsData) ? (reportsData as ExperimentReport[]) : []);
+        setSideBySide((sideBySideData as SideBySideReport) ?? null);
       } catch (err) {
         const message = err instanceof Error ? err.message : "unknown error";
         setError(message);
         setReports([]);
+        setSideBySide(null);
       } finally {
         setLoading(false);
       }
@@ -169,6 +230,81 @@ export default function ExperimentsPage() {
 
         {!loading && !error && sortedReports.length === 0 ? (
           <div style={{ color: "var(--text-muted)", fontWeight: 700 }}>No experiments found.</div>
+        ) : null}
+
+        {!loading && !error && sideBySide ? (
+          <section
+            style={{
+              background: "var(--bg-surface)",
+              border: "2px solid var(--border-subtle)",
+              borderRadius: "var(--radius-sm)",
+              boxShadow: "var(--shadow-sm)",
+              padding: "1.1rem 1.25rem",
+              marginBottom: "1.25rem",
+            }}
+          >
+            <div style={{ marginBottom: "0.8rem" }}>
+              <div style={{ fontWeight: 900, letterSpacing: "-0.01em" }}>Simulated vs Real Reports</div>
+              <div style={{ color: "var(--text-muted)", fontWeight: 700, fontSize: "0.9rem" }}>
+                Side-by-side view for isolated experiment keys: simulated `ranking_mode_persona_sim` and real
+                `ranking_mode`.
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gap: "1rem", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))" }}>
+              {[sideBySide.simulated, sideBySide.real].map((bundle) => (
+                <div
+                  key={bundle.label}
+                  style={{
+                    background: "var(--bg-surface-hover)",
+                    border: "2px solid var(--border-subtle)",
+                    borderRadius: "var(--radius-sm)",
+                    padding: "0.9rem",
+                  }}
+                >
+                  <div style={{ marginBottom: "0.75rem" }}>
+                    <div style={{ fontWeight: 900, textTransform: "capitalize" }}>{bundle.label}</div>
+                    <div style={{ color: "var(--text-muted)", fontWeight: 700, fontSize: "0.85rem" }}>
+                      key: {bundle.experiment_key}
+                    </div>
+                  </div>
+
+                  {bundle.status !== "ok" ? (
+                    <div style={{ color: "var(--text-muted)", fontWeight: 700 }}>No report data available.</div>
+                  ) : (
+                    <div style={{ display: "grid", gap: "0.6rem" }}>
+                      {sideBySide.conversion_types.map((conversionType) => {
+                        const summary = reportSummary(bundle.reports[conversionType]);
+                        if (!summary) return null;
+                        return (
+                          <div
+                            key={`${bundle.label}-${conversionType}`}
+                            style={{
+                              border: "1px solid var(--border-subtle)",
+                              borderRadius: "var(--radius-sm)",
+                              padding: "0.6rem 0.7rem",
+                              background: "var(--bg-surface)",
+                            }}
+                          >
+                            <div style={{ fontWeight: 900, textTransform: "uppercase", fontSize: "0.78rem" }}>
+                              {conversionType}
+                            </div>
+                            <div style={{ color: "var(--text-muted)", fontWeight: 700, fontSize: "0.84rem" }}>
+                              {summary.totalConversions} / {summary.totalImpressions} conversions
+                            </div>
+                            <div style={{ fontWeight: 800, fontSize: "0.9rem", marginTop: "0.25rem" }}>
+                              Control {summary.control.name}: {formatPct(summary.control.conversion_rate)} · Best{" "}
+                              {summary.best.name}: {formatPct(summary.best.conversion_rate)} ({formatLift(summary.bestLift)})
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </section>
         ) : null}
 
         <div style={{ display: "grid", gap: "1.25rem" }}>
@@ -298,4 +434,3 @@ export default function ExperimentsPage() {
     </div>
   );
 }
-

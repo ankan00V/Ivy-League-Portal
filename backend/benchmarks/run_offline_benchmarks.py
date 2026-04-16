@@ -245,6 +245,7 @@ def _compare_and_gate(
     baseline: dict[str, Any],
     mode: str,
     tolerance: float,
+    metric_drop_thresholds: dict[str, float] | None = None,
 ) -> tuple[bool, list[str]]:
     failures: list[str] = []
 
@@ -257,13 +258,39 @@ def _compare_and_gate(
         failures.append(f"Missing mode={mode} in current/baseline results.")
         return False, failures
 
+    thresholds = metric_drop_thresholds or {}
     for metric in ("precision_at_k", "recall_at_k", "ndcg_at_k", "mrr"):
         cur = float(current_row.get(metric, 0.0))
         base = float(baseline_row.get(metric, 0.0))
-        if cur + float(tolerance) < base:
-            failures.append(f"{mode}.{metric} regressed: {cur:.6f} < {base:.6f} (tolerance={tolerance})")
+        allowed_drop = float(thresholds.get(metric, tolerance))
+        delta = cur - base
+        if delta < -allowed_drop:
+            failures.append(
+                f"{mode}.{metric} regression exceeded threshold: "
+                f"delta={delta:+.6f}, allowed_drop={allowed_drop:.6f}, current={cur:.6f}, baseline={base:.6f}"
+            )
 
     return len(failures) == 0, failures
+
+
+def _metric_deltas(
+    *,
+    current: dict[str, Any],
+    baseline: dict[str, Any],
+    mode: str,
+) -> dict[str, float]:
+    current_modes = (current.get("summary") or {}).get("modes") or {}
+    baseline_modes = (baseline.get("summary") or baseline.get("modes") or {}).get("modes") or baseline.get("modes") or {}
+
+    current_row = current_modes.get(mode) or {}
+    baseline_row = baseline_modes.get(mode) or {}
+    if not current_row or not baseline_row:
+        return {}
+
+    deltas: dict[str, float] = {}
+    for metric in ("precision_at_k", "recall_at_k", "ndcg_at_k", "mrr"):
+        deltas[metric] = float(current_row.get(metric, 0.0)) - float(baseline_row.get(metric, 0.0))
+    return deltas
 
 
 def _gate_latency(
@@ -305,6 +332,30 @@ def main() -> int:
     parser.add_argument("--write-baseline", action="store_true", help="Overwrite baseline.json with current summary.")
     parser.add_argument("--gate", action="store_true", help="Fail if semantic metrics regress vs baseline.")
     parser.add_argument("--tolerance", type=float, default=0.0, help="Allowed absolute drop vs baseline.")
+    parser.add_argument(
+        "--semantic-max-precision-drop",
+        type=float,
+        default=None,
+        help="Allowed absolute drop vs baseline for semantic precision@k. Falls back to --tolerance.",
+    )
+    parser.add_argument(
+        "--semantic-max-recall-drop",
+        type=float,
+        default=None,
+        help="Allowed absolute drop vs baseline for semantic recall@k. Falls back to --tolerance.",
+    )
+    parser.add_argument(
+        "--semantic-max-ndcg-drop",
+        type=float,
+        default=None,
+        help="Allowed absolute drop vs baseline for semantic ndcg@k. Falls back to --tolerance.",
+    )
+    parser.add_argument(
+        "--semantic-max-mrr-drop",
+        type=float,
+        default=None,
+        help="Allowed absolute drop vs baseline for semantic MRR. Falls back to --tolerance.",
+    )
     parser.add_argument("--semantic-p95-ms-budget", type=float, default=None, help="Fail if semantic latency p95 exceeds this budget.")
     parser.add_argument("--semantic-mean-ms-budget", type=float, default=None, help="Fail if semantic latency mean exceeds this budget.")
     parser.add_argument("--semantic-max-ms-budget", type=float, default=None, help="Fail if semantic latency max exceeds this budget.")
@@ -334,11 +385,27 @@ def main() -> int:
             print(f"Baseline file missing: {baseline_path}", file=sys.stderr)
             return 2
         baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+        deltas = _metric_deltas(current=current, baseline=baseline, mode="semantic")
+        if deltas:
+            print("Semantic metric deltas vs baseline:")
+            for metric in ("precision_at_k", "recall_at_k", "ndcg_at_k", "mrr"):
+                if metric in deltas:
+                    print(f"  {metric}: {deltas[metric]:+.6f}")
+        metric_thresholds: dict[str, float] = {}
+        if args.semantic_max_precision_drop is not None:
+            metric_thresholds["precision_at_k"] = float(args.semantic_max_precision_drop)
+        if args.semantic_max_recall_drop is not None:
+            metric_thresholds["recall_at_k"] = float(args.semantic_max_recall_drop)
+        if args.semantic_max_ndcg_drop is not None:
+            metric_thresholds["ndcg_at_k"] = float(args.semantic_max_ndcg_drop)
+        if args.semantic_max_mrr_drop is not None:
+            metric_thresholds["mrr"] = float(args.semantic_max_mrr_drop)
         ok, failures = _compare_and_gate(
             current=current,
             baseline=baseline,
             mode="semantic",
             tolerance=float(args.tolerance),
+            metric_drop_thresholds=metric_thresholds or None,
         )
         if not ok:
             for line in failures:

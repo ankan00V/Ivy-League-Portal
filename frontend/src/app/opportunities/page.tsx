@@ -2,9 +2,10 @@
 import Sidebar from "@/components/Sidebar";
 import React, { startTransition, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { MapPin, Calendar, ExternalLink, Send } from "lucide-react";
+import { MapPin, Calendar, ExternalLink, Send, Bookmark } from "lucide-react";
 import Image from "next/image";
 import { apiUrl } from "@/lib/api";
+import { logOpportunityInteraction } from "@/lib/opportunity-interactions";
 
 interface Opportunity {
     id: string;
@@ -20,6 +21,11 @@ interface Opportunity {
     last_seen_at?: string;
     deadline?: string;
     ranking_mode?: string;
+    experiment_key?: string;
+    experiment_variant?: string;
+    rank_position?: number;
+    match_score?: number;
+    model_version_id?: string;
 }
 
 const FEED_REFRESH_MS = 60 * 1000;
@@ -54,9 +60,11 @@ export default function OpportunitiesPage() {
     const [loading, setLoading] = useState(true);
     const [notice, setNotice] = useState<string | null>(null);
     const [applyingId, setApplyingId] = useState<string | null>(null);
+    const [savedOpportunityIds, setSavedOpportunityIds] = useState<Record<string, boolean>>({});
     const [imageFallbackMap, setImageFallbackMap] = useState<Record<string, boolean>>({});
     const opportunitiesSignatureRef = useRef<string>("");
     const scraperTriggerAttemptedRef = useRef(false);
+    const lastImpressionBatchRef = useRef("");
 
     const domains = useMemo(() => {
         const apiDomains = Array.from(new Set(opportunities.map(o => o.domain))).filter(Boolean);
@@ -86,7 +94,14 @@ export default function OpportunitiesPage() {
                     }
                 );
                 if (personalizedRes.ok) {
-                    const data: Opportunity[] = await personalizedRes.json();
+                    const rawData: Opportunity[] = await personalizedRes.json();
+                    const data: Opportunity[] = rawData.map((item, idx) => ({
+                        ...item,
+                        ranking_mode: item.ranking_mode || "baseline",
+                        experiment_key: item.experiment_key || "ranking_mode",
+                        experiment_variant: item.experiment_variant || item.ranking_mode || "baseline",
+                        rank_position: item.rank_position ?? idx + 1,
+                    }));
                     const nextSignature = buildOpportunitiesSignature(data);
                     if (nextSignature !== opportunitiesSignatureRef.current) {
                         opportunitiesSignatureRef.current = nextSignature;
@@ -102,7 +117,14 @@ export default function OpportunitiesPage() {
 
             const res = await fetch(apiUrl("/api/v1/opportunities/"), { credentials: "include" });
             if (res.ok) {
-                const data: Opportunity[] = await res.json();
+                const rawData: Opportunity[] = await res.json();
+                const data: Opportunity[] = rawData.map((item, idx) => ({
+                    ...item,
+                    ranking_mode: item.ranking_mode || "baseline",
+                    experiment_key: item.experiment_key || "ranking_mode",
+                    experiment_variant: item.experiment_variant || item.ranking_mode || "baseline",
+                    rank_position: item.rank_position ?? idx + 1,
+                }));
                 const nextSignature = buildOpportunitiesSignature(data);
                 if (nextSignature !== opportunitiesSignatureRef.current) {
                     opportunitiesSignatureRef.current = nextSignature;
@@ -151,30 +173,24 @@ export default function OpportunitiesPage() {
         }
     });
 
-    const logInteraction = async (opportunity: Opportunity, interactionType: "click") => {
-        const token = localStorage.getItem("access_token");
-        if (!token) return;
-        try {
-            const rankingMode = opportunity.ranking_mode;
-            await fetch(apiUrl("/api/v1/opportunities/interactions"), {
-                method: "POST",
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                    "Content-Type": "application/json",
+    const logOpportunityEvent = useEffectEvent(
+        async (opportunity: Opportunity, interactionType: "impression" | "click" | "save" | "apply") => {
+            await logOpportunityInteraction({
+                opportunityId: opportunity.id,
+                interactionType,
+                rankingMode: opportunity.ranking_mode || "baseline",
+                experimentKey: opportunity.experiment_key || "ranking_mode",
+                experimentVariant: opportunity.experiment_variant || opportunity.ranking_mode || "baseline",
+                rankPosition: opportunity.rank_position ?? null,
+                matchScore: opportunity.match_score ?? null,
+                modelVersionId: opportunity.model_version_id ?? null,
+                features: {
+                    surface: "opportunities_page",
+                    active_tab: activeTab,
                 },
-                body: JSON.stringify({
-                    opportunity_id: opportunity.id,
-                    interaction_type: interactionType,
-                    ranking_mode: rankingMode || null,
-                    experiment_key: rankingMode ? "ranking_mode" : null,
-                    experiment_variant: rankingMode || null,
-                }),
             });
-        } catch (error) {
-            const message = error instanceof Error ? error.message : "unknown error";
-            console.warn(`[Opportunities] Interaction log failed: ${message}`);
         }
-    };
+    );
 
     useEffect(() => {
         void fetchOpportunities();
@@ -210,7 +226,11 @@ export default function OpportunitiesPage() {
             other: [],
         };
 
-        for (const opportunity of filtered) {
+        for (let idx = 0; idx < filtered.length; idx += 1) {
+            const opportunity: Opportunity = {
+                ...filtered[idx],
+                rank_position: filtered[idx].rank_position ?? idx + 1,
+            };
             const typeValue = (opportunity.opportunity_type || "").toLowerCase().trim();
             const titleValue = (opportunity.title || "").toLowerCase().trim();
             const descriptionValue = (opportunity.description || "").toLowerCase().trim();
@@ -232,17 +252,61 @@ export default function OpportunitiesPage() {
         return groups;
     }, [filtered]);
 
-    const handleApply = async (opportunityId: string) => {
+    useEffect(() => {
+        const token = localStorage.getItem("access_token");
+        if (!token || filtered.length === 0) {
+            return;
+        }
+        const batchSignature = `${activeTab}:${filtered
+            .map((item) => `${item.id}:${item.rank_position ?? ""}:${item.ranking_mode || "baseline"}`)
+            .join("|")}`;
+        if (batchSignature === lastImpressionBatchRef.current) {
+            return;
+        }
+        lastImpressionBatchRef.current = batchSignature;
+        void Promise.allSettled(
+            filtered.map((opportunity, idx) =>
+                logOpportunityEvent(
+                    {
+                        ...opportunity,
+                        rank_position: opportunity.rank_position ?? idx + 1,
+                    },
+                    "impression"
+                )
+            )
+        );
+    }, [filtered, activeTab]);
+
+    const handleSave = async (opportunity: Opportunity) => {
+        setSavedOpportunityIds((current) => ({ ...current, [opportunity.id]: true }));
+        await logOpportunityEvent(opportunity, "save");
+    };
+
+    const handleApply = async (opportunity: Opportunity) => {
         const token = localStorage.getItem("access_token");
         if (!token) {
             setNotice("Sign in to use one-click application.");
             return;
         }
 
-        setApplyingId(opportunityId);
+        setApplyingId(opportunity.id);
         setNotice(null);
         try {
-            const res = await fetch(apiUrl(`/api/v1/applications/${opportunityId}`), {
+            const query = new URLSearchParams({
+                ranking_mode: opportunity.ranking_mode || "baseline",
+                experiment_key: opportunity.experiment_key || "ranking_mode",
+                experiment_variant: opportunity.experiment_variant || opportunity.ranking_mode || "baseline",
+            });
+            if (opportunity.rank_position) {
+                query.set("rank_position", String(opportunity.rank_position));
+            }
+            if (typeof opportunity.match_score === "number") {
+                query.set("match_score", String(opportunity.match_score));
+            }
+            if (opportunity.model_version_id) {
+                query.set("model_version_id", opportunity.model_version_id);
+            }
+            const res = await fetch(apiUrl(`/api/v1/applications/${opportunity.id}?${query.toString()}`), {
                 method: "POST",
                 headers: {
                     Authorization: `Bearer ${token}`,
@@ -495,11 +559,20 @@ export default function OpportunitiesPage() {
                             <button
                                 className="btn-primary"
                                 style={{ padding: "0.7rem 1.1rem", fontSize: "0.9rem", display: "flex", alignItems: "center", gap: "0.4rem", border: "2px solid #000000" }}
-                                onClick={() => void handleApply(opp.id)}
+                                onClick={() => void handleApply(opp)}
                                 disabled={applyingId === opp.id}
                             >
                                 <Send size={14} />
                                 {applyingId === opp.id ? "Joining..." : "Join"}
+                            </button>
+                            <button
+                                className="btn-secondary"
+                                style={{ padding: "0.7rem 0.95rem", fontSize: "0.9rem", display: "flex", alignItems: "center", gap: "0.3rem", border: "2px solid var(--border-subtle)" }}
+                                onClick={() => void handleSave(opp)}
+                                disabled={Boolean(savedOpportunityIds[opp.id])}
+                            >
+                                <Bookmark size={14} />
+                                {savedOpportunityIds[opp.id] ? "Saved" : "Save"}
                             </button>
                             <a
                                 href={opp.url}
@@ -507,7 +580,7 @@ export default function OpportunitiesPage() {
                                 rel="noreferrer"
                                 className="btn-secondary"
                                 style={{ padding: "0.7rem 0.95rem", fontSize: "0.9rem", display: "flex", alignItems: "center", gap: "0.3rem", border: "2px solid var(--border-subtle)" }}
-                                onClick={() => void logInteraction(opp, "click")}
+                                onClick={() => void logOpportunityEvent(opp, "click")}
                             >
                                 Event Page <ExternalLink size={14} />
                             </a>
@@ -671,11 +744,20 @@ export default function OpportunitiesPage() {
                         <button
                             className="btn-primary"
                             style={{ padding: "0.7rem 1rem", fontSize: "0.9rem", display: "flex", alignItems: "center", gap: "0.4rem", border: "2px solid #000000" }}
-                            onClick={() => void handleApply(opp.id)}
+                            onClick={() => void handleApply(opp)}
                             disabled={applyingId === opp.id}
                         >
                             <Send size={14} />
                             {applyingId === opp.id ? "Applying..." : "Apply"}
+                        </button>
+                        <button
+                            className="btn-secondary"
+                            style={{ padding: "0.7rem 0.95rem", fontSize: "0.9rem", display: "flex", alignItems: "center", gap: "0.3rem", border: "2px solid var(--border-subtle)" }}
+                            onClick={() => void handleSave(opp)}
+                            disabled={Boolean(savedOpportunityIds[opp.id])}
+                        >
+                            <Bookmark size={14} />
+                            {savedOpportunityIds[opp.id] ? "Saved" : "Save"}
                         </button>
                         <a
                             href={opp.url}
@@ -683,7 +765,7 @@ export default function OpportunitiesPage() {
                             rel="noreferrer"
                             className="btn-secondary"
                             style={{ padding: "0.7rem 0.95rem", fontSize: "0.9rem", display: "flex", alignItems: "center", gap: "0.3rem", border: "2px solid var(--border-subtle)" }}
-                            onClick={() => void logInteraction(opp, "click")}
+                            onClick={() => void logOpportunityEvent(opp, "click")}
                         >
                             Job Page <ExternalLink size={14} />
                         </a>

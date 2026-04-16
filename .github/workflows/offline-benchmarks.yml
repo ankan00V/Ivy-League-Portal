@@ -9,6 +9,14 @@ jobs:
   offline-benchmarks:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      BENCH_MAX_DROP_PRECISION_AT_K: "0.010"
+      BENCH_MAX_DROP_RECALL_AT_K: "0.010"
+      BENCH_MAX_DROP_NDCG_AT_K: "0.010"
+      BENCH_MAX_DROP_MRR_AT_K: "0.010"
+      BENCH_LATENCY_P95_MS_BUDGET: "25"
+      BENCH_LATENCY_MEAN_MS_BUDGET: "12"
+      BENCH_LATENCY_MAX_MS_BUDGET: "40"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,6 +36,12 @@ jobs:
           python backend/benchmarks/run_offline_benchmarks.py
           --gate
           --k 5
+          --tolerance 0
           --out /tmp/offline-benchmark-results.json
-          --semantic-p95-ms-budget 25
-          --semantic-mean-ms-budget 12
+          --semantic-max-precision-drop $BENCH_MAX_DROP_PRECISION_AT_K
+          --semantic-max-recall-drop $BENCH_MAX_DROP_RECALL_AT_K
+          --semantic-max-ndcg-drop $BENCH_MAX_DROP_NDCG_AT_K
+          --semantic-max-mrr-drop $BENCH_MAX_DROP_MRR_AT_K
+          --semantic-p95-ms-budget $BENCH_LATENCY_P95_MS_BUDGET
+          --semantic-mean-ms-budget $BENCH_LATENCY_MEAN_MS_BUDGET
+          --semantic-max-ms-budget $BENCH_LATENCY_MAX_MS_BUDGET

@@ -52,6 +52,8 @@ class RecommendedOpportunityResponse(OpportunityResponse):
     semantic_score: Optional[float] = None
     behavior_score: Optional[float] = None
     ranking_mode: Optional[str] = None
+    experiment_key: Optional[str] = None
+    experiment_variant: Optional[str] = None
 
 
 class InteractionEventCreate(BaseModel):
@@ -107,6 +109,8 @@ def _to_recommended_response(payload: dict[str, Any]) -> RecommendedOpportunityR
         semantic_score=payload.get("semantic_score"),
         behavior_score=payload.get("behavior_score"),
         ranking_mode=payload.get("ranking_mode"),
+        experiment_key=payload.get("experiment_key"),
+        experiment_variant=payload.get("experiment_variant"),
     )
 
 
@@ -222,6 +226,12 @@ async def get_personalized_recommendations(
         query=query,
     )
     effective_mode = str(meta.get("mode") or "semantic")
+    experiment_key = meta.get("experiment_key")
+    experiment_variant = meta.get("variant")
+
+    for item in ranked:
+        item["experiment_key"] = experiment_key
+        item["experiment_variant"] = experiment_variant
 
     if ranked:
         await interaction_service.log_impressions(
@@ -230,8 +240,8 @@ async def get_personalized_recommendations(
                 {
                     "opportunity_id": item["opportunity"].id,
                     "ranking_mode": effective_mode,
-                    "experiment_key": meta.get("experiment_key"),
-                    "experiment_variant": meta.get("variant"),
+                    "experiment_key": experiment_key,
+                    "experiment_variant": experiment_variant,
                     "query": query,
                     "model_version_id": meta.get("model_version_id"),
                     "rank_position": idx + 1,
@@ -282,6 +292,12 @@ async def get_smart_shortlist(
         query=query,
     )
     effective_mode = str(meta.get("mode") or "semantic")
+    experiment_key = meta.get("experiment_key")
+    experiment_variant = meta.get("variant")
+
+    for item in ranked:
+        item["experiment_key"] = experiment_key
+        item["experiment_variant"] = experiment_variant
 
     if ranked:
         await interaction_service.log_impressions(
@@ -290,8 +306,8 @@ async def get_smart_shortlist(
                 {
                     "opportunity_id": item["opportunity"].id,
                     "ranking_mode": effective_mode,
-                    "experiment_key": meta.get("experiment_key"),
-                    "experiment_variant": meta.get("variant"),
+                    "experiment_key": experiment_key,
+                    "experiment_variant": experiment_variant,
                     "query": query,
                     "model_version_id": meta.get("model_version_id"),
                     "rank_position": idx + 1,

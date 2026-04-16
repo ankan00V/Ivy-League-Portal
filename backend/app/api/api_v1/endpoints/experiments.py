@@ -13,6 +13,8 @@ from app.services.experiment_analytics_service import experiment_analytics_servi
 from app.services.experiment_service import experiment_service
 
 router = APIRouter()
+DEFAULT_REAL_EXPERIMENT_KEY = "ranking_mode"
+DEFAULT_SIMULATED_EXPERIMENT_KEY = "ranking_mode_persona_sim"
 
 
 class ExperimentVariantIn(BaseModel):
@@ -146,3 +148,51 @@ async def all_experiment_reports(
         reports.append(await experiment_analytics_service.report(experiment=experiment, days=days, conversion_types=conversion_types))
     return reports
 
+
+@router.get("/reports/side-by-side", response_model=dict)
+async def side_by_side_reports(
+    days: int = 30,
+    conversion: str = "click,apply,save",
+    real_experiment_key: str = DEFAULT_REAL_EXPERIMENT_KEY,
+    simulated_experiment_key: str = DEFAULT_SIMULATED_EXPERIMENT_KEY,
+    _: User = Depends(get_current_admin_user),
+) -> Any:
+    conversion_types = [value.strip() for value in conversion.split(",") if value.strip()]
+    if not conversion_types:
+        conversion_types = ["click", "apply", "save"]
+    ordered_conversion_types = list(dict.fromkeys(conversion_types))
+
+    async def _build_bundle(experiment_key: str, label: str) -> dict[str, Any]:
+        experiment = await Experiment.find_one(Experiment.key == experiment_key)
+        if not experiment:
+            return {
+                "label": label,
+                "experiment_key": experiment_key,
+                "status": "missing",
+                "reports": {},
+            }
+
+        reports_by_conversion: dict[str, Any] = {}
+        for conversion_type in ordered_conversion_types:
+            reports_by_conversion[conversion_type] = await experiment_analytics_service.report(
+                experiment=experiment,
+                days=days,
+                conversion_types=[conversion_type],
+            )
+
+        return {
+            "label": label,
+            "experiment_key": experiment_key,
+            "status": "ok",
+            "reports": reports_by_conversion,
+        }
+
+    real_bundle = await _build_bundle(real_experiment_key, "real")
+    simulated_bundle = await _build_bundle(simulated_experiment_key, "simulated")
+
+    return {
+        "days": max(1, min(int(days), 365)),
+        "conversion_types": ordered_conversion_types,
+        "real": real_bundle,
+        "simulated": simulated_bundle,
+    }
