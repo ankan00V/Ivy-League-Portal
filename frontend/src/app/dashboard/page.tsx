@@ -1,15 +1,22 @@
 "use client";
-import React, { useState, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import Sidebar from "@/components/Sidebar";
 import { motion, useMotionValue, useTransform } from "framer-motion";
 import { TrendingUp, Briefcase, ShieldCheck, Activity, Sparkles, Star } from "lucide-react";
 import { apiUrl } from "@/lib/api";
 import { useRouter } from "next/navigation";
+import { isMongoObjectId, logOpportunityInteraction } from "@/lib/opportunity-interactions";
 
 interface OpportunityCard {
     id: string;
     title: string;
     domain?: string;
+    ranking_mode?: string;
+    experiment_key?: string;
+    experiment_variant?: string;
+    rank_position?: number;
+    match_score?: number;
+    model_version_id?: string;
 }
 
 interface ActivityPost {
@@ -81,9 +88,9 @@ const MARQUEE_COMPANIES = [
 
 // --- GENUINE INFO MOCKS ---
 const MOCK_OPPORTUNITIES = [
-    { id: 'm1', title: 'Google Summer of Code 2026', domain: 'Engineering' },
-    { id: 'm2', title: 'Meta Hacker Cup - Round 1', domain: 'Competitive Programming' },
-    { id: 'm3', title: 'Stripe API Design Challenge', domain: 'Backend' },
+    { id: 'm1', title: 'Google Summer of Code 2026', domain: 'Engineering', ranking_mode: 'baseline', experiment_key: 'ranking_mode', experiment_variant: 'baseline', rank_position: 1 },
+    { id: 'm2', title: 'Meta Hacker Cup - Round 1', domain: 'Competitive Programming', ranking_mode: 'baseline', experiment_key: 'ranking_mode', experiment_variant: 'baseline', rank_position: 2 },
+    { id: 'm3', title: 'Stripe API Design Challenge', domain: 'Backend', ranking_mode: 'baseline', experiment_key: 'ranking_mode', experiment_variant: 'baseline', rank_position: 3 },
 ];
 
 const MOCK_POSTS = [
@@ -106,6 +113,7 @@ export default function DashboardPage() {
     const [profile, setProfile] = useState<ProfileSummary | null>(null);
     const [appCount, setAppCount] = useState<number>(0);
     const [posts, setPosts] = useState<ActivityPost[]>([]);
+    const lastImpressionBatchRef = useRef("");
 
     const fetchDashboardData = async () => {
         try {
@@ -131,13 +139,29 @@ export default function DashboardPage() {
             // 3. Fetch Personalized Opportunities (Top 3)
             const oppsRes = await fetch(apiUrl("/api/v1/opportunities/recommended/me?limit=3"), { headers });
             if (oppsRes.ok) {
-                const oData = await oppsRes.json();
-                setRecommended(oData);
+                const oData: OpportunityCard[] = await oppsRes.json();
+                setRecommended(
+                    oData.map((item, idx) => ({
+                        ...item,
+                        ranking_mode: item.ranking_mode || "baseline",
+                        experiment_key: item.experiment_key || "ranking_mode",
+                        experiment_variant: item.experiment_variant || item.ranking_mode || "baseline",
+                        rank_position: item.rank_position ?? idx + 1,
+                    }))
+                );
             } else {
                 const fallback = await fetch(apiUrl("/api/v1/opportunities/?limit=3"));
                 if (fallback.ok) {
-                    const fallbackData = await fallback.json();
-                    setRecommended(fallbackData);
+                    const fallbackData: OpportunityCard[] = await fallback.json();
+                    setRecommended(
+                        fallbackData.map((item, idx) => ({
+                            ...item,
+                            ranking_mode: item.ranking_mode || "baseline",
+                            experiment_key: item.experiment_key || "ranking_mode",
+                            experiment_variant: item.experiment_variant || item.ranking_mode || "baseline",
+                            rank_position: item.rank_position ?? idx + 1,
+                        }))
+                    );
                 }
             }
 
@@ -172,8 +196,62 @@ export default function DashboardPage() {
         return 85 + (Math.abs(hash) % 15);
     };
 
-    const activeRecommendations = recommended.length > 0 ? recommended : MOCK_OPPORTUNITIES;
+    const logDashboardOpportunityEvent = useCallback(
+        async (opportunity: OpportunityCard, interactionType: "impression" | "click") => {
+            if (!isMongoObjectId(opportunity.id)) {
+                return;
+            }
+            await logOpportunityInteraction({
+                opportunityId: opportunity.id,
+                interactionType,
+                rankingMode: opportunity.ranking_mode || "baseline",
+                experimentKey: opportunity.experiment_key || "ranking_mode",
+                experimentVariant: opportunity.experiment_variant || opportunity.ranking_mode || "baseline",
+                rankPosition: opportunity.rank_position ?? null,
+                matchScore: opportunity.match_score ?? null,
+                modelVersionId: opportunity.model_version_id ?? null,
+                features: {
+                    surface: "dashboard_page",
+                    widget: "live_recommendations",
+                },
+            });
+        },
+        []
+    );
+
+    const activeRecommendations = useMemo(
+        () =>
+            (recommended.length > 0 ? recommended : MOCK_OPPORTUNITIES).map((opportunity, idx) => ({
+                ...opportunity,
+                ranking_mode: opportunity.ranking_mode || "baseline",
+                experiment_key: opportunity.experiment_key || "ranking_mode",
+                experiment_variant: opportunity.experiment_variant || opportunity.ranking_mode || "baseline",
+                rank_position: opportunity.rank_position ?? idx + 1,
+            })),
+        [recommended]
+    );
     const activePosts = posts.length > 0 ? posts : MOCK_POSTS;
+
+    useEffect(() => {
+        const token = localStorage.getItem("access_token");
+        if (!token) {
+            return;
+        }
+        const impressionCandidates = activeRecommendations.filter((item) => isMongoObjectId(item.id));
+        if (impressionCandidates.length === 0) {
+            return;
+        }
+        const batchSignature = impressionCandidates
+            .map((item) => `${item.id}:${item.rank_position ?? ""}:${item.ranking_mode || "baseline"}`)
+            .join("|");
+        if (batchSignature === lastImpressionBatchRef.current) {
+            return;
+        }
+        lastImpressionBatchRef.current = batchSignature;
+        void Promise.allSettled(
+            impressionCandidates.map((opportunity) => logDashboardOpportunityEvent(opportunity, "impression"))
+        );
+    }, [activeRecommendations, logDashboardOpportunityEvent]);
 
     return (
         <div style={{ minHeight: '100vh', display: 'flex', background: 'var(--bg-base)', position: 'relative', overflow: 'hidden' }}>
@@ -318,7 +396,10 @@ export default function DashboardPage() {
                                         cursor: 'pointer',
                                         padding: '1rem 1.25rem'
                                     }}
-                                    onClick={() => router.push('/opportunities')}
+                                    onClick={() => {
+                                        void logDashboardOpportunityEvent(opp, "click");
+                                        router.push('/opportunities');
+                                    }}
                                 >
                                     <div style={{ display: 'flex', gap: '1.25rem', alignItems: 'center' }}>
                                         <div style={{

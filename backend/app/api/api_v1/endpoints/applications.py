@@ -63,6 +63,11 @@ async def list_my_applications(
 async def apply_to_opportunity(
     opportunity_id: PydanticObjectId,
     ranking_mode: Optional[str] = None,
+    experiment_key: Optional[str] = None,
+    experiment_variant: Optional[str] = None,
+    rank_position: Optional[int] = None,
+    match_score: Optional[float] = None,
+    model_version_id: Optional[str] = None,
     current_user: User = Depends(get_current_active_user)
 ) -> Any:
     """Automated application submission using Playwright browser automation."""
@@ -107,6 +112,11 @@ async def apply_to_opportunity(
         opportunity_id=opp.id,
         interaction_type="apply",
         ranking_mode=ranking_mode,
+        experiment_key=experiment_key,
+        experiment_variant=experiment_variant,
+        rank_position=rank_position,
+        match_score=match_score,
+        model_version_id=model_version_id,
     )
     
     return ApplicationResponse(

@@ -1,6 +1,6 @@
 "use client";
 import Sidebar from "@/components/Sidebar";
-import React, { startTransition, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import React, { startTransition, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { MapPin, Calendar, ExternalLink, Send, Bookmark } from "lucide-react";
 import Image from "next/image";
@@ -173,7 +173,7 @@ export default function OpportunitiesPage() {
         }
     });
 
-    const logOpportunityEvent = useEffectEvent(
+    const logOpportunityEvent = useCallback(
         async (opportunity: Opportunity, interactionType: "impression" | "click" | "save" | "apply") => {
             await logOpportunityInteraction({
                 opportunityId: opportunity.id,
@@ -189,7 +189,8 @@ export default function OpportunitiesPage() {
                     active_tab: activeTab,
                 },
             });
-        }
+        },
+        [activeTab]
     );
 
     useEffect(() => {
@@ -275,7 +276,7 @@ export default function OpportunitiesPage() {
                 )
             )
         );
-    }, [filtered, activeTab]);
+    }, [filtered, activeTab, logOpportunityEvent]);
 
     const handleSave = async (opportunity: Opportunity) => {
         setSavedOpportunityIds((current) => ({ ...current, [opportunity.id]: true }));
