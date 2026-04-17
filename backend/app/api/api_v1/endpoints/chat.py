@@ -1,4 +1,3 @@
-import os
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from typing import List, Optional
@@ -9,18 +8,26 @@ from app.core.config import settings
 
 router = APIRouter()
 
-# Initialize AsyncOpenAI client configured for OpenRouter using Pydantic Settings
-OPENROUTER_API_KEY = settings.OPENROUTER_API_KEY
-OPENROUTER_MODEL = settings.OPENROUTER_MODEL
+LLM_API_BASE_URL = (
+    (settings.LLM_API_BASE_URL or "").strip()
+    or (settings.OPENROUTER_BASE_URL or "").strip()
+    or "https://openrouter.ai/api/v1"
+)
+LLM_API_KEY = (settings.LLM_API_KEY or settings.OPENROUTER_API_KEY or "").strip() or None
+LLM_MODEL = (
+    (settings.LLM_MODEL or "").strip()
+    or (settings.OPENROUTER_MODEL or "").strip()
+    or "meta-llama/llama-3-8b-instruct:free"
+)
 
-if not OPENROUTER_API_KEY:
-    print("WARNING: OPENROUTER_API_KEY environment variable is missing. AI Chat will not function.")
+if not LLM_API_KEY:
+    print("WARNING: LLM_API_KEY/OPENROUTER_API_KEY environment variable is missing. AI Chat will not function.")
 
 # We MUST provide a fallback 'dummy' key so the AsyncOpenAI class itself doesn't crash on boot
 # If the user doesn't have an API key, we handle the error inside the route handler instead of crashing the whole server
 client = AsyncOpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=OPENROUTER_API_KEY or "dummy_key_to_prevent_boot_crash",
+    base_url=LLM_API_BASE_URL,
+    api_key=LLM_API_KEY or "dummy_key_to_prevent_boot_crash",
 )
 
 class ChatMessage(BaseModel):
@@ -48,7 +55,7 @@ async def chat_with_vidya(
     request: ChatRequest,
     current_user: User = Depends(get_current_user)
 ):
-    if not OPENROUTER_API_KEY:
+    if not LLM_API_KEY:
          raise HTTPException(
              status_code=status.HTTP_503_SERVICE_UNAVAILABLE, 
              detail="Underlying AI service is not configured (Missing API Key)."
@@ -68,13 +75,17 @@ async def chat_with_vidya(
                 api_messages.append({"role": msg.role, "content": msg.content})
                 
         response = await client.chat.completions.create(
-            model=OPENROUTER_MODEL,
+            model=LLM_MODEL,
             messages=api_messages,
-            # OpenRouter optional headers for ranking
-            extra_headers={
-                "HTTP-Referer": "http://localhost:3000", # Optional
-                "X-Title": "VidyaVerse AI", # Optional
-            }
+            # OpenRouter optional headers for ranking.
+            extra_headers=(
+                {
+                    "HTTP-Referer": "http://localhost:3000",
+                    "X-Title": "VidyaVerse AI",
+                }
+                if "openrouter.ai" in LLM_API_BASE_URL.lower()
+                else None
+            ),
         )
         
         if response.choices and len(response.choices) > 0:
@@ -84,7 +95,7 @@ async def chat_with_vidya(
              raise HTTPException(status_code=500, detail="Empty response received from AI Model")
              
     except Exception as e:
-        print(f"OpenRouter API Error: {str(e)}")
+        print(f"LLM API Error: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to generate AI response. The service might be temporarily overloaded or the model may be unavailable."

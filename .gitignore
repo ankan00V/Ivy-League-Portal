@@ -3,4 +3,8 @@ backend/venv/
 __pycache__/
 *.pyc
 .env
+backend/.env
+backend/.env.*
+!backend/.env.example
+!backend/.env.*.example
 backend/benchmarks/results.json

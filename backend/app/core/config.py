@@ -93,16 +93,25 @@ class Settings(BaseSettings):
     # AI Chatbot / OpenRouter
     OPENROUTER_API_KEY: Optional[str] = None
     OPENROUTER_MODEL: str = "meta-llama/llama-3-8b-instruct:free"
+    OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+
+    # Generic OpenAI-compatible LLM endpoint (preferred over OPENROUTER_* when set)
+    LLM_API_KEY: Optional[str] = None
+    LLM_MODEL: Optional[str] = None
+    LLM_API_BASE_URL: Optional[str] = None
 
     # Quality / safety evaluation (optional)
     LLM_JUDGE_ENABLED: bool = False
     LLM_JUDGE_MODEL: Optional[str] = None
+    LLM_JUDGE_API_KEY: Optional[str] = None
+    LLM_JUDGE_API_BASE_URL: Optional[str] = None
     LLM_JUDGE_MIN_SCORE: float = 0.55  # 0..1 gate when enabled
 
     # Embeddings / semantic ranking
     EMBEDDING_PROVIDER: str = "sentence_transformers"  # sentence_transformers | openai | auto
     EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
     OPENAI_API_KEY: Optional[str] = None
+    OPENAI_API_BASE_URL: Optional[str] = None
     OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
     SEMANTIC_DEDUP_THRESHOLD: float = 0.9
     VECTOR_STORE_PROVIDER: str = "mongo"  # mongo | memory

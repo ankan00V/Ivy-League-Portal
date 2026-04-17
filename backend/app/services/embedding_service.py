@@ -30,9 +30,14 @@ class EmbeddingService:
         self.provider = (settings.EMBEDDING_PROVIDER or "sentence_transformers").strip().lower()
         self.local_model_name = settings.EMBEDDING_MODEL
         self.openai_model = settings.OPENAI_EMBEDDING_MODEL
+        self.openai_base_url = (settings.OPENAI_API_BASE_URL or "").strip() or None
         self._local_model = None
         self._label_dim = 384
-        self._openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY) if settings.OPENAI_API_KEY else None
+        self._openai_client = (
+            AsyncOpenAI(api_key=settings.OPENAI_API_KEY, base_url=self.openai_base_url)
+            if settings.OPENAI_API_KEY
+            else None
+        )
         self._local_model_disabled = False
         self._local_model_failure_logged = False
 
@@ -129,11 +134,13 @@ class EmbeddingService:
         if not values:
             return np.empty((0, self._label_dim), dtype=np.float32)
 
-        if self.provider == "openai" and self._openai_client:
+        async def _embed_openai(values_: list[str]) -> np.ndarray | None:
+            if not self._openai_client:
+                return None
             try:
                 response = await self._openai_client.embeddings.create(
                     model=self.openai_model,
-                    input=values,
+                    input=values_,
                 )
                 vectors = np.asarray([row.embedding for row in response.data], dtype=np.float32)
                 vectors = self._normalize(vectors)
@@ -142,7 +149,24 @@ class EmbeddingService:
                 self._label_dim = int(vectors.shape[1])
                 return vectors
             except Exception as exc:
-                print(f"[EmbeddingService] OpenAI embeddings failed, falling back to local/hash: {exc}")
+                print(f"[EmbeddingService] OpenAI embeddings failed, falling back: {exc}")
+                return None
+
+        if self.provider == "openai":
+            vectors = await _embed_openai(values)
+            if vectors is not None:
+                return vectors
+            return await asyncio.to_thread(self.embed_texts_sync, values)
+
+        if self.provider in {"sentence_transformers", "auto"}:
+            local_or_hash = await asyncio.to_thread(self.embed_texts_sync, values)
+            if not self._local_model_disabled:
+                return local_or_hash
+            # sentence-transformers failed; upgrade fallback quality to OpenAI if configured.
+            vectors = await _embed_openai(values)
+            if vectors is not None:
+                return vectors
+            return local_or_hash
 
         return await asyncio.to_thread(self.embed_texts_sync, values)
 
@@ -169,6 +193,7 @@ class EmbeddingService:
             "embedding",
             self.provider,
             self.local_model_name,
+            self.openai_base_url or "",
             self.openai_model,
             cleaned.lower(),
         )

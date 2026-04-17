@@ -21,10 +21,34 @@ from app.services.ranking_metrics import (
 
 class EvaluationService:
     def __init__(self) -> None:
-        self._judge_client = AsyncOpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=settings.OPENROUTER_API_KEY or "dummy_key_to_prevent_boot_crash",
+        self._api_base_url = (
+            (settings.LLM_API_BASE_URL or "").strip()
+            or (settings.OPENROUTER_BASE_URL or "").strip()
+            or "https://openrouter.ai/api/v1"
         )
+        self._api_key = (settings.LLM_API_KEY or settings.OPENROUTER_API_KEY or "").strip() or None
+        self._default_model = (
+            (settings.LLM_MODEL or "").strip()
+            or (settings.OPENROUTER_MODEL or "").strip()
+            or "meta-llama/llama-3-8b-instruct:free"
+        )
+        self._judge_api_base_url = (
+            (settings.LLM_JUDGE_API_BASE_URL or "").strip()
+            or self._api_base_url
+        )
+        self._judge_api_key = (settings.LLM_JUDGE_API_KEY or self._api_key or "").strip() or None
+        self._judge_client = AsyncOpenAI(
+            base_url=self._judge_api_base_url,
+            api_key=self._judge_api_key or "dummy_key_to_prevent_boot_crash",
+        )
+
+    def _judge_headers(self, *, title: str) -> dict[str, str] | None:
+        if "openrouter.ai" not in self._judge_api_base_url.lower():
+            return None
+        return {
+            "HTTP-Referer": "http://localhost:3000",
+            "X-Title": title,
+        }
 
     def _extract_json(self, content: str) -> dict[str, Any]:
         raw = (content or "").strip()
@@ -55,10 +79,10 @@ class EvaluationService:
         expected_keywords: list[str],
         rubric: Optional[str],
     ) -> Optional[dict[str, Any]]:
-        if not settings.OPENROUTER_API_KEY:
+        if not self._judge_api_key:
             return None
 
-        model = (settings.LLM_JUDGE_MODEL or settings.OPENROUTER_MODEL).strip()
+        model = ((settings.LLM_JUDGE_MODEL or "").strip() or self._default_model).strip()
         judge_prompt = {
             "generated_text": generated_text,
             "expected_keywords": expected_keywords,
@@ -82,10 +106,7 @@ class EvaluationService:
                 },
                 {"role": "user", "content": json.dumps(judge_prompt)},
             ],
-            extra_headers={
-                "HTTP-Referer": "http://localhost:3000",
-                "X-Title": "VidyaVerse LLM Judge",
-            },
+            extra_headers=self._judge_headers(title="VidyaVerse LLM Judge"),
         )
 
         content = ""
@@ -121,10 +142,10 @@ class EvaluationService:
         Optional LLM-as-judge for RAG outputs.
         Returns {score:0..1, rationale, flags, model} or None if judge unavailable.
         """
-        if not settings.OPENROUTER_API_KEY:
+        if not self._judge_api_key:
             return None
 
-        model = (settings.LLM_JUDGE_MODEL or settings.OPENROUTER_MODEL).strip()
+        model = ((settings.LLM_JUDGE_MODEL or "").strip() or self._default_model).strip()
         judge_prompt = {
             "query": query,
             "candidates": [
@@ -159,10 +180,7 @@ class EvaluationService:
                 },
                 {"role": "user", "content": json.dumps(judge_prompt)},
             ],
-            extra_headers={
-                "HTTP-Referer": "http://localhost:3000",
-                "X-Title": "VidyaVerse RAG Judge",
-            },
+            extra_headers=self._judge_headers(title="VidyaVerse RAG Judge"),
         )
 
         content = ""

@@ -22,10 +22,30 @@ from app.services.vector_service import opportunity_vector_service
 
 class RAGService:
     def __init__(self) -> None:
-        self._client = AsyncOpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=settings.OPENROUTER_API_KEY or "dummy_key_to_prevent_boot_crash",
+        self._api_base_url = (
+            (settings.LLM_API_BASE_URL or "").strip()
+            or (settings.OPENROUTER_BASE_URL or "").strip()
+            or "https://openrouter.ai/api/v1"
         )
+        self._api_key = (settings.LLM_API_KEY or settings.OPENROUTER_API_KEY or "").strip() or None
+        self._model = (
+            (settings.LLM_MODEL or "").strip()
+            or (settings.OPENROUTER_MODEL or "").strip()
+            or "meta-llama/llama-3-8b-instruct:free"
+        )
+        self._client = AsyncOpenAI(
+            base_url=self._api_base_url,
+            api_key=self._api_key or "dummy_key_to_prevent_boot_crash",
+        )
+
+    def _extra_headers(self, *, title: str) -> dict[str, str] | None:
+        # OpenRouter supports optional ranking headers; other OpenAI-compatible hosts may ignore/reject them.
+        if "openrouter.ai" not in self._api_base_url.lower():
+            return None
+        return {
+            "HTTP-Referer": "http://localhost:3000",
+            "X-Title": title,
+        }
 
     def _profile_context(self, profile: Optional[Profile]) -> str:
         if not profile:
@@ -213,7 +233,7 @@ class RAGService:
         retrieval_payload: dict[str, Any],
         profile: Optional[Profile],
     ) -> dict[str, Any]:
-        if not settings.OPENROUTER_API_KEY:
+        if not self._api_key:
             return self._heuristic_insight(query, retrieval_payload.get("results", []))
 
         top_candidates = retrieval_payload.get("results", [])[:6]
@@ -261,12 +281,9 @@ class RAGService:
         ]
 
         response = await self._client.chat.completions.create(
-            model=settings.OPENROUTER_MODEL,
+            model=self._model,
             messages=messages,
-            extra_headers={
-                "HTTP-Referer": "http://localhost:3000",
-                "X-Title": "VidyaVerse RAG",
-            },
+            extra_headers=self._extra_headers(title="VidyaVerse RAG"),
         )
 
         content = ""
@@ -298,7 +315,7 @@ class RAGService:
         insights_model = self._apply_hallucination_checks(insights_model, results)
 
         # Optional LLM-as-judge quality gate (disabled by default).
-        if settings.LLM_JUDGE_ENABLED and settings.OPENROUTER_API_KEY:
+        if settings.LLM_JUDGE_ENABLED and self._api_key:
             judge = await evaluation_service.judge_rag_response(
                 query=query,
                 candidates=results,

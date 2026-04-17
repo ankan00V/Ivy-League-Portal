@@ -235,6 +235,22 @@ playwright install chromium
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
+Production env templates:
+```bash
+backend/.env.example
+backend/.env.production.example
+```
+
+OpenAI-compatible LLM routing (NVIDIA/OpenRouter/etc) is controlled by:
+- `LLM_API_BASE_URL`
+- `LLM_API_KEY`
+- `LLM_MODEL`
+- optional judge overrides: `LLM_JUDGE_API_BASE_URL`, `LLM_JUDGE_API_KEY`, `LLM_JUDGE_MODEL`
+
+Embedding fallback routing:
+- primary local model: `EMBEDDING_PROVIDER=sentence_transformers`
+- fallback endpoint: `OPENAI_API_KEY` (+ optional `OPENAI_API_BASE_URL`)
+
 RAG contract tests:
 ```bash
 cd backend
