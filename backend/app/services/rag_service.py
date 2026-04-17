@@ -40,7 +40,7 @@ class RAGService:
 
     async def retrieve(self, query: str, top_k: int = 8) -> dict[str, Any]:
         intent = await nlp_service.classify_intent(query)
-        entities = nlp_service.extract_entities(query)
+        entities = await nlp_service.extract_entities_with_model(query)
 
         filters = {
             "intent": intent.get("intent"),

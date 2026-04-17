@@ -9,10 +9,13 @@ from pydantic import BaseModel, Field
 from app.api.deps import get_current_admin_user
 from app.core.config import settings
 from app.models.model_drift_report import ModelDriftReport
+from app.models.nlp_model_version import NLPModelVersion
 from app.models.ranking_model_version import RankingModelVersion
 from app.models.user import User
 from app.services.mlops.drift_service import drift_service
 from app.services.mlops.retraining_service import retraining_service
+from app.services.nlp_model_service import ENTITY_KEYS, nlp_model_service
+from app.services.nlp_service import nlp_service
 from app.services.ranking_model_service import ranking_model_service
 
 router = APIRouter()
@@ -47,6 +50,68 @@ class ModelVersionResponse(BaseModel):
     training_metadata: dict[str, Any] = Field(default_factory=dict)
     model_card: dict[str, Any] = Field(default_factory=dict)
     notes: Optional[str] = None
+
+
+class NLPExampleIn(BaseModel):
+    text: str = Field(min_length=2)
+    intent: str = Field(min_length=2)
+    entities: dict[str, list[str]] = Field(default_factory=dict)
+
+
+class NLPTrainRequest(BaseModel):
+    examples: list[NLPExampleIn] = Field(min_length=20)
+    name: str = "nlp-model-v1"
+    notes: Optional[str] = None
+    auto_activate: bool = True
+    min_intent_macro_f1_for_activation: float = Field(default=0.55, ge=0.0, le=1.0)
+
+
+class NLPEvaluateRequest(BaseModel):
+    examples: list[NLPExampleIn] = Field(min_length=5)
+
+
+class NLPModelVersionResponse(BaseModel):
+    id: str
+    name: str
+    is_active: bool
+    metrics: dict[str, float]
+    training_rows: int
+    split_summary: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    confusion_matrix: dict[str, dict[str, int]] = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+    notes: Optional[str] = None
+
+
+def _f1(precision: float, recall: float) -> float:
+    if precision <= 0.0 or recall <= 0.0:
+        return 0.0
+    return 2.0 * precision * recall / (precision + recall)
+
+
+def _normalize_entities(payload: dict[str, list[str]]) -> dict[str, set[str]]:
+    normalized: dict[str, set[str]] = {}
+    for key in ENTITY_KEYS:
+        values = payload.get(key) or []
+        normalized[key] = {str(value).strip().lower() for value in values if str(value).strip()}
+    return normalized
+
+
+def _serialize_nlp_model(model: NLPModelVersion) -> NLPModelVersionResponse:
+    return NLPModelVersionResponse(
+        id=str(model.id),
+        name=model.name,
+        is_active=bool(model.is_active),
+        metrics={str(k): float(v) for k, v in (model.metrics or {}).items()},
+        training_rows=int(model.training_rows or 0),
+        split_summary=dict(model.split_summary or {}),
+        metadata=dict(model.metadata or {}),
+        confusion_matrix={str(k): {str(pk): int(pv) for pk, pv in (row or {}).items()} for k, row in (model.confusion_matrix or {}).items()},
+        created_at=model.created_at,
+        updated_at=model.updated_at,
+        notes=model.notes,
+    )
 
 
 @router.get("/models", response_model=list[ModelVersionResponse])
@@ -100,6 +165,102 @@ async def activate_model(model_id: str, _: User = Depends(get_current_admin_user
         model_card=dict(model.model_card or {}),
         notes=model.notes,
     )
+
+
+@router.get("/nlp/models", response_model=list[NLPModelVersionResponse])
+async def list_nlp_models(_: User = Depends(get_current_admin_user)) -> Any:
+    models = await NLPModelVersion.find_many().sort("-created_at").limit(50).to_list()
+    return [_serialize_nlp_model(model) for model in models]
+
+
+@router.post("/nlp/models/{model_id}/activate", response_model=NLPModelVersionResponse)
+async def activate_nlp_model(model_id: str, _: User = Depends(get_current_admin_user)) -> Any:
+    try:
+        model = await nlp_model_service.activate(model_id=model_id)
+    except ValueError as exc:
+        if str(exc) == "model_not_found":
+            raise HTTPException(status_code=404, detail="NLP model not found") from exc
+        raise
+    return _serialize_nlp_model(model)
+
+
+@router.post("/nlp/train", response_model=dict)
+async def train_nlp_model(request: NLPTrainRequest, _: User = Depends(get_current_admin_user)) -> Any:
+    model = await nlp_model_service.train_and_register(
+        examples=[example.model_dump() for example in request.examples],
+        name=request.name,
+        notes=request.notes,
+        auto_activate=request.auto_activate,
+        min_intent_macro_f1_for_activation=request.min_intent_macro_f1_for_activation,
+    )
+    return {
+        "status": "ok",
+        "model": _serialize_nlp_model(model).model_dump(),
+    }
+
+
+@router.post("/nlp/evaluate", response_model=dict)
+async def evaluate_nlp_model(request: NLPEvaluateRequest, _: User = Depends(get_current_admin_user)) -> Any:
+    examples = request.examples
+    labels = sorted({example.intent.strip().lower() for example in examples if example.intent.strip()})
+    if not labels:
+        raise HTTPException(status_code=400, detail="No valid intent labels in examples")
+
+    confusion: dict[str, dict[str, int]] = {label: {pred: 0 for pred in labels} for label in labels}
+    correct = 0
+    entity_tp = 0
+    entity_fp = 0
+    entity_fn = 0
+
+    for row in examples:
+        expected_intent = row.intent.strip().lower()
+        prediction = await nlp_service.classify_intent(row.text)
+        predicted_intent = str(prediction.get("intent") or "").strip().lower() or "internships"
+        if expected_intent not in confusion:
+            confusion[expected_intent] = {}
+        confusion[expected_intent][predicted_intent] = confusion[expected_intent].get(predicted_intent, 0) + 1
+        if predicted_intent == expected_intent:
+            correct += 1
+
+        predicted_entities = await nlp_service.extract_entities_with_model(row.text)
+        expected_entities = _normalize_entities(row.entities)
+        actual_entities = _normalize_entities(predicted_entities)
+        for key in ENTITY_KEYS:
+            pred_set = actual_entities.get(key, set())
+            true_set = expected_entities.get(key, set())
+            entity_tp += len(pred_set.intersection(true_set))
+            entity_fp += len(pred_set - true_set)
+            entity_fn += len(true_set - pred_set)
+
+    intent_accuracy = float(correct / max(1, len(examples)))
+    per_label_f1: list[float] = []
+    for label in labels:
+        tp = int(confusion.get(label, {}).get(label, 0))
+        fp = sum(int(confusion.get(other, {}).get(label, 0)) for other in labels if other != label)
+        fn = sum(int(confusion.get(label, {}).get(other, 0)) for other in labels if other != label)
+        precision = float(tp / max(1, tp + fp))
+        recall = float(tp / max(1, tp + fn))
+        per_label_f1.append(_f1(precision, recall))
+    intent_macro_f1 = float(sum(per_label_f1) / max(1, len(per_label_f1)))
+
+    entity_precision = float(entity_tp / max(1, entity_tp + entity_fp))
+    entity_recall = float(entity_tp / max(1, entity_tp + entity_fn))
+    entity_micro_f1 = _f1(entity_precision, entity_recall)
+
+    return {
+        "status": "ok",
+        "rows": len(examples),
+        "intent_metrics": {
+            "accuracy": round(intent_accuracy, 6),
+            "macro_f1": round(intent_macro_f1, 6),
+            "confusion_matrix": confusion,
+        },
+        "entity_metrics": {
+            "precision": round(entity_precision, 6),
+            "recall": round(entity_recall, 6),
+            "micro_f1": round(entity_micro_f1, 6),
+        },
+    }
 
 
 @router.post("/retrain", response_model=dict)

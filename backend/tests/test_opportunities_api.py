@@ -128,6 +128,25 @@ class TestOpportunitiesAPI(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(log_event.await_args.kwargs["experiment_variant"], "semantic")
         self.assertEqual(log_event.await_args.kwargs["rank_position"], 2)
 
+    async def test_log_opportunity_interaction_rejects_simulated_traffic_type(self) -> None:
+        user = DummyUser()
+        payload = opportunities_endpoint.InteractionEventCreate(
+            opportunity_id=PydanticObjectId("64b64b64b64b64b64b64b64e"),
+            interaction_type="click",
+            ranking_mode="semantic",
+            experiment_key="ranking_mode",
+            experiment_variant="semantic",
+            rank_position=1,
+            traffic_type="simulated",
+        )
+
+        with patch.object(opportunities_endpoint.Opportunity, "get", new=AsyncMock(return_value=object())):
+            with self.assertRaises(opportunities_endpoint.HTTPException) as context:
+                await opportunities_endpoint.log_opportunity_interaction(payload=payload, current_user=user)
+
+        self.assertEqual(context.exception.status_code, 400)
+        self.assertIn("traffic_type must be 'real'", str(context.exception.detail))
+
 
 if __name__ == "__main__":
     unittest.main()

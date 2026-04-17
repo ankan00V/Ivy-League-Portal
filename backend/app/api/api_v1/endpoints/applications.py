@@ -133,6 +133,7 @@ async def apply_to_opportunity(
         rank_position=tracking_rank_position,
         match_score=match_score,
         model_version_id=model_version_id,
+        traffic_type="real",
     )
     
     return ApplicationResponse(

@@ -44,6 +44,39 @@ class TestExperimentAnalyticsService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(report["comparisons"][0]["control"], "baseline")
         self.assertEqual(report["comparisons"][0]["variant"], "ml")
         self.assertGreater(report["comparisons"][0]["lift"], 0.0)
+        self.assertIn("diagnostics", report)
+        self.assertIn("srm", report["diagnostics"])
+        self.assertTrue(report["diagnostics"]["srm"]["eligible"])
+        self.assertIn("power", report["comparisons"][0])
+        self.assertTrue(report["comparisons"][0]["power"]["eligible"])
+
+    async def test_report_srm_handles_no_impressions(self) -> None:
+        experiment = SimpleNamespace(
+            key="ranking_mode",
+            status="active",
+            variants=[
+                ExperimentVariant(name="baseline", weight=1.0, is_control=True),
+                ExperimentVariant(name="semantic", weight=1.0, is_control=False),
+            ],
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        service = ExperimentAnalyticsService()
+
+        with patch.object(
+            service,
+            "_counts_by_variant",
+            new=AsyncMock(
+                return_value={
+                    "baseline": VariantCounts(impressions=0, conversions=0),
+                    "semantic": VariantCounts(impressions=0, conversions=0),
+                }
+            ),
+        ):
+            report = await service.report(experiment=experiment, days=14, conversion_types=("click",))
+
+        self.assertFalse(report["diagnostics"]["srm"]["eligible"])
+        self.assertEqual(report["diagnostics"]["srm"]["reason"], "no_impressions")
 
 
 if __name__ == "__main__":

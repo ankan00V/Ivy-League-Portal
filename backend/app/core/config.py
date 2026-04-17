@@ -105,6 +105,8 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: Optional[str] = None
     OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
     SEMANTIC_DEDUP_THRESHOLD: float = 0.9
+    VECTOR_STORE_PROVIDER: str = "mongo"  # mongo | memory
+    VECTOR_STORE_PERSISTENCE_ENABLED: bool = True
 
     # Learned ranker (LightGBM/XGBoost) for real personalization
     LEARNED_RANKER_ENABLED: bool = False

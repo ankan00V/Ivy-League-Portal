@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Bot, ExternalLink, Loader2, MessageSquareQuote, Sparkles, ThumbsDown, ThumbsUp } from "lucide-react";
 
 import { apiUrl } from "@/lib/api";
+import { isMongoObjectId, logOpportunityInteraction } from "@/lib/opportunity-interactions";
 
 interface Citation {
   opportunity_id: string;
@@ -43,6 +44,36 @@ export default function AskAIPanel({ surface, suggestedQueries }: AskAIPanelProp
   const [notice, setNotice] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<"up" | "down" | null>(null);
   const [feedbackNotice, setFeedbackNotice] = useState<string | null>(null);
+  const lastImpressionBatchRef = useRef<string>("");
+
+  const logAskAIInteraction = useCallback(async (
+    item: AskAIResponse["insights"]["top_opportunities"][number],
+    interactionType: "impression" | "click",
+    rankPosition: number,
+    requestId: string,
+    resolvedQuery: string,
+    metadata?: Record<string, unknown>
+  ): Promise<void> => {
+    if (!isMongoObjectId(item.opportunity_id)) {
+      return;
+    }
+    await logOpportunityInteraction({
+      opportunityId: item.opportunity_id,
+      interactionType,
+      rankingMode: "semantic",
+      experimentKey: "ask_ai_rag",
+      experimentVariant: "semantic",
+      rankPosition,
+      matchScore: item.match_score,
+      query: resolvedQuery,
+      features: {
+        surface,
+        ask_ai_request_id: requestId,
+        ask_ai_urgency: item.urgency,
+        ...metadata,
+      },
+    });
+  }, [surface]);
 
   const runAskAI = async (nextQuery?: string) => {
     const resolvedQuery = (nextQuery ?? query).trim();
@@ -124,6 +155,28 @@ export default function AskAIPanel({ surface, suggestedQueries }: AskAIPanelProp
       setFeedbackNotice(error instanceof Error ? error.message : "Could not save feedback.");
     }
   };
+
+  useEffect(() => {
+    const token = localStorage.getItem("access_token");
+    if (!token || !response || response.insights.top_opportunities.length === 0) {
+      return;
+    }
+    const batchSignature = `${response.request_id}:${response.insights.top_opportunities
+      .map((item, idx) => `${item.opportunity_id}:${idx + 1}`)
+      .join("|")}`;
+    if (batchSignature === lastImpressionBatchRef.current) {
+      return;
+    }
+    lastImpressionBatchRef.current = batchSignature;
+
+    void Promise.allSettled(
+      response.insights.top_opportunities.map((item, idx) =>
+        logAskAIInteraction(item, "impression", idx + 1, response.request_id, response.query, {
+          origin: "ask_ai_top_opportunity",
+        })
+      )
+    );
+  }, [logAskAIInteraction, response]);
 
   return (
     <section
@@ -250,7 +303,7 @@ export default function AskAIPanel({ surface, suggestedQueries }: AskAIPanelProp
           </div>
 
           <div style={{ display: "grid", gap: "0.85rem" }}>
-            {response.insights.top_opportunities.map((item) => (
+            {response.insights.top_opportunities.map((item, index) => (
               <article key={item.opportunity_id} className="card-panel" style={{ display: "grid", gap: "0.8rem", background: "var(--bg-base)" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: "1rem", alignItems: "start", flexWrap: "wrap" }}>
                   <div>
@@ -279,6 +332,13 @@ export default function AskAIPanel({ surface, suggestedQueries }: AskAIPanelProp
                       target="_blank"
                       rel="noreferrer"
                       className="btn-secondary"
+                      onClick={() =>
+                        void logAskAIInteraction(item, "click", index + 1, response.request_id, response.query, {
+                          origin: "ask_ai_citation",
+                          citation_url: citation.url,
+                          citation_title: citation.title || citation.source || null,
+                        })
+                      }
                       style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem", border: "2px solid var(--border-subtle)", padding: "0.55rem 0.85rem", fontSize: "0.88rem" }}
                     >
                       <MessageSquareQuote size={14} />

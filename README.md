@@ -10,12 +10,15 @@ Students discover internships, research roles, scholarships, and hackathons acro
   - intent classification (`internships`, `research`, `scholarships`, `hackathons`)
   - NER extraction (`deadlines`, `locations`, `companies`, `eligibility`)
 - Vector retrieval service with FAISS acceleration when available and NumPy cosine fallback.
+- Persistent vector index adapter (`mongo` provider) with in-memory fallback (`memory`) and text-hash invalidation.
 - RAG service (`query -> retrieval -> structured insight generation`) exposed via `POST /api/v1/opportunities/ask-ai`.
 - Recommendation stack with ranking modes: `baseline`, `semantic`, `ml`, `ab`.
-- Interaction logging + experiment analytics endpoints (`CTR`, `lift`, experiment reports).
+- Interaction logging + experiment analytics endpoints (`CTR`, `lift`, experiment reports) with explicit `real` vs `simulated` traffic typing.
+- Experiment-science diagnostics: SRM checks (chi-square allocation test) and per-variant power/MDE diagnostics.
 - Evaluation endpoints for ranking quality (`Precision@K`, `Recall@K`, `nDCG@K`, `MRR`) and LLM response quality.
 - Semantic deduplication during scraper upserts using embedding similarity thresholds.
 - MLOps endpoints/services for retraining and drift checks.
+- NLP model lifecycle endpoints for training, evaluation, model listing, and activation (`/api/v1/mlops/nlp/*`).
 
 ### Platform and Data Pipeline
 - Multi-source ingestion: Ivy RSS + Indian opportunity sources.
@@ -192,6 +195,7 @@ From live `ranking_mode` experiment (baseline vs ml), 14-day window:
 - `GET /api/v1/opportunities/experiments/ctr`
 - `GET /api/v1/opportunities/experiments/lift`
 - `GET /api/v1/experiments/{experiment_key}/report`
+- `GET /api/v1/experiments/reports/side-by-side` (real vs simulated bundles)
 
 ## Same-Day Real Pilot (10-20 Testers)
 1. Keep experiment `ranking_mode` active.
@@ -213,6 +217,10 @@ From live `ranking_mode` experiment (baseline vs ml), 14-day window:
 - `GET /api/v1/opportunities/experiments/lift`
 - `POST /api/v1/mlops/retrain`
 - `GET /api/v1/mlops/models`
+- `POST /api/v1/mlops/nlp/train`
+- `POST /api/v1/mlops/nlp/evaluate`
+- `GET /api/v1/mlops/nlp/models`
+- `POST /api/v1/mlops/nlp/models/{model_id}/activate`
 - `GET /api/v1/mlops/drift`
 - `GET /api/v1/mlops/lifecycle`
 
@@ -238,6 +246,13 @@ venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 cd frontend
 npm install
 npm run dev
+```
+
+Frontend E2E interaction coverage (Playwright):
+```bash
+cd frontend
+npx playwright install chromium
+npm run e2e
 ```
 
 ### Bootstrap Ranking Data + Model Version (Staging/Prod Warmup)

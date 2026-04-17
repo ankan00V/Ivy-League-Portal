@@ -15,6 +15,7 @@ from app.models.application import Application
 from app.models.opportunity import Opportunity
 from app.models.profile import Profile
 from app.models.rag_feedback_event import RAGFeedbackEvent
+from app.models.traffic import TrafficType
 from app.models.user import User
 from app.schemas.rag import RAGAskResponse
 from app.services.ai_engine import ai_system
@@ -65,6 +66,7 @@ class InteractionEventCreate(BaseModel):
     ranking_mode: Optional[str] = None
     experiment_key: Optional[str] = None
     experiment_variant: Optional[str] = None
+    traffic_type: TrafficType = "real"
     query: Optional[str] = None
     model_version_id: Optional[str] = None
     rank_position: Optional[int] = None
@@ -294,6 +296,7 @@ async def get_personalized_recommendations(
                     }
                     for idx, item in enumerate(ranked)
                 ],
+                traffic_type="real",
             )
 
         await ranking_request_telemetry_service.log(
@@ -308,6 +311,7 @@ async def get_personalized_recommendations(
             model_version_id=meta.get("model_version_id"),
             results_count=len(ranked),
             freshness_seconds=_freshness_seconds([item["opportunity"] for item in ranked]),
+            traffic_type="real",
         )
         return [_to_recommended_response(item) for item in ranked]
     except Exception as exc:
@@ -320,6 +324,7 @@ async def get_personalized_recommendations(
             ranking_mode=requested_mode,
             results_count=0,
             error_code=exc.__class__.__name__,
+            traffic_type="real",
         )
         raise
 
@@ -390,6 +395,7 @@ async def get_smart_shortlist(
                     }
                     for idx, item in enumerate(ranked)
                 ],
+                traffic_type="real",
             )
 
         await ranking_request_telemetry_service.log(
@@ -404,6 +410,7 @@ async def get_smart_shortlist(
             model_version_id=meta.get("model_version_id"),
             results_count=len(ranked),
             freshness_seconds=_freshness_seconds([item["opportunity"] for item in ranked]),
+            traffic_type="real",
         )
         return [_to_recommended_response(item) for item in ranked]
     except Exception as exc:
@@ -416,6 +423,7 @@ async def get_smart_shortlist(
             ranking_mode=requested_mode,
             results_count=0,
             error_code=exc.__class__.__name__,
+            traffic_type="real",
         )
         raise
 
@@ -437,6 +445,12 @@ async def log_opportunity_interaction(
     tracking_experiment_key = (payload.experiment_key or "").strip() or None
     tracking_experiment_variant = (payload.experiment_variant or "").strip() or None
     tracking_rank_position = payload.rank_position
+    tracking_traffic_type = (payload.traffic_type or "real").strip().lower()
+    if tracking_traffic_type not in {"real", "simulated"}:
+        raise HTTPException(status_code=400, detail="Invalid traffic_type")
+    if tracking_traffic_type != "real":
+        # Public client endpoint should not ingest simulated events.
+        raise HTTPException(status_code=400, detail="traffic_type must be 'real' for live interactions")
 
     if payload.interaction_type in {"impression", "click", "save", "apply"}:
         required_fields: dict[str, Any] = {
@@ -473,6 +487,7 @@ async def log_opportunity_interaction(
         rank_position=tracking_rank_position,
         match_score=payload.match_score,
         features=payload.features,
+        traffic_type="real",
     )
 
     return {
@@ -485,21 +500,23 @@ async def log_opportunity_interaction(
 @router.get("/experiments/ctr", response_model=list[dict])
 async def get_ctr_by_mode(
     days: int = 30,
+    traffic_type: Literal["all", "real", "simulated"] = "real",
     _: User = Depends(get_current_admin_user),
 ) -> Any:
-    return await interaction_service.ctr_by_mode(days=days)
+    return await interaction_service.ctr_by_mode(days=days, traffic_type=traffic_type)
 
 
 @router.get("/experiments/lift", response_model=dict)
 async def get_lift_vs_baseline(
     days: int = 30,
     baseline_mode: str = "baseline",
+    traffic_type: Literal["all", "real", "simulated"] = "real",
     _: User = Depends(get_current_admin_user),
 ) -> Any:
     """
     Computes CTR/apply_rate/save_rate per ranking mode + lift vs baseline.
     """
-    return await interaction_service.lift_vs_baseline(days=days, baseline_mode=baseline_mode)
+    return await interaction_service.lift_vs_baseline(days=days, baseline_mode=baseline_mode, traffic_type=traffic_type)
 
 
 @router.get("/ask-ai/schema", response_model=dict)
@@ -526,6 +543,7 @@ async def ask_ai_shortlist(
             success=True,
             user_id=current_user.id,
             results_count=len(result.get("results") or []),
+            traffic_type="real",
         )
         return result
     except Exception as exc:
@@ -536,6 +554,7 @@ async def ask_ai_shortlist(
             success=False,
             user_id=current_user.id,
             error_code=exc.__class__.__name__,
+            traffic_type="real",
         )
         raise
 

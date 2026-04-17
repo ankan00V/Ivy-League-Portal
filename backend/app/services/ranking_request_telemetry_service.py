@@ -5,6 +5,7 @@ from typing import Optional
 from beanie import PydanticObjectId
 
 from app.models.ranking_request_telemetry import RankingRequestTelemetry
+from app.models.traffic import TrafficType
 
 
 class RankingRequestTelemetryService:
@@ -23,6 +24,7 @@ class RankingRequestTelemetryService:
         results_count: int = 0,
         freshness_seconds: float | None = None,
         error_code: str | None = None,
+        traffic_type: TrafficType = "real",
     ) -> RankingRequestTelemetry:
         event = RankingRequestTelemetry(
             user_id=user_id,
@@ -37,6 +39,7 @@ class RankingRequestTelemetryService:
             results_count=max(0, int(results_count)),
             freshness_seconds=None if freshness_seconds is None else max(0.0, float(freshness_seconds)),
             error_code=(error_code or None),
+            traffic_type=traffic_type,
         )
         await event.insert()
         return event

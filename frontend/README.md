@@ -57,5 +57,18 @@ That gives:
 ## Notes
 
 - `allowedDevOrigins` in `next.config.ts` already includes `web.test`.
+- Opportunity surfaces now enforce tracking metadata for interaction logs:
+  - `ranking_mode`, `experiment_key`, `experiment_variant`, `rank_position`
+  - Ask AI shortlist cards and citation clicks are logged with `experiment_key=ask_ai_rag`.
 - The opportunity pages expect a live backend for recommendations, interactions, social content, and Ask AI.
 - If the backend is unavailable, the UI falls back where possible and surfaces retry notices on the opportunities feed.
+
+## E2E Checks
+
+Playwright tests validate interaction payload contracts across feed and Ask AI surfaces.
+
+```bash
+npm install
+npx playwright install chromium
+npm run e2e
+```

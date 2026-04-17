@@ -21,12 +21,31 @@ def _percentile(values: list[float], q: float) -> float:
 
 
 class RolloutGuardrailService:
+    def _matches_traffic_type(self, *, value: str | None, traffic_type: str) -> bool:
+        normalized_filter = (traffic_type or "all").strip().lower()
+        if normalized_filter == "all":
+            return True
+        normalized_value = (value or "").strip().lower()
+        if normalized_filter == "real":
+            return normalized_value in {"", "real"}
+        if normalized_filter == "simulated":
+            return normalized_value == "simulated"
+        return False
+
     async def _mode_request_metrics(self, *, mode: str, days: int) -> dict[str, float]:
         since = datetime.utcnow() - timedelta(days=max(1, min(int(days), 365)))
         rows = await RankingRequestTelemetry.find_many(
             RankingRequestTelemetry.created_at >= since,
             RankingRequestTelemetry.ranking_mode == mode,
         ).to_list()
+        rows = [
+            row
+            for row in rows
+            if self._matches_traffic_type(
+                value=getattr(row, "traffic_type", None),
+                traffic_type="real",
+            )
+        ]
         if not rows:
             return {
                 "requests": 0.0,
@@ -56,7 +75,7 @@ class RolloutGuardrailService:
         baseline_mode: str,
         days: int = 30,
     ) -> dict[str, Any]:
-        interaction_rows = await interaction_service.ctr_by_mode(days=days)
+        interaction_rows = await interaction_service.ctr_by_mode(days=days, traffic_type="real")
         interaction_map = {str(row.get("mode") or ""): row for row in interaction_rows}
         candidate_interactions = interaction_map.get(candidate_mode) or {}
         baseline_interactions = interaction_map.get(baseline_mode) or {}

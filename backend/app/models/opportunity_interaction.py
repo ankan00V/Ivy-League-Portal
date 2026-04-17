@@ -4,6 +4,8 @@ from typing import Any, Literal, Optional
 from beanie import Document, PydanticObjectId
 from pydantic import Field
 
+from app.models.traffic import TrafficType
+
 InteractionType = Literal["impression", "view", "click", "apply", "save"]
 RankingMode = Literal["baseline", "semantic", "ml", "ab"]
 
@@ -20,6 +22,7 @@ class OpportunityInteraction(Document):
     rank_position: Optional[int] = None
     match_score: Optional[float] = None
     features: Optional[dict[str, Any]] = None
+    traffic_type: TrafficType = Field(default="real", index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     class Settings:
@@ -32,5 +35,6 @@ class OpportunityInteraction(Document):
             "experiment_key",
             "experiment_variant",
             "model_version_id",
+            "traffic_type",
             "created_at",
         ]

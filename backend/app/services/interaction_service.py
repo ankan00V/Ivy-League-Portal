@@ -7,9 +7,35 @@ from typing import Any, Iterable, Optional
 from beanie import PydanticObjectId
 
 from app.models.opportunity_interaction import OpportunityInteraction
+from app.models.traffic import TrafficType
 
 
 class InteractionService:
+    def _traffic_type_matches(
+        self,
+        *,
+        event_traffic_type: Optional[str],
+        event_experiment_key: Optional[str],
+        filter_traffic_type: str,
+    ) -> bool:
+        normalized_filter = (filter_traffic_type or "all").strip().lower()
+        if normalized_filter == "all":
+            return True
+
+        normalized_value = (event_traffic_type or "").strip().lower()
+        if normalized_filter == "real":
+            # Backward-compatible: missing traffic_type is treated as real.
+            return normalized_value in {"", "real"}
+
+        if normalized_filter == "simulated":
+            if normalized_value == "simulated":
+                return True
+            # Backward-compatible inference for legacy simulation runs.
+            key = (event_experiment_key or "").strip().lower()
+            return "sim" in key
+
+        return False
+
     async def log_event(
         self,
         *,
@@ -24,6 +50,7 @@ class InteractionService:
         rank_position: Optional[int] = None,
         match_score: Optional[float] = None,
         features: Optional[dict[str, Any]] = None,
+        traffic_type: TrafficType = "real",
     ) -> OpportunityInteraction:
         event = OpportunityInteraction(
             user_id=user_id,
@@ -37,6 +64,7 @@ class InteractionService:
             rank_position=rank_position,
             match_score=match_score,
             features=features,
+            traffic_type=traffic_type,
         )
         await event.insert()
         return event
@@ -46,6 +74,7 @@ class InteractionService:
         *,
         user_id: PydanticObjectId,
         impressions: Iterable[dict[str, Any]],
+        traffic_type: TrafficType = "real",
     ) -> int:
         inserted = 0
         for impression in impressions:
@@ -64,11 +93,12 @@ class InteractionService:
                 rank_position=impression.get("rank_position"),
                 match_score=impression.get("match_score"),
                 features=impression.get("features"),
+                traffic_type=(impression.get("traffic_type") or traffic_type),
             )
             inserted += 1
         return inserted
 
-    async def ctr_by_mode(self, days: int = 30) -> list[dict[str, Any]]:
+    async def ctr_by_mode(self, days: int = 30, traffic_type: str = "all") -> list[dict[str, Any]]:
         since = datetime.utcnow() - timedelta(days=max(1, min(days, 365)))
         interactions = await OpportunityInteraction.find_many(
             OpportunityInteraction.created_at >= since,
@@ -80,6 +110,12 @@ class InteractionService:
         saves: dict[str, int] = defaultdict(int)
 
         for interaction in interactions:
+            if not self._traffic_type_matches(
+                event_traffic_type=getattr(interaction, "traffic_type", None),
+                event_experiment_key=getattr(interaction, "experiment_key", None),
+                filter_traffic_type=traffic_type,
+            ):
+                continue
             mode = interaction.ranking_mode or "unknown"
             if interaction.interaction_type == "impression":
                 impressions[mode] += 1
@@ -116,8 +152,14 @@ class InteractionService:
 
         return report
 
-    async def lift_vs_baseline(self, *, days: int = 30, baseline_mode: str = "baseline") -> dict[str, Any]:
-        rows = await self.ctr_by_mode(days=days)
+    async def lift_vs_baseline(
+        self,
+        *,
+        days: int = 30,
+        baseline_mode: str = "baseline",
+        traffic_type: str = "all",
+    ) -> dict[str, Any]:
+        rows = await self.ctr_by_mode(days=days, traffic_type=traffic_type)
         baseline = next((row for row in rows if row.get("mode") == baseline_mode), None) or {}
 
         def _lift(value: float, baseline_value: float) -> Optional[float]:
@@ -148,6 +190,7 @@ class InteractionService:
         return {
             "days": int(max(1, min(days, 365))),
             "baseline_mode": baseline_mode,
+            "traffic_type": (traffic_type or "all").strip().lower() or "all",
             "baseline": baseline,
             "modes": enriched,
         }

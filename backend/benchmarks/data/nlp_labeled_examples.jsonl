@@ -1,0 +1,28 @@
+{"text":"Best AI internship in Bengaluru for LLM projects with deadline in June","intent":"internships","entities":{"locations":["Bengaluru"],"deadlines":["June"],"companies":[],"eligibility":[]}}
+{"text":"Looking for machine learning internship in Hyderabad for final year students","intent":"internships","entities":{"locations":["Hyderabad"],"eligibility":["final year students"]}}
+{"text":"Software engineering internship at startup in Pune, apply by 30 May","intent":"internships","entities":{"locations":["Pune"],"deadlines":["30 May"],"companies":["startup"]}}
+{"text":"Data analyst internship in Mumbai with SQL and Power BI","intent":"internships","entities":{"locations":["Mumbai"],"companies":[]}}
+{"text":"Remote summer internship for backend engineering with stipend","intent":"internships","entities":{"eligibility":[]}}
+{"text":"Find cybersecurity internship for undergraduates in Chennai","intent":"internships","entities":{"locations":["Chennai"],"eligibility":["undergraduates"]}}
+{"text":"Research assistant role in computer vision lab at IIT Delhi","intent":"research","entities":{"companies":["IIT Delhi"],"locations":["Delhi"]}}
+{"text":"NLP research fellowship in India for graduate students","intent":"research","entities":{"eligibility":["graduate students"],"locations":["India"]}}
+{"text":"Quantum computing research internship at IISc Bangalore","intent":"research","entities":{"companies":["IISc"],"locations":["Bangalore"]}}
+{"text":"Bioinformatics research program with 6 month duration","intent":"research","entities":{"duration":["6 month"]}}
+{"text":"Open call for research scholars in robotics and control","intent":"research","entities":{}}
+{"text":"Summer research fellowship with application deadline July 15","intent":"research","entities":{"deadlines":["July 15"]}}
+{"text":"Need scholarship for MS in data science with full tuition","intent":"scholarships","entities":{"eligibility":["MS in data science"]}}
+{"text":"STEM scholarship for women in engineering in India","intent":"scholarships","entities":{"locations":["India"],"eligibility":["women in engineering"]}}
+{"text":"Merit based scholarship apply by August 10 for undergraduate students","intent":"scholarships","entities":{"deadlines":["August 10"],"eligibility":["undergraduate students"]}}
+{"text":"Scholarship grant for low income students in Karnataka","intent":"scholarships","entities":{"locations":["Karnataka"],"eligibility":["low income students"]}}
+{"text":"International scholarship for AI masters with IELTS requirement","intent":"scholarships","entities":{"eligibility":["IELTS requirement"]}}
+{"text":"Education funding program and tuition waiver for CS students","intent":"scholarships","entities":{"eligibility":["CS students"]}}
+{"text":"Any hackathon in Bengaluru for AI and machine learning this month","intent":"hackathons","entities":{"locations":["Bengaluru"],"companies":[]}}
+{"text":"Coding competition by Unstop with deadline next week","intent":"hackathons","entities":{"companies":["Unstop"],"deadlines":["next week"]}}
+{"text":"Blockchain hackathon in Mumbai with team size 4","intent":"hackathons","entities":{"locations":["Mumbai"]}}
+{"text":"Find data science challenge open for college students","intent":"hackathons","entities":{"eligibility":["college students"]}}
+{"text":"National level quiz and innovation challenge for engineers","intent":"hackathons","entities":{"eligibility":["engineers"]}}
+{"text":"Devpost hackathon with registration ending on 12 June","intent":"hackathons","entities":{"companies":["Devpost"],"deadlines":["12 June"]}}
+{"text":"AI challenge by Google for final year CSE students in India","intent":"hackathons","entities":{"companies":["Google"],"eligibility":["final year CSE students"],"locations":["India"]}}
+{"text":"Scholarship application for MBA students closes on 1 September","intent":"scholarships","entities":{"eligibility":["MBA students"],"deadlines":["1 September"]}}
+{"text":"Research fellowship at TCS Innovation Labs in Hyderabad","intent":"research","entities":{"companies":["TCS Innovation Labs"],"locations":["Hyderabad"]}}
+{"text":"Frontend internship at product company in Gurugram","intent":"internships","entities":{"locations":["Gurugram"]}}

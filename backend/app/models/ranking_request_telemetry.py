@@ -6,6 +6,7 @@ from typing import Literal, Optional
 from beanie import Document, PydanticObjectId
 from pydantic import Field
 
+from app.models.traffic import TrafficType
 
 RequestKind = Literal["recommended", "shortlist", "ask_ai"]
 
@@ -23,6 +24,7 @@ class RankingRequestTelemetry(Document):
     results_count: int = Field(default=0, ge=0)
     freshness_seconds: Optional[float] = Field(default=None, ge=0.0)
     error_code: Optional[str] = None
+    traffic_type: TrafficType = Field(default="real", index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     class Settings:
@@ -35,5 +37,6 @@ class RankingRequestTelemetry(Document):
             "model_version_id",
             "surface",
             "success",
+            "traffic_type",
             "created_at",
         ]

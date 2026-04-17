@@ -73,6 +73,126 @@ def _diff_ci_unpooled(
     return diff, diff - (z * se), diff + (z * se)
 
 
+def _chi_square_sf(chi_square: float, df: int) -> Optional[float]:
+    if df <= 0 or chi_square < 0:
+        return None
+    # Wilson-Hilferty approximation: chi-square to standard normal.
+    # Accurate enough for online SRM diagnostics with df >= 1.
+    denom = sqrt(2.0 / (9.0 * float(df)))
+    if denom <= 0:
+        return None
+    transformed = ((chi_square / float(df)) ** (1.0 / 3.0) - (1.0 - 2.0 / (9.0 * float(df)))) / denom
+    p_value = 1.0 - _norm_cdf(transformed)
+    return max(0.0, min(1.0, p_value))
+
+
+def _srm_diagnostic(
+    *,
+    variants_payload: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not variants_payload:
+        return {
+            "eligible": False,
+            "reason": "no_variants",
+            "chi_square": None,
+            "p_value": None,
+            "alert": False,
+        }
+
+    total_impressions = int(sum(int(item.get("impressions") or 0) for item in variants_payload))
+    if total_impressions <= 0:
+        return {
+            "eligible": False,
+            "reason": "no_impressions",
+            "chi_square": None,
+            "p_value": None,
+            "alert": False,
+        }
+
+    total_weight = float(sum(max(0.0, float(item.get("weight") or 0.0)) for item in variants_payload))
+    if total_weight <= 0.0:
+        total_weight = float(len(variants_payload))
+
+    observed: dict[str, float] = {}
+    expected: dict[str, float] = {}
+    chi_square = 0.0
+    for item in variants_payload:
+        name = str(item.get("name") or "")
+        impressions = int(item.get("impressions") or 0)
+        weight = max(0.0, float(item.get("weight") or 0.0))
+        if total_weight <= 0:
+            expected_ratio = 1.0 / float(max(1, len(variants_payload)))
+        else:
+            expected_ratio = weight / total_weight
+        expected_count = float(total_impressions) * expected_ratio
+
+        observed[name] = float(impressions / float(total_impressions))
+        expected[name] = float(expected_ratio)
+        if expected_count > 0:
+            chi_square += ((float(impressions) - expected_count) ** 2) / expected_count
+
+    df = max(1, len(variants_payload) - 1)
+    p_value = _chi_square_sf(chi_square, df)
+    alert = bool(p_value is not None and p_value < 0.01)
+    return {
+        "eligible": True,
+        "reason": None,
+        "chi_square": round(float(chi_square), 8),
+        "df": int(df),
+        "p_value": round(float(p_value), 8) if p_value is not None else None,
+        "alert": alert,
+        "expected_allocation": expected,
+        "observed_allocation": observed,
+        "total_impressions": total_impressions,
+    }
+
+
+def _observed_power_and_mde(
+    *,
+    k_control: int,
+    n_control: int,
+    k_variant: int,
+    n_variant: int,
+    alpha: float = 0.05,
+    target_power: float = 0.8,
+) -> dict[str, Any]:
+    if n_control <= 0 or n_variant <= 0:
+        return {
+            "eligible": False,
+            "reason": "insufficient_impressions",
+            "alpha": alpha,
+            "target_power": target_power,
+            "observed_power": None,
+            "mde_absolute": None,
+            "is_underpowered": None,
+        }
+
+    p1 = k_control / float(n_control)
+    p2 = k_variant / float(n_variant)
+    diff = p2 - p1
+    z_alpha = 1.959963984540054  # two-sided alpha=0.05
+    z_beta = 0.8416212335729143  # target power=0.8
+
+    se_alt = sqrt(max(0.0, (p1 * (1.0 - p1) / n_control) + (p2 * (1.0 - p2) / n_variant)))
+    z_effect = (abs(diff) / se_alt) if se_alt > 0 else 0.0
+    power = _norm_cdf(z_effect - z_alpha) + (1.0 - _norm_cdf(z_effect + z_alpha))
+    power = max(0.0, min(1.0, power))
+
+    pooled = (k_control + k_variant) / float(n_control + n_variant)
+    se_null = sqrt(max(0.0, pooled * (1.0 - pooled) * ((1.0 / n_control) + (1.0 / n_variant))))
+    mde_absolute = (z_alpha + z_beta) * se_null
+
+    return {
+        "eligible": True,
+        "reason": None,
+        "alpha": alpha,
+        "target_power": target_power,
+        "observed_power": round(float(power), 8),
+        "mde_absolute": round(float(mde_absolute), 8),
+        "is_underpowered": bool(power < target_power),
+    }
+
+
 @dataclass(frozen=True)
 class VariantCounts:
     impressions: int
@@ -80,22 +200,45 @@ class VariantCounts:
 
 
 class ExperimentAnalyticsService:
+    def _traffic_match(self, *, experiment_key: str, traffic_type: str) -> dict[str, Any]:
+        normalized = (traffic_type or "all").strip().lower()
+        if normalized == "all":
+            return {}
+        if normalized == "real":
+            return {"$or": [{"traffic_type": "real"}, {"traffic_type": {"$exists": False}}, {"traffic_type": None}]}
+        if normalized == "simulated":
+            return {
+                "$or": [
+                    {"traffic_type": "simulated"},
+                    {
+                        "$and": [
+                            {"$or": [{"traffic_type": {"$exists": False}}, {"traffic_type": None}]},
+                            {"experiment_key": {"$regex": "sim", "$options": "i"}},
+                        ]
+                    },
+                ]
+            }
+        return {}
+
     async def _counts_by_variant(
         self,
         *,
         experiment_key: str,
         since: datetime,
         conversion_types: set[str],
+        traffic_type: str = "all",
     ) -> dict[str, VariantCounts]:
         collection = _get_collection(OpportunityInteraction)
+        traffic_match = self._traffic_match(experiment_key=experiment_key, traffic_type=traffic_type)
+        match_stage: dict[str, Any] = {
+            "created_at": {"$gte": since},
+            "experiment_key": experiment_key,
+            "experiment_variant": {"$ne": None},
+        }
+        if traffic_match:
+            match_stage.update(traffic_match)
         pipeline: list[dict[str, Any]] = [
-            {
-                "$match": {
-                    "created_at": {"$gte": since},
-                    "experiment_key": experiment_key,
-                    "experiment_variant": {"$ne": None},
-                }
-            },
+            {"$match": match_stage},
             {
                 "$group": {
                     "_id": {
@@ -129,6 +272,7 @@ class ExperimentAnalyticsService:
         experiment: Experiment,
         days: int = 30,
         conversion_types: Iterable[str] = ("click",),
+        traffic_type: str = "all",
     ) -> dict[str, Any]:
         safe_days = max(1, min(int(days), 365))
         conversion_set = {str(value) for value in conversion_types if value}
@@ -140,6 +284,7 @@ class ExperimentAnalyticsService:
             experiment_key=experiment.key,
             since=since,
             conversion_types=conversion_set,
+            traffic_type=traffic_type,
         )
 
         variants_payload: list[dict[str, Any]] = []
@@ -165,9 +310,13 @@ class ExperimentAnalyticsService:
                 "experiment_key": experiment.key,
                 "status": experiment.status,
                 "days": safe_days,
+                "traffic_type": (traffic_type or "all").strip().lower() or "all",
                 "conversion_types": sorted(conversion_set),
                 "variants": [],
                 "comparisons": [],
+                "diagnostics": {
+                    "srm": _srm_diagnostic(variants_payload=[]),
+                },
             }
 
         control_name = next((v["name"] for v in variants_payload if v["is_control"]), variants_payload[0]["name"])
@@ -201,6 +350,12 @@ class ExperimentAnalyticsService:
                     "lift": round(float(lift), 8) if lift is not None else None,
                     "z": round(float(z_stat), 8) if z_stat is not None else None,
                     "p_value": round(float(p_value), 8) if p_value is not None else None,
+                    "power": _observed_power_and_mde(
+                        k_control=int(control["conversions"]),
+                        n_control=int(control["impressions"]),
+                        k_variant=int(variant["conversions"]),
+                        n_variant=int(variant["impressions"]),
+                    ),
                 }
             )
 
@@ -208,9 +363,13 @@ class ExperimentAnalyticsService:
             "experiment_key": experiment.key,
             "status": experiment.status,
             "days": safe_days,
+            "traffic_type": (traffic_type or "all").strip().lower() or "all",
             "conversion_types": sorted(conversion_set),
             "variants": variants_payload,
             "comparisons": comparisons,
+            "diagnostics": {
+                "srm": _srm_diagnostic(variants_payload=variants_payload),
+            },
         }
 
 

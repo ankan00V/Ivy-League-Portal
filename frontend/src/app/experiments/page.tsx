@@ -25,15 +25,36 @@ type ComparisonRow = {
   lift: number | null;
   z: number | null;
   p_value: number | null;
+  power?: {
+    eligible: boolean;
+    alpha: number;
+    target_power: number;
+    observed_power: number | null;
+    mde_absolute: number | null;
+    is_underpowered: boolean | null;
+    reason?: string | null;
+  } | null;
 };
 
 type ExperimentReport = {
   experiment_key: string;
   status: string;
   days: number;
+  traffic_type?: "all" | "real" | "simulated";
   conversion_types: string[];
   variants: VariantRow[];
   comparisons: ComparisonRow[];
+  diagnostics?: {
+    srm?: {
+      eligible: boolean;
+      chi_square: number | null;
+      p_value: number | null;
+      df?: number;
+      alert: boolean;
+      total_impressions?: number;
+      reason?: string | null;
+    };
+  };
 };
 
 type SideBySideBundle = {
@@ -66,6 +87,11 @@ function formatLift(value: number | null | undefined): string {
   const pct = value * 100;
   const prefix = pct > 0 ? "+" : "";
   return `${prefix}${pct.toFixed(1)}%`;
+}
+
+function formatNum(value: number | null | undefined, digits = 3): string {
+  if (value === null || value === undefined) return "—";
+  return value.toFixed(digits);
 }
 
 function reportSummary(report?: ExperimentReport) {
@@ -352,9 +378,34 @@ export default function ExperimentsPage() {
                   ) : null}
                 </div>
 
+                {report.diagnostics?.srm ? (
+                  <div
+                    style={{
+                      padding: "0.8rem 1.25rem",
+                      borderBottom: "2px solid var(--border-subtle)",
+                      background: report.diagnostics.srm.alert
+                        ? "color-mix(in srgb, #fef08a 30%, var(--bg-surface-hover))"
+                        : "var(--bg-surface-hover)",
+                      display: "flex",
+                      flexWrap: "wrap",
+                      gap: "0.9rem",
+                      fontWeight: 700,
+                      fontSize: "0.88rem",
+                    }}
+                  >
+                    <span>
+                      SRM: {report.diagnostics.srm.alert ? "alert" : "ok"}
+                    </span>
+                    <span>p={formatP(report.diagnostics.srm.p_value)}</span>
+                    <span>chi2={formatNum(report.diagnostics.srm.chi_square, 4)}</span>
+                    <span>df={report.diagnostics.srm.df ?? "—"}</span>
+                    <span>impressions={report.diagnostics.srm.total_impressions ?? 0}</span>
+                  </div>
+                ) : null}
+
                 <div style={{ padding: "1.25rem" }}>
                   <div style={{ overflowX: "auto" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 780 }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 980 }}>
                       <thead>
                         <tr style={{ textAlign: "left", color: "var(--text-muted)", fontWeight: 900 }}>
                           <th style={{ padding: "0.6rem 0.5rem" }}>Variant</th>
@@ -364,6 +415,8 @@ export default function ExperimentsPage() {
                           <th style={{ padding: "0.6rem 0.5rem" }}>Rate (95% CI)</th>
                           <th style={{ padding: "0.6rem 0.5rem" }}>Δ vs control (95% CI)</th>
                           <th style={{ padding: "0.6rem 0.5rem" }}>p</th>
+                          <th style={{ padding: "0.6rem 0.5rem" }}>Power</th>
+                          <th style={{ padding: "0.6rem 0.5rem" }}>MDE (abs)</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -380,6 +433,7 @@ export default function ExperimentsPage() {
                                 : "—";
                           const pValue = comparison?.p_value ?? null;
                           const significant = pValue !== null && pValue < 0.05;
+                          const power = comparison?.power;
                           return (
                             <tr key={variant.name} style={{ borderTop: "1px solid var(--border-subtle)" }}>
                               <td style={{ padding: "0.85rem 0.5rem", fontWeight: 900 }}>
@@ -418,6 +472,14 @@ export default function ExperimentsPage() {
                                 <span style={{ color: significant ? "var(--brand-primary)" : "var(--text-primary)" }}>
                                   {formatP(pValue)}
                                 </span>
+                              </td>
+                              <td style={{ padding: "0.85rem 0.5rem", fontWeight: 900 }}>
+                                {power?.eligible
+                                  ? `${formatPct(power.observed_power)}${power.is_underpowered ? " (low)" : ""}`
+                                  : "—"}
+                              </td>
+                              <td style={{ padding: "0.85rem 0.5rem", fontWeight: 900 }}>
+                                {power?.eligible ? formatPct(power.mde_absolute) : "—"}
                               </td>
                             </tr>
                           );

@@ -7,6 +7,7 @@ import numpy as np
 import spacy
 
 from app.services.embedding_service import embedding_service
+from app.services.nlp_model_service import nlp_model_service
 
 ELIGIBILITY_PATTERN = re.compile(
     r"(?i)(eligible|eligibility|minimum|required|must have|cgpa|gpa|age limit|undergraduate|graduate|final year|experience)"
@@ -26,6 +27,9 @@ class NLPService:
         self._nlp = None
         self._intent_embeddings: np.ndarray | None = None
         self._intent_keys = list(INTENT_LABELS.keys())
+        self._active_intent_centroids: dict[str, np.ndarray] = {}
+        self._active_entity_lexicon: dict[str, list[str]] = {}
+        self._active_model_id: str | None = None
 
     def _ensure_nlp(self):
         if self._nlp is not None:
@@ -43,6 +47,14 @@ class NLPService:
             return
         self._intent_embeddings = await embedding_service.embed_texts(INTENT_LABELS.values())
 
+    async def _refresh_active_model(self) -> None:
+        active = await nlp_model_service.get_active()
+        if active.model_id == self._active_model_id:
+            return
+        self._active_model_id = active.model_id
+        self._active_intent_centroids = dict(active.intent_centroids or {})
+        self._active_entity_lexicon = dict(active.entity_lexicon or {})
+
     async def classify_intent(self, query: str) -> dict[str, Any]:
         cleaned_query = (query or "").strip()
         if not cleaned_query:
@@ -50,6 +62,27 @@ class NLPService:
                 "intent": "internships",
                 "scores": {key: 0.0 for key in self._intent_keys},
                 "confidence": 0.0,
+            }
+
+        await self._refresh_active_model()
+        if self._active_intent_centroids:
+            query_embedding = await embedding_service.embed_query(cleaned_query)
+            scores = {
+                label: float(np.dot(query_embedding, centroid))
+                for label, centroid in self._active_intent_centroids.items()
+                if centroid.shape == query_embedding.shape
+            }
+            score_map = {
+                str(label): round(float(max(-1.0, min(1.0, score))), 4)
+                for label, score in scores.items()
+            }
+            sorted_labels = sorted(score_map.items(), key=lambda item: item[1], reverse=True)
+            top_intent, top_score = sorted_labels[0] if sorted_labels else ("internships", 0.0)
+            return {
+                "intent": top_intent,
+                "scores": score_map,
+                "confidence": round(float((top_score + 1.0) / 2.0), 4),
+                "model_id": self._active_model_id,
             }
 
         await self._ensure_intent_embeddings()
@@ -67,6 +100,7 @@ class NLPService:
             "intent": top_intent,
             "scores": score_map,
             "confidence": round(float((top_score + 1.0) / 2.0), 4),
+            "model_id": self._active_model_id,
         }
 
     def extract_entities(self, text: str) -> dict[str, list[str]]:
@@ -120,6 +154,27 @@ class NLPService:
             "eligibility": _dedupe(eligibility)[:5],
             "duration": _dedupe(duration),
         }
+
+    async def extract_entities_with_model(self, text: str) -> dict[str, list[str]]:
+        await self._refresh_active_model()
+        extracted = self.extract_entities(text)
+        if not self._active_entity_lexicon:
+            return extracted
+
+        haystack = f" {(text or '').lower()} "
+        merged: dict[str, list[str]] = {}
+        for key, values in extracted.items():
+            combined = list(values)
+            seen = {item.lower() for item in values}
+            for lexeme in self._active_entity_lexicon.get(key, []):
+                token = (lexeme or "").strip().lower()
+                if not token or token in seen:
+                    continue
+                if f" {token} " in haystack:
+                    combined.append(lexeme)
+                    seen.add(token)
+            merged[key] = combined
+        return merged
 
 
 nlp_service = NLPService()

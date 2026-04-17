@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -126,26 +126,40 @@ async def experiment_report(
     experiment_key: str,
     days: int = 30,
     conversion: str = "click",
+    traffic_type: Literal["all", "real", "simulated"] = "all",
     _: User = Depends(get_current_admin_user),
 ) -> Any:
     experiment = await Experiment.find_one(Experiment.key == experiment_key)
     if not experiment:
         raise HTTPException(status_code=404, detail="Experiment not found")
     conversion_types = [value.strip() for value in conversion.split(",") if value.strip()]
-    return await experiment_analytics_service.report(experiment=experiment, days=days, conversion_types=conversion_types)
+    return await experiment_analytics_service.report(
+        experiment=experiment,
+        days=days,
+        conversion_types=conversion_types,
+        traffic_type=traffic_type,
+    )
 
 
 @router.get("/reports", response_model=list[dict])
 async def all_experiment_reports(
     days: int = 30,
     conversion: str = "click",
+    traffic_type: Literal["all", "real", "simulated"] = "all",
     _: User = Depends(get_current_admin_user),
 ) -> Any:
     conversion_types = [value.strip() for value in conversion.split(",") if value.strip()]
     experiments = await Experiment.find_many(Experiment.status != "archived").to_list()
     reports: list[dict[str, Any]] = []
     for experiment in experiments:
-        reports.append(await experiment_analytics_service.report(experiment=experiment, days=days, conversion_types=conversion_types))
+        reports.append(
+            await experiment_analytics_service.report(
+                experiment=experiment,
+                days=days,
+                conversion_types=conversion_types,
+                traffic_type=traffic_type,
+            )
+        )
     return reports
 
 
@@ -178,6 +192,7 @@ async def side_by_side_reports(
                 experiment=experiment,
                 days=days,
                 conversion_types=[conversion_type],
+                traffic_type="real" if label == "real" else "simulated",
             )
 
         return {

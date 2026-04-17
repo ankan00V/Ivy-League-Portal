@@ -23,12 +23,14 @@ from app.core.config import settings
 from app.models.application import Application
 from app.models.experiment import Experiment, ExperimentAssignment, ExperimentVariant
 from app.models.model_drift_report import ModelDriftReport
+from app.models.nlp_model_version import NLPModelVersion
 from app.models.opportunity import Opportunity
 from app.models.opportunity_interaction import OpportunityInteraction
 from app.models.otp_code import OTPCode
 from app.models.post import Comment, Post
 from app.models.profile import Profile
 from app.models.ranking_model_version import RankingModelVersion
+from app.models.vector_index_entry import VectorIndexEntry
 from app.models.user import User
 from app.services.experiment_analytics_service import experiment_analytics_service
 from app.services.experiment_service import experiment_service
@@ -216,6 +218,8 @@ async def _init_db() -> AsyncIOMotorClient:
             ExperimentAssignment,
             RankingModelVersion,
             ModelDriftReport,
+            NLPModelVersion,
+            VectorIndexEntry,
         ],
     )
     return client
@@ -471,6 +475,7 @@ async def _simulate(
                 "ranking_mode": ranking_mode,
                 "experiment_key": experiment_key,
                 "experiment_variant": ranking_mode,
+                "traffic_type": "simulated",
                 "query": query,
                 "rank_position": rank_pos,
                 "match_score": round(match_score, 4),
@@ -557,16 +562,19 @@ async def _simulate(
         experiment=experiment,
         days=max(1, lookback_days),
         conversion_types={"click"},
+        traffic_type="simulated",
     )
     apply_report = await experiment_analytics_service.report(
         experiment=experiment,
         days=max(1, lookback_days),
         conversion_types={"apply"},
+        traffic_type="simulated",
     )
     save_report = await experiment_analytics_service.report(
         experiment=experiment,
         days=max(1, lookback_days),
         conversion_types={"save"},
+        traffic_type="simulated",
     )
 
     return {
@@ -602,16 +610,19 @@ async def _build_real_pilot_snapshot(experiment_key: Optional[str], days: int) -
             experiment=experiment,
             days=max(1, days),
             conversion_types={"click"},
+            traffic_type="real",
         ),
         "apply": await experiment_analytics_service.report(
             experiment=experiment,
             days=max(1, days),
             conversion_types={"apply"},
+            traffic_type="real",
         ),
         "save": await experiment_analytics_service.report(
             experiment=experiment,
             days=max(1, days),
             conversion_types={"save"},
+            traffic_type="real",
         ),
     }
 

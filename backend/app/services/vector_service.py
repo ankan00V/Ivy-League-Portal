@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+from hashlib import md5
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Optional
 
 import numpy as np
+from beanie.odm.operators.find.comparison import In
 
 from app.core.cache import cache_get_json, cache_key, cache_set_json
 from app.models.opportunity import Opportunity
+from app.models.vector_index_entry import VectorIndexEntry
 from app.services.embedding_service import embedding_service
 from app.core.config import settings
 from app.core.metrics import CACHE_HITS_TOTAL, CACHE_MISSES_TOTAL
@@ -39,6 +42,10 @@ def _normalize_deadline(deadline: datetime | None) -> datetime | None:
     return deadline.astimezone(timezone.utc).replace(tzinfo=None)
 
 
+def _text_hash(text: str) -> str:
+    return md5((text or "").encode("utf-8")).hexdigest()
+
+
 class OpportunityVectorService:
     def __init__(self) -> None:
         self._lock = asyncio.Lock()
@@ -51,6 +58,103 @@ class OpportunityVectorService:
 
     def _score_to_similarity(self, score: float) -> float:
         return float(max(-1.0, min(1.0, score)))
+
+    async def _sync_persistent_vectors(
+        self,
+        *,
+        opportunities: list[Opportunity],
+        texts: list[str],
+    ) -> np.ndarray | None:
+        provider = (settings.VECTOR_STORE_PROVIDER or "memory").strip().lower()
+        if provider != "mongo" or not settings.VECTOR_STORE_PERSISTENCE_ENABLED:
+            return None
+        if not opportunities:
+            return np.empty((0, embedding_service.dimension), dtype=np.float32)
+
+        opp_ids = [opportunity.id for opportunity in opportunities]
+        existing_rows = await VectorIndexEntry.find_many(In(VectorIndexEntry.opportunity_id, opp_ids)).to_list()
+        existing_map = {str(row.opportunity_id): row for row in existing_rows}
+
+        to_embed_texts: list[str] = []
+        to_embed_keys: list[str] = []
+        embeddings_map: dict[str, list[float]] = {}
+        now = datetime.utcnow()
+
+        for opportunity, text in zip(opportunities, texts):
+            key = str(opportunity.id)
+            text_hash = _text_hash(text)
+            row = existing_map.get(key)
+            if row and row.text_hash == text_hash and row.embedding:
+                embeddings_map[key] = list(row.embedding)
+                continue
+            to_embed_keys.append(key)
+            to_embed_texts.append(text)
+
+        if to_embed_texts:
+            embedded = await embedding_service.embed_texts(to_embed_texts)
+            for idx, key in enumerate(to_embed_keys):
+                vector = np.asarray(embedded[idx], dtype=np.float32)
+                embeddings_map[key] = [float(value) for value in vector.tolist()]
+
+        for opportunity, text in zip(opportunities, texts):
+            key = str(opportunity.id)
+            row = existing_map.get(key)
+            vector_values = embeddings_map.get(key) or []
+            if not vector_values:
+                continue
+            payload = {
+                "text_hash": _text_hash(text),
+                "text": text,
+                "embedding": vector_values,
+                "metadata": {
+                    "title": opportunity.title,
+                    "domain": opportunity.domain,
+                    "opportunity_type": opportunity.opportunity_type,
+                    "source": opportunity.source,
+                    "updated_at": opportunity.updated_at.isoformat() if opportunity.updated_at else None,
+                },
+                "updated_at": now,
+            }
+            if row:
+                row.text_hash = payload["text_hash"]
+                row.text = payload["text"]
+                row.embedding = payload["embedding"]
+                row.metadata = payload["metadata"]
+                row.updated_at = now
+                await row.save()
+            else:
+                await VectorIndexEntry(
+                    opportunity_id=opportunity.id,
+                    text_hash=payload["text_hash"],
+                    text=payload["text"],
+                    embedding=payload["embedding"],
+                    metadata=payload["metadata"],
+                    updated_at=now,
+                ).insert()
+
+        # Remove entries for opportunities that no longer exist.
+        try:
+            collection = VectorIndexEntry.get_motor_collection()
+            await collection.delete_many({"opportunity_id": {"$nin": opp_ids}})
+        except Exception:
+            pass
+
+        vector_rows: list[np.ndarray] = []
+        vector_dim: int | None = None
+        for opportunity in opportunities:
+            vector_values = embeddings_map.get(str(opportunity.id)) or []
+            if not vector_values:
+                return None
+            array = np.asarray(vector_values, dtype=np.float32)
+            if vector_dim is None:
+                vector_dim = int(array.shape[0])
+            if int(array.shape[0]) != int(vector_dim):
+                return None
+            vector_rows.append(array)
+
+        if not vector_rows:
+            return np.empty((0, embedding_service.dimension), dtype=np.float32)
+        return np.vstack(vector_rows).astype(np.float32)
 
     def _passes_filters(self, meta: dict[str, Any], filters: dict[str, Any] | None) -> bool:
         if not filters:
@@ -113,7 +217,9 @@ class OpportunityVectorService:
                 return
 
             texts = [_opportunity_to_text(opportunity) for opportunity in opportunities]
-            vectors = await embedding_service.embed_texts(texts)
+            vectors = await self._sync_persistent_vectors(opportunities=opportunities, texts=texts)
+            if vectors is None:
+                vectors = await embedding_service.embed_texts(texts)
             vectors = np.asarray(vectors, dtype=np.float32)
             if vectors.ndim == 1:
                 vectors = vectors.reshape(1, -1)
