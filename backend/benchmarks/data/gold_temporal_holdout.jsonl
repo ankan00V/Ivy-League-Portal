@@ -1,0 +1,6 @@
+{"query": "Looking for work on LLM red teaming, eval harnesses, and synthetic judges rather than generic chatbot product work", "relevant_ids": ["holdout_ai_eval_rel"], "split": "holdout", "not_before": "2025-01-10T00:00:00"}
+{"query": "Which role is strongest for Core Web Vitals, rendering performance, and accessibility systems work?", "relevant_ids": ["holdout_front_perf_rel"], "split": "holdout", "not_before": "2025-02-02T00:00:00"}
+{"query": "I want a quant internship focused on macro signals, regime shifts, and portfolio construction instead of business analytics", "relevant_ids": ["holdout_quant_rel"], "split": "holdout", "not_before": "2025-02-18T00:00:00"}
+{"query": "Find the blue-team opportunity that is about detections, cloud telemetry, and threat hunting", "relevant_ids": ["holdout_security_rel"], "split": "holdout", "not_before": "2025-03-05T00:00:00"}
+{"query": "What is the best recent fellowship for satellite imagery and climate resilience modeling?", "relevant_ids": ["holdout_climate_rel"], "split": "holdout", "not_before": "2025-03-21T00:00:00"}
+{"query": "Need a genomics role centered on sequence analysis and variant interpretation, not a wet lab assistant position", "relevant_ids": ["holdout_bio_rel"], "split": "holdout", "not_before": "2025-04-01T00:00:00"}

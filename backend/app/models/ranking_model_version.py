@@ -27,9 +27,12 @@ class RankingModelVersion(Document):
     trained_window_end: Optional[datetime] = None
     training_rows: int = 0
     label_window_hours: int = 72
+    split_strategy: str = "time"
 
     baselines: dict[str, Any] = Field(default_factory=dict)
     lifecycle: dict[str, Any] = Field(default_factory=dict)
+    training_metadata: dict[str, Any] = Field(default_factory=dict)
+    model_card: dict[str, Any] = Field(default_factory=dict)
     notes: Optional[str] = None
 
     created_at: datetime = Field(default_factory=datetime.utcnow)

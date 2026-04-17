@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from typing import Any, Optional
+from uuid import uuid4
 
 from openai import AsyncOpenAI
 
@@ -336,6 +337,7 @@ class RAGService:
 
         response = RAGAskResponse.model_validate(
             {
+                "request_id": uuid4().hex,
                 "query": query,
                 "intent": retrieval_payload.get("intent", {}) or {},
                 "entities": retrieval_payload.get("entities", {}) or {},

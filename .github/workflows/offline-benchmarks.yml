@@ -34,6 +34,7 @@ jobs:
       - name: Run offline retrieval regression gate
         run: >
           python backend/benchmarks/run_offline_benchmarks.py
+          --profile ci_hash
           --gate
           --k 5
           --tolerance 0

@@ -43,6 +43,9 @@ class ModelVersionResponse(BaseModel):
     label_window_hours: int
     created_at: datetime
     lifecycle: dict[str, Any] = Field(default_factory=dict)
+    split_strategy: str = "time"
+    training_metadata: dict[str, Any] = Field(default_factory=dict)
+    model_card: dict[str, Any] = Field(default_factory=dict)
     notes: Optional[str] = None
 
 
@@ -62,6 +65,9 @@ async def list_models(_: User = Depends(get_current_admin_user)) -> Any:
             label_window_hours=int(model.label_window_hours or 0),
             created_at=model.created_at,
             lifecycle=dict(model.lifecycle or {}),
+            split_strategy=model.split_strategy,
+            training_metadata=dict(model.training_metadata or {}),
+            model_card=dict(model.model_card or {}),
             notes=model.notes,
         )
         for model in models
@@ -89,6 +95,9 @@ async def activate_model(model_id: str, _: User = Depends(get_current_admin_user
         label_window_hours=int(model.label_window_hours or 0),
         created_at=model.created_at,
         lifecycle=dict(model.lifecycle or {}),
+        split_strategy=model.split_strategy,
+        training_metadata=dict(model.training_metadata or {}),
+        model_card=dict(model.model_card or {}),
         notes=model.notes,
     )
 
@@ -115,6 +124,9 @@ async def retrain(request: RetrainRequest, _: User = Depends(get_current_admin_u
         "weights": result.weights,
         "metrics": result.metrics,
         "lifecycle": result.lifecycle,
+        "split_strategy": result.split_strategy,
+        "training_metadata": result.training_metadata,
+        "model_card": result.model_card,
         "auto_activated": bool(result.auto_activated),
         "activation_reason": result.activation_reason,
     }
@@ -199,6 +211,12 @@ async def lifecycle_status(_: User = Depends(get_current_admin_user)) -> Any:
             "min_auc_gain": float(settings.MLOPS_AUTO_ACTIVATE_MIN_AUC_GAIN),
             "min_positive_rate": float(settings.MLOPS_AUTO_ACTIVATE_MIN_POSITIVE_RATE),
             "max_weight_shift": float(settings.MLOPS_AUTO_ACTIVATE_MAX_WEIGHT_SHIFT),
+            "guardrail_lookback_days": int(settings.MLOPS_GUARDRAIL_LOOKBACK_DAYS),
+            "guardrail_require_online_kpis": bool(settings.MLOPS_GUARDRAIL_REQUIRE_ONLINE_KPIS),
+            "max_apply_rate_drop": float(settings.MLOPS_GUARDRAIL_MAX_APPLY_RATE_DROP),
+            "max_freshness_regression_seconds": float(settings.MLOPS_GUARDRAIL_MAX_FRESHNESS_REGRESSION_SECONDS),
+            "max_latency_p95_regression_ms": float(settings.MLOPS_GUARDRAIL_MAX_LATENCY_P95_REGRESSION_MS),
+            "max_failure_rate_regression": float(settings.MLOPS_GUARDRAIL_MAX_FAILURE_RATE_REGRESSION),
         },
         "alerts": {
             "enabled": bool(settings.MLOPS_ALERTS_ENABLED),

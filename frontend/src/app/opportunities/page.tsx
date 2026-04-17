@@ -1,11 +1,12 @@
 "use client";
 import Sidebar from "@/components/Sidebar";
+import AskAIPanel from "@/components/AskAIPanel";
 import React, { startTransition, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { MapPin, Calendar, ExternalLink, Send, Bookmark } from "lucide-react";
 import Image from "next/image";
 import { apiUrl } from "@/lib/api";
-import { logOpportunityInteraction } from "@/lib/opportunity-interactions";
+import { logTrackedOpportunityEvent, useOpportunityFeedImpressions } from "@/lib/opportunity-feed-tracker";
 
 interface Opportunity {
     id: string;
@@ -64,7 +65,6 @@ export default function OpportunitiesPage() {
     const [imageFallbackMap, setImageFallbackMap] = useState<Record<string, boolean>>({});
     const opportunitiesSignatureRef = useRef<string>("");
     const scraperTriggerAttemptedRef = useRef(false);
-    const lastImpressionBatchRef = useRef("");
 
     const domains = useMemo(() => {
         const apiDomains = Array.from(new Set(opportunities.map(o => o.domain))).filter(Boolean);
@@ -180,19 +180,9 @@ export default function OpportunitiesPage() {
 
     const logOpportunityEvent = useCallback(
         async (opportunity: Opportunity, interactionType: "impression" | "click" | "save" | "apply") => {
-            await logOpportunityInteraction({
-                opportunityId: opportunity.id,
-                interactionType,
-                rankingMode: opportunity.ranking_mode || "baseline",
-                experimentKey: opportunity.experiment_key || "ranking_mode",
-                experimentVariant: opportunity.experiment_variant || opportunity.ranking_mode || "baseline",
-                rankPosition: opportunity.rank_position ?? null,
-                matchScore: opportunity.match_score ?? null,
-                modelVersionId: opportunity.model_version_id ?? null,
-                features: {
-                    surface: "opportunities_page",
-                    active_tab: activeTab,
-                },
+            await logTrackedOpportunityEvent(opportunity, interactionType, {
+                surface: "opportunities_page",
+                activeTab,
             });
         },
         [activeTab]
@@ -262,31 +252,11 @@ export default function OpportunitiesPage() {
         () => [...grouped.competitive, ...grouped.other],
         [grouped]
     );
-
-    useEffect(() => {
-        const token = localStorage.getItem("access_token");
-        if (!token || visibleOpportunities.length === 0) {
-            return;
-        }
-        const batchSignature = `${activeTab}:${visibleOpportunities
-            .map((item) => `${item.id}:${item.rank_position ?? ""}:${item.ranking_mode || "baseline"}`)
-            .join("|")}`;
-        if (batchSignature === lastImpressionBatchRef.current) {
-            return;
-        }
-        lastImpressionBatchRef.current = batchSignature;
-        void Promise.allSettled(
-            visibleOpportunities.map((opportunity, idx) =>
-                logOpportunityEvent(
-                    {
-                        ...opportunity,
-                        rank_position: opportunity.rank_position ?? idx + 1,
-                    },
-                    "impression"
-                )
-            )
-        );
-    }, [visibleOpportunities, activeTab, logOpportunityEvent]);
+    const trackerContext = useMemo(
+        () => ({ surface: "opportunities_page", activeTab }),
+        [activeTab]
+    );
+    useOpportunityFeedImpressions(visibleOpportunities, trackerContext);
 
     const handleSave = async (opportunity: Opportunity) => {
         setSavedOpportunityIds((current) => ({ ...current, [opportunity.id]: true }));
@@ -886,6 +856,15 @@ export default function OpportunitiesPage() {
                         </button>
                     ))}
                 </div>
+
+                <AskAIPanel
+                    surface="opportunities_page"
+                    suggestedQueries={[
+                        "hackathons for web3 and smart contracts with deadlines soon",
+                        "research fellowships in AI evaluation or NLP with citations",
+                        "product and analytics competitions worth shortlisting this week",
+                    ]}
+                />
 
                 {/* Interactive Grid Layout */}
                 {notice && (

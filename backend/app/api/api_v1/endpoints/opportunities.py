@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import datetime, timedelta
 from typing import Any, Literal, Optional
 
@@ -13,6 +14,7 @@ from app.core.config import settings
 from app.models.application import Application
 from app.models.opportunity import Opportunity
 from app.models.profile import Profile
+from app.models.rag_feedback_event import RAGFeedbackEvent
 from app.models.user import User
 from app.schemas.rag import RAGAskResponse
 from app.services.ai_engine import ai_system
@@ -20,6 +22,7 @@ from app.services.evaluation_service import evaluation_service
 from app.services.interaction_service import interaction_service
 from app.services.rag_service import rag_service
 from app.services.recommendation_service import recommendation_service
+from app.services.ranking_request_telemetry_service import ranking_request_telemetry_service
 
 router = APIRouter()
 
@@ -74,6 +77,16 @@ class AskAIRequest(BaseModel):
     top_k: int = 8
 
 
+class AskAIFeedbackRequest(BaseModel):
+    request_id: str = Field(min_length=1)
+    query: str = Field(min_length=2)
+    feedback: Literal["up", "down"]
+    response_summary: Optional[str] = None
+    citations: list[dict[str, Any]] = Field(default_factory=list)
+    surface: str = Field(default="opportunities_page", min_length=1)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class RankingEvaluationRequest(BaseModel):
     query: str = Field(min_length=2)
     relevant_opportunity_ids: list[str]
@@ -126,6 +139,19 @@ def _filter_active_opportunities(opportunities: list[Opportunity]) -> list[Oppor
     active = [opportunity for opportunity in opportunities if is_opportunity_active(opportunity)]
     active.sort(key=_activity_sort_key, reverse=True)
     return active
+
+
+def _freshness_seconds(opportunities: list[Opportunity]) -> float | None:
+    now = datetime.utcnow()
+    freshness_values: list[float] = []
+    for opportunity in opportunities:
+        last = opportunity.last_seen_at or opportunity.updated_at or opportunity.created_at
+        if last is None:
+            continue
+        freshness_values.append(max(0.0, (now - last).total_seconds()))
+    if not freshness_values:
+        return None
+    return float(sum(freshness_values) / len(freshness_values))
 
 
 async def _load_active_opportunities(
@@ -213,53 +239,81 @@ async def get_personalized_recommendations(
     Personalized recommendations with baseline + semantic + behavior-aware scoring.
     ranking_mode: baseline | semantic | ml | ab
     """
+    started_at = time.perf_counter()
     safe_limit = max(1, min(limit, 50))
-    profile = await _get_or_create_profile(current_user.id)
-    opportunities = _filter_active_opportunities(await Opportunity.find_many().to_list())
+    requested_mode = ranking_mode
+    try:
+        profile = await _get_or_create_profile(current_user.id)
+        opportunities = _filter_active_opportunities(await Opportunity.find_many().to_list())
 
-    ranked, meta = await recommendation_service.rank(
-        user_id=current_user.id,
-        profile=profile,
-        opportunities=opportunities,
-        limit=safe_limit,
-        ranking_mode=ranking_mode,
-        query=query,
-    )
-    effective_mode = str(meta.get("mode") or "semantic")
-    experiment_key = meta.get("experiment_key")
-    experiment_variant = meta.get("variant")
-
-    for item in ranked:
-        item["experiment_key"] = experiment_key
-        item["experiment_variant"] = experiment_variant
-
-    if ranked:
-        await interaction_service.log_impressions(
+        ranked, meta = await recommendation_service.rank(
             user_id=current_user.id,
-            impressions=[
-                {
-                    "opportunity_id": item["opportunity"].id,
-                    "ranking_mode": effective_mode,
-                    "experiment_key": experiment_key,
-                    "experiment_variant": experiment_variant,
-                    "query": query,
-                    "model_version_id": meta.get("model_version_id"),
-                    "rank_position": idx + 1,
-                    "match_score": item.get("match_score"),
-                    "features": {
-                        "baseline_score": item.get("baseline_score"),
-                        "semantic_score": item.get("semantic_score"),
-                        "behavior_score": item.get("behavior_score"),
-                        "skills_overlap_score": item.get("skills_overlap_score"),
-                        "behavior_domain_pref": item.get("behavior_domain_pref"),
-                        "behavior_type_pref": item.get("behavior_type_pref"),
-                    },
-                }
-                for idx, item in enumerate(ranked)
-            ],
+            profile=profile,
+            opportunities=opportunities,
+            limit=safe_limit,
+            ranking_mode=ranking_mode,
+            query=query,
         )
+        effective_mode = str(meta.get("mode") or "semantic")
+        experiment_key = meta.get("experiment_key")
+        experiment_variant = meta.get("variant")
 
-    return [_to_recommended_response(item) for item in ranked]
+        for item in ranked:
+            item["experiment_key"] = experiment_key
+            item["experiment_variant"] = experiment_variant
+
+        if ranked:
+            await interaction_service.log_impressions(
+                user_id=current_user.id,
+                impressions=[
+                    {
+                        "opportunity_id": item["opportunity"].id,
+                        "ranking_mode": effective_mode,
+                        "experiment_key": experiment_key,
+                        "experiment_variant": experiment_variant,
+                        "query": query,
+                        "model_version_id": meta.get("model_version_id"),
+                        "rank_position": idx + 1,
+                        "match_score": item.get("match_score"),
+                        "features": {
+                            "baseline_score": item.get("baseline_score"),
+                            "semantic_score": item.get("semantic_score"),
+                            "behavior_score": item.get("behavior_score"),
+                            "skills_overlap_score": item.get("skills_overlap_score"),
+                            "behavior_domain_pref": item.get("behavior_domain_pref"),
+                            "behavior_type_pref": item.get("behavior_type_pref"),
+                        },
+                    }
+                    for idx, item in enumerate(ranked)
+                ],
+            )
+
+        await ranking_request_telemetry_service.log(
+            request_kind="recommended",
+            surface="recommended_me",
+            latency_ms=(time.perf_counter() - started_at) * 1000.0,
+            success=True,
+            user_id=current_user.id,
+            ranking_mode=effective_mode,
+            experiment_key=experiment_key,
+            experiment_variant=experiment_variant,
+            model_version_id=meta.get("model_version_id"),
+            results_count=len(ranked),
+            freshness_seconds=_freshness_seconds([item["opportunity"] for item in ranked]),
+        )
+        return [_to_recommended_response(item) for item in ranked]
+    except Exception as exc:
+        await ranking_request_telemetry_service.log(
+            request_kind="recommended",
+            surface="recommended_me",
+            latency_ms=(time.perf_counter() - started_at) * 1000.0,
+            success=False,
+            user_id=current_user.id,
+            ranking_mode=requested_mode,
+            results_count=0,
+            error_code=exc.__class__.__name__,
+        )
+        raise
 
 
 @router.get("/shortlist/me", response_model=list[RecommendedOpportunityResponse])
@@ -273,59 +327,87 @@ async def get_smart_shortlist(
     """
     Smart shortlisting with semantic ranking and A/B experimentation support.
     """
+    started_at = time.perf_counter()
+    requested_mode = ranking_mode
     safe_limit = max(1, min(limit, 50))
-    profile = await _get_or_create_profile(current_user.id)
+    try:
+        profile = await _get_or_create_profile(current_user.id)
 
-    my_apps = await Application.find(Application.user_id == current_user.id).to_list()
-    applied_ids = {str(application.opportunity_id) for application in my_apps}
+        my_apps = await Application.find(Application.user_id == current_user.id).to_list()
+        applied_ids = {str(application.opportunity_id) for application in my_apps}
 
-    opportunities = _filter_active_opportunities(await Opportunity.find_many().to_list())
-    opportunities = [item for item in opportunities if str(item.id) not in applied_ids]
+        opportunities = _filter_active_opportunities(await Opportunity.find_many().to_list())
+        opportunities = [item for item in opportunities if str(item.id) not in applied_ids]
 
-    ranked, meta = await recommendation_service.rank(
-        user_id=current_user.id,
-        profile=profile,
-        opportunities=opportunities,
-        limit=safe_limit,
-        min_score=min_score,
-        ranking_mode=ranking_mode,
-        query=query,
-    )
-    effective_mode = str(meta.get("mode") or "semantic")
-    experiment_key = meta.get("experiment_key")
-    experiment_variant = meta.get("variant")
-
-    for item in ranked:
-        item["experiment_key"] = experiment_key
-        item["experiment_variant"] = experiment_variant
-
-    if ranked:
-        await interaction_service.log_impressions(
+        ranked, meta = await recommendation_service.rank(
             user_id=current_user.id,
-            impressions=[
-                {
-                    "opportunity_id": item["opportunity"].id,
-                    "ranking_mode": effective_mode,
-                    "experiment_key": experiment_key,
-                    "experiment_variant": experiment_variant,
-                    "query": query,
-                    "model_version_id": meta.get("model_version_id"),
-                    "rank_position": idx + 1,
-                    "match_score": item.get("match_score"),
-                    "features": {
-                        "baseline_score": item.get("baseline_score"),
-                        "semantic_score": item.get("semantic_score"),
-                        "behavior_score": item.get("behavior_score"),
-                        "skills_overlap_score": item.get("skills_overlap_score"),
-                        "behavior_domain_pref": item.get("behavior_domain_pref"),
-                        "behavior_type_pref": item.get("behavior_type_pref"),
-                    },
-                }
-                for idx, item in enumerate(ranked)
-            ],
+            profile=profile,
+            opportunities=opportunities,
+            limit=safe_limit,
+            min_score=min_score,
+            ranking_mode=ranking_mode,
+            query=query,
         )
+        effective_mode = str(meta.get("mode") or "semantic")
+        experiment_key = meta.get("experiment_key")
+        experiment_variant = meta.get("variant")
 
-    return [_to_recommended_response(item) for item in ranked]
+        for item in ranked:
+            item["experiment_key"] = experiment_key
+            item["experiment_variant"] = experiment_variant
+
+        if ranked:
+            await interaction_service.log_impressions(
+                user_id=current_user.id,
+                impressions=[
+                    {
+                        "opportunity_id": item["opportunity"].id,
+                        "ranking_mode": effective_mode,
+                        "experiment_key": experiment_key,
+                        "experiment_variant": experiment_variant,
+                        "query": query,
+                        "model_version_id": meta.get("model_version_id"),
+                        "rank_position": idx + 1,
+                        "match_score": item.get("match_score"),
+                        "features": {
+                            "baseline_score": item.get("baseline_score"),
+                            "semantic_score": item.get("semantic_score"),
+                            "behavior_score": item.get("behavior_score"),
+                            "skills_overlap_score": item.get("skills_overlap_score"),
+                            "behavior_domain_pref": item.get("behavior_domain_pref"),
+                            "behavior_type_pref": item.get("behavior_type_pref"),
+                        },
+                    }
+                    for idx, item in enumerate(ranked)
+                ],
+            )
+
+        await ranking_request_telemetry_service.log(
+            request_kind="shortlist",
+            surface="shortlist_me",
+            latency_ms=(time.perf_counter() - started_at) * 1000.0,
+            success=True,
+            user_id=current_user.id,
+            ranking_mode=effective_mode,
+            experiment_key=experiment_key,
+            experiment_variant=experiment_variant,
+            model_version_id=meta.get("model_version_id"),
+            results_count=len(ranked),
+            freshness_seconds=_freshness_seconds([item["opportunity"] for item in ranked]),
+        )
+        return [_to_recommended_response(item) for item in ranked]
+    except Exception as exc:
+        await ranking_request_telemetry_service.log(
+            request_kind="shortlist",
+            surface="shortlist_me",
+            latency_ms=(time.perf_counter() - started_at) * 1000.0,
+            success=False,
+            user_id=current_user.id,
+            ranking_mode=requested_mode,
+            results_count=0,
+            error_code=exc.__class__.__name__,
+        )
+        raise
 
 
 @router.post("/interactions", response_model=dict)
@@ -395,9 +477,48 @@ async def ask_ai_shortlist(
     request: AskAIRequest,
     current_user: User = Depends(get_current_active_user),
 ) -> Any:
-    profile = await _get_or_create_profile(current_user.id)
-    result = await rag_service.ask(query=request.query, top_k=request.top_k, profile=profile)
-    return result
+    started_at = time.perf_counter()
+    try:
+        profile = await _get_or_create_profile(current_user.id)
+        result = await rag_service.ask(query=request.query, top_k=request.top_k, profile=profile)
+        await ranking_request_telemetry_service.log(
+            request_kind="ask_ai",
+            surface="ask_ai",
+            latency_ms=(time.perf_counter() - started_at) * 1000.0,
+            success=True,
+            user_id=current_user.id,
+            results_count=len(result.get("results") or []),
+        )
+        return result
+    except Exception as exc:
+        await ranking_request_telemetry_service.log(
+            request_kind="ask_ai",
+            surface="ask_ai",
+            latency_ms=(time.perf_counter() - started_at) * 1000.0,
+            success=False,
+            user_id=current_user.id,
+            error_code=exc.__class__.__name__,
+        )
+        raise
+
+
+@router.post("/ask-ai/feedback", response_model=dict)
+async def log_ask_ai_feedback(
+    payload: AskAIFeedbackRequest,
+    current_user: User = Depends(get_current_active_user),
+) -> Any:
+    event = RAGFeedbackEvent(
+        user_id=current_user.id,
+        request_id=payload.request_id,
+        query=payload.query,
+        feedback=payload.feedback,
+        response_summary=payload.response_summary,
+        citations=payload.citations,
+        surface=payload.surface,
+        metadata=payload.metadata,
+    )
+    await event.insert()
+    return {"status": "ok", "request_id": payload.request_id, "feedback": payload.feedback}
 
 
 @router.post("/evaluate-ranking", response_model=dict)

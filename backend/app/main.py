@@ -26,7 +26,9 @@ from app.models.evaluation_run import EvaluationRun
 from app.models.impact_event import ImpactEvent
 from app.models.experiment import Experiment, ExperimentAssignment
 from app.models.model_drift_report import ModelDriftReport
+from app.models.rag_feedback_event import RAGFeedbackEvent
 from app.models.ranking_model_version import RankingModelVersion
+from app.models.ranking_request_telemetry import RankingRequestTelemetry
 from app.models.background_job import BackgroundJob
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -87,6 +89,8 @@ async def lifespan(app: FastAPI):
             ExperimentAssignment,
             RankingModelVersion,
             ModelDriftReport,
+            RankingRequestTelemetry,
+            RAGFeedbackEvent,
             BackgroundJob,
         ]
     )

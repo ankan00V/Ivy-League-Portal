@@ -1,0 +1,157 @@
+{
+  "per_query": [
+    {
+      "modes": {
+        "baseline": {
+          "mrr": 1.0,
+          "ndcg_at_k": 1.0,
+          "precision_at_k": 0.2,
+          "recall_at_k": 1.0
+        },
+        "semantic": {
+          "mrr": 1.0,
+          "ndcg_at_k": 1.0,
+          "precision_at_k": 0.2,
+          "recall_at_k": 1.0
+        }
+      },
+      "query": "Looking for work on LLM red teaming, eval harnesses, and synthetic judges rather than generic chatbot product work",
+      "relevant_count": 1
+    },
+    {
+      "modes": {
+        "baseline": {
+          "mrr": 1.0,
+          "ndcg_at_k": 1.0,
+          "precision_at_k": 0.2,
+          "recall_at_k": 1.0
+        },
+        "semantic": {
+          "mrr": 1.0,
+          "ndcg_at_k": 1.0,
+          "precision_at_k": 0.2,
+          "recall_at_k": 1.0
+        }
+      },
+      "query": "Which role is strongest for Core Web Vitals, rendering performance, and accessibility systems work?",
+      "relevant_count": 1
+    },
+    {
+      "modes": {
+        "baseline": {
+          "mrr": 1.0,
+          "ndcg_at_k": 1.0,
+          "precision_at_k": 0.2,
+          "recall_at_k": 1.0
+        },
+        "semantic": {
+          "mrr": 1.0,
+          "ndcg_at_k": 1.0,
+          "precision_at_k": 0.2,
+          "recall_at_k": 1.0
+        }
+      },
+      "query": "I want a quant internship focused on macro signals, regime shifts, and portfolio construction instead of business analytics",
+      "relevant_count": 1
+    },
+    {
+      "modes": {
+        "baseline": {
+          "mrr": 1.0,
+          "ndcg_at_k": 1.0,
+          "precision_at_k": 0.2,
+          "recall_at_k": 1.0
+        },
+        "semantic": {
+          "mrr": 1.0,
+          "ndcg_at_k": 1.0,
+          "precision_at_k": 0.2,
+          "recall_at_k": 1.0
+        }
+      },
+      "query": "Find the blue-team opportunity that is about detections, cloud telemetry, and threat hunting",
+      "relevant_count": 1
+    },
+    {
+      "modes": {
+        "baseline": {
+          "mrr": 1.0,
+          "ndcg_at_k": 1.0,
+          "precision_at_k": 0.2,
+          "recall_at_k": 1.0
+        },
+        "semantic": {
+          "mrr": 1.0,
+          "ndcg_at_k": 1.0,
+          "precision_at_k": 0.2,
+          "recall_at_k": 1.0
+        }
+      },
+      "query": "What is the best recent fellowship for satellite imagery and climate resilience modeling?",
+      "relevant_count": 1
+    },
+    {
+      "modes": {
+        "baseline": {
+          "mrr": 1.0,
+          "ndcg_at_k": 1.0,
+          "precision_at_k": 0.2,
+          "recall_at_k": 1.0
+        },
+        "semantic": {
+          "mrr": 0.5,
+          "ndcg_at_k": 0.6309297535714575,
+          "precision_at_k": 0.2,
+          "recall_at_k": 1.0
+        }
+      },
+      "query": "Need a genomics role centered on sequence analysis and variant interpretation, not a wet lab assistant position",
+      "relevant_count": 1
+    }
+  ],
+  "summary": {
+    "corpus_size": 12,
+    "description": "Harder paraphrased queries evaluated on a temporal holdout with the production embedding path.",
+    "embedding_provider": "sentence_transformers",
+    "embedding_runtime_provider": "hash_fallback",
+    "k": 5,
+    "latency_ms": {
+      "baseline": {
+        "max": 0.079083,
+        "mean": 0.060916,
+        "p50": 0.058354,
+        "p95": 0.074687
+      },
+      "semantic": {
+        "max": 0.122708,
+        "mean": 0.100681,
+        "p50": 0.102521,
+        "p95": 0.120083
+      }
+    },
+    "modes": {
+      "baseline": {
+        "mrr": 1.0,
+        "ndcg_at_k": 1.0,
+        "precision_at_k": 0.2,
+        "recall_at_k": 1.0
+      },
+      "semantic": {
+        "mrr": 0.916667,
+        "ndcg_at_k": 0.938488,
+        "precision_at_k": 0.2,
+        "recall_at_k": 1.0
+      }
+    },
+    "profile": "production_temporal_holdout",
+    "query_count": 6,
+    "temporal_holdout": {
+      "corpus_holdout": 12,
+      "corpus_total": 15,
+      "cutoff": "2025-01-01T00:00:00",
+      "enabled": true,
+      "queries_holdout": 6,
+      "queries_total": 6
+    }
+  }
+}
