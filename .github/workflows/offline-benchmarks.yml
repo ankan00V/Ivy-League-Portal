@@ -39,6 +39,7 @@ jobs:
           --k 5
           --tolerance 0
           --out /tmp/offline-benchmark-results.json
+          --fail-on-fallback
           --semantic-max-precision-drop $BENCH_MAX_DROP_PRECISION_AT_K
           --semantic-max-recall-drop $BENCH_MAX_DROP_RECALL_AT_K
           --semantic-max-ndcg-drop $BENCH_MAX_DROP_NDCG_AT_K

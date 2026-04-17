@@ -308,10 +308,30 @@ class RetrainingService:
         *,
         X_train: np.ndarray,
         y_train: np.ndarray,
+        X_validation: Optional[np.ndarray] = None,
+        y_validation: Optional[np.ndarray] = None,
         grid_step: float = 0.05,
     ) -> dict[str, float] | None:
         if X_train.size == 0 or y_train.size == 0 or X_train.shape[0] != y_train.shape[0]:
             return None
+
+        def _has_binary_classes(values: Optional[np.ndarray]) -> bool:
+            if values is None or values.size == 0:
+                return False
+            positives = int((values == 1).sum())
+            negatives = int((values == 0).sum())
+            return positives > 0 and negatives > 0
+
+        use_validation = (
+            X_validation is not None
+            and y_validation is not None
+            and X_validation.size > 0
+            and y_validation.size > 0
+            and X_validation.shape[0] == y_validation.shape[0]
+            and _has_binary_classes(y_validation)
+        )
+        eval_X = X_validation if use_validation and X_validation is not None else X_train
+        eval_y = y_validation if use_validation and y_validation is not None else y_train
 
         step = float(max(0.01, min(0.25, grid_step)))
         best_auc = -1.0
@@ -323,8 +343,8 @@ class RetrainingService:
                 if w_beh < 0.0:
                     continue
                 w = np.asarray([w_sem, w_base, w_beh], dtype=np.float64)
-                scores = X_train @ w
-                auc = _roc_auc_score(y_train, scores)
+                scores = eval_X @ w
+                auc = _roc_auc_score(eval_y, scores)
                 if auc > best_auc:
                     best_auc = auc
                     best_weights = {"semantic": float(w_sem), "baseline": float(w_base), "behavior": float(w_beh)}
@@ -390,6 +410,7 @@ class RetrainingService:
             "split_strategy": splits.strategy,
             "split_summary": splits.summary,
             "feature_names": ["semantic_score", "baseline_score", "behavior_score"],
+            "selection_metric": "validation_auc_preferred",
             "feature_stats": dict(baselines.get("features") or {}),
             "query_stats": {
                 "length": dict(baselines.get("query_length") or {}),
@@ -492,6 +513,8 @@ class RetrainingService:
         learned = self.train_weights(
             X_train=X[splits.train_idx],
             y_train=y[splits.train_idx],
+            X_validation=X[splits.validation_idx],
+            y_validation=y[splits.validation_idx],
             grid_step=grid_step,
         )
         if not learned:

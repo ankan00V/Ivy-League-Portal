@@ -410,6 +410,12 @@ def _gate_latency(
 def main() -> int:
     parser = argparse.ArgumentParser(description="Offline retrieval benchmark (gold queries -> relevant ids).")
     parser.add_argument("--profile", choices=sorted(BENCHMARK_PROFILES.keys()), default="ci_hash")
+    parser.add_argument(
+        "--embedding-provider",
+        choices=["hash", "sentence_transformers", "openai", "auto"],
+        default=None,
+        help="Override embedding provider for this benchmark run.",
+    )
     parser.add_argument("--opportunities", type=str, default=None)
     parser.add_argument("--gold", type=str, default=None)
     parser.add_argument("--k", type=int, default=5)
@@ -425,9 +431,23 @@ def main() -> int:
     parser.add_argument("--semantic-p95-ms-budget", type=float, default=None)
     parser.add_argument("--semantic-mean-ms-budget", type=float, default=None)
     parser.add_argument("--semantic-max-ms-budget", type=float, default=None)
+    parser.add_argument(
+        "--fail-on-fallback",
+        action="store_true",
+        help="Fail when runtime embedding provider falls back from the requested provider.",
+    )
     args = parser.parse_args()
 
     profile = BENCHMARK_PROFILES[args.profile]
+    if args.embedding_provider:
+        profile = BenchmarkProfile(
+            name=profile.name,
+            embedding_provider=args.embedding_provider,
+            opportunities_path=profile.opportunities_path,
+            gold_path=profile.gold_path,
+            holdout_after=profile.holdout_after,
+            description=profile.description,
+        )
     _configure_environment(profile)
 
     opportunities_path = Path(args.opportunities) if args.opportunities else _default_path(profile.opportunities_path)
@@ -514,6 +534,17 @@ def main() -> int:
             print("Current summary:", file=sys.stderr)
             print(json.dumps(current["summary"], indent=2, sort_keys=True), file=sys.stderr)
             return 4
+
+    runtime_provider = str((current.get("summary") or {}).get("embedding_runtime_provider") or "").strip()
+    if args.fail_on_fallback and runtime_provider.endswith("_fallback"):
+        print(
+            (
+                "Embedding runtime fallback detected: "
+                f"requested={profile.embedding_provider}, runtime={runtime_provider}"
+            ),
+            file=sys.stderr,
+        )
+        return 5
 
     print(json.dumps(current["summary"], indent=2, sort_keys=True))
     return 0
