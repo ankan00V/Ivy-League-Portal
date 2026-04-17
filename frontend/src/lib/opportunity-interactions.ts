@@ -31,6 +31,14 @@ export function isMongoObjectId(value?: string | null): boolean {
   return Boolean(value && OBJECT_ID_PATTERN.test(value));
 }
 
+function normalizeRankPosition(value?: number | null): number {
+  const parsed = Number(value);
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return Math.floor(parsed);
+  }
+  return 1;
+}
+
 export async function logOpportunityInteraction(input: OpportunityInteractionInput): Promise<boolean> {
   if (typeof window === "undefined") {
     return false;
@@ -46,13 +54,15 @@ export async function logOpportunityInteraction(input: OpportunityInteractionInp
   }
 
   const rankingMode = normalizeRankingMode(input.rankingMode);
+  const experimentKey = (input.experimentKey || "ranking_mode").trim() || "ranking_mode";
+  const experimentVariant = (input.experimentVariant || rankingMode).trim() || rankingMode;
   const payload = {
     opportunity_id: input.opportunityId,
     interaction_type: input.interactionType,
     ranking_mode: rankingMode,
-    experiment_key: input.experimentKey || "ranking_mode",
-    experiment_variant: input.experimentVariant || rankingMode,
-    rank_position: input.rankPosition ?? null,
+    experiment_key: experimentKey,
+    experiment_variant: experimentVariant,
+    rank_position: normalizeRankPosition(input.rankPosition),
     match_score: input.matchScore ?? null,
     query: input.query ?? null,
     model_version_id: input.modelVersionId ?? null,

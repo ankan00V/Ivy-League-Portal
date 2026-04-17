@@ -71,6 +71,22 @@ async def apply_to_opportunity(
     current_user: User = Depends(get_current_active_user)
 ) -> Any:
     """Automated application submission using Playwright browser automation."""
+    tracking_mode = (ranking_mode or "baseline").strip().lower()
+    if tracking_mode not in {"baseline", "semantic", "ml", "ab"}:
+        raise HTTPException(status_code=400, detail="Invalid ranking_mode")
+
+    tracking_experiment_key = (experiment_key or "ranking_mode").strip()
+    if not tracking_experiment_key:
+        raise HTTPException(status_code=400, detail="experiment_key must not be empty")
+
+    tracking_experiment_variant = (experiment_variant or tracking_mode).strip()
+    if not tracking_experiment_variant:
+        raise HTTPException(status_code=400, detail="experiment_variant must not be empty")
+
+    tracking_rank_position = int(rank_position or 1)
+    if tracking_rank_position <= 0:
+        raise HTTPException(status_code=400, detail="rank_position must be >= 1")
+
     # Verify opportunity exists
     opp = await Opportunity.get(opportunity_id)
     if not opp:
@@ -111,10 +127,10 @@ async def apply_to_opportunity(
         user_id=current_user.id,
         opportunity_id=opp.id,
         interaction_type="apply",
-        ranking_mode=ranking_mode,
-        experiment_key=experiment_key,
-        experiment_variant=experiment_variant,
-        rank_position=rank_position,
+        ranking_mode=tracking_mode,
+        experiment_key=tracking_experiment_key,
+        experiment_variant=tracking_experiment_variant,
+        rank_position=tracking_rank_position,
         match_score=match_score,
         model_version_id=model_version_id,
     )

@@ -277,10 +277,8 @@ export default function OpportunitiesPage() {
                 ranking_mode: opportunity.ranking_mode || "baseline",
                 experiment_key: opportunity.experiment_key || "ranking_mode",
                 experiment_variant: opportunity.experiment_variant || opportunity.ranking_mode || "baseline",
+                rank_position: String(opportunity.rank_position ?? 1),
             });
-            if (opportunity.rank_position) {
-                query.set("rank_position", String(opportunity.rank_position));
-            }
             if (typeof opportunity.match_score === "number") {
                 query.set("match_score", String(opportunity.match_score));
             }

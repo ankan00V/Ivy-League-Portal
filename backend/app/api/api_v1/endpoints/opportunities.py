@@ -101,6 +101,12 @@ class LLMEvaluationRequest(BaseModel):
     rubric: Optional[str] = None
 
 
+def _resolve_experiment_context(*, effective_mode: str, meta: dict[str, Any]) -> tuple[str, str]:
+    experiment_key = str(meta.get("experiment_key") or "ranking_mode").strip() or "ranking_mode"
+    experiment_variant = str(meta.get("variant") or effective_mode).strip() or effective_mode
+    return experiment_key, experiment_variant
+
+
 def _to_recommended_response(payload: dict[str, Any]) -> RecommendedOpportunityResponse:
     opportunity: Opportunity = payload["opportunity"]
     return RecommendedOpportunityResponse(
@@ -255,8 +261,10 @@ async def get_personalized_recommendations(
             query=query,
         )
         effective_mode = str(meta.get("mode") or "semantic")
-        experiment_key = meta.get("experiment_key")
-        experiment_variant = meta.get("variant")
+        experiment_key, experiment_variant = _resolve_experiment_context(
+            effective_mode=effective_mode,
+            meta=meta,
+        )
 
         for item in ranked:
             item["experiment_key"] = experiment_key
@@ -349,8 +357,10 @@ async def get_smart_shortlist(
             query=query,
         )
         effective_mode = str(meta.get("mode") or "semantic")
-        experiment_key = meta.get("experiment_key")
-        experiment_variant = meta.get("variant")
+        experiment_key, experiment_variant = _resolve_experiment_context(
+            effective_mode=effective_mode,
+            meta=meta,
+        )
 
         for item in ranked:
             item["experiment_key"] = experiment_key
@@ -423,16 +433,44 @@ async def log_opportunity_interaction(
     if payload.interaction_type not in allowed_types:
         raise HTTPException(status_code=400, detail="Invalid interaction_type")
 
+    tracking_mode = (payload.ranking_mode or "").strip().lower() or None
+    tracking_experiment_key = (payload.experiment_key or "").strip() or None
+    tracking_experiment_variant = (payload.experiment_variant or "").strip() or None
+    tracking_rank_position = payload.rank_position
+
+    if payload.interaction_type in {"impression", "click", "save", "apply"}:
+        required_fields: dict[str, Any] = {
+            "ranking_mode": tracking_mode,
+            "experiment_key": tracking_experiment_key,
+            "experiment_variant": tracking_experiment_variant,
+            "rank_position": tracking_rank_position,
+        }
+        missing = [
+            key
+            for key, value in required_fields.items()
+            if value is None or (isinstance(value, str) and not value.strip())
+        ]
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Missing required tracking metadata: {', '.join(missing)}",
+            )
+
+        if tracking_mode not in {"baseline", "semantic", "ml", "ab"}:
+            raise HTTPException(status_code=400, detail="Invalid ranking_mode")
+        if tracking_rank_position is None or int(tracking_rank_position) <= 0:
+            raise HTTPException(status_code=400, detail="rank_position must be >= 1")
+
     await interaction_service.log_event(
         user_id=current_user.id,
         opportunity_id=payload.opportunity_id,
         interaction_type=payload.interaction_type,
-        ranking_mode=payload.ranking_mode,
-        experiment_key=payload.experiment_key,
-        experiment_variant=payload.experiment_variant,
+        ranking_mode=tracking_mode,
+        experiment_key=tracking_experiment_key,
+        experiment_variant=tracking_experiment_variant,
         query=payload.query,
         model_version_id=payload.model_version_id,
-        rank_position=payload.rank_position,
+        rank_position=tracking_rank_position,
         match_score=payload.match_score,
         features=payload.features,
     )
