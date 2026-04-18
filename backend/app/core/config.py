@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     
     # Celery & Redis
     REDIS_URL: str = "redis://localhost:6379/0"
+    UPSTASH_REDIS_REST_URL: Optional[str] = None
+    UPSTASH_REDIS_REST_TOKEN: Optional[str] = None
 
     # Caching (Redis-backed)
     CACHE_ENABLED: bool = True
