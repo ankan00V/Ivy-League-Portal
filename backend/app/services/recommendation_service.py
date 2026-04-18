@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from bisect import bisect_left
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Any, Optional
@@ -35,6 +36,117 @@ def _profile_query(profile: Profile) -> str:
 
 
 class RecommendationService:
+    def _quantile(self, values: list[float], q: float) -> float:
+        if not values:
+            return 0.0
+        sorted_values = sorted(float(value) for value in values)
+        if len(sorted_values) == 1:
+            return float(sorted_values[0])
+
+        p = max(0.0, min(1.0, float(q)))
+        idx = p * float(len(sorted_values) - 1)
+        lo = int(idx)
+        hi = min(lo + 1, len(sorted_values) - 1)
+        if lo == hi:
+            return float(sorted_values[lo])
+        frac = idx - float(lo)
+        return float(sorted_values[lo] * (1.0 - frac) + sorted_values[hi] * frac)
+
+    async def _learn_user_filter_threshold(
+        self,
+        *,
+        user_id,
+        ranking_mode: str,
+        lookback_days: int = 120,
+        label_window_hours: int = 72,
+        min_impressions: int = 30,
+        min_positive: int = 4,
+    ) -> dict[str, Any] | None:
+        """
+        Learn a user-specific shortlist cutoff from historical interactions.
+
+        Training signal:
+        - impression(match_score) is a candidate sample
+        - positive label if click/save/apply occurred for same opportunity within label window
+        """
+        since = datetime.utcnow() - timedelta(days=max(7, min(int(lookback_days), 365)))
+        label_window = timedelta(hours=max(1, min(int(label_window_hours), 168)))
+        target_modes = {str(ranking_mode or "").strip().lower(), "ab"}
+
+        try:
+            interactions = await OpportunityInteraction.find_many(
+                OpportunityInteraction.user_id == user_id,
+                OpportunityInteraction.created_at >= since,
+            ).sort("-created_at").limit(5000).to_list()
+        except Exception:
+            return None
+
+        if not interactions:
+            return None
+
+        positive_map: dict[str, list[datetime]] = {}
+        for item in interactions:
+            if (getattr(item, "traffic_type", "real") or "real").strip().lower() not in {"", "real"}:
+                continue
+            mode = (getattr(item, "ranking_mode", "") or "").strip().lower()
+            if mode and mode not in target_modes:
+                continue
+            action = (getattr(item, "interaction_type", "") or "").strip().lower()
+            if action not in {"click", "save", "apply"}:
+                continue
+            key = str(item.opportunity_id)
+            positive_map.setdefault(key, []).append(item.created_at)
+
+        for times in positive_map.values():
+            times.sort()
+
+        positives: list[float] = []
+        negatives: list[float] = []
+        for item in interactions:
+            if (getattr(item, "traffic_type", "real") or "real").strip().lower() not in {"", "real"}:
+                continue
+            mode = (getattr(item, "ranking_mode", "") or "").strip().lower()
+            if mode and mode not in target_modes:
+                continue
+            if (getattr(item, "interaction_type", "") or "").strip().lower() != "impression":
+                continue
+            score = getattr(item, "match_score", None)
+            if score is None:
+                continue
+
+            key = str(item.opportunity_id)
+            times = positive_map.get(key, [])
+            label = 0
+            if times:
+                left = bisect_left(times, item.created_at)
+                if left < len(times) and times[left] <= (item.created_at + label_window):
+                    label = 1
+
+            if label == 1:
+                positives.append(float(score))
+            else:
+                negatives.append(float(score))
+
+        impression_count = len(positives) + len(negatives)
+        if impression_count < int(min_impressions) or len(positives) < int(min_positive):
+            return None
+
+        positive_q25 = self._quantile(positives, 0.25)
+        positive_q40 = self._quantile(positives, 0.40)
+        negative_q80 = self._quantile(negatives, 0.80) if negatives else positive_q25
+        threshold = max(10.0, min(95.0, max(positive_q25, negative_q80 * 0.85)))
+        threshold = round((threshold + positive_q40) / 2.0, 3)
+
+        return {
+            "enabled": True,
+            "threshold": float(max(10.0, min(95.0, threshold))),
+            "trained_on_impressions": int(impression_count),
+            "positives": int(len(positives)),
+            "negatives": int(len(negatives)),
+            "lookback_days": int(lookback_days),
+            "label_window_hours": int(label_window_hours),
+        }
+
     async def _build_behavior_map(self, user_id) -> dict[str, dict[str, float]]:
         since = datetime.utcnow() - timedelta(days=120)
         interactions = await OpportunityInteraction.find_many(
@@ -52,6 +164,7 @@ class RecommendationService:
             "impression": 0.2,
             "view": 0.5,
             "click": 1.0,
+            "save": 1.2,
             "apply": 1.8,
         }
 
@@ -112,11 +225,11 @@ class RecommendationService:
         opportunities: list[Opportunity],
         limit: int,
         min_score: float = 0.0,
-        ranking_mode: str = "semantic",
+        ranking_mode: str = "ml",
         query: Optional[str] = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         if not opportunities:
-            return [], {"mode": "semantic"}
+            return [], {"mode": ranking_mode}
 
         active_model = await ranking_model_service.get_active()
         weights = active_model.weights
@@ -141,6 +254,14 @@ class RecommendationService:
 
         meta["model_version_id"] = active_model.model_version_id
         meta["weights"] = dict(weights)
+        if effective_mode == "ml":
+            importance = learned_ranker.feature_importance(top_k=8)
+            meta["feature_importance_top"] = [
+                {"feature": item.feature, "importance": item.importance}
+                for item in importance
+            ]
+        else:
+            meta["feature_importance_top"] = []
 
         behavior_map = await self._build_behavior_map(user_id)
         semantic_scores: dict[str, float] = {}
@@ -156,18 +277,27 @@ class RecommendationService:
                 for result in semantic_results
             }
 
-        ranked: list[dict[str, Any]] = []
+        candidates: list[dict[str, Any]] = []
+        ml_request_failed = False
+        top_features = [item["feature"] for item in list(meta.get("feature_importance_top") or [])[:3]]
+        feature_reason = f"Top model features: {', '.join(top_features)}." if top_features else None
         for opportunity in opportunities:
             baseline_score, baseline_reasons = score_opportunity_match(profile, opportunity)
             semantic_score = round(float(semantic_scores.get(str(opportunity.id), 0.0)), 3)
             behavior_score = self._behavior_score(opportunity, behavior_map)
             behavior_domain_pref, behavior_type_pref = self._behavior_prefs(opportunity, behavior_map)
             overlap_score = skills_overlap_score(profile=profile, opportunity=opportunity)
+            heuristic_blend_score = round(
+                (weights["semantic"] * semantic_score)
+                + (weights["baseline"] * baseline_score)
+                + (weights["behavior"] * behavior_score),
+                3,
+            )
 
-            if effective_mode == "baseline":
-                final_score = baseline_score
-                reasons = baseline_reasons
-            elif effective_mode == "ml":
+            reasons = list(baseline_reasons)
+            ml_raw_score: float | None = None
+
+            if effective_mode == "ml":
                 features = build_ranker_features(
                     profile=profile,
                     opportunity=opportunity,
@@ -180,41 +310,59 @@ class RecommendationService:
                 )
                 ranker_result = learned_ranker.score(features)
                 if ranker_result is None:
-                    final_score = round(
-                        (weights["semantic"] * semantic_score)
-                        + (weights["baseline"] * baseline_score)
-                        + (weights["behavior"] * behavior_score),
-                        3,
-                    )
-                    reasons = list(baseline_reasons)
-                    reasons.append("Learned ranker unavailable; used heuristic blend.")
-                    ml_raw_score: float | None = None
+                    ml_request_failed = True
                 else:
-                    # Keep raw score for later per-request normalization to 0-100.
                     ml_raw_score = float(ranker_result.score)
-                    final_score = ml_raw_score
-                    reasons = list(baseline_reasons)
                     reasons.append(f"Learned ranker: {ranker_result.model}")
                     if semantic_score > 0:
                         reasons.append(f"Semantic similarity: {semantic_score:.1f}")
                     if overlap_score > 0:
                         reasons.append(f"Skills overlap: {overlap_score:.2f}")
-            else:
-                # Personalization = content similarity + profile compatibility + behavior weighting.
-                final_score = round(
-                    (weights["semantic"] * semantic_score)
-                    + (weights["baseline"] * baseline_score)
-                    + (weights["behavior"] * behavior_score),
-                    3,
-                )
-                reasons = list(baseline_reasons)
+            elif effective_mode == "semantic":
                 if semantic_score > 0:
                     reasons.append(f"Semantic match score: {semantic_score:.1f}")
                 if behavior_score > 0:
                     reasons.append(f"Behavioral preference boost: {behavior_score:.1f}")
 
-            # For ML scoring, normalize after collecting all raw scores.
-            if effective_mode != "ml" and final_score < min_score:
+            candidates.append(
+                {
+                    "opportunity": opportunity,
+                    "baseline_score": round(baseline_score, 3),
+                    "semantic_score": round(semantic_score, 3),
+                    "behavior_score": round(behavior_score, 3),
+                    "skills_overlap_score": round(float(overlap_score), 6),
+                    "behavior_domain_pref": round(float(behavior_domain_pref), 6),
+                    "behavior_type_pref": round(float(behavior_type_pref), 6),
+                    "heuristic_blend_score": heuristic_blend_score,
+                    "ml_raw_score": ml_raw_score,
+                    "match_reasons": reasons,
+                }
+            )
+
+        if effective_mode == "ml" and ml_request_failed:
+            meta["mode"] = "semantic"
+            meta["fallback_reason"] = "ml_model_failure"
+
+        ranked: list[dict[str, Any]] = []
+        for candidate in candidates:
+            opportunity = candidate["opportunity"]
+            reasons = list(candidate.get("match_reasons") or [])
+
+            if effective_mode == "baseline":
+                final_score = float(candidate["baseline_score"])
+                final_mode = "baseline"
+            elif effective_mode == "ml" and not ml_request_failed:
+                final_score = float(candidate.get("ml_raw_score") or 0.0)
+                final_mode = "ml"
+                if feature_reason:
+                    reasons.append(feature_reason)
+            else:
+                final_score = float(candidate["heuristic_blend_score"])
+                final_mode = "semantic"
+                if effective_mode == "ml" and ml_request_failed:
+                    reasons.append("ML ranker failed for this request; used heuristic blend fallback.")
+
+            if final_mode != "ml" and final_score < min_score:
                 continue
 
             ranked.append(
@@ -222,20 +370,21 @@ class RecommendationService:
                     "opportunity": opportunity,
                     "match_score": round(final_score, 3),
                     "match_reasons": reasons,
-                    "baseline_score": round(baseline_score, 3),
-                    "semantic_score": round(semantic_score, 3),
-                    "behavior_score": round(behavior_score, 3),
-                    "skills_overlap_score": round(float(overlap_score), 6),
-                    "behavior_domain_pref": round(float(behavior_domain_pref), 6),
-                    "behavior_type_pref": round(float(behavior_type_pref), 6),
-                    "ranking_mode": effective_mode,
+                    "baseline_score": candidate["baseline_score"],
+                    "semantic_score": candidate["semantic_score"],
+                    "behavior_score": candidate["behavior_score"],
+                    "skills_overlap_score": candidate["skills_overlap_score"],
+                    "behavior_domain_pref": candidate["behavior_domain_pref"],
+                    "behavior_type_pref": candidate["behavior_type_pref"],
+                    "ranking_mode": final_mode,
                     "model_version_id": active_model.model_version_id,
                     "weights": dict(weights),
-                    "ml_raw_score": ml_raw_score if effective_mode == "ml" else None,
+                    "ml_raw_score": candidate.get("ml_raw_score") if final_mode == "ml" else None,
+                    "feature_importance_top": list(meta.get("feature_importance_top") or []),
                 }
             )
 
-        if effective_mode == "ml" and ranked:
+        if effective_mode == "ml" and not ml_request_failed and ranked:
             raw_scores = [float(item.get("ml_raw_score")) for item in ranked if item.get("ml_raw_score") is not None]
             if raw_scores:
                 lo = min(raw_scores)
@@ -249,6 +398,23 @@ class RecommendationService:
                     item["match_score"] = round(float(scaled), 3)
 
             ranked = [item for item in ranked if float(item.get("match_score") or 0.0) >= float(min_score)]
+
+        adaptive_filter = await self._learn_user_filter_threshold(
+            user_id=user_id,
+            ranking_mode=str(meta.get("mode") or effective_mode or "semantic"),
+        )
+        if adaptive_filter and effective_mode in {"semantic", "ml"}:
+            adaptive_min_score = max(float(min_score), float(adaptive_filter["threshold"]))
+            filtered = [item for item in ranked if float(item.get("match_score") or 0.0) >= adaptive_min_score]
+            if filtered:
+                ranked = filtered
+            meta["adaptive_filter"] = {
+                **adaptive_filter,
+                "applied": bool(filtered),
+                "effective_min_score": float(round(adaptive_min_score, 3)),
+            }
+        else:
+            meta["adaptive_filter"] = {"enabled": False}
 
         ranked.sort(
             key=lambda item: (

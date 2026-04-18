@@ -77,6 +77,192 @@ class TestRecommendationService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(meta["model_version_id"], "model-123")
         self.assertGreater(ranked[0]["semantic_score"], ranked[1]["semantic_score"])
 
+    async def test_ml_mode_falls_back_for_entire_request_on_ranker_failure(self) -> None:
+        service = RecommendationService()
+        user_id = "user-ml-fallback"
+        profile = SimpleNamespace(
+            user_id=user_id,
+            bio="",
+            skills="python ml ranking",
+            interests="recommenders",
+            education="",
+            achievements="",
+        )
+        opportunities = [
+            SimpleNamespace(
+                id="opp-1",
+                title="Ranking Internship",
+                description="Build ranking models and offline evals.",
+                url="https://example.com/1",
+                domain="AI/ML",
+                opportunity_type="Internship",
+                university="Lab",
+                source="example_source",
+                deadline=None,
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow(),
+                last_seen_at=datetime.utcnow(),
+            ),
+            SimpleNamespace(
+                id="opp-2",
+                title="General Analytics Internship",
+                description="Dashboards and KPI tracking.",
+                url="https://example.com/2",
+                domain="Analytics",
+                opportunity_type="Internship",
+                university="Org",
+                source="example_source",
+                deadline=None,
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow(),
+                last_seen_at=datetime.utcnow(),
+            ),
+        ]
+
+        with (
+            patch(
+                "app.services.recommendation_service.ranking_model_service.get_active",
+                new=AsyncMock(
+                    return_value=type(
+                        "ActiveModel",
+                        (),
+                        {"model_version_id": "model-ml", "weights": {"semantic": 0.6, "baseline": 0.25, "behavior": 0.15}},
+                    )()
+                ),
+            ),
+            patch(
+                "app.services.recommendation_service.opportunity_vector_service.search",
+                new=AsyncMock(
+                    return_value=[
+                        {"id": opportunities[0].id, "similarity": 0.95},
+                        {"id": opportunities[1].id, "similarity": 0.11},
+                    ]
+                ),
+            ),
+            patch.object(service, "_build_behavior_map", new=AsyncMock(return_value={"domain": {}, "type": {}})),
+            patch("app.services.recommendation_service.learned_ranker.feature_importance", return_value=[]),
+            patch("app.services.recommendation_service.learned_ranker.score", return_value=None),
+        ):
+            ranked, meta = await service.rank(
+                user_id=user_id,
+                profile=profile,
+                opportunities=opportunities,
+                limit=2,
+                ranking_mode="ml",
+                query="ranking ml intern",
+            )
+
+        self.assertEqual(meta.get("fallback_reason"), "ml_model_failure")
+        self.assertEqual(meta.get("mode"), "semantic")
+        self.assertTrue(all(item["ranking_mode"] == "semantic" for item in ranked))
+        self.assertTrue(
+            all(
+                any("heuristic blend fallback" in reason.lower() for reason in item["match_reasons"])
+                for item in ranked
+            )
+        )
+
+    async def test_semantic_mode_applies_user_trained_adaptive_filter(self) -> None:
+        service = RecommendationService()
+        user_id = "user-adaptive-filter"
+        profile = SimpleNamespace(
+            user_id=user_id,
+            bio="",
+            skills="python ml ranking",
+            interests="recommenders",
+            education="",
+            achievements="",
+        )
+        opportunities = [
+            SimpleNamespace(
+                id="opp-high",
+                title="High Match Internship",
+                description="Build ranking systems with Python and ML.",
+                url="https://example.com/high",
+                domain="AI/ML",
+                opportunity_type="Internship",
+                university="Lab",
+                source="example_source",
+                deadline=None,
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow(),
+                last_seen_at=datetime.utcnow(),
+            ),
+            SimpleNamespace(
+                id="opp-low",
+                title="Low Match Internship",
+                description="General office internship role.",
+                url="https://example.com/low",
+                domain="General",
+                opportunity_type="Internship",
+                university="Org",
+                source="example_source",
+                deadline=None,
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow(),
+                last_seen_at=datetime.utcnow(),
+            ),
+        ]
+
+        def _mock_baseline_score(profile_arg, opportunity_arg):  # noqa: ANN001
+            if opportunity_arg.id == "opp-high":
+                return 92.0, ["Strong profile fit."]
+            return 12.0, ["Weak fit."]
+
+        with (
+            patch(
+                "app.services.recommendation_service.ranking_model_service.get_active",
+                new=AsyncMock(
+                    return_value=type(
+                        "ActiveModel",
+                        (),
+                        {"model_version_id": "model-adaptive", "weights": {"semantic": 0.6, "baseline": 0.25, "behavior": 0.15}},
+                    )()
+                ),
+            ),
+            patch(
+                "app.services.recommendation_service.opportunity_vector_service.search",
+                new=AsyncMock(
+                    return_value=[
+                        {"id": opportunities[0].id, "similarity": 0.95},
+                        {"id": opportunities[1].id, "similarity": 0.11},
+                    ]
+                ),
+            ),
+            patch("app.services.recommendation_service.score_opportunity_match", side_effect=_mock_baseline_score),
+            patch.object(service, "_build_behavior_map", new=AsyncMock(return_value={"domain": {}, "type": {}})),
+            patch.object(
+                service,
+                "_learn_user_filter_threshold",
+                new=AsyncMock(
+                    return_value={
+                        "enabled": True,
+                        "threshold": 70.0,
+                        "trained_on_impressions": 120,
+                        "positives": 18,
+                        "negatives": 102,
+                        "lookback_days": 120,
+                        "label_window_hours": 72,
+                    }
+                ),
+            ),
+        ):
+            ranked, meta = await service.rank(
+                user_id=user_id,
+                profile=profile,
+                opportunities=opportunities,
+                limit=5,
+                ranking_mode="semantic",
+                min_score=0.0,
+                query="ml ranking systems",
+            )
+
+        self.assertEqual(len(ranked), 1)
+        self.assertEqual(ranked[0]["opportunity"].id, "opp-high")
+        self.assertEqual(meta.get("adaptive_filter", {}).get("enabled"), True)
+        self.assertEqual(meta.get("adaptive_filter", {}).get("applied"), True)
+        self.assertEqual(meta.get("adaptive_filter", {}).get("effective_min_score"), 70.0)
+
 
 if __name__ == "__main__":
     unittest.main()
