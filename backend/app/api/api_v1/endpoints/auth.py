@@ -16,7 +16,7 @@ from pydantic import BaseModel, EmailStr, field_validator
 
 from app.core.config import settings
 from app.core.email_policy import is_corporate_email
-from app.core.redis_client import delete_otp, set_otp, validate_otp
+from app.core.redis_client import delete_otp, get_otp_cooldown_remaining, set_otp, validate_otp
 from app.core.security import create_access_token, get_password_hash, verify_password
 from app.models.user import User
 from app.schemas.user import Token, UserCreate, UserResponse
@@ -81,6 +81,40 @@ def _sanitize_next_path(value: Optional[str]) -> str:
     if candidate.startswith("//"):
         return "/dashboard"
     return candidate
+
+
+def _normalize_frontend_origin(value: Optional[str]) -> Optional[str]:
+    candidate = (value or "").strip()
+    if not candidate:
+        return None
+    split = urlsplit(candidate)
+    if split.scheme not in {"http", "https"} or not split.netloc:
+        return None
+    if split.path not in {"", "/"} or split.query or split.fragment:
+        return None
+    return urlunsplit((split.scheme, split.netloc, "", "", ""))
+
+
+def _join_origin_path(origin: str, path: str, *, default_path: str) -> str:
+    normalized_path = (path or "").strip() or default_path
+    if not normalized_path.startswith("/"):
+        normalized_path = f"/{normalized_path}"
+    return f"{origin.rstrip('/')}{normalized_path}"
+
+
+def _resolve_oauth_frontend_urls(frontend_origin: Optional[str]) -> tuple[str, str]:
+    success_url = settings.FRONTEND_OAUTH_SUCCESS_URL
+    failure_url = settings.FRONTEND_OAUTH_FAILURE_URL
+    normalized_origin = _normalize_frontend_origin(frontend_origin)
+    if not normalized_origin:
+        return success_url, failure_url
+
+    success_path = urlsplit(success_url).path or "/auth/callback"
+    failure_path = urlsplit(failure_url).path or "/login"
+    return (
+        _join_origin_path(normalized_origin, success_path, default_path="/auth/callback"),
+        _join_origin_path(normalized_origin, failure_path, default_path="/login"),
+    )
 
 
 def _google_oauth_is_configured() -> bool:
@@ -158,6 +192,7 @@ class OTPSendResponse(BaseModel):
     message: str
     delivery: Literal["email", "debug"]
     expires_in_seconds: int = OTP_EXPIRY_SECONDS
+    cooldown_seconds: int = 60
     debug_otp: str | None = None
 
 
@@ -227,6 +262,7 @@ async def oauth_providers() -> Any:
 async def oauth_google_start(
     account_type: Literal["candidate", "employer"] = "candidate",
     next: Optional[str] = None,
+    frontend_origin: Optional[str] = None,
 ) -> Any:
     """
     Returns Google OAuth authorization URL for the frontend to redirect users.
@@ -236,13 +272,15 @@ async def oauth_google_start(
 
     safe_account_type = _normalize_account_type(account_type)
     safe_next = _sanitize_next_path(next)
-    state = _base64url_encode(
-        {
-            "account_type": safe_account_type,
-            "next": safe_next,
-            "nonce": secrets.token_urlsafe(12),
-        }
-    )
+    state_payload: dict[str, Any] = {
+        "account_type": safe_account_type,
+        "next": safe_next,
+        "nonce": secrets.token_urlsafe(12),
+    }
+    safe_frontend_origin = _normalize_frontend_origin(frontend_origin)
+    if safe_frontend_origin:
+        state_payload["frontend_origin"] = safe_frontend_origin
+    state = _base64url_encode(state_payload)
 
     query = urlencode(
         {
@@ -269,18 +307,20 @@ async def oauth_google_callback(
     """
     Google OAuth callback: exchanges code, verifies ID token, and redirects to frontend with API JWT.
     """
-    failure_url = settings.FRONTEND_OAUTH_FAILURE_URL
-    success_url = settings.FRONTEND_OAUTH_SUCCESS_URL
     account_type = "candidate"
     next_path = "/dashboard"
+    frontend_origin: Optional[str] = None
 
     if state:
         try:
             state_payload = _base64url_decode(state)
             account_type = _normalize_account_type(state_payload.get("account_type"), default="candidate")
             next_path = _sanitize_next_path(state_payload.get("next"))
+            frontend_origin = _normalize_frontend_origin(state_payload.get("frontend_origin"))
         except Exception:
             pass
+
+    success_url, failure_url = _resolve_oauth_frontend_urls(frontend_origin)
 
     if error:
         target = _append_query(
@@ -446,6 +486,19 @@ async def send_otp(request: OTPSendRequest):
         if requested_account_type == "employer":
             _ensure_employer_corporate_email(normalized_email)
 
+    cooldown_seconds = max(1, int(settings.OTP_SEND_COOLDOWN_SECONDS))
+    remaining_cooldown = await get_otp_cooldown_remaining(
+        normalized_email,
+        purpose=request.purpose,
+        cooldown_seconds=cooldown_seconds,
+    )
+    if remaining_cooldown > 0:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Please wait {remaining_cooldown} seconds before requesting another OTP.",
+            headers={"Retry-After": str(remaining_cooldown)},
+        )
+
     otp = f"{secrets.randbelow(1_000_000):06d}"
     await set_otp(
         normalized_email,
@@ -490,6 +543,7 @@ async def send_otp(request: OTPSendRequest):
             else "OTP generated in local debug mode. Use the provided code to continue."
         ),
         delivery=delivery,
+        cooldown_seconds=cooldown_seconds,
         debug_otp=debug_otp,
     )
 

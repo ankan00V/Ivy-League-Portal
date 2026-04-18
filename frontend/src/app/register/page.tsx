@@ -32,12 +32,14 @@ const REGISTER_VISUALS = {
 
 export default function RegisterPage() {
   const router = useRouter();
+  const defaultOtpCooldownSeconds = 60;
   const [accountType, setAccountType] = useState<AccountType>("candidate");
   const [step, setStep] = useState<RegisterStep>("details");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [otp, setOtp] = useState("");
+  const [otpCooldownSeconds, setOtpCooldownSeconds] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
@@ -61,6 +63,16 @@ export default function RegisterPage() {
     void run();
   }, []);
 
+  React.useEffect(() => {
+    if (otpCooldownSeconds <= 0) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setOtpCooldownSeconds((current) => (current > 0 ? current - 1 : 0));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [otpCooldownSeconds]);
+
   const fullName = useMemo(() => `${firstName} ${lastName}`.trim(), [firstName, lastName]);
 
   const resetMessages = () => {
@@ -68,8 +80,28 @@ export default function RegisterPage() {
     setInfo(null);
   };
 
-  const handleSendOtp = async (event: React.FormEvent) => {
-    event.preventDefault();
+  const resolveCooldownSeconds = (response: Response, payload: Record<string, unknown>) => {
+    const fromBody = Number(payload.cooldown_seconds);
+    if (Number.isFinite(fromBody) && fromBody > 0) {
+      return Math.floor(fromBody);
+    }
+    const retryAfter = Number(response.headers.get("retry-after"));
+    if (Number.isFinite(retryAfter) && retryAfter > 0) {
+      return Math.floor(retryAfter);
+    }
+    const detail = String(payload.detail || "");
+    const matched = detail.match(/(\d+)/);
+    if (matched) {
+      return Math.max(1, Number(matched[1]));
+    }
+    return defaultOtpCooldownSeconds;
+  };
+
+  const requestOtp = async () => {
+    if (otpCooldownSeconds > 0) {
+      throw new Error(`Please wait ${otpCooldownSeconds}s before requesting another OTP.`);
+    }
+
     setLoading(true);
     resetMessages();
 
@@ -79,10 +111,19 @@ export default function RegisterPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, purpose: "signup", account_type: accountType }),
       });
-      const payload = await res.json().catch(() => ({}));
+      const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
       if (!res.ok) {
-        throw new Error(payload.detail || "Failed to send OTP");
+        const detail = typeof payload.detail === "string" ? payload.detail : "";
+        if (res.status === 429) {
+          const remaining = resolveCooldownSeconds(res, payload);
+          setOtpCooldownSeconds(remaining);
+          throw new Error(`Please wait ${remaining}s before requesting another OTP.`);
+        }
+        throw new Error(detail || "Failed to send OTP");
       }
+
+      const cooldown = resolveCooldownSeconds(res, payload);
+      setOtpCooldownSeconds(cooldown);
       if (typeof payload.debug_otp === "string" && payload.debug_otp.length === 6) {
         setOtp(payload.debug_otp);
         setInfo(`Debug OTP: ${payload.debug_otp} (local fallback)`);
@@ -96,6 +137,11 @@ export default function RegisterPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSendOtp = async (event: React.FormEvent) => {
+    event.preventDefault();
+    await requestOtp();
   };
 
   const handleVerifySignup = async (event: React.FormEvent) => {
@@ -136,7 +182,11 @@ export default function RegisterPage() {
     setLoading(true);
     resetMessages();
     try {
-      const params = new URLSearchParams({ account_type: accountType, next: "/auth/callback" });
+      const params = new URLSearchParams({
+        account_type: accountType,
+        next: "/auth/callback",
+        frontend_origin: window.location.origin,
+      });
       const res = await fetch(apiUrl(`/api/v1/auth/oauth/google/start?${params.toString()}`));
       const payload = await res.json().catch(() => ({}));
       if (!res.ok || !payload.redirect_url) {
@@ -266,8 +316,13 @@ export default function RegisterPage() {
                 disabled={loading}
               />
 
-              <button type="submit" className="btn-primary" disabled={loading} style={{ width: "100%", justifyContent: "center", marginTop: "0.25rem" }}>
-                {loading ? "Please wait..." : "Send OTP"}
+              <button
+                type="submit"
+                className="btn-primary"
+                disabled={loading || otpCooldownSeconds > 0}
+                style={{ width: "100%", justifyContent: "center", marginTop: "0.25rem" }}
+              >
+                {loading ? "Please wait..." : (otpCooldownSeconds > 0 ? `Send OTP (${otpCooldownSeconds}s)` : "Send OTP")}
               </button>
             </form>
           ) : (
@@ -288,6 +343,15 @@ export default function RegisterPage() {
                 disabled={loading}
                 style={{ letterSpacing: "0.25em", textAlign: "center", fontWeight: 800 }}
               />
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={loading || otpCooldownSeconds > 0}
+                onClick={() => void requestOtp()}
+                style={{ width: "100%", justifyContent: "center" }}
+              >
+                {otpCooldownSeconds > 0 ? `Resend OTP in ${otpCooldownSeconds}s` : "Resend OTP"}
+              </button>
 
               <button type="submit" className="btn-primary" disabled={loading} style={{ width: "100%", justifyContent: "center", marginTop: "0.25rem" }}>
                 {loading ? "Verifying..." : "Verify OTP & Continue"}

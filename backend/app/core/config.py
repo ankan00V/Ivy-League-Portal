@@ -80,6 +80,7 @@ class Settings(BaseSettings):
     
     # SMTP & Email Auth
     SMTP_SERVER: Optional[str] = None
+    SMTP_HOST: Optional[str] = None  # compatibility alias
     SMTP_PORT: int = 587
     SMTP_STARTTLS: bool = True
     SMTP_USE_TLS: bool = False
@@ -88,9 +89,13 @@ class Settings(BaseSettings):
     SMTP_USER: Optional[str] = None
     SMTP_PASSWORD: Optional[str] = None
     SMTP_FROM_EMAIL: str = "noreply@vidyaverse.com"
+    SMTP_FROM_NAME: Optional[str] = None
+    AUTH_OTP_FROM_EMAIL: Optional[str] = None  # compatibility alias
+    AUTH_OTP_FROM_NAME: Optional[str] = None   # compatibility alias
 
     # OTP delivery behavior
     OTP_ALLOW_DEBUG_FALLBACK: bool = False
+    OTP_SEND_COOLDOWN_SECONDS: int = 60
 
     # OAuth (Google implemented, other providers surfaced as config status)
     GOOGLE_OAUTH_CLIENT_ID: Optional[str] = None
@@ -177,3 +182,19 @@ class Settings(BaseSettings):
     )
 
 settings = Settings()
+
+
+def smtp_server_value() -> Optional[str]:
+    return (settings.SMTP_SERVER or settings.SMTP_HOST or "").strip() or None
+
+
+def smtp_from_email_value() -> str:
+    return (
+        settings.SMTP_FROM_EMAIL
+        or settings.AUTH_OTP_FROM_EMAIL
+        or "noreply@vidyaverse.com"
+    ).strip()
+
+
+def smtp_from_name_value() -> Optional[str]:
+    return (settings.SMTP_FROM_NAME or settings.AUTH_OTP_FROM_NAME or "").strip() or None

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 import hashlib
 import hmac
+import math
 
 import pymongo.errors
 
@@ -65,6 +66,33 @@ async def set_otp(
             record.expires_at = expires_at
             record.created_at = now
             await record.save()
+
+
+async def get_otp_cooldown_remaining(
+    email: str,
+    *,
+    purpose: str = "signin",
+    cooldown_seconds: int = 60,
+) -> int:
+    normalized_email = _normalize_email(email)
+    normalized_purpose = _normalize_purpose(purpose)
+    safe_cooldown = max(1, int(cooldown_seconds))
+
+    record = await OTPCode.find_one(
+        OTPCode.email == normalized_email,
+        OTPCode.purpose == normalized_purpose,
+    )
+    if not record:
+        return 0
+
+    now = datetime.utcnow()
+    if record.expires_at <= now:
+        await record.delete()
+        return 0
+
+    elapsed = max(0.0, (now - record.created_at).total_seconds())
+    remaining = int(math.ceil(safe_cooldown - elapsed))
+    return max(0, remaining)
 
 
 async def get_otp(email: str, purpose: str = "signin") -> str | None:
