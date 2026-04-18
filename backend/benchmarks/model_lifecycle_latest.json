@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-04-16T00:00:00",
+  "generated_at": "2026-04-18T07:04:42.628589",
   "policy": {
     "mode": "guarded",
     "auto_activate": false,
@@ -12,7 +12,561 @@
     "alerts_enabled": true,
     "alert_cooldown_minutes": 120
   },
-  "active_model": null,
-  "recent_models": [],
-  "latest_drift": null
+  "active_model": {
+    "id": "69e1c43e26508ae7fe8ba4e1",
+    "name": "ranking-weights-v2",
+    "created_at": "2026-04-17T05:25:18.324000",
+    "training_rows": 11530,
+    "weights": {
+      "semantic": 0.2,
+      "baseline": 0.8,
+      "behavior": 0.0
+    },
+    "metrics": {
+      "auc_default": 0.547235,
+      "auc_learned": 0.567303,
+      "auc_gain": 0.020068,
+      "auc_default_train": 0.528784,
+      "auc_default_validation": 0.516242,
+      "auc_default_test": 0.547235,
+      "auc_learned_train": 0.542507,
+      "auc_learned_validation": 0.532021,
+      "auc_learned_test": 0.567303,
+      "auc_gain_train": 0.013723,
+      "auc_gain_validation": 0.015779,
+      "auc_gain_test": 0.020068,
+      "positive_rate": 0.159237,
+      "rows": 11530.0,
+      "grid_step": 0.05
+    },
+    "lifecycle": {
+      "evaluated_at": "2026-04-17T05:25:18.476194",
+      "activation_policy": "guarded",
+      "activation_reason": "auto_activate_disabled",
+      "activated": false,
+      "diagnostics": {
+        "auto_activate_requested": false,
+        "policy": "guarded",
+        "auc_gain": 0.020068,
+        "min_auc_gain": 0.0,
+        "positive_rate": 0.159237,
+        "min_positive_rate": 0.005,
+        "weight_shift_l1": 1.0,
+        "max_weight_shift": 0.35,
+        "guardrails": {
+          "days": 30,
+          "candidate_mode": "ml",
+          "baseline_mode": "baseline",
+          "candidate": {
+            "mode": "ml",
+            "impressions": 2240,
+            "clicks": 277,
+            "applies": 38,
+            "saves": 129,
+            "ctr": 0.123661,
+            "apply_rate": 0.016964,
+            "save_rate": 0.057589,
+            "requests": 0.0,
+            "success_rate": 0.0,
+            "failure_rate": 0.0,
+            "latency_p95_ms": 0.0,
+            "freshness_seconds": 0.0
+          },
+          "baseline": {
+            "mode": "baseline",
+            "impressions": 5580,
+            "clicks": 760,
+            "applies": 108,
+            "saves": 243,
+            "ctr": 0.136201,
+            "apply_rate": 0.019355,
+            "save_rate": 0.043548,
+            "requests": 0.0,
+            "success_rate": 0.0,
+            "failure_rate": 0.0,
+            "latency_p95_ms": 0.0,
+            "freshness_seconds": 0.0
+          },
+          "deltas": {
+            "ctr": -0.012539999999999996,
+            "apply_rate": -0.0023910000000000008,
+            "freshness_seconds": 0.0,
+            "latency_p95_ms": 0.0,
+            "failure_rate": 0.0
+          },
+          "data_complete": false
+        }
+      }
+    },
+    "notes": "scheduled"
+  },
+  "recent_models": [
+    {
+      "id": "69e32cf46bd83b3e2b711a96",
+      "name": "ranking-weights-v2",
+      "is_active": false,
+      "created_at": "2026-04-18T07:04:20.592000",
+      "training_rows": 11530,
+      "metrics": {
+        "auc_default": 0.547235,
+        "auc_learned": 0.565407,
+        "auc_gain": 0.018172,
+        "auc_default_train": 0.528784,
+        "auc_default_validation": 0.516242,
+        "auc_default_test": 0.547235,
+        "auc_learned_train": 0.541441,
+        "auc_learned_validation": 0.534504,
+        "auc_learned_test": 0.565407,
+        "auc_gain_train": 0.012656,
+        "auc_gain_validation": 0.018262,
+        "auc_gain_test": 0.018172,
+        "positive_rate": 0.159237,
+        "rows": 11530.0,
+        "grid_step": 0.05
+      },
+      "lifecycle": {
+        "evaluated_at": "2026-04-18T07:04:20.699828",
+        "activation_policy": "guarded",
+        "activation_reason": "weight_shift_above_threshold:1.400000>0.350000",
+        "activated": false,
+        "diagnostics": {
+          "auto_activate_requested": true,
+          "policy": "guarded",
+          "auc_gain": 0.018172,
+          "min_auc_gain": 0.0,
+          "positive_rate": 0.159237,
+          "min_positive_rate": 0.005,
+          "weight_shift_l1": 1.4,
+          "max_weight_shift": 0.35,
+          "guardrails": {
+            "days": 30,
+            "candidate_mode": "ml",
+            "baseline_mode": "baseline",
+            "candidate": {
+              "mode": "ml",
+              "impressions": 2240,
+              "clicks": 277,
+              "applies": 38,
+              "saves": 129,
+              "ctr": 0.123661,
+              "apply_rate": 0.016964,
+              "save_rate": 0.057589,
+              "requests": 0.0,
+              "success_rate": 0.0,
+              "failure_rate": 0.0,
+              "latency_p95_ms": 0.0,
+              "freshness_seconds": 0.0
+            },
+            "baseline": {
+              "mode": "baseline",
+              "impressions": 5580,
+              "clicks": 760,
+              "applies": 108,
+              "saves": 243,
+              "ctr": 0.136201,
+              "apply_rate": 0.019355,
+              "save_rate": 0.043548,
+              "requests": 0.0,
+              "success_rate": 0.0,
+              "failure_rate": 0.0,
+              "latency_p95_ms": 0.0,
+              "freshness_seconds": 0.0
+            },
+            "deltas": {
+              "ctr": -0.012539999999999996,
+              "apply_rate": -0.0023910000000000008,
+              "freshness_seconds": 0.0,
+              "latency_p95_ms": 0.0,
+              "failure_rate": 0.0
+            },
+            "data_complete": false
+          }
+        }
+      },
+      "notes": "lifecycle_pipeline"
+    },
+    {
+      "id": "69e1c43e26508ae7fe8ba4e1",
+      "name": "ranking-weights-v2",
+      "is_active": true,
+      "created_at": "2026-04-17T05:25:18.324000",
+      "training_rows": 11530,
+      "metrics": {
+        "auc_default": 0.547235,
+        "auc_learned": 0.567303,
+        "auc_gain": 0.020068,
+        "auc_default_train": 0.528784,
+        "auc_default_validation": 0.516242,
+        "auc_default_test": 0.547235,
+        "auc_learned_train": 0.542507,
+        "auc_learned_validation": 0.532021,
+        "auc_learned_test": 0.567303,
+        "auc_gain_train": 0.013723,
+        "auc_gain_validation": 0.015779,
+        "auc_gain_test": 0.020068,
+        "positive_rate": 0.159237,
+        "rows": 11530.0,
+        "grid_step": 0.05
+      },
+      "lifecycle": {
+        "evaluated_at": "2026-04-17T05:25:18.476194",
+        "activation_policy": "guarded",
+        "activation_reason": "auto_activate_disabled",
+        "activated": false,
+        "diagnostics": {
+          "auto_activate_requested": false,
+          "policy": "guarded",
+          "auc_gain": 0.020068,
+          "min_auc_gain": 0.0,
+          "positive_rate": 0.159237,
+          "min_positive_rate": 0.005,
+          "weight_shift_l1": 1.0,
+          "max_weight_shift": 0.35,
+          "guardrails": {
+            "days": 30,
+            "candidate_mode": "ml",
+            "baseline_mode": "baseline",
+            "candidate": {
+              "mode": "ml",
+              "impressions": 2240,
+              "clicks": 277,
+              "applies": 38,
+              "saves": 129,
+              "ctr": 0.123661,
+              "apply_rate": 0.016964,
+              "save_rate": 0.057589,
+              "requests": 0.0,
+              "success_rate": 0.0,
+              "failure_rate": 0.0,
+              "latency_p95_ms": 0.0,
+              "freshness_seconds": 0.0
+            },
+            "baseline": {
+              "mode": "baseline",
+              "impressions": 5580,
+              "clicks": 760,
+              "applies": 108,
+              "saves": 243,
+              "ctr": 0.136201,
+              "apply_rate": 0.019355,
+              "save_rate": 0.043548,
+              "requests": 0.0,
+              "success_rate": 0.0,
+              "failure_rate": 0.0,
+              "latency_p95_ms": 0.0,
+              "freshness_seconds": 0.0
+            },
+            "deltas": {
+              "ctr": -0.012539999999999996,
+              "apply_rate": -0.0023910000000000008,
+              "freshness_seconds": 0.0,
+              "latency_p95_ms": 0.0,
+              "failure_rate": 0.0
+            },
+            "data_complete": false
+          }
+        }
+      },
+      "notes": "scheduled"
+    },
+    {
+      "id": "69e1c37abdf77f4a5e94c3cb",
+      "name": "ranking-weights-v1",
+      "is_active": false,
+      "created_at": "2026-04-17T05:22:02.094000",
+      "training_rows": 11530,
+      "metrics": {
+        "auc_default": 0.530699,
+        "auc_learned": 0.543927,
+        "auc_gain": 0.013229,
+        "positive_rate": 0.159237,
+        "rows": 11530.0,
+        "grid_step": 0.05
+      },
+      "lifecycle": {
+        "evaluated_at": "2026-04-17T05:22:02.134656",
+        "activation_policy": "guarded",
+        "activation_reason": "auto_activate_disabled",
+        "activated": false,
+        "diagnostics": {
+          "auto_activate_requested": false,
+          "policy": "guarded",
+          "auc_gain": 0.013229,
+          "min_auc_gain": 0.0,
+          "positive_rate": 0.159237,
+          "min_positive_rate": 0.005,
+          "weight_shift_l1": 0.5,
+          "max_weight_shift": 0.35
+        }
+      },
+      "notes": "scheduled"
+    },
+    {
+      "id": "69e1c3627f1fb9c774a531fa",
+      "name": "ranking-weights-v1",
+      "is_active": false,
+      "created_at": "2026-04-17T05:21:38.033000",
+      "training_rows": 11530,
+      "metrics": {
+        "auc_default": 0.530699,
+        "auc_learned": 0.543927,
+        "auc_gain": 0.013229,
+        "positive_rate": 0.159237,
+        "rows": 11530.0,
+        "grid_step": 0.05
+      },
+      "lifecycle": {
+        "evaluated_at": "2026-04-17T05:21:38.079283",
+        "activation_policy": "guarded",
+        "activation_reason": "auto_activate_disabled",
+        "activated": false,
+        "diagnostics": {
+          "auto_activate_requested": false,
+          "policy": "guarded",
+          "auc_gain": 0.013229,
+          "min_auc_gain": 0.0,
+          "positive_rate": 0.159237,
+          "min_positive_rate": 0.005,
+          "weight_shift_l1": 0.5,
+          "max_weight_shift": 0.35
+        }
+      },
+      "notes": "scheduled"
+    },
+    {
+      "id": "69e1c2d34c13b06fecd84a2b",
+      "name": "ranking-weights-v1",
+      "is_active": false,
+      "created_at": "2026-04-17T05:19:15.238000",
+      "training_rows": 11530,
+      "metrics": {
+        "auc_default": 0.530699,
+        "auc_learned": 0.543927,
+        "auc_gain": 0.013229,
+        "positive_rate": 0.159237,
+        "rows": 11530.0,
+        "grid_step": 0.05
+      },
+      "lifecycle": {
+        "evaluated_at": "2026-04-17T05:19:15.281393",
+        "activation_policy": "guarded",
+        "activation_reason": "auto_activate_disabled",
+        "activated": false,
+        "diagnostics": {
+          "auto_activate_requested": false,
+          "policy": "guarded",
+          "auc_gain": 0.013229,
+          "min_auc_gain": 0.0,
+          "positive_rate": 0.159237,
+          "min_positive_rate": 0.005,
+          "weight_shift_l1": 0.5,
+          "max_weight_shift": 0.35
+        }
+      },
+      "notes": "scheduled"
+    },
+    {
+      "id": "69e12a181da06b6cd92207a3",
+      "name": "ranking-weights-v1",
+      "is_active": false,
+      "created_at": "2026-04-16T18:27:36.837000",
+      "training_rows": 11530,
+      "metrics": {
+        "auc_default": 0.530699,
+        "auc_learned": 0.543927,
+        "auc_gain": 0.013229,
+        "positive_rate": 0.159237,
+        "rows": 11530.0,
+        "grid_step": 0.05
+      },
+      "lifecycle": {
+        "evaluated_at": "2026-04-16T18:27:36.882626",
+        "activation_policy": "guarded",
+        "activation_reason": "auto_activate_disabled",
+        "activated": false,
+        "diagnostics": {
+          "auto_activate_requested": false,
+          "policy": "guarded",
+          "auc_gain": 0.013229,
+          "min_auc_gain": 0.0,
+          "positive_rate": 0.159237,
+          "min_positive_rate": 0.005,
+          "weight_shift_l1": 0.5,
+          "max_weight_shift": 0.35
+        }
+      },
+      "notes": "scheduled"
+    },
+    {
+      "id": "69e121b19b9d6fbe5748b05b",
+      "name": "ranking-weights-v1",
+      "is_active": false,
+      "created_at": "2026-04-16T17:51:45.261000",
+      "training_rows": 11530,
+      "metrics": {
+        "auc_default": 0.530699,
+        "auc_learned": 0.543927,
+        "auc_gain": 0.013229,
+        "positive_rate": 0.159237,
+        "rows": 11530.0,
+        "grid_step": 0.05
+      },
+      "lifecycle": {
+        "evaluated_at": "2026-04-16T17:51:45.332082",
+        "activation_policy": "guarded",
+        "activation_reason": "auto_activate_disabled",
+        "activated": false,
+        "diagnostics": {
+          "auto_activate_requested": false,
+          "policy": "guarded",
+          "auc_gain": 0.013229,
+          "min_auc_gain": 0.0,
+          "positive_rate": 0.159237,
+          "min_positive_rate": 0.005,
+          "weight_shift_l1": 0.5,
+          "max_weight_shift": 0.35
+        }
+      },
+      "notes": "scheduled"
+    },
+    {
+      "id": "69e1213f32ae748d8b9db1fa",
+      "name": "ranking-weights-v1",
+      "is_active": false,
+      "created_at": "2026-04-16T17:49:51.023000",
+      "training_rows": 11530,
+      "metrics": {
+        "auc_default": 0.530699,
+        "auc_learned": 0.543927,
+        "auc_gain": 0.013229,
+        "positive_rate": 0.159237,
+        "rows": 11530.0,
+        "grid_step": 0.05
+      },
+      "lifecycle": {
+        "evaluated_at": "2026-04-16T17:49:51.064335",
+        "activation_policy": "guarded",
+        "activation_reason": "auto_activate_disabled",
+        "activated": false,
+        "diagnostics": {
+          "auto_activate_requested": false,
+          "policy": "guarded",
+          "auc_gain": 0.013229,
+          "min_auc_gain": 0.0,
+          "positive_rate": 0.159237,
+          "min_positive_rate": 0.005,
+          "weight_shift_l1": 0.5,
+          "max_weight_shift": 0.35
+        }
+      },
+      "notes": "scheduled"
+    },
+    {
+      "id": "69e11e3d3b121e44fd853969",
+      "name": "ranking-weights-v1",
+      "is_active": false,
+      "created_at": "2026-04-16T17:37:01.303000",
+      "training_rows": 11530,
+      "metrics": {
+        "auc_default": 0.530699,
+        "auc_learned": 0.543927,
+        "auc_gain": 0.013229,
+        "positive_rate": 0.159237,
+        "rows": 11530.0,
+        "grid_step": 0.05
+      },
+      "lifecycle": {
+        "evaluated_at": "2026-04-16T17:37:01.347016",
+        "activation_policy": "guarded",
+        "activation_reason": "auto_activate_disabled",
+        "activated": false,
+        "diagnostics": {
+          "auto_activate_requested": false,
+          "policy": "guarded",
+          "auc_gain": 0.013229,
+          "min_auc_gain": 0.0,
+          "positive_rate": 0.159237,
+          "min_positive_rate": 0.005,
+          "weight_shift_l1": 0.5,
+          "max_weight_shift": 0.35
+        }
+      },
+      "notes": "scheduled"
+    },
+    {
+      "id": "69e10cf16ca5613092fb9980",
+      "name": "ranking-weights-v1",
+      "is_active": false,
+      "created_at": "2026-04-16T16:23:13.598000",
+      "training_rows": 4480,
+      "metrics": {
+        "auc_default": 0.523782,
+        "auc_learned": 0.51358,
+        "auc_gain": -0.010202,
+        "positive_rate": 0.14308,
+        "rows": 4480.0,
+        "grid_step": 0.05
+      },
+      "lifecycle": {},
+      "notes": "activation-guard-check"
+    },
+    {
+      "id": "69e10c4a5fbda4b73e1ff5d1",
+      "name": "ranking-weights-v1",
+      "is_active": false,
+      "created_at": "2026-04-16T16:20:26.935000",
+      "training_rows": 4480,
+      "metrics": {
+        "auc_default": 0.523782,
+        "auc_learned": 0.51358,
+        "positive_rate": 0.14308,
+        "rows": 4480.0,
+        "grid_step": 0.05
+      },
+      "lifecycle": {},
+      "notes": "bootstrap_ranking_pipeline"
+    },
+    {
+      "id": "69e10c0e87f73c87a605ee2d",
+      "name": "ranking-weights-bootstrap-v1",
+      "is_active": false,
+      "created_at": "2026-04-16T16:19:26.647000",
+      "training_rows": 0,
+      "metrics": {
+        "auc_default": 0.0,
+        "auc_learned": 0.0,
+        "positive_rate": 0.0,
+        "rows": 0.0
+      },
+      "lifecycle": {},
+      "notes": "Auto-bootstrapped default ranking weights."
+    }
+  ],
+  "latest_drift": {
+    "id": "69e32d076bd83b3e2b711a97",
+    "model_version_id": "69e1c43e26508ae7fe8ba4e1",
+    "created_at": "2026-04-18T07:04:39.951000",
+    "alert": false,
+    "alert_notified_at": null,
+    "metrics": {
+      "window_start": "2026-04-11T07:04:22.564977",
+      "window_end": "2026-04-18T07:04:22.564977",
+      "impressions": 4727,
+      "query_bucket_psi": 0.030294,
+      "psi_alert_threshold": 0.25,
+      "z_alert_threshold": 3.0,
+      "recent_feature_means": {
+        "semantic_score": 0.412117,
+        "baseline_score": 0.441321,
+        "behavior_score": 0.0989
+      },
+      "feature_mean_z": {
+        "semantic_score": 0.057393,
+        "baseline_score": 0.020825,
+        "behavior_score": 0.069408
+      },
+      "max_feature_mean_z": 0.069408,
+      "baseline_available": true
+    }
+  }
 }
