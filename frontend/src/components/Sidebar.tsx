@@ -3,17 +3,71 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useTheme } from '@/context/ThemeContext';
 import { LayoutDashboard, Target, Briefcase, FileText, Globe, Trophy, Sun, Moon, BarChart3 } from 'lucide-react';
-import { useSyncExternalStore } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import BrandLogo from '@/components/BrandLogo';
+import { apiUrl } from '@/lib/api';
+import { formatTopPercent, type RankingSummary } from '@/lib/ranking-summary';
 
 export default function Sidebar() {
     const pathname = usePathname();
     const { theme, toggleTheme } = useTheme();
+    const [rankingSummary, setRankingSummary] = useState<RankingSummary | null>(null);
     const isHydrated = useSyncExternalStore(
         () => () => { },
         () => true,
         () => false
     );
+
+    useEffect(() => {
+        let cancelled = false;
+        const loadRankingSummary = async () => {
+            const token = localStorage.getItem("access_token");
+            if (!token) {
+                if (!cancelled) {
+                    setRankingSummary(null);
+                }
+                return;
+            }
+            try {
+                const res = await fetch(apiUrl("/api/v1/users/me/ranking-summary"), {
+                    headers: {
+                        Authorization: `Bearer ${token}`,
+                    },
+                });
+                if (!res.ok) {
+                    if (!cancelled) {
+                        setRankingSummary(null);
+                    }
+                    return;
+                }
+                const payload: RankingSummary = await res.json();
+                if (!cancelled) {
+                    setRankingSummary(payload);
+                }
+            } catch {
+                if (!cancelled) {
+                    setRankingSummary(null);
+                }
+            }
+        };
+
+        void loadRankingSummary();
+        const interval = window.setInterval(() => {
+            void loadRankingSummary();
+        }, 30000);
+
+        return () => {
+            cancelled = true;
+            window.clearInterval(interval);
+        };
+    }, []);
+
+    const globalRankTitle = rankingSummary
+        ? `Top ${formatTopPercent(rankingSummary.top_percent)}%`
+        : "--";
+    const globalRankSubtitle = rankingSummary
+        ? `Rank #${rankingSummary.rank} of ${rankingSummary.total_users}`
+        : "Live rank unavailable";
 
     const links = [
         { name: 'Dashboard', href: '/dashboard', icon: <LayoutDashboard size={20} /> },
@@ -169,8 +223,8 @@ export default function Sidebar() {
                     width: '100%'
                 }}>
                     <div style={{ fontSize: '0.875rem', marginBottom: '0.25rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Global Rank</div>
-                    <div style={{ fontSize: '2rem', fontWeight: 400, fontFamily: 'var(--font-serif)', lineHeight: 1, margin: '0.5rem 0' }}>Top 5%</div>
-                    <div style={{ fontSize: '0.85rem', fontWeight: 600 }}>Keep applying!</div>
+                    <div style={{ fontSize: '2rem', fontWeight: 400, fontFamily: 'var(--font-serif)', lineHeight: 1, margin: '0.5rem 0' }}>{globalRankTitle}</div>
+                    <div style={{ fontSize: '0.85rem', fontWeight: 700 }}>{globalRankSubtitle}</div>
                 </div>
             </div>
 

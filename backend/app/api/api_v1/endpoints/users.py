@@ -158,6 +158,16 @@ class OnboardingStatusResponse(BaseModel):
     recommended_next_step: str
 
 
+class RankingSummaryResponse(BaseModel):
+    account_scope: str
+    incoscore: float
+    rank: int
+    total_users: int
+    top_percent: float
+    percentile: float
+    updated_at: datetime
+
+
 class LeaderboardEntry(BaseModel):
     user_id: str
     full_name: Optional[str] = None
@@ -227,6 +237,41 @@ def _compute_onboarding_status(profile: Profile) -> tuple[bool, int, list[str], 
     is_complete = len(missing) == 0
     next_step = "profile_complete" if is_complete else missing[0]
     return is_complete, progress_percent, missing, next_step
+
+
+def _normalize_account_scope(account_type: Optional[str]) -> str:
+    return "employer" if str(account_type or "").strip().lower() == "employer" else "candidate"
+
+
+def _compute_rank_stats(*, rank: int, total_users: int) -> tuple[float, float]:
+    safe_total = max(1, int(total_users))
+    safe_rank = max(1, min(int(rank), safe_total))
+    top_percent = round((safe_rank / safe_total) * 100.0, 2)
+    percentile = round(((safe_total - safe_rank) / safe_total) * 100.0, 2)
+    return top_percent, percentile
+
+
+async def _build_ranking_summary(profile: Profile) -> RankingSummaryResponse:
+    scope = _normalize_account_scope(profile.account_type)
+    scope_filters = [Profile.account_type == scope]
+
+    total_users = int(await Profile.find(*scope_filters).count())
+    if total_users <= 0:
+        total_users = 1
+
+    higher_count = int(await Profile.find(*scope_filters, Profile.incoscore > float(profile.incoscore)).count())
+    rank = max(1, higher_count + 1)
+    top_percent, percentile = _compute_rank_stats(rank=rank, total_users=total_users)
+
+    return RankingSummaryResponse(
+        account_scope=scope,
+        incoscore=float(profile.incoscore),
+        rank=rank,
+        total_users=total_users,
+        top_percent=top_percent,
+        percentile=percentile,
+        updated_at=datetime.now(timezone.utc),
+    )
 
 
 def _sync_profile_identity(profile: Profile, user: User) -> None:
@@ -335,6 +380,14 @@ async def read_onboarding_status(
         missing_fields=missing_fields,
         recommended_next_step=next_step,
     )
+
+
+@router.get("/me/ranking-summary", response_model=RankingSummaryResponse)
+async def read_ranking_summary(
+    current_user: User = Depends(get_current_active_user),
+) -> RankingSummaryResponse:
+    profile = await _get_or_create_profile_for_user(current_user)
+    return await _build_ranking_summary(profile)
 
 
 @router.put("/me/profile", response_model=ProfileResponse)

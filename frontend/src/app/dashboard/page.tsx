@@ -6,6 +6,7 @@ import { TrendingUp, Briefcase, ShieldCheck, Activity, Sparkles, Star } from "lu
 import { apiUrl } from "@/lib/api";
 import { useRouter } from "next/navigation";
 import { isMongoObjectId, logOpportunityInteraction } from "@/lib/opportunity-interactions";
+import { formatTopPercent, type RankingSummary } from "@/lib/ranking-summary";
 
 interface OpportunityCard {
     id: string;
@@ -112,6 +113,7 @@ export default function DashboardPage() {
     const router = useRouter();
     const [recommended, setRecommended] = useState<OpportunityCard[]>([]);
     const [profile, setProfile] = useState<ProfileSummary | null>(null);
+    const [rankingSummary, setRankingSummary] = useState<RankingSummary | null>(null);
     const [appCount, setAppCount] = useState<number>(0);
     const [posts, setPosts] = useState<ActivityPost[]>([]);
     const lastImpressionBatchRef = useRef("");
@@ -123,7 +125,12 @@ export default function DashboardPage() {
 
             // 1. Fetch Profile + Applications only when authenticated
             if (authHeaders) {
-                const profileRes = await fetch(apiUrl("/api/v1/users/me/profile"), { headers: authHeaders });
+                const [profileRes, appsRes, rankingRes] = await Promise.all([
+                    fetch(apiUrl("/api/v1/users/me/profile"), { headers: authHeaders }),
+                    fetch(apiUrl("/api/v1/applications/"), { headers: authHeaders }),
+                    fetch(apiUrl("/api/v1/users/me/ranking-summary"), { headers: authHeaders }),
+                ]);
+
                 if (profileRes.ok) {
                     const pData = await profileRes.json();
                     if (String(pData.account_type || "").toLowerCase() === "employer") {
@@ -133,11 +140,19 @@ export default function DashboardPage() {
                     setProfile(pData);
                 }
 
-                const appsRes = await fetch(apiUrl("/api/v1/applications/"), { headers: authHeaders });
                 if (appsRes.ok) {
                     const aData = await appsRes.json();
                     setAppCount(aData.length);
                 }
+
+                if (rankingRes.ok) {
+                    const rankingData: RankingSummary = await rankingRes.json();
+                    setRankingSummary(rankingData);
+                } else {
+                    setRankingSummary(null);
+                }
+            } else {
+                setRankingSummary(null);
             }
 
             // 2. Personalized opportunities when authenticated, else public fallback
@@ -244,6 +259,13 @@ export default function DashboardPage() {
         [recommended]
     );
     const activePosts = posts.length > 0 ? posts : MOCK_POSTS;
+    const incoscoreValue = rankingSummary?.incoscore ?? profile?.incoscore ?? 0;
+    const rankingTitle = rankingSummary
+        ? `Top ${formatTopPercent(rankingSummary.top_percent)}% Globally`
+        : "Sign in for live rank";
+    const rankingDetail = rankingSummary
+        ? `Rank #${rankingSummary.rank} of ${rankingSummary.total_users}`
+        : "Live global percentile";
 
     useEffect(() => {
         const token = localStorage.getItem("access_token");
@@ -347,9 +369,10 @@ export default function DashboardPage() {
                             <TrendingUp size={18} /> InCoScore Ranking
                         </div>
                         <div style={{ fontSize: '4rem', fontWeight: 400, fontFamily: 'var(--font-serif)', color: '#000000', lineHeight: 1 }}>
-                            {profile?.incoscore?.toFixed(1) || 0}
+                            {incoscoreValue.toFixed(1)}
                         </div>
-                        <div style={{ fontSize: '0.9rem', color: 'rgba(0,0,0,0.8)', marginTop: '0.5rem', fontWeight: 600 }}>Top 5% Globally</div>
+                        <div style={{ fontSize: '0.9rem', color: 'rgba(0,0,0,0.8)', marginTop: '0.5rem', fontWeight: 700 }}>{rankingTitle}</div>
+                        <div style={{ fontSize: '0.8rem', color: 'rgba(0,0,0,0.7)', marginTop: '0.2rem', fontWeight: 600 }}>{rankingDetail}</div>
                     </TiltCard>
 
                     <TiltCard
