@@ -4,6 +4,8 @@ from datetime import datetime, timedelta
 import hashlib
 import hmac
 
+import pymongo.errors
+
 from app.core.config import settings
 from app.models.otp_code import OTPCode
 
@@ -44,13 +46,25 @@ async def set_otp(
         await record.save()
         return
 
-    await OTPCode(
-        email=normalized_email,
-        purpose=normalized_purpose,
-        otp_hash=otp_hash,
-        expires_at=expires_at,
-        created_at=now,
-    ).insert()
+    try:
+        await OTPCode(
+            email=normalized_email,
+            purpose=normalized_purpose,
+            otp_hash=otp_hash,
+            expires_at=expires_at,
+            created_at=now,
+        ).insert()
+    except pymongo.errors.DuplicateKeyError:
+        # Handle racing requests safely when the unique (email, purpose) row was created concurrently.
+        record = await OTPCode.find_one(
+            OTPCode.email == normalized_email,
+            OTPCode.purpose == normalized_purpose,
+        )
+        if record:
+            record.otp_hash = otp_hash
+            record.expires_at = expires_at
+            record.created_at = now
+            await record.save()
 
 
 async def get_otp(email: str, purpose: str = "signin") -> str | None:
