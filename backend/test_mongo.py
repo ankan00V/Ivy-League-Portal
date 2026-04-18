@@ -2,6 +2,9 @@ import certifi
 import ssl
 from pymongo import MongoClient
 
+from app.core.config import settings
+
+
 def main() -> None:
     try:
         print("Testing manual SSLContext injection...")
@@ -12,12 +15,11 @@ def main() -> None:
         ctx.verify_mode = ssl.CERT_NONE
         _ = ctx  # keep reference for debugging
 
-        client = MongoClient(
-            "mongodb+srv://bobthebuilder144411_db_user:nn9lUoDQuy7wrtrf@vidyaverse.okbocmk.mongodb.net/?appName=vidyaverse",
-            tls=True,
-            tlsAllowInvalidCertificates=True,
-            tlsCAFile=certifi.where(),
-        )
+        mongodb_url = (settings.MONGODB_URL or "").strip()
+        if not mongodb_url:
+            raise RuntimeError("MONGODB_URL is not configured. Set it in backend/.env.")
+
+        client = MongoClient(mongodb_url, tls=True, tlsAllowInvalidCertificates=True, tlsCAFile=certifi.where())
         db = client.test
         print("Ping:", db.command("ping"))
         print("Success!")

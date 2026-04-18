@@ -1,6 +1,11 @@
 repos:
   - repo: local
     hooks:
+      - id: secret-pattern-check
+        name: secret pattern check
+        entry: python3 backend/scripts/check_secret_patterns.py
+        language: system
+        pass_filenames: true
       - id: duplicate-artifact-check
         name: duplicate artifact filename check
         entry: python3 backend/scripts/check_duplicate_artifacts.py
