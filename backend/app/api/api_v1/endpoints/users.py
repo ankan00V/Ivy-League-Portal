@@ -87,6 +87,23 @@ class ProfileUpdate(BaseModel):
     resume_content_type: Optional[str] = None
     resume_uploaded_at: Optional[datetime] = None
 
+    @field_validator("resume_url", "resume_filename", "resume_content_type", mode="before")
+    @classmethod
+    def normalize_optional_resume_text(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    @field_validator("resume_uploaded_at", mode="before")
+    @classmethod
+    def normalize_resume_uploaded_at(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        if isinstance(value, str) and value.strip() == "":
+            return None
+        return value
+
     @field_validator("account_type", mode="before")
     @classmethod
     def normalize_account_type(cls, value: Optional[str]) -> Optional[str]:
@@ -174,6 +191,8 @@ class ProfileResponse(BaseModel):
     consent_updates: bool = False
     onboarding_step: str = "identity"
     onboarding_completed: bool = False
+    onboarding_prompt_seen: bool = False
+    onboarding_first_seen_at: Optional[datetime] = None
 
     bio: Optional[str] = None
     skills: Optional[str] = None
@@ -195,6 +214,11 @@ class OnboardingStatusResponse(BaseModel):
     progress_percent: int
     missing_fields: list[str]
     recommended_next_step: str
+
+
+class OnboardingPromptSeenResponse(BaseModel):
+    onboarding_prompt_seen: bool
+    onboarding_first_seen_at: Optional[datetime] = None
 
 
 class RankingSummaryResponse(BaseModel):
@@ -686,6 +710,26 @@ async def read_onboarding_status(
         progress_percent=progress_percent,
         missing_fields=missing_fields,
         recommended_next_step=next_step,
+    )
+
+
+@router.post("/me/onboarding/mark-seen", response_model=OnboardingPromptSeenResponse)
+async def mark_onboarding_seen(
+    current_user: User = Depends(get_current_active_user),
+) -> OnboardingPromptSeenResponse:
+    """
+    Marks that onboarding has been shown once for this user.
+    Used to prevent forcing onboarding on every subsequent login.
+    """
+    profile = await _get_or_create_profile(current_user)
+    if not bool(profile.onboarding_prompt_seen):
+        profile.onboarding_prompt_seen = True
+        if profile.onboarding_first_seen_at is None:
+            profile.onboarding_first_seen_at = datetime.now(timezone.utc)
+        await profile.save()
+    return OnboardingPromptSeenResponse(
+        onboarding_prompt_seen=bool(profile.onboarding_prompt_seen),
+        onboarding_first_seen_at=profile.onboarding_first_seen_at,
     )
 
 

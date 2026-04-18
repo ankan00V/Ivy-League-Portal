@@ -40,6 +40,11 @@ type ProfilePayload = {
   resume_url: string;
   resume_filename: string;
   resume_uploaded_at: string;
+  bio: string;
+  skills: string;
+  interests: string;
+  achievements: string;
+  education: string;
 };
 
 type OnboardingStatus = {
@@ -47,6 +52,39 @@ type OnboardingStatus = {
   progress_percent: number;
   missing_fields: string[];
   recommended_next_step: string;
+};
+
+type OnboardingUpdatePayload = {
+  account_type: AccountType;
+  first_name: string;
+  last_name: string;
+  mobile: string;
+  country_code: string;
+  user_type?: UserType;
+  domain?: string;
+  course?: string;
+  passout_year?: number | null;
+  class_grade?: number | null;
+  current_job_role?: string;
+  total_work_experience?: string;
+  college_name?: string;
+  company_name?: string;
+  company_website?: string;
+  company_size?: string;
+  company_description?: string;
+  hiring_for?: "myself" | "others";
+  goals?: string[];
+  preferred_roles?: string;
+  preferred_locations?: string;
+  pan_india: boolean;
+  prefer_wfh: boolean;
+  consent_data_processing: boolean;
+  consent_updates: boolean;
+  bio?: string;
+  skills?: string;
+  interests?: string;
+  achievements?: string;
+  education?: string;
 };
 
 const DOMAIN_OPTIONS = ["Management", "Engineering", "Arts & Science", "Medicine", "Law"];
@@ -92,6 +130,80 @@ function pillButtonStyle(active: boolean): React.CSSProperties {
   };
 }
 
+type OptionalStringFieldKey =
+  | "domain"
+  | "course"
+  | "current_job_role"
+  | "total_work_experience"
+  | "college_name"
+  | "company_name"
+  | "company_website"
+  | "company_size"
+  | "company_description"
+  | "preferred_roles"
+  | "preferred_locations"
+  | "bio"
+  | "skills"
+  | "interests"
+  | "achievements"
+  | "education";
+
+function withOptionalString(target: OnboardingUpdatePayload, key: OptionalStringFieldKey, value: string) {
+  const trimmed = value.trim();
+  if (trimmed.length > 0) {
+    target[key] = trimmed;
+  }
+}
+
+function buildOnboardingPayload(profile: ProfilePayload): OnboardingUpdatePayload {
+  const payload: OnboardingUpdatePayload = {
+    account_type: profile.account_type,
+    first_name: profile.first_name.trim(),
+    last_name: profile.last_name.trim(),
+    mobile: profile.mobile.trim(),
+    country_code: profile.country_code.trim() || "+91",
+    pan_india: profile.pan_india,
+    prefer_wfh: profile.prefer_wfh,
+    consent_data_processing: profile.consent_data_processing,
+    consent_updates: profile.consent_updates,
+  };
+
+  if (profile.user_type) {
+    payload.user_type = profile.user_type;
+  }
+  if (profile.hiring_for) {
+    payload.hiring_for = profile.hiring_for;
+  }
+  if (profile.passout_year !== null) {
+    payload.passout_year = profile.passout_year;
+  }
+  if (profile.class_grade !== null) {
+    payload.class_grade = profile.class_grade;
+  }
+  if (profile.goals.length > 0) {
+    payload.goals = [...profile.goals];
+  }
+
+  withOptionalString(payload, "domain", profile.domain);
+  withOptionalString(payload, "course", profile.course);
+  withOptionalString(payload, "current_job_role", profile.current_job_role);
+  withOptionalString(payload, "total_work_experience", profile.total_work_experience);
+  withOptionalString(payload, "college_name", profile.college_name);
+  withOptionalString(payload, "company_name", profile.company_name);
+  withOptionalString(payload, "company_website", profile.company_website);
+  withOptionalString(payload, "company_size", profile.company_size);
+  withOptionalString(payload, "company_description", profile.company_description);
+  withOptionalString(payload, "preferred_roles", profile.preferred_roles);
+  withOptionalString(payload, "preferred_locations", profile.preferred_locations);
+  withOptionalString(payload, "bio", profile.bio ?? "");
+  withOptionalString(payload, "skills", profile.skills ?? "");
+  withOptionalString(payload, "interests", profile.interests ?? "");
+  withOptionalString(payload, "achievements", profile.achievements ?? "");
+  withOptionalString(payload, "education", profile.education ?? "");
+
+  return payload;
+}
+
 export default function OnboardingPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -130,6 +242,11 @@ export default function OnboardingPage() {
     resume_url: "",
     resume_filename: "",
     resume_uploaded_at: "",
+    bio: "",
+    skills: "",
+    interests: "",
+    achievements: "",
+    education: "",
   });
 
   const totalSteps = profile.account_type === "employer" ? 2 : 3;
@@ -203,6 +320,11 @@ export default function OnboardingPage() {
           resume_url: asText(profilePayload.resume_url),
           resume_filename: asText(profilePayload.resume_filename),
           resume_uploaded_at: asText(profilePayload.resume_uploaded_at),
+          bio: asText(profilePayload.bio),
+          skills: asText(profilePayload.skills),
+          interests: asText(profilePayload.interests),
+          achievements: asText(profilePayload.achievements),
+          education: asText(profilePayload.education),
         }));
         const existingRole = String(profilePayload.current_job_role || "").trim();
         if (existingRole.length === 0) {
@@ -348,13 +470,14 @@ export default function OnboardingPage() {
     setSaving(true);
     setError(null);
     try {
+      const payloadToSave = buildOnboardingPayload(profile);
       const res = await fetch(apiUrl("/api/v1/users/me/onboarding"), {
         method: "PUT",
         headers: {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(profile),
+        body: JSON.stringify(payloadToSave),
       });
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) {

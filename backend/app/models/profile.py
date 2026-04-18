@@ -33,6 +33,8 @@ class Profile(Document):
     onboarding_step: str = "identity"
     onboarding_completed: bool = False
     onboarding_completed_at: Optional[datetime] = None
+    onboarding_prompt_seen: bool = False
+    onboarding_first_seen_at: Optional[datetime] = None
     bio: Optional[str] = None
     skills: Optional[str] = None
     interests: Optional[str] = None

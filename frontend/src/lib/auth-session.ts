@@ -5,6 +5,7 @@ const ACCESS_TOKEN_KEY = "access_token";
 type OnboardingStatus = {
   account_type?: "candidate" | "employer";
   onboarding_completed?: boolean;
+  onboarding_prompt_seen?: boolean;
 };
 
 export function getAccessToken(): string | null {
@@ -39,8 +40,20 @@ export async function resolvePostAuthRoute(token: string): Promise<string> {
     const status = (await res.json()) as OnboardingStatus;
     const accountType = String(status.account_type || "candidate").toLowerCase();
     const onboardingCompleted = Boolean(status.onboarding_completed);
+    const onboardingPromptSeen = Boolean(status.onboarding_prompt_seen);
     if (!onboardingCompleted) {
-      return "/onboarding";
+      if (!onboardingPromptSeen) {
+        try {
+          await fetch(apiUrl("/api/v1/users/me/onboarding/mark-seen"), {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}` },
+          });
+        } catch {
+          // Non-blocking best effort.
+        }
+        return "/onboarding";
+      }
+      return accountType === "employer" ? "/employer/dashboard" : "/dashboard";
     }
     return accountType === "employer" ? "/employer/dashboard" : "/dashboard";
   } catch {
