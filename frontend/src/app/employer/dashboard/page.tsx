@@ -230,7 +230,7 @@ export default function EmployerDashboardPage() {
             </p>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
-            <Link href="/onboarding" className="btn-secondary">Update Profile</Link>
+            <Link href="/profile" className="btn-secondary">View Profile</Link>
             <button
               type="button"
               className="btn-secondary"

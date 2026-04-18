@@ -2,7 +2,8 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import Sidebar from "@/components/Sidebar";
 import { motion, useMotionValue, useTransform } from "framer-motion";
-import { TrendingUp, Briefcase, ShieldCheck, Activity, Sparkles, Star } from "lucide-react";
+import type { HTMLMotionProps } from "framer-motion";
+import { TrendingUp, Briefcase, ShieldCheck, Activity, Sparkles, Star, CircleAlert, CircleCheck, X } from "lucide-react";
 import { apiUrl } from "@/lib/api";
 import { useRouter } from "next/navigation";
 import { isMongoObjectId, logOpportunityInteraction } from "@/lib/opportunity-interactions";
@@ -35,14 +36,34 @@ interface ProfileSummary {
     account_type?: string;
 }
 
-interface TiltCardProps {
+const PROFILE_SIGNAL_FALLBACK: Record<string, { label: string; description: string }> = {
+    first_name: { label: "First Name", description: "Add your first name." },
+    last_name: { label: "Last Name", description: "Add your last name." },
+    mobile: { label: "Mobile Number", description: "Add your mobile number." },
+    consent_data_processing: { label: "Privacy Consent", description: "Accept data processing policy." },
+    user_type: { label: "User Type", description: "Select your user type." },
+    class_grade: { label: "Class/Grade", description: "Select your class or grade." },
+    domain: { label: "Domain", description: "Select your domain specialization." },
+    course: { label: "Course", description: "Add your course/degree." },
+    passout_year: { label: "Passout Year", description: "Set your graduation year." },
+    college_name: { label: "College Name", description: "Add your institute/college name." },
+    current_job_role: { label: "Current Role", description: "Add your current role." },
+    total_work_experience: { label: "Work Experience", description: "Add your total work experience." },
+    bio: { label: "Bio", description: "Add a short bio." },
+    skills: { label: "Skills", description: "Add core skills." },
+    interests: { label: "Interests", description: "Add your interests." },
+    education: { label: "Education", description: "Add education details." },
+    resume: { label: "Resume", description: "Upload your resume." },
+};
+
+interface TiltCardProps extends Omit<HTMLMotionProps<"div">, "children" | "style" | "className"> {
     children: React.ReactNode;
     style?: React.CSSProperties;
     className?: string;
 }
 
 // --- 3D TILT CARD COMPONENT ---
-const TiltCard = ({ children, style, className }: TiltCardProps) => {
+const TiltCard = ({ children, style, className, ...rest }: TiltCardProps) => {
     const x = useMotionValue(0);
     const y = useMotionValue(0);
     const rotateX = useTransform(y, [-100, 100], [15, -15]);
@@ -71,6 +92,7 @@ const TiltCard = ({ children, style, className }: TiltCardProps) => {
             }}
             onMouseMove={handleMouseMove}
             onMouseLeave={handleMouseLeave}
+            {...rest}
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0, transition: { type: "spring", stiffness: 300, damping: 24 } }}
             whileHover={{ scale: 1.02 }}
@@ -116,6 +138,7 @@ export default function DashboardPage() {
     const [profile, setProfile] = useState<ProfileSummary | null>(null);
     const [rankingSummary, setRankingSummary] = useState<RankingSummary | null>(null);
     const [profileStrength, setProfileStrength] = useState<ProfileStrengthSummary | null>(null);
+    const [showProfileStrengthModal, setShowProfileStrengthModal] = useState(false);
     const [appCount, setAppCount] = useState<number>(0);
     const [posts, setPosts] = useState<ActivityPost[]>([]);
     const lastImpressionBatchRef = useRef("");
@@ -282,6 +305,21 @@ export default function DashboardPage() {
         ? `${profileStrength.completed_signals}/${profileStrength.total_signals} profile signals complete`
         : "Sign in to compute live profile strength";
     const profileStrengthRecommendation = profileStrength?.recommendation || "Complete profile fields for better matching.";
+    const profileStrengthMissingDetails = useMemo(() => {
+        if (!profileStrength) return [];
+        const apiDetails = profileStrength.missing_signal_details;
+        if (Array.isArray(apiDetails) && apiDetails.length > 0) {
+            return apiDetails;
+        }
+        return (profileStrength.missing_signals || []).map((key) => {
+            const fallback = PROFILE_SIGNAL_FALLBACK[key];
+            return {
+                key,
+                label: fallback?.label || key.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase()),
+                description: fallback?.description || "Complete this field in your profile.",
+            };
+        });
+    }, [profileStrength]);
 
     useEffect(() => {
         const token = localStorage.getItem("access_token");
@@ -339,8 +377,8 @@ export default function DashboardPage() {
                             Your opportunity intelligence overview is ready. Discover your next big win today.
                         </p>
                     </div>
-                    <button className="btn-secondary" onClick={() => router.push('/onboarding')}>
-                        Update Profile
+                    <button className="btn-secondary" onClick={() => router.push('/profile')}>
+                        View Profile
                     </button>
                 </motion.header>
 
@@ -406,7 +444,27 @@ export default function DashboardPage() {
 
                     <TiltCard
                         className="card-panel"
-                        style={{ background: 'var(--bg-surface)', color: 'var(--text-primary)' }}
+                        style={{ background: 'var(--bg-surface)', color: 'var(--text-primary)', cursor: 'pointer' }}
+                        role="button"
+                        aria-label="View profile strength details"
+                        tabIndex={0}
+                        onClick={() => {
+                            if (!profileStrength) {
+                                router.push("/profile");
+                                return;
+                            }
+                            setShowProfileStrengthModal(true);
+                        }}
+                        onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                if (!profileStrength) {
+                                    router.push("/profile");
+                                    return;
+                                }
+                                setShowProfileStrengthModal(true);
+                            }
+                        }}
                     >
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.25rem', fontWeight: 700 }}>
                             <ShieldCheck size={18} /> Profile Strength
@@ -416,6 +474,9 @@ export default function DashboardPage() {
                         </div>
                         <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginTop: '0.5rem', fontWeight: 700 }}>{profileStrengthHint}</div>
                         <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.2rem', fontWeight: 600 }}>{profileStrengthRecommendation}</div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.45rem', fontWeight: 700 }}>
+                            Click to view missing details
+                        </div>
                     </TiltCard>
                 </motion.div>
 
@@ -512,6 +573,119 @@ export default function DashboardPage() {
                         </div>
                     </motion.section>
                 </motion.div>
+
+                {showProfileStrengthModal && profileStrength ? (
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-label="Profile strength details"
+                        onClick={() => setShowProfileStrengthModal(false)}
+                        style={{
+                            position: "fixed",
+                            inset: 0,
+                            background: "rgba(0,0,0,0.45)",
+                            zIndex: 120,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            padding: "1.5rem",
+                        }}
+                    >
+                        <motion.div
+                            initial={{ opacity: 0, y: 10, scale: 0.98 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            onClick={(event) => event.stopPropagation()}
+                            style={{
+                                width: "min(760px, 100%)",
+                                maxHeight: "86vh",
+                                overflowY: "auto",
+                                background: "var(--bg-surface)",
+                                border: "2px solid var(--border-subtle)",
+                                borderRadius: "var(--radius-md)",
+                                boxShadow: "var(--shadow-lg)",
+                                padding: "1.5rem",
+                            }}
+                        >
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
+                                <div>
+                                    <h3 style={{ margin: 0, fontSize: "1.55rem", fontFamily: "var(--font-serif)" }}>Profile Strength Breakdown</h3>
+                                    <p style={{ margin: "0.25rem 0 0 0", color: "var(--text-muted)", fontWeight: 600 }}>
+                                        {profileStrength.completed_signals}/{profileStrength.total_signals} signals complete
+                                    </p>
+                                </div>
+                                <button
+                                    onClick={() => setShowProfileStrengthModal(false)}
+                                    style={{
+                                        border: "2px solid var(--border-subtle)",
+                                        background: "var(--bg-surface-hover)",
+                                        borderRadius: "50%",
+                                        width: 40,
+                                        height: 40,
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        justifyContent: "center",
+                                        cursor: "pointer",
+                                    }}
+                                    aria-label="Close profile strength details"
+                                >
+                                    <X size={18} />
+                                </button>
+                            </div>
+
+                            <div style={{ marginTop: "1rem", marginBottom: "1.25rem", padding: "1rem", border: "2px solid var(--border-subtle)", borderRadius: "var(--radius-sm)", background: "var(--bg-base)" }}>
+                                <div style={{ fontSize: "2.6rem", fontFamily: "var(--font-serif)", lineHeight: 1 }}>
+                                    {clampPercent(profileStrength.strength_percent)}%
+                                </div>
+                                <div style={{ marginTop: "0.35rem", fontWeight: 600, color: "var(--text-muted)" }}>
+                                    {profileStrength.recommendation}
+                                </div>
+                            </div>
+
+                            {profileStrengthMissingDetails.length > 0 ? (
+                                <div style={{ display: "grid", gap: "0.7rem" }}>
+                                    {profileStrengthMissingDetails.map((item) => (
+                                        <div
+                                            key={item.key}
+                                            style={{
+                                                border: "2px solid var(--border-subtle)",
+                                                borderRadius: "var(--radius-sm)",
+                                                padding: "0.85rem 1rem",
+                                                background: "var(--bg-surface-hover)",
+                                                display: "flex",
+                                                alignItems: "flex-start",
+                                                gap: "0.6rem",
+                                            }}
+                                        >
+                                            <CircleAlert size={18} style={{ marginTop: "0.15rem", flexShrink: 0 }} />
+                                            <div>
+                                                <div style={{ fontWeight: 700 }}>{item.label}</div>
+                                                <div style={{ color: "var(--text-muted)", fontWeight: 600, fontSize: "0.92rem" }}>{item.description}</div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            ) : (
+                                <div style={{ border: "2px solid var(--border-subtle)", borderRadius: "var(--radius-sm)", padding: "1rem", background: "var(--brand-accent)", color: "#000", display: "flex", alignItems: "center", gap: "0.6rem", fontWeight: 700 }}>
+                                    <CircleCheck size={18} />
+                                    Your profile is complete. You are at full strength.
+                                </div>
+                            )}
+
+                            <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.75rem", marginTop: "1.25rem" }}>
+                                <button className="btn-secondary" onClick={() => setShowProfileStrengthModal(false)}>Close</button>
+                                <button
+                                    className="btn-primary"
+                                    onClick={() => {
+                                        setShowProfileStrengthModal(false);
+                                        router.push("/profile");
+                                    }}
+                                >
+                                    View Profile
+                                </button>
+                            </div>
+                        </motion.div>
+                    </div>
+                ) : null}
 
                 {/* CSS for Skeleton Pulse since we didn't add it to globals.css */}
                 <style dangerouslySetInnerHTML={{

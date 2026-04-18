@@ -23,3 +23,5 @@ playwright>=1.46.0
 redis>=5.0.0
 prometheus-client>=0.20.0
 aiosmtplib>=3.0.2
+pypdf>=4.3.0
+python-docx>=1.1.2

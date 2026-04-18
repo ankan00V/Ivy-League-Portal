@@ -39,6 +39,10 @@ class Profile(Document):
     achievements: Optional[str] = None
     education: Optional[str] = None
     resume_url: Optional[str] = None
+    resume_filename: Optional[str] = None
+    resume_content_type: Optional[str] = None
+    resume_storage_key: Optional[str] = None
+    resume_uploaded_at: Optional[datetime] = None
     incoscore: float = 0.0
 
     class Settings:

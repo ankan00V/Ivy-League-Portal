@@ -37,6 +37,9 @@ type ProfilePayload = {
   prefer_wfh: boolean;
   consent_data_processing: boolean;
   consent_updates: boolean;
+  resume_url: string;
+  resume_filename: string;
+  resume_uploaded_at: string;
 };
 
 type OnboardingStatus = {
@@ -68,6 +71,7 @@ const EMPLOYER_ORGANIZATION_SUGGESTIONS = [
 ];
 const DEFAULT_YEARS = [2026, 2027, 2028, 2029, 2030, 2031];
 const SCHOOL_GRADES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+const RESUME_REQUIRED_USER_TYPES = new Set<UserType>(["college_student", "fresher", "professional"]);
 
 const ONBOARDING_VISUALS = [
   "https://images.unsplash.com/photo-1529074963764-98f45c47344b?auto=format&fit=crop&w=1200&q=80",
@@ -94,6 +98,7 @@ export default function OnboardingPage() {
   const [saving, setSaving] = useState(false);
   const [step, setStep] = useState(1);
   const [error, setError] = useState<string | null>(null);
+  const [resumeUploading, setResumeUploading] = useState(false);
   const [employerRoleSelection, setEmployerRoleSelection] = useState<string>("");
   const [status, setStatus] = useState<OnboardingStatus | null>(null);
   const [profile, setProfile] = useState<ProfilePayload>({
@@ -122,6 +127,9 @@ export default function OnboardingPage() {
     prefer_wfh: false,
     consent_data_processing: false,
     consent_updates: false,
+    resume_url: "",
+    resume_filename: "",
+    resume_uploaded_at: "",
   });
 
   const totalSteps = profile.account_type === "employer" ? 2 : 3;
@@ -192,6 +200,9 @@ export default function OnboardingPage() {
           prefer_wfh: asBool(profilePayload.prefer_wfh),
           consent_data_processing: asBool(profilePayload.consent_data_processing),
           consent_updates: asBool(profilePayload.consent_updates),
+          resume_url: asText(profilePayload.resume_url),
+          resume_filename: asText(profilePayload.resume_filename),
+          resume_uploaded_at: asText(profilePayload.resume_uploaded_at),
         }));
         const existingRole = String(profilePayload.current_job_role || "").trim();
         if (existingRole.length === 0) {
@@ -212,6 +223,9 @@ export default function OnboardingPage() {
 
   const missingConsent = !profile.consent_data_processing;
   const requiresUserType = profile.account_type === "candidate";
+  const resumeRequiredForUserType =
+    profile.account_type === "candidate" && profile.user_type.length > 0 && RESUME_REQUIRED_USER_TYPES.has(profile.user_type as UserType);
+  const hasResume = profile.resume_url.trim().length > 0;
   const canContinueStep1 =
     profile.first_name.trim().length > 0 &&
     profile.mobile.trim().length >= 8 &&
@@ -234,11 +248,16 @@ export default function OnboardingPage() {
         profile.domain.trim().length > 0 &&
         profile.course.trim().length > 0 &&
         profile.passout_year !== null &&
-        profile.college_name.trim().length > 0
+        profile.college_name.trim().length > 0 &&
+        (!resumeRequiredForUserType || hasResume)
       );
     }
     if (profile.user_type === "professional") {
-      return profile.current_job_role.trim().length > 0 && profile.total_work_experience.trim().length > 0;
+      return (
+        profile.current_job_role.trim().length > 0 &&
+        profile.total_work_experience.trim().length > 0 &&
+        (!resumeRequiredForUserType || hasResume)
+      );
     }
     return false;
   })();
@@ -253,6 +272,71 @@ export default function OnboardingPage() {
       const goals = exists ? prev.goals.filter((item) => item !== goal) : [...prev.goals, goal];
       return { ...prev, goals };
     });
+  };
+
+  const handleResumeUpload = async (file: File) => {
+    const token = getAccessToken();
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
+    setResumeUploading(true);
+    setError(null);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch(apiUrl("/api/v1/users/me/resume"), {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body: form,
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(getApiErrorMessage(payload, "Unable to upload resume"));
+      }
+      setProfile((prev) => ({
+        ...prev,
+        resume_url: typeof payload.resume_url === "string" ? payload.resume_url : prev.resume_url,
+        resume_filename: typeof payload.resume_filename === "string" ? payload.resume_filename : file.name,
+        resume_uploaded_at: typeof payload.resume_uploaded_at === "string" ? payload.resume_uploaded_at : prev.resume_uploaded_at,
+      }));
+    } catch (err) {
+      setError(getUnknownErrorMessage(err, "Unable to upload resume"));
+    } finally {
+      setResumeUploading(false);
+    }
+  };
+
+  const handleResumeDelete = async () => {
+    const token = getAccessToken();
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
+    setResumeUploading(true);
+    setError(null);
+    try {
+      const res = await fetch(apiUrl("/api/v1/users/me/resume"), {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(getApiErrorMessage(payload, "Unable to remove resume"));
+      }
+      setProfile((prev) => ({
+        ...prev,
+        resume_url: "",
+        resume_filename: "",
+        resume_uploaded_at: "",
+      }));
+    } catch (err) {
+      setError(getUnknownErrorMessage(err, "Unable to remove resume"));
+    } finally {
+      setResumeUploading(false);
+    }
   };
 
   const handleSave = async (finish: boolean) => {
@@ -421,7 +505,7 @@ export default function OnboardingPage() {
                         { key: "school_student", label: "School Student" },
                         { key: "college_student", label: "College Student" },
                         { key: "fresher", label: "Fresher" },
-                        { key: "professional", label: "Professional" },
+                        { key: "professional", label: "Educator / Professional" },
                       ].map((item) => (
                         <button
                           key={item.key}
@@ -527,6 +611,54 @@ export default function OnboardingPage() {
                       </div>
                     </div>
                   </>
+                )}
+
+                {profile.account_type === "candidate" && resumeRequiredForUserType && (
+                  <div style={{ border: "2px solid var(--border-subtle)", borderRadius: "var(--radius-sm)", padding: "0.9rem", background: "var(--bg-surface)" }}>
+                    <label style={{ fontWeight: 700, display: "block", marginBottom: "0.35rem" }}>Resume / CV (Required)</label>
+                    <p style={{ color: "var(--text-secondary)", fontWeight: 600, marginBottom: "0.6rem" }}>
+                      Upload your resume so recommendations and shortlisting can be personalized from your profile + CV.
+                    </p>
+                    {profile.resume_filename ? (
+                      <div style={{ marginBottom: "0.55rem", fontWeight: 700 }}>
+                        Uploaded: {profile.resume_filename}
+                        {profile.resume_uploaded_at ? (
+                          <span style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
+                            {" "}
+                            ({new Date(profile.resume_uploaded_at).toLocaleDateString()})
+                          </span>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <div style={{ marginBottom: "0.55rem", fontWeight: 700, color: "#b91c1c" }}>
+                        Resume not uploaded yet.
+                      </div>
+                    )}
+                    <div style={{ display: "flex", gap: "0.55rem", flexWrap: "wrap" }}>
+                      <label className="btn-secondary" style={{ cursor: resumeUploading ? "not-allowed" : "pointer", opacity: resumeUploading ? 0.7 : 1 }}>
+                        {resumeUploading ? "Uploading..." : profile.resume_filename ? "Replace Resume" : "Upload Resume"}
+                        <input
+                          type="file"
+                          accept=".txt,.pdf,.doc,.docx"
+                          disabled={resumeUploading}
+                          style={{ display: "none" }}
+                          onChange={(event) => {
+                            const nextFile = event.target.files?.[0];
+                            if (!nextFile) {
+                              return;
+                            }
+                            void handleResumeUpload(nextFile);
+                            event.currentTarget.value = "";
+                          }}
+                        />
+                      </label>
+                      {profile.resume_filename && (
+                        <button type="button" className="btn-secondary" disabled={resumeUploading} onClick={() => void handleResumeDelete()}>
+                          Remove Resume
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 )}
 
                 {profile.account_type === "employer" && (
