@@ -7,6 +7,7 @@ import { apiUrl } from "@/lib/api";
 import { useRouter } from "next/navigation";
 import { isMongoObjectId, logOpportunityInteraction } from "@/lib/opportunity-interactions";
 import { formatTopPercent, type RankingSummary } from "@/lib/ranking-summary";
+import { clampPercent, type ProfileStrengthSummary } from "@/lib/profile-strength";
 
 interface OpportunityCard {
     id: string;
@@ -114,6 +115,7 @@ export default function DashboardPage() {
     const [recommended, setRecommended] = useState<OpportunityCard[]>([]);
     const [profile, setProfile] = useState<ProfileSummary | null>(null);
     const [rankingSummary, setRankingSummary] = useState<RankingSummary | null>(null);
+    const [profileStrength, setProfileStrength] = useState<ProfileStrengthSummary | null>(null);
     const [appCount, setAppCount] = useState<number>(0);
     const [posts, setPosts] = useState<ActivityPost[]>([]);
     const lastImpressionBatchRef = useRef("");
@@ -125,10 +127,11 @@ export default function DashboardPage() {
 
             // 1. Fetch Profile + Applications only when authenticated
             if (authHeaders) {
-                const [profileRes, appsRes, rankingRes] = await Promise.all([
+                const [profileRes, appsRes, rankingRes, strengthRes] = await Promise.all([
                     fetch(apiUrl("/api/v1/users/me/profile"), { headers: authHeaders }),
                     fetch(apiUrl("/api/v1/applications/"), { headers: authHeaders }),
                     fetch(apiUrl("/api/v1/users/me/ranking-summary"), { headers: authHeaders }),
+                    fetch(apiUrl("/api/v1/users/me/profile-strength"), { headers: authHeaders }),
                 ]);
 
                 if (profileRes.ok) {
@@ -151,8 +154,16 @@ export default function DashboardPage() {
                 } else {
                     setRankingSummary(null);
                 }
+
+                if (strengthRes.ok) {
+                    const strengthData: ProfileStrengthSummary = await strengthRes.json();
+                    setProfileStrength(strengthData);
+                } else {
+                    setProfileStrength(null);
+                }
             } else {
                 setRankingSummary(null);
+                setProfileStrength(null);
             }
 
             // 2. Personalized opportunities when authenticated, else public fallback
@@ -266,6 +277,11 @@ export default function DashboardPage() {
     const rankingDetail = rankingSummary
         ? `Rank #${rankingSummary.rank} of ${rankingSummary.total_users}`
         : "Live global percentile";
+    const profileStrengthPercent = profileStrength ? clampPercent(profileStrength.strength_percent) : 0;
+    const profileStrengthHint = profileStrength
+        ? `${profileStrength.completed_signals}/${profileStrength.total_signals} profile signals complete`
+        : "Sign in to compute live profile strength";
+    const profileStrengthRecommendation = profileStrength?.recommendation || "Complete profile fields for better matching.";
 
     useEffect(() => {
         const token = localStorage.getItem("access_token");
@@ -396,9 +412,10 @@ export default function DashboardPage() {
                             <ShieldCheck size={18} /> Profile Strength
                         </div>
                         <div style={{ fontSize: '4rem', fontWeight: 400, fontFamily: 'var(--font-serif)', color: 'var(--text-primary)', lineHeight: 1 }}>
-                            {profile?.skills ? '100%' : '20%'}
+                            {profileStrengthPercent}%
                         </div>
-                        <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginTop: '0.5rem', fontWeight: 600 }}>Add resume to reach 100%</div>
+                        <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginTop: '0.5rem', fontWeight: 700 }}>{profileStrengthHint}</div>
+                        <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.2rem', fontWeight: 600 }}>{profileStrengthRecommendation}</div>
                     </TiltCard>
                 </motion.div>
 

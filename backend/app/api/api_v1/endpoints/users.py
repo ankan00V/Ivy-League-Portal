@@ -168,6 +168,16 @@ class RankingSummaryResponse(BaseModel):
     updated_at: datetime
 
 
+class ProfileStrengthResponse(BaseModel):
+    account_scope: str
+    strength_percent: int
+    completed_signals: int
+    total_signals: int
+    missing_signals: list[str]
+    recommendation: str
+    updated_at: datetime
+
+
 class LeaderboardEntry(BaseModel):
     user_id: str
     full_name: Optional[str] = None
@@ -270,6 +280,89 @@ async def _build_ranking_summary(profile: Profile) -> RankingSummaryResponse:
         total_users=total_users,
         top_percent=top_percent,
         percentile=percentile,
+        updated_at=datetime.now(timezone.utc),
+    )
+
+
+def _profile_strength_checks(profile: Profile) -> list[tuple[str, bool]]:
+    checks: list[tuple[str, bool]] = [
+        ("first_name", bool((profile.first_name or "").strip())),
+        ("last_name", bool((profile.last_name or "").strip())),
+        ("mobile", bool((profile.mobile or "").strip())),
+        ("consent_data_processing", bool(profile.consent_data_processing)),
+    ]
+
+    scope = _normalize_account_scope(profile.account_type)
+    if scope == "candidate":
+        user_type = str(profile.user_type or "").strip().lower()
+        checks.append(("user_type", user_type in VALID_USER_TYPES))
+
+        if user_type == "school_student":
+            checks.append(("class_grade", profile.class_grade is not None))
+        elif user_type in {"college_student", "fresher"}:
+            checks.extend(
+                [
+                    ("domain", bool((profile.domain or "").strip())),
+                    ("course", bool((profile.course or "").strip())),
+                    ("passout_year", profile.passout_year is not None),
+                    ("college_name", bool((profile.college_name or "").strip())),
+                ]
+            )
+        elif user_type == "professional":
+            checks.extend(
+                [
+                    ("current_job_role", bool((profile.current_job_role or "").strip())),
+                    ("total_work_experience", bool((profile.total_work_experience or "").strip())),
+                ]
+            )
+
+        checks.extend(
+            [
+                ("bio", bool((profile.bio or "").strip())),
+                ("skills", bool((profile.skills or "").strip())),
+                ("interests", bool((profile.interests or "").strip())),
+                ("education", bool((profile.education or "").strip())),
+                ("resume", bool((profile.resume_url or "").strip())),
+            ]
+        )
+    else:
+        checks.extend(
+            [
+                ("company_name", bool((profile.company_name or "").strip())),
+                ("current_job_role", bool((profile.current_job_role or "").strip())),
+                ("hiring_for", str(profile.hiring_for or "").strip().lower() in VALID_HIRING_FOR),
+                ("company_website", bool((profile.company_website or "").strip())),
+                ("company_description", bool((profile.company_description or "").strip())),
+            ]
+        )
+
+    return checks
+
+
+def _strength_recommendation(missing_signals: list[str]) -> str:
+    if len(missing_signals) == 0:
+        return "Profile is complete and ranked-ready."
+    if "resume" in missing_signals:
+        return "Upload resume and skills to unlock higher-quality recommendations."
+    if "skills" in missing_signals or "bio" in missing_signals:
+        return "Add bio and skills to improve matching relevance."
+    first = missing_signals[0].replace("_", " ")
+    return f"Complete {first} to improve profile strength."
+
+
+def _build_profile_strength_summary(profile: Profile) -> ProfileStrengthResponse:
+    checks = _profile_strength_checks(profile)
+    total = max(1, len(checks))
+    completed = sum(1 for _name, done in checks if done)
+    missing = [name for name, done in checks if not done]
+    strength_percent = int(round((completed / total) * 100.0))
+    return ProfileStrengthResponse(
+        account_scope=_normalize_account_scope(profile.account_type),
+        strength_percent=strength_percent,
+        completed_signals=completed,
+        total_signals=total,
+        missing_signals=missing,
+        recommendation=_strength_recommendation(missing),
         updated_at=datetime.now(timezone.utc),
     )
 
@@ -388,6 +481,14 @@ async def read_ranking_summary(
 ) -> RankingSummaryResponse:
     profile = await _get_or_create_profile_for_user(current_user)
     return await _build_ranking_summary(profile)
+
+
+@router.get("/me/profile-strength", response_model=ProfileStrengthResponse)
+async def read_profile_strength(
+    current_user: User = Depends(get_current_active_user),
+) -> ProfileStrengthResponse:
+    profile = await _get_or_create_profile_for_user(current_user)
+    return _build_profile_strength_summary(profile)
 
 
 @router.put("/me/profile", response_model=ProfileResponse)
