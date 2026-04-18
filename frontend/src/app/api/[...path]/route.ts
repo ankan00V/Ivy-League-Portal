@@ -83,9 +83,10 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
     const upstreamUrl = buildBackendUrl(target, request, path);
     try {
       const upstreamResponse = await fetch(upstreamUrl, requestInit);
-      // Some candidates can be syntactically valid but point to wrong upstreams.
-      // Skip known transport-like statuses and continue trying next candidate.
-      if ([404, 405, 502, 503, 504].includes(upstreamResponse.status)) {
+      // Retry only on gateway-like upstream failures.
+      // Do NOT swallow application-level 4xx responses (e.g., OTP validation 404),
+      // otherwise the client sees a fake "backend unavailable" message.
+      if ([502, 503, 504].includes(upstreamResponse.status)) {
         failureDetails.push({
           upstream: upstreamUrl,
           reason: `upstream responded with ${upstreamResponse.status}`,
