@@ -1,212 +1,299 @@
 "use client";
-import React, { useState } from 'react';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { apiUrl } from '@/lib/api';
-import BrandLogo from '@/components/BrandLogo';
+
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import React, { useMemo, useState } from "react";
+
+import BrandLogo from "@/components/BrandLogo";
+import { apiUrl } from "@/lib/api";
+import { setAccessToken } from "@/lib/auth-session";
+
+type RegisterStep = "details" | "otp";
+type AccountType = "candidate" | "employer";
+
+type OAuthProviderStatus = {
+  google: boolean;
+  linkedin: boolean;
+  microsoft: boolean;
+};
+
+const REGISTER_VISUALS = {
+  candidate: {
+    heading: "Sign up as candidate",
+    image:
+      "https://images.unsplash.com/photo-1600880292203-757bb62b4baf?auto=format&fit=crop&w=1200&q=80",
+  },
+  employer: {
+    heading: "Sign up as employer",
+    image:
+      "https://images.unsplash.com/photo-1557804506-669a67965ba0?auto=format&fit=crop&w=1200&q=80",
+  },
+};
 
 export default function RegisterPage() {
-    const router = useRouter();
-    const [fullName, setFullName] = useState('');
-    const [email, setEmail] = useState('');
-    const [otp, setOtp] = useState('');
-    const [step, setStep] = useState(1); // 1 = Details, 2 = OTP
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [info, setInfo] = useState<string | null>(null);
+  const router = useRouter();
+  const [accountType, setAccountType] = useState<AccountType>("candidate");
+  const [step, setStep] = useState<RegisterStep>("details");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [email, setEmail] = useState("");
+  const [otp, setOtp] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
+  const [providers, setProviders] = useState<OAuthProviderStatus>({ google: false, linkedin: false, microsoft: false });
 
-    const handleSendOTP = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setLoading(true);
-        setError(null);
-        setInfo(null);
+  const visual = useMemo(() => REGISTER_VISUALS[accountType], [accountType]);
 
-        try {
-            const res = await fetch(apiUrl('/api/v1/auth/send-otp'), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email, purpose: "signup" })
-            });
-
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok) {
-                throw new Error(data.detail || "Failed to send OTP");
-            }
-
-            if (typeof data.debug_otp === 'string' && data.debug_otp.length === 6) {
-                setOtp(data.debug_otp);
-                setInfo(`SMTP unavailable in local mode. Use OTP: ${data.debug_otp} (expires in 5 minutes).`);
-            } else {
-                setOtp('');
-                setInfo("OTP sent to your email. It expires in 5 minutes.");
-            }
-            setStep(2);
-        } catch (err: unknown) {
-            setError(err instanceof Error ? err.message : String(err));
-        } finally {
-            setLoading(false);
+  React.useEffect(() => {
+    const run = async () => {
+      try {
+        const res = await fetch(apiUrl("/api/v1/auth/oauth/providers"));
+        if (!res.ok) {
+          return;
         }
+        const payload = (await res.json()) as OAuthProviderStatus;
+        setProviders(payload);
+      } catch {
+        // Ignore local discovery errors.
+      }
     };
+    void run();
+  }, []);
 
-    const handleVerifyRegistration = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setLoading(true);
-        setError(null);
+  const fullName = useMemo(() => `${firstName} ${lastName}`.trim(), [firstName, lastName]);
 
-        try {
-            const res = await fetch(apiUrl('/api/v1/auth/verify-otp'), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email, otp, full_name: fullName, purpose: "signup" })
-            });
+  const resetMessages = () => {
+    setError(null);
+    setInfo(null);
+  };
 
-            if (!res.ok) {
-                const data = await res.json();
-                throw new Error(data.detail || "Invalid OTP");
-            }
+  const handleSendOtp = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setLoading(true);
+    resetMessages();
 
-            const data = await res.json();
-            localStorage.setItem("access_token", data.access_token);
-            router.push('/dashboard');
-        } catch (err: unknown) {
-            setError(err instanceof Error ? err.message : String(err));
-        } finally {
-            setLoading(false);
-        }
-    };
+    try {
+      const res = await fetch(apiUrl("/api/v1/auth/send-otp"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, purpose: "signup" }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload.detail || "Failed to send OTP");
+      }
+      if (typeof payload.debug_otp === "string" && payload.debug_otp.length === 6) {
+        setOtp(payload.debug_otp);
+        setInfo(`Debug OTP: ${payload.debug_otp} (local fallback)`);
+      } else {
+        setInfo("OTP sent to your email. It expires in 5 minutes.");
+        setOtp("");
+      }
+      setStep("otp");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to send OTP");
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    return (
-        <div style={{ minHeight: '100vh', display: 'flex', background: 'var(--bg-base)' }}>
+  const handleVerifySignup = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setLoading(true);
+    resetMessages();
 
-            {/* Visual Pane (Left) */}
-            <div className="hidden lg:flex" style={{
-                flex: 1,
-                background: 'linear-gradient(135deg, var(--brand-primary), var(--accent-cyan))',
-                position: 'relative',
-                overflow: 'hidden',
-                flexDirection: 'column',
-                justifyContent: 'space-between',
-                padding: '4rem'
-            }}>
-                {/* Decorative circles */}
-                <div style={{ position: 'absolute', top: '10%', left: '-10%', width: '500px', height: '500px', borderRadius: '50%', background: 'rgba(255,255,255,0.1)', filter: 'blur(40px)' }} />
-                <div style={{ position: 'absolute', bottom: '-10%', right: '-10%', width: '400px', height: '400px', borderRadius: '50%', background: 'rgba(59, 130, 246, 0.3)', filter: 'blur(60px)' }} />
+    try {
+      const res = await fetch(apiUrl("/api/v1/auth/verify-otp"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email,
+          otp,
+          purpose: "signup",
+          full_name: fullName,
+          account_type: accountType,
+        }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload.detail || "OTP verification failed");
+      }
+      const token = String(payload.access_token || "");
+      if (!token) {
+        throw new Error("Auth token missing from response");
+      }
+      setAccessToken(token);
+      router.push("/onboarding");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to verify OTP");
+    } finally {
+      setLoading(false);
+    }
+  };
 
-                <div style={{ position: 'relative', zIndex: 10 }}>
-                    <BrandLogo size="md" />
-                </div>
+  const startGoogleOAuth = async () => {
+    setLoading(true);
+    resetMessages();
+    try {
+      const params = new URLSearchParams({ account_type: accountType, next: "/auth/callback" });
+      const res = await fetch(apiUrl(`/api/v1/auth/oauth/google/start?${params.toString()}`));
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || !payload.redirect_url) {
+        throw new Error(payload.detail || "Google OAuth is unavailable. Configure Google OAuth env vars.");
+      }
+      window.location.href = String(payload.redirect_url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to start Google OAuth");
+      setLoading(false);
+    }
+  };
 
-                <div style={{ position: 'relative', zIndex: 10, maxWidth: '500px' }}>
-                    <h2 style={{ fontSize: '3.5rem', color: '#ffffff', marginBottom: '1rem', lineHeight: 1.1, fontWeight: 800 }}>
-                        Unlock Your Potential.
-                    </h2>
-                    <p style={{ color: 'rgba(255,255,255,0.85)', fontSize: '1.25rem', lineHeight: 1.5 }}>
-                        Join the world&apos;s fastest-growing academic intelligence network. Track opportunities, network with peers, and build an unstoppable profile.
-                    </p>
-                </div>
+  return (
+    <main
+      style={{
+        minHeight: "100vh",
+        display: "grid",
+        placeItems: "center",
+        padding: "1.5rem",
+        background:
+          "radial-gradient(circle at 20% 20%, rgba(251,191,36,0.11), transparent 28%), radial-gradient(circle at 80% 10%, rgba(59,130,246,0.08), transparent 24%), var(--bg-base)",
+      }}
+    >
+      <section
+        className="card-panel auth-shell"
+        style={{
+          width: "min(1100px, 100%)",
+          minHeight: "740px",
+          overflow: "hidden",
+          padding: 0,
+        }}
+      >
+        <aside
+          className="auth-left-pane"
+          style={{
+            background: "#f7c948",
+            padding: "1.25rem",
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "space-between",
+            borderRight: "2px solid var(--border-subtle)",
+          }}
+        >
+          <BrandLogo size="md" />
+          <div style={{ borderRadius: "var(--radius-md)", overflow: "hidden", border: "2px solid rgba(0,0,0,0.12)", background: "#fff" }}>
+            <img src={visual.image} alt="Signup visual" style={{ width: "100%", height: "420px", objectFit: "cover", display: "block" }} />
+          </div>
+          <div>
+            <h2 style={{ fontSize: "2rem", marginBottom: "0.4rem", color: "#111" }}>{visual.heading}</h2>
+            <p style={{ color: "rgba(0,0,0,0.78)", fontWeight: 600 }}>
+              Verify with OTP and complete a guided profile setup to unlock personalized recommendations.
+            </p>
+          </div>
+        </aside>
+
+        <div className="auth-right-pane" style={{ padding: "2rem", display: "flex", flexDirection: "column", gap: "1rem" }}>
+          <h1 style={{ fontSize: "2.2rem", marginBottom: "0.35rem" }}>Create your account</h1>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: "0.5rem",
+              background: "var(--bg-surface-hover)",
+              padding: "0.3rem",
+              borderRadius: "999px",
+              border: "2px solid var(--border-subtle)",
+              maxWidth: "360px",
+            }}
+          >
+            <button type="button" className={accountType === "candidate" ? "btn-primary" : "btn-secondary"} style={{ borderRadius: "999px", width: "100%" }} onClick={() => setAccountType("candidate")}>
+              Candidate
+            </button>
+            <button type="button" className={accountType === "employer" ? "btn-primary" : "btn-secondary"} style={{ borderRadius: "999px", width: "100%" }} onClick={() => setAccountType("employer")}>
+              Employer
+            </button>
+          </div>
+
+          {error && (
+            <div style={{ background: "rgba(239,68,68,0.08)", border: "2px solid #ef4444", color: "#b91c1c", borderRadius: "var(--radius-sm)", padding: "0.75rem" }}>
+              {error}
             </div>
-
-            {/* Form Pane (Right) */}
-            <div style={{
-                flex: 1,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: '2rem'
-            }}>
-                <div className="animate-fade-up" style={{ width: '100%', maxWidth: '440px' }}>
-                    <div style={{ textAlign: 'left', marginBottom: '2.5rem' }}>
-                        <div className="block lg:hidden" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '2rem' }}>
-                            <BrandLogo size="md" />
-                        </div>
-
-                        <h1 style={{ fontSize: '2rem', marginBottom: '0.75rem', letterSpacing: '-0.02em', color: 'var(--text-primary)' }}>Apply for Access</h1>
-                        <p style={{ color: 'var(--text-secondary)', fontSize: '1rem' }}>
-                            {step === 1 ? "Provide your details to securely create an account." : "Enter the 6-digit code sent to your email to verify ownership."}
-                        </p>
-                    </div>
-
-                    {error && (
-                        <div style={{ padding: '1rem', background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', borderRadius: 'var(--radius-sm)', marginBottom: '1.5rem', fontSize: '0.9rem', fontWeight: 500 }}>
-                            {error}
-                        </div>
-                    )}
-                    {info && (
-                        <div style={{ padding: '1rem', background: 'rgba(34, 197, 94, 0.12)', color: '#22c55e', borderRadius: 'var(--radius-sm)', marginBottom: '1.5rem', fontSize: '0.9rem', fontWeight: 600 }}>
-                            {info}
-                        </div>
-                    )}
-
-                    <div className="card-panel" style={{ padding: '2.5rem', boxShadow: 'var(--shadow-lg)' }}>
-                        {step === 1 ? (
-                            <form onSubmit={handleSendOTP} style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                                <div>
-                                    <label style={{ display: 'block', fontSize: '0.9rem', marginBottom: '0.5rem', color: 'var(--text-primary)', fontWeight: 600 }}>Full Name</label>
-                                    <input
-                                        type="text"
-                                        className="input-base"
-                                        placeholder="E.g., Jane Doe"
-                                        value={fullName}
-                                        onChange={(e) => setFullName(e.target.value)}
-                                        required
-                                        disabled={loading}
-                                    />
-                                </div>
-                                <div>
-                                    <label style={{ display: 'block', fontSize: '0.9rem', marginBottom: '0.5rem', color: 'var(--text-primary)', fontWeight: 600 }}>Email Address</label>
-                                    <input
-                                        type="email"
-                                        className="input-base"
-                                        placeholder="student@university.edu"
-                                        value={email}
-                                        onChange={(e) => setEmail(e.target.value)}
-                                        required
-                                        disabled={loading}
-                                    />
-                                </div>
-
-                                <button type="submit" className="btn-primary" style={{ width: '100%', padding: '1rem', marginTop: '0.5rem' }} disabled={loading}>
-                                    {loading ? "Sending Code..." : "Send Verification Code"}
-                                </button>
-                            </form>
-                        ) : (
-                            <form onSubmit={handleVerifyRegistration} style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                                <div>
-                                    <label style={{ display: 'block', fontSize: '0.9rem', marginBottom: '0.5rem', color: 'var(--text-primary)', fontWeight: 600 }}>Verification Code</label>
-                                    <input
-                                        type="text"
-                                        className="input-base"
-                                        placeholder="123456"
-                                        value={otp}
-                                        onChange={(e) => setOtp(e.target.value)}
-                                        minLength={6}
-                                        maxLength={6}
-                                        required
-                                        disabled={loading}
-                                        style={{ textAlign: "center", letterSpacing: "8px", fontSize: "1.5rem", fontWeight: 700 }}
-                                    />
-                                </div>
-
-                                <button type="submit" className="btn-primary" style={{ width: '100%', padding: '1rem' }} disabled={loading}>
-                                    {loading ? "Verifying..." : "Verify & Complete Signup"}
-                                </button>
-
-                                <div style={{ textAlign: 'center', marginTop: '0.5rem' }}>
-                                    <button type="button" onClick={() => setStep(1)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.9rem', fontWeight: 500, textDecoration: 'underline' }}>
-                                        Go back
-                                    </button>
-                                </div>
-                            </form>
-                        )}
-                    </div>
-
-                    {step === 1 && (
-                        <div style={{ marginTop: '2.5rem', textAlign: 'center', fontSize: '0.95rem', color: 'var(--text-secondary)' }}>
-                            Already hold an account? <Link href="/login" style={{ color: 'var(--brand-primary)', fontWeight: 600 }}>Sign in</Link>
-                        </div>
-                    )}
-                </div>
+          )}
+          {info && (
+            <div style={{ background: "rgba(34,197,94,0.08)", border: "2px solid #22c55e", color: "#15803d", borderRadius: "var(--radius-sm)", padding: "0.75rem" }}>
+              {info}
             </div>
+          )}
+
+          {step === "details" && (
+            <>
+              <div style={{ display: "grid", gap: "0.6rem" }}>
+                <button type="button" className="btn-secondary" onClick={() => void startGoogleOAuth()} disabled={loading || !providers.google} style={{ width: "100%", justifyContent: "center" }}>
+                  Continue with Google
+                </button>
+              </div>
+
+              <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", color: "var(--text-secondary)" }}>
+                <div style={{ height: "1px", background: "var(--border-subtle)", flex: 1 }} />
+                <span>OR</span>
+                <div style={{ height: "1px", background: "var(--border-subtle)", flex: 1 }} />
+              </div>
+            </>
+          )}
+
+          {step === "details" ? (
+            <form onSubmit={handleSendOtp} style={{ display: "grid", gap: "0.85rem" }}>
+              <label style={{ fontWeight: 700 }}>First Name</label>
+              <input type="text" className="input-base" value={firstName} onChange={(event) => setFirstName(event.target.value)} placeholder="Bob" required disabled={loading} />
+
+              <label style={{ fontWeight: 700 }}>Last Name</label>
+              <input type="text" className="input-base" value={lastName} onChange={(event) => setLastName(event.target.value)} placeholder="Builder" disabled={loading} />
+
+              <label style={{ fontWeight: 700 }}>Email</label>
+              <input type="email" className="input-base" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="student@college.edu" required disabled={loading} />
+
+              <button type="submit" className="btn-primary" disabled={loading} style={{ width: "100%", justifyContent: "center", marginTop: "0.25rem" }}>
+                {loading ? "Please wait..." : "Send OTP"}
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleVerifySignup} style={{ display: "grid", gap: "0.85rem" }}>
+              <label style={{ fontWeight: 700 }}>Email</label>
+              <input type="email" className="input-base" value={email} disabled />
+
+              <label style={{ fontWeight: 700 }}>OTP</label>
+              <input
+                type="text"
+                className="input-base"
+                value={otp}
+                onChange={(event) => setOtp(event.target.value)}
+                placeholder="123456"
+                maxLength={6}
+                minLength={6}
+                required
+                disabled={loading}
+                style={{ letterSpacing: "0.25em", textAlign: "center", fontWeight: 800 }}
+              />
+
+              <button type="submit" className="btn-primary" disabled={loading} style={{ width: "100%", justifyContent: "center", marginTop: "0.25rem" }}>
+                {loading ? "Verifying..." : "Verify OTP & Continue"}
+              </button>
+
+              <button type="button" style={{ border: "none", background: "none", color: "var(--brand-primary)", fontWeight: 700, cursor: "pointer" }} onClick={() => setStep("details")}>
+                Edit details
+              </button>
+            </form>
+          )}
+
+          <div style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
+            Already have an account?{" "}
+            <Link href="/login" style={{ color: "var(--brand-primary)", fontWeight: 800 }}>
+              Sign in
+            </Link>
+          </div>
         </div>
-    );
+      </section>
+    </main>
+  );
 }

@@ -296,7 +296,7 @@ export default function DashboardPage() {
                             Your opportunity intelligence overview is ready. Discover your next big win today.
                         </p>
                     </div>
-                    <button className="btn-secondary">
+                    <button className="btn-secondary" onClick={() => router.push('/onboarding')}>
                         Update Profile
                     </button>
                 </motion.header>

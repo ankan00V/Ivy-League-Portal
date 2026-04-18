@@ -530,3 +530,28 @@ button {
 .input-base::placeholder {
   color: var(--text-muted);
 }
+
+/* Auth + Onboarding shared layout */
+.auth-shell {
+  display: grid;
+  grid-template-columns: minmax(320px, 46%) minmax(0, 1fr);
+}
+
+.auth-left-pane {
+  min-width: 0;
+}
+
+.auth-right-pane {
+  min-width: 0;
+}
+
+@media (max-width: 980px) {
+  .auth-shell {
+    grid-template-columns: 1fr;
+    min-height: auto !important;
+  }
+
+  .auth-left-pane {
+    display: none !important;
+  }
+}

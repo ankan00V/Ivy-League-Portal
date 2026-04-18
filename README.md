@@ -15,10 +15,10 @@ Students discover internships, research roles, scholarships, and hackathons acro
 - Recommendation stack with ranking modes: `baseline`, `semantic`, `ml`, `ab`.
 - Interaction logging + experiment analytics endpoints (`CTR`, `lift`, experiment reports) with explicit `real` vs `simulated` traffic typing.
 - Experiment-science diagnostics: SRM checks (chi-square allocation test) and per-variant power/MDE diagnostics.
-- Evaluation endpoints for ranking quality (`Precision@K`, `Recall@K`, `nDCG@K`, `MRR`) and LLM response quality.
+- Evaluation endpoints for ranking quality (`Precision@K`, `Recall@K`, `nDCG@K`, `MRR`) and LLM response quality with token/phrase PRF, rubric score, citation grounding, and judge-agreement diagnostics.
 - Semantic deduplication during scraper upserts using embedding similarity thresholds.
 - MLOps endpoints/services for retraining and drift checks.
-- NLP model lifecycle endpoints for training, evaluation, model listing, and activation (`/api/v1/mlops/nlp/*`).
+- NLP model lifecycle endpoints for training, evaluation, model listing, and activation (`/api/v1/mlops/nlp/*`) with centroid-vs-linear-head macro-F1 uplift reporting and dedicated NER eval-set support.
 
 ### Platform and Data Pipeline
 - Multi-source ingestion: Ivy RSS + Indian opportunity sources.
@@ -45,6 +45,13 @@ Students discover internships, research roles, scholarships, and hackathons acro
   - `http_responses_total` (error rates)
   - `scraper_runs_total` + `scraper_source_runs_total` (scraper success)
   - `opportunity_freshness_seconds` + `opportunity_freshness_sla_breached` (freshness SLA)
+  - `ranking_request_latency_ms` + `ranking_requests_total` (ranking request p95 + failure rate by variant)
+  - `opportunity_interaction_events_total` (CTR/apply-rate by experiment variant)
+- Ops assets:
+  - Grafana dashboard JSON: `ops/grafana/vidyaverse-production-overview.json`
+  - Prometheus alert rules: `ops/alerts/prometheus-rules.yml`
+  - Alertmanager routing template: `ops/alerts/alertmanager-routes.yml`
+  - Incident runbook: `docs/runbooks/incident-response.md`
 
 ### Security
 - Auth scopes embedded in JWTs (admin tokens include `admin`, `metrics:read`, `jobs:*`, `scraper:trigger`).
@@ -52,9 +59,9 @@ Students discover internships, research roles, scholarships, and hackathons acro
 - Production secret enforcement: refuses to boot in `ENVIRONMENT=production` if `SECRET_KEY` is left as the dev default.
 
 ## What Is Still Missing (High Impact Next)
-- Production experiment traffic in live environments (real user behavior) to validate lift outside synthetic/bootstrap data.
-- Real-time observability dashboard (p95 latency trend, scrape freshness SLA, experiment significance).
-- Automated rollback playbook with pager/on-call escalation for sustained drift or conversion regressions.
+- Sustained real-user traffic volume for statistically stable experiment reads across all three arms (`baseline`, `semantic`, `ml`).
+- Production-grade alert integrations wired to live Slack/PagerDuty credentials (templates are committed, secrets are environment-owned).
+- Continuous post-incident learning loop (blameless postmortems + permanent mitigation tracking) beyond code-level guardrails.
 
 ## Architecture Diagram
 ```mermaid
@@ -135,6 +142,11 @@ Auto-publish command:
 python backend/scripts/publish_model_metadata.py
 ```
 
+End-to-end lifecycle command (retrain on current interactions, champion activation, drift snapshot, README + artifact publish):
+```bash
+python backend/scripts/run_model_lifecycle_pipeline.py
+```
+
 <!-- MODEL_VERSION_METADATA:START -->
 
 Updated: **2026-04-16T00:00:00**
@@ -212,7 +224,7 @@ From live `ranking_mode` experiment (baseline vs ml), 14-day window:
 - `GET /api/v1/opportunities/ask-ai/schema`
 - `POST /api/v1/opportunities/interactions`
 - `POST /api/v1/opportunities/evaluate-ranking`
-- `POST /api/v1/opportunities/evaluate-llm` (supports `include_judge=true` with `OPENROUTER_API_KEY`)
+- `POST /api/v1/opportunities/evaluate-llm` (token/phrase PRF, citation-grounding, rubric score, optional judge agreement)
 - `GET /api/v1/opportunities/experiments/ctr`
 - `GET /api/v1/opportunities/experiments/lift`
 - `POST /api/v1/mlops/retrain`
@@ -223,6 +235,8 @@ From live `ranking_mode` experiment (baseline vs ml), 14-day window:
 - `POST /api/v1/mlops/nlp/models/{model_id}/activate`
 - `GET /api/v1/mlops/drift`
 - `GET /api/v1/mlops/lifecycle`
+- `GET /api/v1/admin/openapi.json` (admin-authenticated OpenAPI export, production-safe)
+- `GET /api/v1/admin/docs` (admin-authenticated Swagger UI, production-safe)
 
 ## Local Run
 ### Backend
@@ -269,6 +283,11 @@ Frontend E2E interaction coverage (Playwright):
 cd frontend
 npx playwright install chromium
 npm run e2e
+```
+
+Unified PR quality gate (backend tests + frontend lint/build + Playwright smoke):
+```bash
+.github/workflows/pr-quality-gate.yml
 ```
 
 ### Bootstrap Ranking Data + Model Version (Staging/Prod Warmup)

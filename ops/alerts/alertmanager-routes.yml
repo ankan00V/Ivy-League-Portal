@@ -1,0 +1,35 @@
+route:
+  receiver: dev-null
+  group_by: ["alertname", "service", "severity"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 2h
+  routes:
+    - matchers:
+        - severity="page"
+      receiver: pagerduty-primary
+      continue: true
+    - matchers:
+        - severity="warn"
+      receiver: slack-mlops
+
+receivers:
+  - name: dev-null
+
+  - name: slack-mlops
+    slack_configs:
+      - api_url: ${SLACK_WEBHOOK_URL}
+        channel: "#mlops-alerts"
+        send_resolved: true
+        title: "[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}"
+        text: |
+          Service: {{ .CommonLabels.service }}
+          Severity: {{ .CommonLabels.severity }}
+          Summary: {{ .CommonAnnotations.summary }}
+          Description: {{ .CommonAnnotations.description }}
+
+  - name: pagerduty-primary
+    pagerduty_configs:
+      - routing_key: ${PAGERDUTY_ROUTING_KEY}
+        send_resolved: true
+        description: "{{ .CommonLabels.alertname }} - {{ .CommonAnnotations.summary }}"

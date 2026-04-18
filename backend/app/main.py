@@ -2,6 +2,7 @@ import asyncio
 from typing import Any
 
 from fastapi import Depends, FastAPI, Response
+from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -42,7 +43,7 @@ from app.services.system_metrics import refresh_freshness_metrics
 from app.core.redis import close_redis
 from app.core.metrics import CONTENT_TYPE_LATEST, init_metrics, render_metrics
 from app.core.http_middleware import ObservabilityMiddleware, RateLimitMiddleware
-from app.api.deps import require_scopes
+from app.api.deps import get_current_admin_user, require_scopes
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -272,6 +273,25 @@ def health_check():
 async def metrics_endpoint(_: Any = Depends(require_scopes(["metrics:read"]))):  # type: ignore[name-defined]
     payload = render_metrics()
     return Response(content=payload, media_type=CONTENT_TYPE_LATEST)
+
+
+@app.get(f"{settings.API_V1_STR}/admin/openapi.json", include_in_schema=False)
+async def admin_openapi(_: Any = Depends(get_current_admin_user)) -> Any:
+    """
+    Authenticated OpenAPI export for operations. Public docs remain disabled in production.
+    """
+    return app.openapi()
+
+
+@app.get(f"{settings.API_V1_STR}/admin/docs", include_in_schema=False)
+async def admin_docs(_: Any = Depends(get_current_admin_user)) -> Any:
+    """
+    Authenticated Swagger UI for operations/debugging.
+    """
+    return get_swagger_ui_html(
+        openapi_url=f"{settings.API_V1_STR}/admin/openapi.json",
+        title=f"{settings.PROJECT_NAME} Admin Docs",
+    )
 
 @app.get("/")
 def read_root():

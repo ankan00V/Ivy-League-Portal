@@ -51,6 +51,21 @@ async def _main() -> None:
     parser.add_argument("--notes", type=str, default="CLI-trained NLP model", help="Optional model notes.")
     parser.add_argument("--auto-activate", action="store_true", help="Activate the trained model if metric threshold passes.")
     parser.add_argument("--min-intent-macro-f1", type=float, default=0.55, help="Activation threshold for intent macro F1.")
+    parser.add_argument(
+        "--min-intent-macro-f1-uplift",
+        type=float,
+        default=0.0,
+        help="Activation threshold for macro-F1 uplift over centroid baseline.",
+    )
+    parser.add_argument(
+        "--ner-eval-dataset",
+        type=str,
+        default="backend/benchmarks/data/nlp_ner_eval_set.jsonl",
+        help="Optional JSONL dataset for dedicated NER evaluation (same row schema).",
+    )
+    parser.add_argument("--linear-head-learning-rate", type=float, default=0.08, help="Learning rate for linear classifier head.")
+    parser.add_argument("--linear-head-epochs", type=int, default=220, help="Training epochs for linear classifier head.")
+    parser.add_argument("--linear-head-l2", type=float, default=0.0001, help="L2 regularization for linear classifier head.")
     args = parser.parse_args()
 
     dataset_path = Path(args.dataset)
@@ -58,6 +73,13 @@ async def _main() -> None:
         dataset_path = _repo_root() / dataset_path
     if not dataset_path.exists():
         raise FileNotFoundError(f"Dataset not found: {dataset_path}")
+
+    ner_eval_rows: list[dict[str, Any]] | None = None
+    ner_eval_path = Path(args.ner_eval_dataset)
+    if not ner_eval_path.is_absolute():
+        ner_eval_path = _repo_root() / ner_eval_path
+    if ner_eval_path.exists():
+        ner_eval_rows = _load_jsonl(ner_eval_path)
 
     client = AsyncIOMotorClient(settings.MONGODB_URL)
     await init_beanie(
@@ -73,6 +95,11 @@ async def _main() -> None:
             notes=args.notes,
             auto_activate=bool(args.auto_activate),
             min_intent_macro_f1_for_activation=float(args.min_intent_macro_f1),
+            min_intent_macro_f1_uplift_for_activation=float(args.min_intent_macro_f1_uplift),
+            ner_eval_examples=ner_eval_rows,
+            linear_head_learning_rate=float(args.linear_head_learning_rate),
+            linear_head_epochs=int(args.linear_head_epochs),
+            linear_head_l2=float(args.linear_head_l2),
         )
         print(
             json.dumps(
@@ -82,8 +109,10 @@ async def _main() -> None:
                     "name": model.name,
                     "is_active": bool(model.is_active),
                     "metrics": model.metrics,
+                    "evaluation_snapshot": model.evaluation_snapshot,
                     "training_rows": model.training_rows,
                     "dataset": str(dataset_path),
+                    "ner_eval_dataset": str(ner_eval_path) if ner_eval_rows is not None else None,
                 },
                 indent=2,
                 sort_keys=True,
@@ -95,4 +124,3 @@ async def _main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(_main())
-

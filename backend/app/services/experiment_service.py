@@ -70,10 +70,11 @@ class ExperimentService:
     DEFAULT_EXPERIMENTS: dict[str, dict] = {
         "ranking_mode": {
             "key": "ranking_mode",
-            "description": "Recommendation ranking algorithm: baseline vs learned ranker.",
+            "description": "Recommendation ranking algorithm: baseline vs semantic vs learned ranker.",
             "status": "active",
             "variants": [
                 {"name": "baseline", "weight": 1.0, "is_control": True},
+                {"name": "semantic", "weight": 1.0, "is_control": False},
                 {"name": "ml", "weight": 1.0, "is_control": False},
             ],
         }

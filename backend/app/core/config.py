@@ -91,6 +91,17 @@ class Settings(BaseSettings):
 
     # OTP delivery behavior
     OTP_ALLOW_DEBUG_FALLBACK: bool = False
+
+    # OAuth (Google implemented, other providers surfaced as config status)
+    GOOGLE_OAUTH_CLIENT_ID: Optional[str] = None
+    GOOGLE_OAUTH_CLIENT_SECRET: Optional[str] = None
+    GOOGLE_OAUTH_REDIRECT_URI: Optional[str] = None
+    LINKEDIN_OAUTH_CLIENT_ID: Optional[str] = None
+    LINKEDIN_OAUTH_CLIENT_SECRET: Optional[str] = None
+    MICROSOFT_OAUTH_CLIENT_ID: Optional[str] = None
+    MICROSOFT_OAUTH_CLIENT_SECRET: Optional[str] = None
+    FRONTEND_OAUTH_SUCCESS_URL: str = "http://localhost:3000/auth/callback"
+    FRONTEND_OAUTH_FAILURE_URL: str = "http://localhost:3000/login"
     
     # AI Chatbot / OpenRouter
     OPENROUTER_API_KEY: Optional[str] = None
@@ -152,6 +163,12 @@ class Settings(BaseSettings):
     MLOPS_ALERT_WEBHOOK_TIMEOUT_SECONDS: float = 8.0
     MLOPS_ALERT_COOLDOWN_MINUTES: int = 120
     MLOPS_TRIGGER_RETRAIN_ON_DRIFT_ALERT: bool = True
+
+    # Experiment guardrails / auto-pause
+    EXPERIMENT_AUTO_PAUSE_ON_GUARDRAIL_FAIL: bool = True
+    EXPERIMENT_SRM_P_VALUE_THRESHOLD: float = 0.01
+    EXPERIMENT_SIGNIFICANCE_ALPHA: float = 0.05
+    EXPERIMENT_GUARDRAIL_MIN_IMPRESSIONS_PER_VARIANT: int = 50
     
     model_config = SettingsConfigDict(
         env_file=ENV_FILE,

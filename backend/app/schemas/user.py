@@ -10,6 +10,8 @@ class UserCreate(UserBase):
 
 class UserResponse(UserBase):
     id: str
+    account_type: str
+    auth_provider: str
     is_active: bool
     is_admin: bool
 

@@ -78,6 +78,35 @@ class TestExperimentAnalyticsService(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(report["diagnostics"]["srm"]["eligible"])
         self.assertEqual(report["diagnostics"]["srm"]["reason"], "no_impressions")
 
+    async def test_report_guardrails_flag_significant_regression(self) -> None:
+        experiment = SimpleNamespace(
+            key="ranking_mode",
+            status="active",
+            variants=[
+                ExperimentVariant(name="baseline", weight=1.0, is_control=True),
+                ExperimentVariant(name="ml", weight=1.0, is_control=False),
+            ],
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        service = ExperimentAnalyticsService()
+
+        with patch.object(
+            service,
+            "_counts_by_variant",
+            new=AsyncMock(
+                return_value={
+                    "baseline": VariantCounts(impressions=400, conversions=120),
+                    "ml": VariantCounts(impressions=400, conversions=70),
+                }
+            ),
+        ):
+            report = await service.report(experiment=experiment, days=14, conversion_types=("click",))
+
+        self.assertIn("guardrails", report["diagnostics"])
+        self.assertTrue(report["diagnostics"]["guardrails"]["should_pause"])
+        self.assertIn("significant_regression", report["diagnostics"]["guardrails"]["triggered_reasons"])
+
 
 if __name__ == "__main__":
     unittest.main()

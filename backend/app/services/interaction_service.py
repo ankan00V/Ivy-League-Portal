@@ -6,6 +6,7 @@ from typing import Any, Iterable, Optional
 
 from beanie import PydanticObjectId
 
+from app.core.metrics import INTERACTION_EVENTS_TOTAL
 from app.models.opportunity_interaction import OpportunityInteraction
 from app.models.traffic import TrafficType
 
@@ -52,6 +53,20 @@ class InteractionService:
         features: Optional[dict[str, Any]] = None,
         traffic_type: TrafficType = "real",
     ) -> OpportunityInteraction:
+        normalized_mode = (ranking_mode or "unknown").strip().lower() or "unknown"
+        normalized_key = (experiment_key or "none").strip().lower() or "none"
+        normalized_variant = (experiment_variant or "none").strip().lower() or "none"
+        normalized_type = (interaction_type or "unknown").strip().lower() or "unknown"
+        normalized_traffic = (traffic_type or "real").strip().lower() or "real"
+        if INTERACTION_EVENTS_TOTAL is not None:
+            INTERACTION_EVENTS_TOTAL.labels(
+                interaction_type=normalized_type,
+                ranking_mode=normalized_mode,
+                experiment_key=normalized_key,
+                experiment_variant=normalized_variant,
+                traffic_type=normalized_traffic,
+            ).inc()
+
         event = OpportunityInteraction(
             user_id=user_id,
             opportunity_id=opportunity_id,

@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from math import erf, sqrt
 from typing import Any, Iterable, Optional
 
+from app.core.config import settings
 from app.models.experiment import Experiment
 from app.models.opportunity_interaction import OpportunityInteraction
 
@@ -133,13 +134,15 @@ def _srm_diagnostic(
 
     df = max(1, len(variants_payload) - 1)
     p_value = _chi_square_sf(chi_square, df)
-    alert = bool(p_value is not None and p_value < 0.01)
+    alert_threshold = float(max(0.0, min(1.0, settings.EXPERIMENT_SRM_P_VALUE_THRESHOLD)))
+    alert = bool(p_value is not None and p_value < alert_threshold)
     return {
         "eligible": True,
         "reason": None,
         "chi_square": round(float(chi_square), 8),
         "df": int(df),
         "p_value": round(float(p_value), 8) if p_value is not None else None,
+        "threshold": round(float(alert_threshold), 8),
         "alert": alert,
         "expected_allocation": expected,
         "observed_allocation": observed,
@@ -359,16 +362,70 @@ class ExperimentAnalyticsService:
                 }
             )
 
+        srm_diagnostic = _srm_diagnostic(variants_payload=variants_payload)
+        guardrail_reasons: list[str] = []
+        significance_failures: list[dict[str, Any]] = []
+        alpha = float(max(0.0, min(1.0, settings.EXPERIMENT_SIGNIFICANCE_ALPHA)))
+        min_impressions = int(max(1, settings.EXPERIMENT_GUARDRAIL_MIN_IMPRESSIONS_PER_VARIANT))
+
+        variant_impressions = {item["name"]: int(item.get("impressions") or 0) for item in variants_payload}
+        for comparison in comparisons:
+            p_value = comparison.get("p_value")
+            diff = comparison.get("diff")
+            variant_name = str(comparison.get("variant") or "")
+            control_name_for_cmp = str(comparison.get("control") or control_name)
+            if p_value is None or diff is None:
+                continue
+            if float(p_value) < alpha and float(diff) < 0.0:
+                if (
+                    variant_impressions.get(variant_name, 0) >= min_impressions
+                    and variant_impressions.get(control_name_for_cmp, 0) >= min_impressions
+                ):
+                    significance_failures.append(
+                        {
+                            "control": control_name_for_cmp,
+                            "variant": variant_name,
+                            "diff": float(diff),
+                            "p_value": float(p_value),
+                            "alpha": alpha,
+                        }
+                    )
+
+        if bool(srm_diagnostic.get("alert")):
+            guardrail_reasons.append("srm_failure")
+        if significance_failures:
+            guardrail_reasons.append("significant_regression")
+
+        should_pause = (
+            bool(settings.EXPERIMENT_AUTO_PAUSE_ON_GUARDRAIL_FAIL)
+            and experiment.status == "active"
+            and bool(guardrail_reasons)
+        )
+        auto_paused = False
+        if should_pause and hasattr(experiment, "save"):
+            experiment.status = "paused"  # type: ignore[assignment]
+            experiment.updated_at = datetime.utcnow()
+            await experiment.save()
+            auto_paused = True
+
         return {
             "experiment_key": experiment.key,
-            "status": experiment.status,
+            "status": "paused" if auto_paused else experiment.status,
             "days": safe_days,
             "traffic_type": (traffic_type or "all").strip().lower() or "all",
             "conversion_types": sorted(conversion_set),
             "variants": variants_payload,
             "comparisons": comparisons,
             "diagnostics": {
-                "srm": _srm_diagnostic(variants_payload=variants_payload),
+                "srm": srm_diagnostic,
+                "guardrails": {
+                    "alpha": alpha,
+                    "min_impressions_per_variant": min_impressions,
+                    "significance_failures": significance_failures,
+                    "triggered_reasons": guardrail_reasons,
+                    "should_pause": bool(guardrail_reasons),
+                    "auto_paused": auto_paused,
+                },
             },
         }
 

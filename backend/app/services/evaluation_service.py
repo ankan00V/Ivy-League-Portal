@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Iterable, Optional
 
 from openai import AsyncOpenAI
@@ -70,6 +71,151 @@ class EvaluationService:
                 return {}
 
         return {}
+
+    def _tokenize(self, text: str) -> list[str]:
+        return re.findall(r"[a-z0-9]+", (text or "").lower())
+
+    def _token_level_prf(
+        self,
+        *,
+        generated_text: str,
+        reference_text: str,
+    ) -> dict[str, float]:
+        generated_tokens = self._tokenize(generated_text)
+        reference_tokens = self._tokenize(reference_text)
+        generated_counts: dict[str, int] = {}
+        reference_counts: dict[str, int] = {}
+        for token in generated_tokens:
+            generated_counts[token] = generated_counts.get(token, 0) + 1
+        for token in reference_tokens:
+            reference_counts[token] = reference_counts.get(token, 0) + 1
+
+        overlap = 0
+        for token, count in generated_counts.items():
+            overlap += min(count, reference_counts.get(token, 0))
+
+        precision = float(overlap / max(1, len(generated_tokens)))
+        recall = float(overlap / max(1, len(reference_tokens)))
+        f1_score = 0.0 if (precision <= 0.0 or recall <= 0.0) else (2.0 * precision * recall / (precision + recall))
+        return {
+            "precision": precision,
+            "recall": recall,
+            "f1": f1_score,
+            "overlap_tokens": overlap,
+            "generated_tokens": len(generated_tokens),
+            "reference_tokens": len(reference_tokens),
+        }
+
+    def _phrase_level_prf(
+        self,
+        *,
+        generated_text: str,
+        expected_phrases: list[str],
+    ) -> dict[str, Any]:
+        normalized_expected: list[str] = []
+        seen_expected: set[str] = set()
+        for phrase in expected_phrases:
+            normalized = " ".join(self._tokenize(phrase))
+            if not normalized or normalized in seen_expected:
+                continue
+            seen_expected.add(normalized)
+            normalized_expected.append(normalized)
+
+        generated_tokens = self._tokenize(generated_text)
+        token_lengths = sorted({max(1, len(phrase.split())) for phrase in normalized_expected})
+        predicted_candidates: set[str] = set()
+        for length in token_lengths:
+            if length <= 0 or len(generated_tokens) < length:
+                continue
+            for idx in range(len(generated_tokens) - length + 1):
+                predicted_candidates.add(" ".join(generated_tokens[idx : idx + length]))
+
+        expected_set = set(normalized_expected)
+        matched = sorted(expected_set.intersection(predicted_candidates))
+        precision = float(len(matched) / max(1, len(predicted_candidates))) if predicted_candidates else 0.0
+        recall = float(len(matched) / max(1, len(expected_set))) if expected_set else 0.0
+        f1_score = 0.0 if (precision <= 0.0 or recall <= 0.0) else (2.0 * precision * recall / (precision + recall))
+        return {
+            "precision": precision,
+            "recall": recall,
+            "f1": f1_score,
+            "matched_phrases": matched,
+            "expected_phrases": sorted(expected_set),
+            "predicted_phrase_candidates": int(len(predicted_candidates)),
+        }
+
+    def _citation_grounding(
+        self,
+        *,
+        generated_text: str,
+        required_citations: list[str],
+        allowed_citations: list[str],
+    ) -> dict[str, Any]:
+        extracted = re.findall(r"https?://[^\s\])>,]+", generated_text or "", flags=re.IGNORECASE)
+        normalized_extracted: list[str] = []
+        seen: set[str] = set()
+        for value in extracted:
+            norm = value.strip().rstrip(".;,")
+            if not norm:
+                continue
+            lowered = norm.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            normalized_extracted.append(norm)
+
+        required_set = {item.strip().lower() for item in required_citations if str(item).strip()}
+        allowed_set = {item.strip().lower() for item in allowed_citations if str(item).strip()}
+        hits_required = [cite for cite in normalized_extracted if cite.lower() in required_set]
+        hits_allowed = [cite for cite in normalized_extracted if cite.lower() in allowed_set] if allowed_set else list(hits_required)
+        ungrounded = [cite for cite in normalized_extracted if allowed_set and cite.lower() not in allowed_set]
+
+        precision = float(len(hits_allowed) / max(1, len(normalized_extracted))) if normalized_extracted else 0.0
+        recall = float(len(hits_required) / max(1, len(required_set))) if required_set else 0.0
+        coverage = float(len(hits_required) / max(1, len(required_set))) if required_set else 0.0
+        return {
+            "extracted_citations": normalized_extracted,
+            "required_hits": hits_required,
+            "allowed_hits": hits_allowed,
+            "ungrounded_citations": ungrounded,
+            "precision": precision,
+            "recall": recall,
+            "required_coverage": coverage,
+            "has_ungrounded_citations": bool(ungrounded),
+        }
+
+    def _rubric_score(
+        self,
+        *,
+        weights: dict[str, float] | None,
+        features: dict[str, float | None],
+    ) -> tuple[float, dict[str, float]]:
+        default_weights = {
+            "token_f1": 0.25,
+            "phrase_f1": 0.25,
+            "keyword_recall": 0.2,
+            "citation_precision": 0.15,
+            "citation_recall": 0.15,
+        }
+        provided = weights or {}
+        normalized_weights: dict[str, float] = {}
+        for key, value in default_weights.items():
+            raw = float(provided.get(key, value))
+            if raw < 0:
+                raw = 0.0
+            normalized_weights[key] = raw
+
+        score_total = 0.0
+        weight_total = 0.0
+        for key, weight in normalized_weights.items():
+            metric_value = features.get(key)
+            if metric_value is None:
+                continue
+            score_total += float(metric_value) * weight
+            weight_total += weight
+        if weight_total <= 0:
+            return 0.0, normalized_weights
+        return float(score_total / weight_total), normalized_weights
 
     async def _llm_judge(
         self,
@@ -274,7 +420,11 @@ class EvaluationService:
         *,
         generated_text: str,
         expected_keywords: list[str],
+        expected_phrases: Optional[list[str]] = None,
         expected_output: Optional[str] = None,
+        required_citations: Optional[list[str]] = None,
+        allowed_citations: Optional[list[str]] = None,
+        rubric_weights: Optional[dict[str, float]] = None,
         include_judge: bool = False,
         rubric: Optional[str] = None,
     ) -> dict[str, Any]:
@@ -283,16 +433,41 @@ class EvaluationService:
         expected_count = len(expected_keywords or [])
         hit_count = len(keyword_hits)
         keyword_coverage = (hit_count / expected_count) if expected_count else 0.0
-        # Keyword matching here is a "required coverage" metric; treat it as recall-like.
-        keyword_precision = keyword_coverage
-        keyword_recall = keyword_coverage
-        keyword_f1 = keyword_coverage
+        expected_phrases_merged = list(expected_keywords or []) + list(expected_phrases or [])
+
+        reference_text = expected_output or " ".join(expected_phrases_merged)
+        token_metrics = self._token_level_prf(generated_text=generated_text, reference_text=reference_text)
+        phrase_metrics = self._phrase_level_prf(generated_text=generated_text, expected_phrases=expected_phrases_merged)
+
+        keyword_predicted_count = len(re.findall(r"[a-z0-9]+", generated_lower))
+        keyword_precision = float(hit_count / max(1, keyword_predicted_count)) if keyword_predicted_count else 0.0
+        keyword_recall = float(hit_count / max(1, expected_count)) if expected_count else 0.0
+        keyword_f1 = 0.0 if (keyword_precision <= 0.0 or keyword_recall <= 0.0) else (
+            2.0 * keyword_precision * keyword_recall / (keyword_precision + keyword_recall)
+        )
 
         semantic_similarity = None
         if expected_output:
             vectors = await embedding_service.embed_texts([generated_text, expected_output])
             if len(vectors) == 2:
                 semantic_similarity = float((vectors[0] * vectors[1]).sum())
+
+        citation_metrics = self._citation_grounding(
+            generated_text=generated_text,
+            required_citations=list(required_citations or []),
+            allowed_citations=list(allowed_citations or []),
+        )
+
+        rubric_score_value, normalized_rubric_weights = self._rubric_score(
+            weights=rubric_weights,
+            features={
+                "token_f1": float(token_metrics["f1"]),
+                "phrase_f1": float(phrase_metrics["f1"]),
+                "keyword_recall": float(keyword_recall),
+                "citation_precision": float(citation_metrics["precision"]),
+                "citation_recall": float(citation_metrics["recall"]),
+            },
+        )
 
         judge = None
         if include_judge or settings.LLM_JUDGE_ENABLED:
@@ -303,14 +478,63 @@ class EvaluationService:
                 rubric=rubric,
             )
 
+        judge_agreement = None
+        if judge is not None and judge.get("score") is not None:
+            judge_score = float(judge["score"])
+            score_delta = abs(judge_score - rubric_score_value)
+            threshold = float(max(0.0, min(1.0, settings.LLM_JUDGE_MIN_SCORE)))
+            rubric_pass = bool(rubric_score_value >= threshold)
+            judge_pass = bool(judge_score >= threshold)
+            judge_agreement = {
+                "judge_score": round(judge_score, 6),
+                "rubric_score": round(rubric_score_value, 6),
+                "score_delta": round(score_delta, 6),
+                "score_agreement": round(float(max(0.0, 1.0 - score_delta)), 6),
+                "judge_pass": judge_pass,
+                "rubric_pass": rubric_pass,
+                "verdict_agreement": bool(judge_pass == rubric_pass),
+                "threshold": round(threshold, 6),
+            }
+
         return {
             "keyword_coverage": round(keyword_coverage, 6),
             "keyword_precision": round(float(keyword_precision), 6),
             "keyword_recall": round(float(keyword_recall), 6),
             "keyword_f1": round(float(keyword_f1), 6),
             "keyword_hits": keyword_hits,
+            "token_metrics": {
+                "precision": round(float(token_metrics["precision"]), 6),
+                "recall": round(float(token_metrics["recall"]), 6),
+                "f1": round(float(token_metrics["f1"]), 6),
+                "overlap_tokens": int(token_metrics["overlap_tokens"]),
+                "generated_tokens": int(token_metrics["generated_tokens"]),
+                "reference_tokens": int(token_metrics["reference_tokens"]),
+            },
+            "phrase_metrics": {
+                "precision": round(float(phrase_metrics["precision"]), 6),
+                "recall": round(float(phrase_metrics["recall"]), 6),
+                "f1": round(float(phrase_metrics["f1"]), 6),
+                "matched_phrases": phrase_metrics["matched_phrases"],
+                "expected_phrases": phrase_metrics["expected_phrases"],
+                "predicted_phrase_candidates": int(phrase_metrics["predicted_phrase_candidates"]),
+            },
+            "citation_metrics": {
+                "extracted_citations": citation_metrics["extracted_citations"],
+                "required_hits": citation_metrics["required_hits"],
+                "allowed_hits": citation_metrics["allowed_hits"],
+                "ungrounded_citations": citation_metrics["ungrounded_citations"],
+                "precision": round(float(citation_metrics["precision"]), 6),
+                "recall": round(float(citation_metrics["recall"]), 6),
+                "required_coverage": round(float(citation_metrics["required_coverage"]), 6),
+                "has_ungrounded_citations": bool(citation_metrics["has_ungrounded_citations"]),
+            },
+            "rubric": {
+                "score": round(float(rubric_score_value), 6),
+                "weights": {str(key): round(float(value), 6) for key, value in normalized_rubric_weights.items()},
+            },
             "semantic_similarity": round(float(semantic_similarity), 6) if semantic_similarity is not None else None,
             "llm_judge": judge,
+            "judge_agreement": judge_agreement,
         }
 
 

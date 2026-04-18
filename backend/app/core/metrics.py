@@ -32,6 +32,9 @@ SCRAPER_RUNS_TOTAL: Optional["Counter"] = None
 SCRAPER_SOURCE_TOTAL: Optional["Counter"] = None
 OPPORTUNITY_FRESHNESS_SECONDS: Optional["Gauge"] = None
 OPPORTUNITY_STALE: Optional["Gauge"] = None
+RANKING_REQUESTS_TOTAL: Optional["Counter"] = None
+RANKING_REQUEST_LATENCY_MS: Optional["Histogram"] = None
+INTERACTION_EVENTS_TOTAL: Optional["Counter"] = None
 
 
 def init_metrics() -> None:
@@ -48,6 +51,9 @@ def init_metrics() -> None:
     global SCRAPER_SOURCE_TOTAL
     global OPPORTUNITY_FRESHNESS_SECONDS
     global OPPORTUNITY_STALE
+    global RANKING_REQUESTS_TOTAL
+    global RANKING_REQUEST_LATENCY_MS
+    global INTERACTION_EVENTS_TOTAL
 
     if not metrics_available() or Counter is None or Histogram is None or Gauge is None:
         return
@@ -123,6 +129,22 @@ def init_metrics() -> None:
         "opportunity_freshness_sla_breached",
         "1 if freshness SLA is breached (stale), else 0.",
     )
+    RANKING_REQUESTS_TOTAL = Counter(
+        "ranking_requests_total",
+        "Total ranking/ask-ai requests by mode/variant and status.",
+        labelnames=("request_kind", "ranking_mode", "experiment_key", "experiment_variant", "success", "traffic_type"),
+    )
+    RANKING_REQUEST_LATENCY_MS = Histogram(
+        "ranking_request_latency_ms",
+        "Ranking/ask-ai request latency in milliseconds.",
+        labelnames=("request_kind", "ranking_mode", "experiment_key", "experiment_variant", "traffic_type"),
+        buckets=(10, 25, 50, 75, 100, 150, 250, 500, 750, 1000, 2000, 5000),
+    )
+    INTERACTION_EVENTS_TOTAL = Counter(
+        "opportunity_interaction_events_total",
+        "Interaction events by type and experiment variant.",
+        labelnames=("interaction_type", "ranking_mode", "experiment_key", "experiment_variant", "traffic_type"),
+    )
 
 
 def render_metrics() -> bytes:
@@ -130,4 +152,3 @@ def render_metrics() -> bytes:
         return b""
     init_metrics()
     return generate_latest()
-

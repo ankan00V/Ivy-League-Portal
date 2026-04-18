@@ -98,7 +98,11 @@ class RankingEvaluationRequest(BaseModel):
 class LLMEvaluationRequest(BaseModel):
     generated_text: str
     expected_keywords: list[str] = Field(default_factory=list)
+    expected_phrases: list[str] = Field(default_factory=list)
     expected_output: Optional[str] = None
+    required_citations: list[str] = Field(default_factory=list)
+    allowed_citations: list[str] = Field(default_factory=list)
+    rubric_weights: Optional[dict[str, float]] = None
     include_judge: bool = False
     rubric: Optional[str] = None
 
@@ -601,7 +605,11 @@ async def evaluate_llm_quality(
     return await evaluation_service.evaluate_llm_response(
         generated_text=request.generated_text,
         expected_keywords=request.expected_keywords,
+        expected_phrases=request.expected_phrases,
         expected_output=request.expected_output,
+        required_citations=request.required_citations,
+        allowed_citations=request.allowed_citations,
+        rubric_weights=request.rubric_weights,
         include_judge=request.include_judge,
         rubric=request.rubric,
     )

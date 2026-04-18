@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+import numpy as np
 from pydantic import BaseModel, Field
 
 from app.api.deps import get_current_admin_user
@@ -16,6 +17,7 @@ from app.services.mlops.drift_service import drift_service
 from app.services.mlops.retraining_service import retraining_service
 from app.services.nlp_model_service import ENTITY_KEYS, nlp_model_service
 from app.services.nlp_service import nlp_service
+from app.services.embedding_service import embedding_service
 from app.services.ranking_model_service import ranking_model_service
 
 router = APIRouter()
@@ -60,10 +62,15 @@ class NLPExampleIn(BaseModel):
 
 class NLPTrainRequest(BaseModel):
     examples: list[NLPExampleIn] = Field(min_length=20)
+    ner_eval_examples: list[NLPExampleIn] = Field(default_factory=list)
     name: str = "nlp-model-v1"
     notes: Optional[str] = None
     auto_activate: bool = True
     min_intent_macro_f1_for_activation: float = Field(default=0.55, ge=0.0, le=1.0)
+    min_intent_macro_f1_uplift_for_activation: float = Field(default=0.0, ge=-1.0, le=1.0)
+    linear_head_learning_rate: float = Field(default=0.08, ge=0.0001, le=1.0)
+    linear_head_epochs: int = Field(default=220, ge=20, le=2000)
+    linear_head_l2: float = Field(default=0.0001, ge=0.0, le=1.0)
 
 
 class NLPEvaluateRequest(BaseModel):
@@ -76,9 +83,12 @@ class NLPModelVersionResponse(BaseModel):
     is_active: bool
     metrics: dict[str, float]
     training_rows: int
+    intent_classifier_head: dict[str, Any] = Field(default_factory=dict)
     split_summary: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
     confusion_matrix: dict[str, dict[str, int]] = Field(default_factory=dict)
+    baseline_confusion_matrix: dict[str, dict[str, int]] = Field(default_factory=dict)
+    evaluation_snapshot: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
     updated_at: datetime
     notes: Optional[str] = None
@@ -105,9 +115,15 @@ def _serialize_nlp_model(model: NLPModelVersion) -> NLPModelVersionResponse:
         is_active=bool(model.is_active),
         metrics={str(k): float(v) for k, v in (model.metrics or {}).items()},
         training_rows=int(model.training_rows or 0),
+        intent_classifier_head=dict(model.intent_classifier_head or {}),
         split_summary=dict(model.split_summary or {}),
         metadata=dict(model.metadata or {}),
         confusion_matrix={str(k): {str(pk): int(pv) for pk, pv in (row or {}).items()} for k, row in (model.confusion_matrix or {}).items()},
+        baseline_confusion_matrix={
+            str(k): {str(pk): int(pv) for pk, pv in (row or {}).items()}
+            for k, row in (model.baseline_confusion_matrix or {}).items()
+        },
+        evaluation_snapshot=dict(model.evaluation_snapshot or {}),
         created_at=model.created_at,
         updated_at=model.updated_at,
         notes=model.notes,
@@ -192,6 +208,11 @@ async def train_nlp_model(request: NLPTrainRequest, _: User = Depends(get_curren
         notes=request.notes,
         auto_activate=request.auto_activate,
         min_intent_macro_f1_for_activation=request.min_intent_macro_f1_for_activation,
+        min_intent_macro_f1_uplift_for_activation=request.min_intent_macro_f1_uplift_for_activation,
+        ner_eval_examples=[example.model_dump() for example in request.ner_eval_examples] if request.ner_eval_examples else None,
+        linear_head_learning_rate=request.linear_head_learning_rate,
+        linear_head_epochs=request.linear_head_epochs,
+        linear_head_l2=request.linear_head_l2,
     )
     return {
         "status": "ok",
@@ -207,20 +228,49 @@ async def evaluate_nlp_model(request: NLPEvaluateRequest, _: User = Depends(get_
         raise HTTPException(status_code=400, detail="No valid intent labels in examples")
 
     confusion: dict[str, dict[str, int]] = {label: {pred: 0 for pred in labels} for label in labels}
+    baseline_confusion: dict[str, dict[str, int]] = {label: {pred: 0 for pred in labels} for label in labels}
     correct = 0
+    baseline_correct = 0
     entity_tp = 0
     entity_fp = 0
     entity_fn = 0
 
+    active_model = await nlp_model_service.get_active()
+    centroids = {
+        label: np.asarray(vector, dtype=np.float32)
+        for label, vector in (active_model.intent_centroids or {}).items()
+        if np.asarray(vector).size > 0
+    }
+
     for row in examples:
         expected_intent = row.intent.strip().lower()
+        query_embedding = await embedding_service.embed_query(row.text)
+        if centroids:
+            best_label = labels[0] if labels else "internships"
+            best_score = -2.0
+            for label, centroid in centroids.items():
+                if centroid.shape != query_embedding.shape:
+                    continue
+                score = float(np.dot(query_embedding, centroid))
+                if score > best_score:
+                    best_score = score
+                    best_label = label
+            baseline_intent = best_label
+        else:
+            baseline_intent = "internships"
+
         prediction = await nlp_service.classify_intent(row.text)
         predicted_intent = str(prediction.get("intent") or "").strip().lower() or "internships"
         if expected_intent not in confusion:
             confusion[expected_intent] = {}
+        if expected_intent not in baseline_confusion:
+            baseline_confusion[expected_intent] = {}
         confusion[expected_intent][predicted_intent] = confusion[expected_intent].get(predicted_intent, 0) + 1
+        baseline_confusion[expected_intent][baseline_intent] = baseline_confusion[expected_intent].get(baseline_intent, 0) + 1
         if predicted_intent == expected_intent:
             correct += 1
+        if baseline_intent == expected_intent:
+            baseline_correct += 1
 
         predicted_entities = await nlp_service.extract_entities_with_model(row.text)
         expected_entities = _normalize_entities(row.entities)
@@ -233,7 +283,9 @@ async def evaluate_nlp_model(request: NLPEvaluateRequest, _: User = Depends(get_
             entity_fn += len(true_set - pred_set)
 
     intent_accuracy = float(correct / max(1, len(examples)))
+    baseline_accuracy = float(baseline_correct / max(1, len(examples)))
     per_label_f1: list[float] = []
+    baseline_per_label_f1: list[float] = []
     for label in labels:
         tp = int(confusion.get(label, {}).get(label, 0))
         fp = sum(int(confusion.get(other, {}).get(label, 0)) for other in labels if other != label)
@@ -241,7 +293,14 @@ async def evaluate_nlp_model(request: NLPEvaluateRequest, _: User = Depends(get_
         precision = float(tp / max(1, tp + fp))
         recall = float(tp / max(1, tp + fn))
         per_label_f1.append(_f1(precision, recall))
+        b_tp = int(baseline_confusion.get(label, {}).get(label, 0))
+        b_fp = sum(int(baseline_confusion.get(other, {}).get(label, 0)) for other in labels if other != label)
+        b_fn = sum(int(baseline_confusion.get(label, {}).get(other, 0)) for other in labels if other != label)
+        b_precision = float(b_tp / max(1, b_tp + b_fp))
+        b_recall = float(b_tp / max(1, b_tp + b_fn))
+        baseline_per_label_f1.append(_f1(b_precision, b_recall))
     intent_macro_f1 = float(sum(per_label_f1) / max(1, len(per_label_f1)))
+    baseline_intent_macro_f1 = float(sum(baseline_per_label_f1) / max(1, len(baseline_per_label_f1)))
 
     entity_precision = float(entity_tp / max(1, entity_tp + entity_fp))
     entity_recall = float(entity_tp / max(1, entity_tp + entity_fn))
@@ -253,7 +312,11 @@ async def evaluate_nlp_model(request: NLPEvaluateRequest, _: User = Depends(get_
         "intent_metrics": {
             "accuracy": round(intent_accuracy, 6),
             "macro_f1": round(intent_macro_f1, 6),
+            "baseline_accuracy": round(baseline_accuracy, 6),
+            "baseline_macro_f1": round(baseline_intent_macro_f1, 6),
+            "macro_f1_uplift_vs_baseline": round(intent_macro_f1 - baseline_intent_macro_f1, 6),
             "confusion_matrix": confusion,
+            "baseline_confusion_matrix": baseline_confusion,
         },
         "entity_metrics": {
             "precision": round(entity_precision, 6),

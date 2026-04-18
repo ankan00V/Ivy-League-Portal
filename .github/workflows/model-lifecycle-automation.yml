@@ -1,0 +1,57 @@
+name: Model Lifecycle Automation
+
+on:
+  schedule:
+    - cron: "15 */6 * * *"
+  workflow_dispatch:
+
+jobs:
+  retrain-activate-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      MONGODB_URL: ${{ secrets.MONGODB_URL }}
+      MONGODB_DB_NAME: ${{ secrets.MONGODB_DB_NAME }}
+      MLOPS_AUTO_ACTIVATE: "true"
+      MLOPS_ACTIVATION_POLICY: guarded
+      MLOPS_ALERTS_ENABLED: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Validate required secrets
+        run: |
+          if [ -z "${MONGODB_URL}" ] || [ -z "${MONGODB_DB_NAME}" ]; then
+            echo "Missing MONGODB_URL or MONGODB_DB_NAME secrets. Skipping lifecycle run."
+            exit 0
+          fi
+
+      - name: Run lifecycle pipeline
+        run: |
+          python backend/scripts/run_model_lifecycle_pipeline.py \
+            --lookback-days 90 \
+            --label-window-hours 72 \
+            --min-rows 200 \
+            --grid-step 0.05
+
+      - name: Upload lifecycle artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-lifecycle-artifacts
+          path: |
+            backend/benchmarks/model_lifecycle_latest.json
+            backend/benchmarks/model_card_latest.json
+          if-no-files-found: ignore

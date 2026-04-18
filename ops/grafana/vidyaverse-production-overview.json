@@ -1,0 +1,86 @@
+{
+  "title": "VidyaVerse Production Overview",
+  "tags": ["vidyaverse", "mlops", "ranking"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Ranking Request Latency p95 (ms)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, request_kind) (rate(ranking_request_latency_ms_bucket{traffic_type=\"real\"}[5m])))",
+          "legendFormat": "{{request_kind}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Freshness SLA Breach",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "max(opportunity_freshness_sla_breached)",
+          "legendFormat": "SLA breach",
+          "refId": "A"
+        },
+        {
+          "expr": "max(opportunity_freshness_seconds)",
+          "legendFormat": "freshness_seconds",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "CTR by Variant (real traffic)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum by (experiment_variant) (rate(opportunity_interaction_events_total{interaction_type=\"click\",traffic_type=\"real\"}[15m])) / clamp_min(sum by (experiment_variant) (rate(opportunity_interaction_events_total{interaction_type=\"impression\",traffic_type=\"real\"}[15m])), 1e-9)",
+          "legendFormat": "{{experiment_variant}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Apply Rate by Variant (real traffic)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum by (experiment_variant) (rate(opportunity_interaction_events_total{interaction_type=\"apply\",traffic_type=\"real\"}[15m])) / clamp_min(sum by (experiment_variant) (rate(opportunity_interaction_events_total{interaction_type=\"impression\",traffic_type=\"real\"}[15m])), 1e-9)",
+          "legendFormat": "{{experiment_variant}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Request Error Rate (5m)",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "expr": "sum by (request_kind) (rate(ranking_requests_total{success=\"false\",traffic_type=\"real\"}[5m])) / clamp_min(sum by (request_kind) (rate(ranking_requests_total{traffic_type=\"real\"}[5m])), 1e-9)",
+          "legendFormat": "{{request_kind}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] }
+    }
+  ],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" }
+}
