@@ -10,7 +10,7 @@ lightgbm>=4.0.0
 xgboost>=2.0.0
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
-beanie>=1.26.0
+beanie==2.0.0
 motor>=3.5.0
 pydantic-settings>=2.4.0
 email-validator>=2.2.0
@@ -22,3 +22,4 @@ apscheduler>=3.10.0
 playwright>=1.46.0
 redis>=5.0.0
 prometheus-client>=0.20.0
+aiosmtplib>=3.0.2

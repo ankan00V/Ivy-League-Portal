@@ -4,6 +4,7 @@ from jose import jwt, JWTError
 from beanie import PydanticObjectId
 
 from app.core.config import settings
+from app.core.email_policy import is_corporate_email
 from app.models.user import User
 from app.schemas.user import TokenData
 
@@ -57,6 +58,22 @@ async def get_current_admin_user(
     scopes = set(getattr(current_user, "_token_scopes", []) or [])
     if "admin" not in scopes and not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Not enough privileges")
+    return current_user
+
+
+async def get_current_employer_user(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    if not current_user.is_active:
+        raise HTTPException(status_code=400, detail="Inactive user")
+    if not current_user.is_admin and str(getattr(current_user, "account_type", "candidate")).strip().lower() != "employer":
+        raise HTTPException(status_code=403, detail="Employer account required")
+    if (
+        not current_user.is_admin
+        and str(getattr(current_user, "account_type", "candidate")).strip().lower() == "employer"
+        and not is_corporate_email(getattr(current_user, "email", ""))
+    ):
+        raise HTTPException(status_code=403, detail="Employer access requires a corporate email")
     return current_user
 
 

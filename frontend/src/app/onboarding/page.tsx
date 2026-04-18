@@ -24,6 +24,11 @@ type ProfilePayload = {
   current_job_role: string;
   total_work_experience: string;
   college_name: string;
+  company_name: string;
+  company_website: string;
+  company_size: string;
+  company_description: string;
+  hiring_for: "myself" | "others" | "";
   goals: string[];
   preferred_roles: string;
   preferred_locations: string;
@@ -43,6 +48,23 @@ type OnboardingStatus = {
 const DOMAIN_OPTIONS = ["Management", "Engineering", "Arts & Science", "Medicine", "Law"];
 const GOAL_OPTIONS = ["To find a Job", "Compete & Upskill", "To Host an Event", "To be a Mentor"];
 const EXPERIENCE_OPTIONS = ["0-1 years", "1-3 years", "3-5 years", "5+ years"];
+const EMPLOYER_ROLE_OPTIONS = [
+  "Recruiting Coordinator",
+  "Recruitment Manager",
+  "Recruitment Specialist",
+  "CEO",
+  "Other",
+];
+const EMPLOYER_ORGANIZATION_SUGGESTIONS = [
+  "Tata Consultancy Services",
+  "Infosys",
+  "Wipro",
+  "HCLTech",
+  "Accenture India",
+  "Lovely Professional University (LPU)",
+  "IIT Bombay",
+  "Indian Institute of Science (IISc)",
+];
 const DEFAULT_YEARS = [2026, 2027, 2028, 2029, 2030, 2031];
 const SCHOOL_GRADES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 
@@ -71,6 +93,7 @@ export default function OnboardingPage() {
   const [saving, setSaving] = useState(false);
   const [step, setStep] = useState(1);
   const [error, setError] = useState<string | null>(null);
+  const [employerRoleSelection, setEmployerRoleSelection] = useState<string>("");
   const [status, setStatus] = useState<OnboardingStatus | null>(null);
   const [profile, setProfile] = useState<ProfilePayload>({
     account_type: "candidate",
@@ -86,6 +109,11 @@ export default function OnboardingPage() {
     current_job_role: "",
     total_work_experience: "",
     college_name: "",
+    company_name: "",
+    company_website: "",
+    company_size: "",
+    company_description: "",
+    hiring_for: "",
     goals: [],
     preferred_roles: "",
     preferred_locations: "",
@@ -95,7 +123,14 @@ export default function OnboardingPage() {
     consent_updates: false,
   });
 
+  const totalSteps = profile.account_type === "employer" ? 2 : 3;
   const visual = useMemo(() => ONBOARDING_VISUALS[(step - 1) % ONBOARDING_VISUALS.length], [step]);
+
+  useEffect(() => {
+    if (step > totalSteps) {
+      setStep(totalSteps);
+    }
+  }, [step, totalSteps]);
 
   useEffect(() => {
     const token = getAccessToken();
@@ -120,19 +155,51 @@ export default function OnboardingPage() {
         const profilePayload = await profileRes.json();
         const onboardingStatus = statusRes.ok ? ((await statusRes.json()) as OnboardingStatus) : null;
         if (onboardingStatus?.completed) {
-          router.replace("/dashboard");
+          const accountType = String(profilePayload.account_type || "candidate").toLowerCase();
+          router.replace(accountType === "employer" ? "/employer/dashboard" : "/dashboard");
           return;
         }
+        const asText = (value: unknown): string => (typeof value === "string" ? value : "");
+        const asBool = (value: unknown): boolean => Boolean(value);
+        const asNullableNumber = (value: unknown): number | null => (typeof value === "number" ? value : null);
+
         setStatus(onboardingStatus);
         setProfile((prev) => ({
           ...prev,
-          ...profilePayload,
           account_type: (profilePayload.account_type || "candidate") as AccountType,
+          first_name: asText(profilePayload.first_name),
+          last_name: asText(profilePayload.last_name),
+          mobile: asText(profilePayload.mobile),
+          country_code: asText(profilePayload.country_code) || "+91",
           user_type: (profilePayload.user_type || "") as UserType | "",
-          passout_year: profilePayload.passout_year ?? null,
-          class_grade: profilePayload.class_grade ?? null,
-          goals: Array.isArray(profilePayload.goals) ? profilePayload.goals : [],
+          domain: asText(profilePayload.domain),
+          course: asText(profilePayload.course),
+          passout_year: asNullableNumber(profilePayload.passout_year),
+          class_grade: asNullableNumber(profilePayload.class_grade),
+          current_job_role: asText(profilePayload.current_job_role),
+          total_work_experience: asText(profilePayload.total_work_experience),
+          college_name: asText(profilePayload.college_name),
+          company_name: asText(profilePayload.company_name),
+          company_website: asText(profilePayload.company_website),
+          company_size: asText(profilePayload.company_size),
+          company_description: asText(profilePayload.company_description),
+          hiring_for: (profilePayload.hiring_for || "") as "myself" | "others" | "",
+          goals: Array.isArray(profilePayload.goals) ? profilePayload.goals.map((item: unknown) => String(item)) : [],
+          preferred_roles: asText(profilePayload.preferred_roles),
+          preferred_locations: asText(profilePayload.preferred_locations),
+          pan_india: asBool(profilePayload.pan_india),
+          prefer_wfh: asBool(profilePayload.prefer_wfh),
+          consent_data_processing: asBool(profilePayload.consent_data_processing),
+          consent_updates: asBool(profilePayload.consent_updates),
         }));
+        const existingRole = String(profilePayload.current_job_role || "").trim();
+        if (existingRole.length === 0) {
+          setEmployerRoleSelection("");
+        } else if (EMPLOYER_ROLE_OPTIONS.includes(existingRole)) {
+          setEmployerRoleSelection(existingRole);
+        } else {
+          setEmployerRoleSelection("Other");
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Unable to load onboarding");
       } finally {
@@ -152,7 +219,11 @@ export default function OnboardingPage() {
 
   const canContinueStep2 = (() => {
     if (profile.account_type === "employer") {
-      return true;
+      return (
+        profile.company_name.trim().length > 0 &&
+        profile.current_job_role.trim().length > 0 &&
+        profile.hiring_for.length > 0
+      );
     }
     if (profile.user_type === "school_student") {
       return profile.class_grade !== null;
@@ -212,12 +283,12 @@ export default function OnboardingPage() {
       setStatus(onboardingStatus);
 
       if (finish && onboardingStatus?.completed) {
-        router.push("/dashboard");
+        router.push(profile.account_type === "employer" ? "/employer/dashboard" : "/dashboard");
       } else if (finish) {
         const missing = onboardingStatus?.missing_fields?.join(", ") || "some required fields";
         setError(`Please complete: ${missing}`);
       } else {
-        setStep((current) => Math.min(3, current + 1));
+        setStep((current) => Math.min(totalSteps, current + 1));
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to save onboarding");
@@ -281,7 +352,7 @@ export default function OnboardingPage() {
           <div>
             <h1 style={{ fontSize: "2rem", marginBottom: "0.5rem" }}>You&apos;re almost there</h1>
             <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-              {[1, 2, 3].map((n) => (
+              {Array.from({ length: totalSteps }, (_, idx) => idx + 1).map((n) => (
                 <div
                   key={n}
                   style={{
@@ -331,13 +402,14 @@ export default function OnboardingPage() {
 
                 <div>
                   <label style={{ fontWeight: 700, display: "block", marginBottom: "0.5rem" }}>Account Type</label>
-                  <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>
-                    {(["candidate", "employer"] as const).map((type) => (
-                      <button key={type} type="button" style={pillButtonStyle(profile.account_type === type)} onClick={() => updateProfile("account_type", type)}>
-                        {type === "candidate" ? "Candidate" : "Employer"}
-                      </button>
-                    ))}
+                  <div style={{ display: "inline-flex", padding: "0.45rem 0.8rem", borderRadius: "999px", border: "2px solid var(--border-subtle)", background: "var(--bg-surface)" }}>
+                    <strong>{profile.account_type === "employer" ? "Employer" : "Candidate"}</strong>
                   </div>
+                  {profile.account_type === "employer" && (
+                    <p style={{ marginTop: "0.45rem", color: "var(--text-secondary)", fontWeight: 600 }}>
+                      Employer access is restricted to corporate email domains.
+                    </p>
+                  )}
                 </div>
 
                 {profile.account_type === "candidate" && (
@@ -459,19 +531,89 @@ export default function OnboardingPage() {
                 {profile.account_type === "employer" && (
                   <>
                     <div>
-                      <label style={{ fontWeight: 700, display: "block", marginBottom: "0.35rem" }}>Organization</label>
-                      <input className="input-base" value={profile.college_name} onChange={(e) => updateProfile("college_name", e.target.value)} placeholder="Company / Organization name" />
+                      <label style={{ fontWeight: 700, display: "block", marginBottom: "0.35rem" }}>Current Organisation</label>
+                      <input
+                        className="input-base"
+                        value={profile.company_name}
+                        onChange={(e) => {
+                          updateProfile("company_name", e.target.value);
+                          updateProfile("college_name", e.target.value);
+                        }}
+                        placeholder="Company name"
+                        list="employer-org-suggestions"
+                      />
+                      <datalist id="employer-org-suggestions">
+                        {EMPLOYER_ORGANIZATION_SUGGESTIONS.map((item) => (
+                          <option key={item} value={item} />
+                        ))}
+                      </datalist>
                     </div>
+
                     <div>
-                      <label style={{ fontWeight: 700, display: "block", marginBottom: "0.35rem" }}>Hiring Domain</label>
-                      <input className="input-base" value={profile.domain} onChange={(e) => updateProfile("domain", e.target.value)} placeholder="Engineering / Product / Marketing ..." />
+                      <label style={{ fontWeight: 700, display: "block", marginBottom: "0.35rem" }}>Designation</label>
+                      <select
+                        className="input-base"
+                        value={employerRoleSelection}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setEmployerRoleSelection(value);
+                          if (value === "Other") {
+                            updateProfile("current_job_role", "");
+                          } else {
+                            updateProfile("current_job_role", value);
+                          }
+                        }}
+                      >
+                        <option value="">Job Role</option>
+                        {EMPLOYER_ROLE_OPTIONS.map((item) => (
+                          <option key={item} value={item}>
+                            {item}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {employerRoleSelection === "Other" && (
+                      <input
+                        className="input-base"
+                        value={profile.current_job_role}
+                        onChange={(e) => updateProfile("current_job_role", e.target.value)}
+                        placeholder="If Other, enter custom designation"
+                      />
+                    )}
+
+                    <div>
+                      <label style={{ fontWeight: 700, display: "block", marginBottom: "0.5rem" }}>You&apos;re Hiring for</label>
+                      <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>
+                        <button type="button" style={pillButtonStyle(profile.hiring_for === "myself")} onClick={() => updateProfile("hiring_for", "myself")}>
+                          Myself
+                        </button>
+                        <button type="button" style={pillButtonStyle(profile.hiring_for === "others")} onClick={() => updateProfile("hiring_for", "others")}>
+                          Others
+                        </button>
+                      </div>
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
+                      <input
+                        className="input-base"
+                        value={profile.company_website}
+                        onChange={(e) => updateProfile("company_website", e.target.value)}
+                        placeholder="Company website (optional)"
+                      />
+                      <input
+                        className="input-base"
+                        value={profile.company_size}
+                        onChange={(e) => updateProfile("company_size", e.target.value)}
+                        placeholder="Company size (optional)"
+                      />
                     </div>
                   </>
                 )}
               </>
             )}
 
-            {step === 3 && (
+            {step === 3 && profile.account_type === "candidate" && (
               <>
                 <div>
                   <label style={{ fontWeight: 700, display: "block", marginBottom: "0.5rem" }}>What brings you here?</label>
@@ -520,7 +662,7 @@ export default function OnboardingPage() {
                   Back
                 </button>
               )}
-              {step < 3 ? (
+              {step < totalSteps ? (
                 <button
                   type="button"
                   className="btn-primary"

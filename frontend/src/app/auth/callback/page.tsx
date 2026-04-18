@@ -33,7 +33,12 @@ function OAuthCallbackInner() {
     let cancelled = false;
     const run = async () => {
       setAccessToken(token);
-      const nextRoute = requestedNext && requestedNext.startsWith("/") ? requestedNext : await resolvePostAuthRoute(token);
+      const nextRoute =
+        requestedNext &&
+        requestedNext.startsWith("/") &&
+        requestedNext !== "/auth/callback"
+          ? requestedNext
+          : await resolvePostAuthRoute(token);
       if (!cancelled) {
         router.replace(nextRoute);
       }

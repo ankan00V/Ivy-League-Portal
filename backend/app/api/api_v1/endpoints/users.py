@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field, field_validator
 
 from app.api.deps import get_current_active_user
+from app.core.email_policy import is_corporate_email
 from app.models.profile import Profile
 from app.models.user import User
 from app.schemas.user import UserResponse
@@ -15,6 +16,7 @@ router = APIRouter()
 
 VALID_ACCOUNT_TYPES = {"candidate", "employer"}
 VALID_USER_TYPES = {"school_student", "college_student", "fresher", "professional"}
+VALID_HIRING_FOR = {"myself", "others"}
 
 
 class ProfileUpdate(BaseModel):
@@ -31,6 +33,11 @@ class ProfileUpdate(BaseModel):
     current_job_role: Optional[str] = None
     total_work_experience: Optional[str] = None
     college_name: Optional[str] = None
+    company_name: Optional[str] = None
+    company_website: Optional[str] = None
+    company_size: Optional[str] = None
+    company_description: Optional[str] = None
+    hiring_for: Optional[str] = None
     goals: Optional[list[str]] = None
     preferred_roles: Optional[str] = None
     preferred_locations: Optional[str] = None
@@ -64,6 +71,16 @@ class ProfileUpdate(BaseModel):
         candidate = str(value).strip().lower()
         if candidate not in VALID_USER_TYPES:
             raise ValueError("user_type must be school_student, college_student, fresher, or professional")
+        return candidate
+
+    @field_validator("hiring_for", mode="before")
+    @classmethod
+    def normalize_hiring_for(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        candidate = str(value).strip().lower()
+        if candidate not in VALID_HIRING_FOR:
+            raise ValueError("hiring_for must be myself or others")
         return candidate
 
     @field_validator("goals", mode="before")
@@ -101,6 +118,11 @@ class ProfileResponse(BaseModel):
     current_job_role: Optional[str] = None
     total_work_experience: Optional[str] = None
     college_name: Optional[str] = None
+    company_name: Optional[str] = None
+    company_website: Optional[str] = None
+    company_size: Optional[str] = None
+    company_description: Optional[str] = None
+    hiring_for: Optional[str] = None
     goals: list[str] = Field(default_factory=list)
     preferred_roles: Optional[str] = None
     preferred_locations: Optional[str] = None
@@ -182,6 +204,10 @@ def _required_onboarding_checks(profile: Profile) -> list[tuple[str, bool]]:
         elif user_type == "professional":
             checks.append(("current_job_role", bool((profile.current_job_role or "").strip())))
             checks.append(("total_work_experience", bool((profile.total_work_experience or "").strip())))
+    elif profile.account_type == "employer":
+        checks.append(("company_name", bool((profile.company_name or "").strip())))
+        checks.append(("current_job_role", bool((profile.current_job_role or "").strip())))
+        checks.append(("hiring_for", str(profile.hiring_for or "").strip().lower() in VALID_HIRING_FOR))
 
     return checks
 
@@ -206,15 +232,34 @@ def _sync_profile_identity(profile: Profile, user: User) -> None:
         profile.first_name = first_name
         profile.last_name = last_name
 
+    if str(profile.account_type or "").strip().lower() == "employer":
+        if not (profile.company_name or "").strip():
+            candidate = (profile.college_name or "").strip() or (user.full_name or "").strip()
+            profile.company_name = candidate or None
+
 
 def _apply_profile_patch(*, profile: Profile, user: User, payload: ProfileUpdate) -> None:
     updates = payload.model_dump(exclude_unset=True)
+
+    target_account_type = payload.account_type or profile.account_type or user.account_type or "candidate"
+    if str(target_account_type).strip().lower() == "employer" and not is_corporate_email(user.email):
+        raise HTTPException(
+            status_code=400,
+            detail="Employer account setup requires a corporate email (personal providers are not allowed).",
+        )
+
     for field, value in updates.items():
         setattr(profile, field, value)
 
     # Keep account type mirrored between User and Profile when explicitly changed.
     if payload.account_type and payload.account_type in VALID_ACCOUNT_TYPES and user.account_type != payload.account_type:
         user.account_type = payload.account_type
+
+    if str(profile.account_type or "").strip().lower() == "employer":
+        if not (profile.company_name or "").strip() and (profile.college_name or "").strip():
+            profile.company_name = (profile.college_name or "").strip()
+        if not (profile.college_name or "").strip() and (profile.company_name or "").strip():
+            profile.college_name = (profile.company_name or "").strip()
 
     _sync_profile_identity(profile, user)
     is_complete, _progress, _missing, next_step = _compute_onboarding_status(profile)

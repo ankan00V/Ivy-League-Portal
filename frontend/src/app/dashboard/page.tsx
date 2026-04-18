@@ -30,6 +30,7 @@ interface ProfileSummary {
     email?: string;
     full_name?: string;
     skills?: string;
+    account_type?: string;
 }
 
 interface TiltCardProps {
@@ -115,7 +116,7 @@ export default function DashboardPage() {
     const [posts, setPosts] = useState<ActivityPost[]>([]);
     const lastImpressionBatchRef = useRef("");
 
-    const fetchDashboardData = async () => {
+    const fetchDashboardData = useCallback(async () => {
         try {
             const token = localStorage.getItem("access_token");
             const authHeaders = token ? { Authorization: `Bearer ${token}` } : undefined;
@@ -125,6 +126,10 @@ export default function DashboardPage() {
                 const profileRes = await fetch(apiUrl("/api/v1/users/me/profile"), { headers: authHeaders });
                 if (profileRes.ok) {
                     const pData = await profileRes.json();
+                    if (String(pData.account_type || "").toLowerCase() === "employer") {
+                        router.replace("/employer/dashboard");
+                        return;
+                    }
                     setProfile(pData);
                 }
 
@@ -183,7 +188,7 @@ export default function DashboardPage() {
             const message = error instanceof Error ? error.message : "unknown error";
             console.warn(`[Dashboard] Data refresh failed: ${message}`);
         }
-    };
+    }, [router]);
 
     useEffect(() => {
         const firstRun = window.setTimeout(() => {
@@ -196,7 +201,7 @@ export default function DashboardPage() {
             window.clearTimeout(firstRun);
             window.clearInterval(interval);
         };
-    }, []);
+    }, [fetchDashboardData]);
 
     const getMatchPercent = (seed: string) => {
         let hash = 0;

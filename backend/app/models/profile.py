@@ -18,6 +18,11 @@ class Profile(Document):
     current_job_role: Optional[str] = None
     total_work_experience: Optional[str] = None
     college_name: Optional[str] = None
+    company_name: Optional[str] = None
+    company_website: Optional[str] = None
+    company_size: Optional[str] = None
+    company_description: Optional[str] = None
+    hiring_for: Optional[str] = None  # myself | others
     goals: list[str] = Field(default_factory=list)
     preferred_roles: Optional[str] = None
     preferred_locations: Optional[str] = None

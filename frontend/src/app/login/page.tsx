@@ -88,7 +88,7 @@ export default function LoginPage() {
       const res = await fetch(apiUrl("/api/v1/auth/send-otp"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, purpose: "signin" }),
+        body: JSON.stringify({ email, purpose: "signin", account_type: accountType }),
       });
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -118,7 +118,7 @@ export default function LoginPage() {
       const res = await fetch(apiUrl("/api/v1/auth/verify-otp"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, otp, purpose: "signin" }),
+        body: JSON.stringify({ email, otp, purpose: "signin", account_type: accountType }),
       });
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -279,6 +279,11 @@ export default function LoginPage() {
               Employer
             </button>
           </div>
+          {accountType === "employer" && (
+            <p style={{ color: "var(--text-secondary)", fontWeight: 700 }}>
+              Employer sign-in requires a corporate email domain.
+            </p>
+          )}
 
           {error && (
             <div style={{ background: "rgba(239,68,68,0.08)", border: "2px solid #ef4444", color: "#b91c1c", borderRadius: "var(--radius-sm)", padding: "0.75rem" }}>
@@ -324,7 +329,7 @@ export default function LoginPage() {
                 className="input-base"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
-                placeholder="Enter Email"
+                placeholder={accountType === "employer" ? "name@company.com" : "Enter Email"}
                 required
                 disabled={loading || step === "otp"}
               />
@@ -365,7 +370,7 @@ export default function LoginPage() {
                 className="input-base"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
-                placeholder="Enter Email"
+                placeholder={accountType === "employer" ? "name@company.com" : "Enter Email"}
                 required
                 disabled={loading}
               />

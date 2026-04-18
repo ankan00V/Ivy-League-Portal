@@ -1,6 +1,6 @@
 from typing import Optional
 from datetime import datetime
-from beanie import Document
+from beanie import Document, PydanticObjectId
 from pydantic import Field
 
 class Opportunity(Document):
@@ -11,6 +11,10 @@ class Opportunity(Document):
     domain: Optional[str] = None
     university: Optional[str] = None
     source: Optional[str] = None
+    location: Optional[str] = None
+    eligibility: Optional[str] = None
+    is_employer_post: bool = False
+    posted_by_user_id: Optional[PydanticObjectId] = Field(default=None, index=True)
     deadline: Optional[datetime] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -18,4 +22,4 @@ class Opportunity(Document):
 
     class Settings:
         name = "opportunities"
-        indexes = ["domain", "opportunity_type", "university", "source", "deadline", "last_seen_at"]
+        indexes = ["domain", "opportunity_type", "university", "source", "deadline", "last_seen_at", "posted_by_user_id"]

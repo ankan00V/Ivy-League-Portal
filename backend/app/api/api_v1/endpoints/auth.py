@@ -15,6 +15,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr, field_validator
 
 from app.core.config import settings
+from app.core.email_policy import is_corporate_email
 from app.core.redis_client import delete_otp, set_otp, validate_otp
 from app.core.security import create_access_token, get_password_hash, verify_password
 from app.models.user import User
@@ -41,6 +42,14 @@ def _normalize_account_type(value: Optional[str], *, default: str = "candidate")
     if candidate not in VALID_ACCOUNT_TYPES:
         raise HTTPException(status_code=400, detail="account_type must be candidate or employer")
     return candidate
+
+
+def _ensure_employer_corporate_email(email: str) -> None:
+    if not is_corporate_email(email):
+        raise HTTPException(
+            status_code=400,
+            detail="Employer signup/login requires a corporate email (personal providers are not allowed).",
+        )
 
 
 def _base64url_encode(payload: dict[str, Any]) -> str:
@@ -120,6 +129,8 @@ async def login_access_token(
         raise HTTPException(status_code=400, detail="Incorrect email or password")
     if not user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
+    if str(getattr(user, "account_type", "candidate")).strip().lower() == "employer":
+        _ensure_employer_corporate_email(user.email)
 
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     return {
@@ -135,6 +146,7 @@ async def login_access_token(
 class OTPSendRequest(BaseModel):
     email: EmailStr
     purpose: Literal["signup", "signin"] = "signin"
+    account_type: Optional[Literal["candidate", "employer"]] = None
 
     @field_validator("purpose", mode="before")
     @classmethod
@@ -342,6 +354,10 @@ async def oauth_google_callback(
             raise ValueError("Google email is not verified")
 
         full_name = str(id_info.get("name") or "").strip() or email.split("@")[0]
+
+        if account_type == "employer":
+            _ensure_employer_corporate_email(email)
+
         user = await User.find_one(User.email == email)
         if not user:
             user = User(
@@ -354,6 +370,14 @@ async def oauth_google_callback(
             )
             await user.insert()
         else:
+            existing_account_type = _normalize_account_type(getattr(user, "account_type", "candidate"), default="candidate")
+            if account_type != existing_account_type:
+                raise ValueError(
+                    f"This email is already registered as {existing_account_type}. "
+                    f"Please continue as {existing_account_type}."
+                )
+            if existing_account_type == "employer":
+                _ensure_employer_corporate_email(email)
             if not user.full_name:
                 user.full_name = full_name
             if not user.account_type:
@@ -401,7 +425,26 @@ async def send_otp(request: OTPSendRequest):
     Generate a 6-digit OTP, store in MongoDB, and dispatch email.
     """
     normalized_email = str(request.email).strip().lower()
-    await _validate_user_for_purpose(normalized_email, request.purpose)
+    existing_user = await _validate_user_for_purpose(normalized_email, request.purpose)
+    requested_account_type = _normalize_account_type(request.account_type, default="candidate")
+
+    if request.purpose == "signin":
+        if not existing_user:
+            raise HTTPException(status_code=404, detail="No account found for this email")
+        existing_account_type = _normalize_account_type(
+            getattr(existing_user, "account_type", "candidate"),
+            default="candidate",
+        )
+        if request.account_type and requested_account_type != existing_account_type:
+            raise HTTPException(
+                status_code=400,
+                detail=f"This email is registered as {existing_account_type}. Please continue as {existing_account_type}.",
+            )
+        if existing_account_type == "employer":
+            _ensure_employer_corporate_email(normalized_email)
+    else:
+        if requested_account_type == "employer":
+            _ensure_employer_corporate_email(normalized_email)
 
     otp = f"{secrets.randbelow(1_000_000):06d}"
     await set_otp(
@@ -462,6 +505,26 @@ async def verify_otp(
     """
     normalized_email = str(request.email).strip().lower()
     user = await _validate_user_for_purpose(normalized_email, request.purpose)
+
+    if request.purpose == "signup":
+        signup_account_type = _normalize_account_type(request.account_type, default="candidate")
+        if signup_account_type == "employer":
+            _ensure_employer_corporate_email(normalized_email)
+    else:
+        if not user:
+            raise HTTPException(status_code=404, detail="No account found for this email")
+        existing_account_type = _normalize_account_type(
+            getattr(user, "account_type", "candidate"),
+            default="candidate",
+        )
+        requested_account_type = _normalize_account_type(request.account_type, default=existing_account_type)
+        if request.account_type and requested_account_type != existing_account_type:
+            raise HTTPException(
+                status_code=400,
+                detail=f"This email is registered as {existing_account_type}. Please continue as {existing_account_type}.",
+            )
+        if existing_account_type == "employer":
+            _ensure_employer_corporate_email(normalized_email)
 
     is_valid = await validate_otp(
         normalized_email,

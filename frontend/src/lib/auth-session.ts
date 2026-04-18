@@ -3,8 +3,8 @@ import { apiUrl } from "@/lib/api";
 const ACCESS_TOKEN_KEY = "access_token";
 
 type OnboardingStatus = {
-  completed: boolean;
-  progress_percent?: number;
+  account_type?: "candidate" | "employer";
+  onboarding_completed?: boolean;
 };
 
 export function getAccessToken(): string | null {
@@ -30,17 +30,19 @@ export function clearAccessToken(): void {
 
 export async function resolvePostAuthRoute(token: string): Promise<string> {
   try {
-    const res = await fetch(apiUrl("/api/v1/users/me/onboarding-status"), {
+    const res = await fetch(apiUrl("/api/v1/users/me/profile"), {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) {
       return "/dashboard";
     }
     const status = (await res.json()) as OnboardingStatus;
-    if (!status.completed) {
+    const accountType = String(status.account_type || "candidate").toLowerCase();
+    const onboardingCompleted = Boolean(status.onboarding_completed);
+    if (!onboardingCompleted) {
       return "/onboarding";
     }
-    return "/dashboard";
+    return accountType === "employer" ? "/employer/dashboard" : "/dashboard";
   } catch {
     return "/dashboard";
   }
