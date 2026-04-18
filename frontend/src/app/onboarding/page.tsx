@@ -6,6 +6,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import BrandLogo from "@/components/BrandLogo";
 import { apiUrl } from "@/lib/api";
 import { clearAccessToken, getAccessToken } from "@/lib/auth-session";
+import { getApiErrorMessage, getUnknownErrorMessage } from "@/lib/error-utils";
 
 type AccountType = "candidate" | "employer";
 type UserType = "school_student" | "college_student" | "fresher" | "professional";
@@ -273,7 +274,7 @@ export default function OnboardingPage() {
       });
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(payload.detail || "Unable to save onboarding");
+        throw new Error(getApiErrorMessage(payload, "Unable to save onboarding"));
       }
 
       const statusRes = await fetch(apiUrl("/api/v1/users/me/onboarding-status"), {
@@ -291,7 +292,7 @@ export default function OnboardingPage() {
         setStep((current) => Math.min(totalSteps, current + 1));
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to save onboarding");
+      setError(getUnknownErrorMessage(err, "Unable to save onboarding"));
     } finally {
       setSaving(false);
     }

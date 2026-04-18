@@ -59,6 +59,8 @@ class ProfileUpdate(BaseModel):
         if value is None:
             return None
         candidate = str(value).strip().lower()
+        if not candidate:
+            return None
         if candidate not in VALID_ACCOUNT_TYPES:
             raise ValueError("account_type must be candidate or employer")
         return candidate
@@ -69,6 +71,8 @@ class ProfileUpdate(BaseModel):
         if value is None:
             return None
         candidate = str(value).strip().lower()
+        if not candidate:
+            return None
         if candidate not in VALID_USER_TYPES:
             raise ValueError("user_type must be school_student, college_student, fresher, or professional")
         return candidate
@@ -79,6 +83,8 @@ class ProfileUpdate(BaseModel):
         if value is None:
             return None
         candidate = str(value).strip().lower()
+        if not candidate:
+            return None
         if candidate not in VALID_HIRING_FOR:
             raise ValueError("hiring_for must be myself or others")
         return candidate

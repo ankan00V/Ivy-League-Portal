@@ -7,6 +7,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import BrandLogo from "@/components/BrandLogo";
 import { apiUrl } from "@/lib/api";
 import { clearAccessToken, getAccessToken } from "@/lib/auth-session";
+import { getApiErrorMessage, getUnknownErrorMessage } from "@/lib/error-utils";
 
 type ProfileMe = {
   account_type?: string;
@@ -141,7 +142,7 @@ export default function EmployerDashboardPage() {
       try {
         await refresh();
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Unable to load employer dashboard");
+        setError(getUnknownErrorMessage(err, "Unable to load employer dashboard"));
       } finally {
         setLoading(false);
       }
@@ -184,7 +185,7 @@ export default function EmployerDashboardPage() {
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(body.detail || "Unable to create opportunity");
+        throw new Error(getApiErrorMessage(body, "Unable to create opportunity"));
       }
 
       setForm({
@@ -200,7 +201,7 @@ export default function EmployerDashboardPage() {
       setSuccess("Opportunity published successfully.");
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to create opportunity");
+      setError(getUnknownErrorMessage(err, "Unable to create opportunity"));
     } finally {
       setSaving(false);
     }

@@ -7,6 +7,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import BrandLogo from "@/components/BrandLogo";
 import { apiUrl } from "@/lib/api";
 import { getAccessToken, resolvePostAuthRoute, setAccessToken } from "@/lib/auth-session";
+import { getApiErrorMessage, getUnknownErrorMessage } from "@/lib/error-utils";
 
 type AuthStep = "email" | "otp" | "password";
 type AccountType = "candidate" | "employer";
@@ -124,7 +125,7 @@ export default function LoginPage() {
       });
       const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
       if (!res.ok) {
-        const detail = typeof payload.detail === "string" ? payload.detail : "";
+        const detail = getApiErrorMessage(payload, "");
         if (res.status === 429) {
           const remaining = resolveCooldownSeconds(res, payload);
           setOtpCooldownSeconds(remaining);
@@ -144,7 +145,7 @@ export default function LoginPage() {
       }
       setStep("otp");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to send OTP");
+      setError(getUnknownErrorMessage(err, "Unable to send OTP"));
     } finally {
       setLoading(false);
     }
@@ -168,7 +169,7 @@ export default function LoginPage() {
       });
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(payload.detail || "OTP verification failed");
+        throw new Error(getApiErrorMessage(payload, "OTP verification failed"));
       }
       const token = String(payload.access_token || "");
       if (!token) {
@@ -178,7 +179,7 @@ export default function LoginPage() {
       const nextRoute = await resolvePostAuthRoute(token);
       router.push(nextRoute);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to verify OTP");
+      setError(getUnknownErrorMessage(err, "Unable to verify OTP"));
     } finally {
       setLoading(false);
     }
@@ -201,7 +202,7 @@ export default function LoginPage() {
       });
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(payload.detail || "Invalid email/password");
+        throw new Error(getApiErrorMessage(payload, "Invalid email/password"));
       }
       const token = String(payload.access_token || "");
       if (!token) {
@@ -211,7 +212,7 @@ export default function LoginPage() {
       const nextRoute = await resolvePostAuthRoute(token);
       router.push(nextRoute);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to login");
+      setError(getUnknownErrorMessage(err, "Unable to login"));
     } finally {
       setLoading(false);
     }
@@ -230,11 +231,11 @@ export default function LoginPage() {
       const res = await fetch(apiUrl(`/api/v1/auth/oauth/google/start?${params.toString()}`));
       const payload = await res.json().catch(() => ({}));
       if (!res.ok || !payload.redirect_url) {
-        throw new Error(payload.detail || "Google OAuth is unavailable. Configure Google OAuth env vars.");
+        throw new Error(getApiErrorMessage(payload, "Google OAuth is unavailable. Configure Google OAuth env vars."));
       }
       window.location.href = String(payload.redirect_url);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to start Google OAuth");
+      setError(getUnknownErrorMessage(err, "Unable to start Google OAuth"));
       setLoading(false);
     }
   };

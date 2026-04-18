@@ -7,6 +7,7 @@ import React, { useMemo, useState } from "react";
 import BrandLogo from "@/components/BrandLogo";
 import { apiUrl } from "@/lib/api";
 import { setAccessToken } from "@/lib/auth-session";
+import { getApiErrorMessage, getUnknownErrorMessage } from "@/lib/error-utils";
 
 type RegisterStep = "details" | "otp";
 type AccountType = "candidate" | "employer";
@@ -113,7 +114,7 @@ export default function RegisterPage() {
       });
       const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
       if (!res.ok) {
-        const detail = typeof payload.detail === "string" ? payload.detail : "";
+        const detail = getApiErrorMessage(payload, "");
         if (res.status === 429) {
           const remaining = resolveCooldownSeconds(res, payload);
           setOtpCooldownSeconds(remaining);
@@ -133,7 +134,7 @@ export default function RegisterPage() {
       }
       setStep("otp");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to send OTP");
+      setError(getUnknownErrorMessage(err, "Unable to send OTP"));
     } finally {
       setLoading(false);
     }
@@ -163,7 +164,7 @@ export default function RegisterPage() {
       });
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(payload.detail || "OTP verification failed");
+        throw new Error(getApiErrorMessage(payload, "OTP verification failed"));
       }
       const token = String(payload.access_token || "");
       if (!token) {
@@ -172,7 +173,7 @@ export default function RegisterPage() {
       setAccessToken(token);
       router.push("/onboarding");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to verify OTP");
+      setError(getUnknownErrorMessage(err, "Unable to verify OTP"));
     } finally {
       setLoading(false);
     }
@@ -190,11 +191,11 @@ export default function RegisterPage() {
       const res = await fetch(apiUrl(`/api/v1/auth/oauth/google/start?${params.toString()}`));
       const payload = await res.json().catch(() => ({}));
       if (!res.ok || !payload.redirect_url) {
-        throw new Error(payload.detail || "Google OAuth is unavailable. Configure Google OAuth env vars.");
+        throw new Error(getApiErrorMessage(payload, "Google OAuth is unavailable. Configure Google OAuth env vars."));
       }
       window.location.href = String(payload.redirect_url);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to start Google OAuth");
+      setError(getUnknownErrorMessage(err, "Unable to start Google OAuth"));
       setLoading(false);
     }
   };
