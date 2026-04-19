@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import Sidebar from "@/components/Sidebar";
 import { apiUrl } from "@/lib/api";
+import { getAccessToken } from "@/lib/auth-session";
 import { motion } from "framer-motion";
 
 type VariantRow = {
@@ -71,6 +72,29 @@ type SideBySideReport = {
   simulated: SideBySideBundle;
 };
 
+type DailyAggregate = {
+  date: string;
+  metric_type: string;
+  ranking_mode: string;
+  experiment_key: string;
+  experiment_variant: string;
+  measures: Record<string, number>;
+};
+
+type FunnelAggregate = {
+  date: string;
+  experiment_key: string;
+  ranking_mode: string;
+  experiment_variant: string;
+  impressions: number;
+  clicks: number;
+  saves: number;
+  applies: number;
+  ctr: number;
+  save_rate: number;
+  apply_rate: number;
+};
+
 function formatPct(value: number | null | undefined): string {
   if (value === null || value === undefined) return "—";
   return `${(value * 100).toFixed(2)}%`;
@@ -117,6 +141,9 @@ export default function ExperimentsPage() {
   const [days, setDays] = useState<number>(30);
   const [reports, setReports] = useState<ExperimentReport[]>([]);
   const [sideBySide, setSideBySide] = useState<SideBySideReport | null>(null);
+  const [dailyAggregates, setDailyAggregates] = useState<DailyAggregate[]>([]);
+  const [funnelAggregates, setFunnelAggregates] = useState<FunnelAggregate[]>([]);
+  const [analyticsError, setAnalyticsError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -128,12 +155,15 @@ export default function ExperimentsPage() {
     const load = async () => {
       setLoading(true);
       setError(null);
+      setAnalyticsError(null);
       try {
-        const token = localStorage.getItem("access_token");
+        const token = getAccessToken();
         if (!token) {
           setError("Sign in as an admin to view experiment reports.");
           setReports([]);
           setSideBySide(null);
+          setDailyAggregates([]);
+          setFunnelAggregates([]);
           return;
         }
 
@@ -164,11 +194,40 @@ export default function ExperimentsPage() {
 
         setReports(Array.isArray(reportsData) ? (reportsData as ExperimentReport[]) : []);
         setSideBySide((sideBySideData as SideBySideReport) ?? null);
+
+        const [dailyRes, funnelRes] = await Promise.all([
+          fetch(apiUrl(`/api/v1/analytics/warehouse/daily?limit=50&traffic_type=real`), {
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+          fetch(apiUrl(`/api/v1/analytics/warehouse/funnels?limit=50&traffic_type=real`), {
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+        ]);
+
+        if (dailyRes.ok) {
+          const dailyData = await dailyRes.json().catch(() => []);
+          setDailyAggregates(Array.isArray(dailyData) ? (dailyData as DailyAggregate[]) : []);
+        } else {
+          setDailyAggregates([]);
+        }
+
+        if (funnelRes.ok) {
+          const funnelData = await funnelRes.json().catch(() => []);
+          setFunnelAggregates(Array.isArray(funnelData) ? (funnelData as FunnelAggregate[]) : []);
+        } else {
+          setFunnelAggregates([]);
+        }
+
+        if (!dailyRes.ok || !funnelRes.ok) {
+          setAnalyticsError("Warehouse analytics are admin-only or not initialized yet.");
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : "unknown error";
         setError(message);
         setReports([]);
         setSideBySide(null);
+        setDailyAggregates([]);
+        setFunnelAggregates([]);
       } finally {
         setLoading(false);
       }
@@ -329,6 +388,108 @@ export default function ExperimentsPage() {
                   )}
                 </div>
               ))}
+            </div>
+          </section>
+        ) : null}
+
+        {!loading && !error ? (
+          <section
+            style={{
+              background: "var(--bg-surface)",
+              border: "2px solid var(--border-subtle)",
+              borderRadius: "var(--radius-sm)",
+              boxShadow: "var(--shadow-sm)",
+              padding: "1.1rem 1.25rem",
+              marginBottom: "1.25rem",
+            }}
+          >
+            <div style={{ marginBottom: "0.8rem" }}>
+              <div style={{ fontWeight: 900, letterSpacing: "-0.01em" }}>Analytics Warehouse Snapshot</div>
+              <div style={{ color: "var(--text-muted)", fontWeight: 700, fontSize: "0.9rem" }}>
+                Daily aggregates and conversion funnels for real traffic.
+              </div>
+              {analyticsError ? (
+                <div style={{ color: "#b45309", fontWeight: 700, marginTop: "0.35rem" }}>{analyticsError}</div>
+              ) : null}
+            </div>
+
+            <div style={{ display: "grid", gap: "1rem", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))" }}>
+              <div
+                style={{
+                  background: "var(--bg-surface-hover)",
+                  border: "2px solid var(--border-subtle)",
+                  borderRadius: "var(--radius-sm)",
+                  padding: "0.9rem",
+                }}
+              >
+                <div style={{ fontWeight: 900, marginBottom: "0.6rem" }}>Daily Metrics (latest)</div>
+                {dailyAggregates.length === 0 ? (
+                  <div style={{ color: "var(--text-muted)", fontWeight: 700 }}>No daily aggregates yet.</div>
+                ) : (
+                  <div style={{ display: "grid", gap: "0.45rem" }}>
+                    {dailyAggregates.slice(0, 8).map((row, idx) => (
+                      <div
+                        key={`${row.date}-${row.metric_type}-${row.ranking_mode}-${idx}`}
+                        style={{
+                          border: "1px solid var(--border-subtle)",
+                          borderRadius: "var(--radius-sm)",
+                          padding: "0.55rem 0.65rem",
+                          background: "var(--bg-surface)",
+                        }}
+                      >
+                        <div style={{ fontWeight: 800, fontSize: "0.88rem" }}>
+                          {row.date} · {row.metric_type} · {row.ranking_mode}
+                        </div>
+                        <div style={{ color: "var(--text-muted)", fontWeight: 700, fontSize: "0.82rem" }}>
+                          exp {row.experiment_key}:{row.experiment_variant}
+                        </div>
+                        <div style={{ fontWeight: 700, fontSize: "0.84rem", marginTop: "0.2rem" }}>
+                          ctr {formatPct(row.measures?.ctr)} · apply {formatPct(row.measures?.apply_rate)} · saves{" "}
+                          {formatPct(row.measures?.save_rate)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div
+                style={{
+                  background: "var(--bg-surface-hover)",
+                  border: "2px solid var(--border-subtle)",
+                  borderRadius: "var(--radius-sm)",
+                  padding: "0.9rem",
+                }}
+              >
+                <div style={{ fontWeight: 900, marginBottom: "0.6rem" }}>Funnel Metrics (latest)</div>
+                {funnelAggregates.length === 0 ? (
+                  <div style={{ color: "var(--text-muted)", fontWeight: 700 }}>No funnel aggregates yet.</div>
+                ) : (
+                  <div style={{ display: "grid", gap: "0.45rem" }}>
+                    {funnelAggregates.slice(0, 8).map((row, idx) => (
+                      <div
+                        key={`${row.date}-${row.experiment_key}-${row.ranking_mode}-${idx}`}
+                        style={{
+                          border: "1px solid var(--border-subtle)",
+                          borderRadius: "var(--radius-sm)",
+                          padding: "0.55rem 0.65rem",
+                          background: "var(--bg-surface)",
+                        }}
+                      >
+                        <div style={{ fontWeight: 800, fontSize: "0.88rem" }}>
+                          {row.date} · {row.ranking_mode} · {row.experiment_variant}
+                        </div>
+                        <div style={{ color: "var(--text-muted)", fontWeight: 700, fontSize: "0.82rem" }}>
+                          imp {row.impressions} · click {row.clicks} · save {row.saves} · apply {row.applies}
+                        </div>
+                        <div style={{ fontWeight: 700, fontSize: "0.84rem", marginTop: "0.2rem" }}>
+                          ctr {formatPct(row.ctr)} · save {formatPct(row.save_rate)} · apply {formatPct(row.apply_rate)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </section>
         ) : null}

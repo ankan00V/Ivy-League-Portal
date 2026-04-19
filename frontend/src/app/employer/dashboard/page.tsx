@@ -22,6 +22,8 @@ type EmployerApplication = {
   applicant_name?: string | null;
   applicant_email?: string | null;
   status: string;
+  pipeline_state: "applied" | "shortlisted" | "rejected" | "interview";
+  pipeline_notes?: string | null;
   submitted_at?: string | null;
   created_at: string;
 };
@@ -34,6 +36,9 @@ type EmployerSummary = {
   submitted_applications: number;
   pending_applications: number;
   auto_filled_applications: number;
+  shortlisted_applications: number;
+  rejected_applications: number;
+  interview_applications: number;
   recent_applications: EmployerApplication[];
 };
 
@@ -47,7 +52,19 @@ type EmployerOpportunity = {
   eligibility?: string | null;
   application_url: string;
   deadline?: string | null;
+  lifecycle_status: "draft" | "published" | "paused" | "closed";
   applications_count: number;
+};
+
+type RecruiterAuditLog = {
+  id: string;
+  action: string;
+  entity_type: string;
+  entity_id?: string | null;
+  opportunity_id?: string | null;
+  application_id?: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
 };
 
 type CreateOpportunityPayload = {
@@ -84,6 +101,10 @@ export default function EmployerDashboardPage() {
   const [profile, setProfile] = useState<ProfileMe | null>(null);
   const [summary, setSummary] = useState<EmployerSummary | null>(null);
   const [opportunities, setOpportunities] = useState<EmployerOpportunity[]>([]);
+  const [auditLogs, setAuditLogs] = useState<RecruiterAuditLog[]>([]);
+  const [lifecycleUpdatingId, setLifecycleUpdatingId] = useState<string | null>(null);
+  const [pipelineUpdatingId, setPipelineUpdatingId] = useState<string | null>(null);
+  const [pipelineDrafts, setPipelineDrafts] = useState<Record<string, EmployerApplication["pipeline_state"]>>({});
   const [form, setForm] = useState<CreateOpportunityPayload>({
     title: "",
     description: "",
@@ -109,10 +130,11 @@ export default function EmployerDashboardPage() {
       return;
     }
 
-    const [profileRes, summaryRes, opportunitiesRes] = await Promise.all([
+    const [profileRes, summaryRes, opportunitiesRes, auditLogsRes] = await Promise.all([
       fetch(apiUrl("/api/v1/users/me/profile"), { headers: authHeader }),
       fetch(apiUrl("/api/v1/employer/dashboard/summary"), { headers: authHeader }),
       fetch(apiUrl("/api/v1/employer/opportunities"), { headers: authHeader }),
+      fetch(apiUrl("/api/v1/employer/audit-logs?limit=25"), { headers: authHeader }),
     ]);
 
     if (!profileRes.ok) {
@@ -129,11 +151,22 @@ export default function EmployerDashboardPage() {
     if (summaryRes.ok) {
       const summaryPayload = (await summaryRes.json()) as EmployerSummary;
       setSummary(summaryPayload);
+      setPipelineDrafts(
+        summaryPayload.recent_applications.reduce<Record<string, EmployerApplication["pipeline_state"]>>((acc, row) => {
+          acc[row.application_id] = row.pipeline_state || "applied";
+          return acc;
+        }, {}),
+      );
     }
 
     if (opportunitiesRes.ok) {
       const opportunitiesPayload = (await opportunitiesRes.json()) as EmployerOpportunity[];
       setOpportunities(opportunitiesPayload);
+    }
+
+    if (auditLogsRes.ok) {
+      const logsPayload = (await auditLogsRes.json()) as RecruiterAuditLog[];
+      setAuditLogs(logsPayload);
     }
   }, [authHeader, router]);
 
@@ -153,6 +186,73 @@ export default function EmployerDashboardPage() {
   const updateForm = <K extends keyof CreateOpportunityPayload>(field: K, value: CreateOpportunityPayload[K]) => {
     setForm((prev) => ({ ...prev, [field]: value }));
   };
+
+  const updateLifecycle = useCallback(
+    async (opportunityId: string, status: EmployerOpportunity["lifecycle_status"]) => {
+      if (!authHeader) {
+        router.replace("/login");
+        return;
+      }
+      setLifecycleUpdatingId(opportunityId);
+      setError(null);
+      setSuccess(null);
+      try {
+        const res = await fetch(apiUrl(`/api/v1/employer/opportunities/${opportunityId}/lifecycle`), {
+          method: "POST",
+          headers: {
+            ...authHeader,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ status }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(getApiErrorMessage(body, "Unable to update lifecycle"));
+        }
+        setSuccess(`Lifecycle updated to ${status}.`);
+        await refresh();
+      } catch (err) {
+        setError(getUnknownErrorMessage(err, "Unable to update lifecycle"));
+      } finally {
+        setLifecycleUpdatingId(null);
+      }
+    },
+    [authHeader, refresh, router],
+  );
+
+  const updatePipelineState = useCallback(
+    async (applicationId: string) => {
+      if (!authHeader) {
+        router.replace("/login");
+        return;
+      }
+      const nextState = pipelineDrafts[applicationId] || "applied";
+      setPipelineUpdatingId(applicationId);
+      setError(null);
+      setSuccess(null);
+      try {
+        const res = await fetch(apiUrl(`/api/v1/employer/applications/${applicationId}/pipeline`), {
+          method: "PATCH",
+          headers: {
+            ...authHeader,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ pipeline_state: nextState }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(getApiErrorMessage(body, "Unable to update pipeline state"));
+        }
+        setSuccess(`Application moved to ${nextState}.`);
+        await refresh();
+      } catch (err) {
+        setError(getUnknownErrorMessage(err, "Unable to update pipeline state"));
+      } finally {
+        setPipelineUpdatingId(null);
+      }
+    },
+    [authHeader, pipelineDrafts, refresh, router],
+  );
 
   const handleCreate = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -252,6 +352,9 @@ export default function EmployerDashboardPage() {
             { label: "Submitted", value: summary?.submitted_applications ?? 0 },
             { label: "Pending", value: summary?.pending_applications ?? 0 },
             { label: "Auto-filled", value: summary?.auto_filled_applications ?? 0 },
+            { label: "Shortlisted", value: summary?.shortlisted_applications ?? 0 },
+            { label: "Interview", value: summary?.interview_applications ?? 0 },
+            { label: "Rejected", value: summary?.rejected_applications ?? 0 },
           ].map((item) => (
             <article key={item.label} className="card-panel" style={{ padding: "0.9rem" }}>
               <p style={{ color: "var(--text-secondary)", fontWeight: 700 }}>{item.label}</p>
@@ -305,8 +408,10 @@ export default function EmployerDashboardPage() {
                     <th style={{ padding: "0.55rem" }}>Title</th>
                     <th style={{ padding: "0.55rem" }}>Type</th>
                     <th style={{ padding: "0.55rem" }}>Domain</th>
+                    <th style={{ padding: "0.55rem" }}>Lifecycle</th>
                     <th style={{ padding: "0.55rem" }}>Deadline</th>
                     <th style={{ padding: "0.55rem" }}>Applications</th>
+                    <th style={{ padding: "0.55rem" }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -315,8 +420,36 @@ export default function EmployerDashboardPage() {
                       <td style={{ padding: "0.55rem", fontWeight: 700 }}>{item.title}</td>
                       <td style={{ padding: "0.55rem" }}>{item.opportunity_type || "-"}</td>
                       <td style={{ padding: "0.55rem" }}>{item.domain || "-"}</td>
+                      <td style={{ padding: "0.55rem", fontWeight: 700 }}>{item.lifecycle_status}</td>
                       <td style={{ padding: "0.55rem" }}>{stableDate(item.deadline)}</td>
                       <td style={{ padding: "0.55rem" }}>{item.applications_count}</td>
+                      <td style={{ padding: "0.55rem" }}>
+                        <div style={{ display: "flex", gap: "0.45rem", alignItems: "center" }}>
+                          <select
+                            className="input-base"
+                            value={item.lifecycle_status}
+                            onChange={(event) => {
+                              void updateLifecycle(item.id, event.target.value as EmployerOpportunity["lifecycle_status"]);
+                            }}
+                            disabled={lifecycleUpdatingId === item.id || item.lifecycle_status === "closed"}
+                            style={{ minWidth: "124px" }}
+                          >
+                            <option value="draft">draft</option>
+                            <option value="published">published</option>
+                            <option value="paused">paused</option>
+                            <option value="closed">closed</option>
+                          </select>
+                          <a
+                            href={item.application_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="btn-secondary"
+                            style={{ textDecoration: "none", whiteSpace: "nowrap" }}
+                          >
+                            Open
+                          </a>
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -338,7 +471,9 @@ export default function EmployerDashboardPage() {
                     <th style={{ padding: "0.55rem" }}>Applicant</th>
                     <th style={{ padding: "0.55rem" }}>Email</th>
                     <th style={{ padding: "0.55rem" }}>Status</th>
+                    <th style={{ padding: "0.55rem" }}>Pipeline</th>
                     <th style={{ padding: "0.55rem" }}>Created</th>
+                    <th style={{ padding: "0.55rem" }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -348,7 +483,69 @@ export default function EmployerDashboardPage() {
                       <td style={{ padding: "0.55rem" }}>{row.applicant_name || "-"}</td>
                       <td style={{ padding: "0.55rem" }}>{row.applicant_email || "-"}</td>
                       <td style={{ padding: "0.55rem" }}>{row.status}</td>
+                      <td style={{ padding: "0.55rem" }}>
+                        <select
+                          className="input-base"
+                          value={pipelineDrafts[row.application_id] || row.pipeline_state || "applied"}
+                          onChange={(event) => {
+                            const value = event.target.value as EmployerApplication["pipeline_state"];
+                            setPipelineDrafts((prev) => ({ ...prev, [row.application_id]: value }));
+                          }}
+                          disabled={pipelineUpdatingId === row.application_id}
+                          style={{ minWidth: "124px" }}
+                        >
+                          <option value="applied">applied</option>
+                          <option value="shortlisted">shortlisted</option>
+                          <option value="interview">interview</option>
+                          <option value="rejected">rejected</option>
+                        </select>
+                      </td>
                       <td style={{ padding: "0.55rem" }}>{stableDate(row.created_at)}</td>
+                      <td style={{ padding: "0.55rem" }}>
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          onClick={() => {
+                            void updatePipelineState(row.application_id);
+                          }}
+                          disabled={pipelineUpdatingId === row.application_id}
+                          style={{ whiteSpace: "nowrap" }}
+                        >
+                          {pipelineUpdatingId === row.application_id ? "Saving..." : "Save Stage"}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+
+        <section className="card-panel" style={{ display: "grid", gap: "0.75rem" }}>
+          <h2 style={{ fontSize: "1.4rem" }}>Recruiter Audit Trail</h2>
+          {auditLogs.length === 0 ? (
+            <p style={{ color: "var(--text-secondary)", fontWeight: 600 }}>No audit events yet.</p>
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr style={{ textAlign: "left", borderBottom: "2px solid var(--border-subtle)" }}>
+                    <th style={{ padding: "0.55rem" }}>Time</th>
+                    <th style={{ padding: "0.55rem" }}>Action</th>
+                    <th style={{ padding: "0.55rem" }}>Entity</th>
+                    <th style={{ padding: "0.55rem" }}>Reference</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {auditLogs.map((row) => (
+                    <tr key={row.id} style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+                      <td style={{ padding: "0.55rem" }}>{stableDate(row.created_at)}</td>
+                      <td style={{ padding: "0.55rem", fontWeight: 700 }}>{row.action}</td>
+                      <td style={{ padding: "0.55rem" }}>{row.entity_type}</td>
+                      <td style={{ padding: "0.55rem" }}>
+                        {row.application_id || row.opportunity_id || row.entity_id || "-"}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
