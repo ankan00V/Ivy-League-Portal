@@ -78,6 +78,18 @@ type CreateOpportunityPayload = {
   deadline: string;
 };
 
+type EditOpportunityPayload = {
+  id: string;
+  title: string;
+  description: string;
+  application_url: string;
+  opportunity_type: string;
+  domain: string;
+  location: string;
+  eligibility: string;
+  deadline: string;
+};
+
 function stableDate(value?: string | null): string {
   if (!value) {
     return "-";
@@ -105,6 +117,8 @@ export default function EmployerDashboardPage() {
   const [lifecycleUpdatingId, setLifecycleUpdatingId] = useState<string | null>(null);
   const [pipelineUpdatingId, setPipelineUpdatingId] = useState<string | null>(null);
   const [pipelineDrafts, setPipelineDrafts] = useState<Record<string, EmployerApplication["pipeline_state"]>>({});
+  const [editingOpportunity, setEditingOpportunity] = useState<EditOpportunityPayload | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
   const [form, setForm] = useState<CreateOpportunityPayload>({
     title: "",
     description: "",
@@ -185,6 +199,29 @@ export default function EmployerDashboardPage() {
 
   const updateForm = <K extends keyof CreateOpportunityPayload>(field: K, value: CreateOpportunityPayload[K]) => {
     setForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const updateEditForm = <K extends keyof EditOpportunityPayload>(field: K, value: EditOpportunityPayload[K]) => {
+    setEditingOpportunity((prev) => {
+      if (!prev) {
+        return prev;
+      }
+      return { ...prev, [field]: value };
+    });
+  };
+
+  const openEditDrawer = (opportunity: EmployerOpportunity) => {
+    setEditingOpportunity({
+      id: opportunity.id,
+      title: opportunity.title,
+      description: opportunity.description,
+      application_url: opportunity.application_url,
+      opportunity_type: opportunity.opportunity_type || "",
+      domain: opportunity.domain || "",
+      location: opportunity.location || "",
+      eligibility: opportunity.eligibility || "",
+      deadline: stableDate(opportunity.deadline),
+    });
   };
 
   const updateLifecycle = useCallback(
@@ -307,6 +344,77 @@ export default function EmployerDashboardPage() {
     }
   };
 
+  const handleSaveEdit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!authHeader) {
+      router.replace("/login");
+      return;
+    }
+    if (!editingOpportunity) {
+      return;
+    }
+
+    const targetId = editingOpportunity.id;
+    const previous = opportunities.find((item) => item.id === targetId);
+    if (!previous) {
+      setError("Opportunity could not be found for editing.");
+      setEditingOpportunity(null);
+      return;
+    }
+
+    const optimistic: EmployerOpportunity = {
+      ...previous,
+      title: editingOpportunity.title.trim(),
+      description: editingOpportunity.description.trim(),
+      application_url: editingOpportunity.application_url.trim(),
+      opportunity_type: editingOpportunity.opportunity_type.trim() || previous.opportunity_type,
+      domain: editingOpportunity.domain.trim() || null,
+      location: editingOpportunity.location.trim() || null,
+      eligibility: editingOpportunity.eligibility.trim() || null,
+      deadline: editingOpportunity.deadline ? new Date(`${editingOpportunity.deadline}T23:59:59`).toISOString() : null,
+    };
+
+    setEditSaving(true);
+    setError(null);
+    setSuccess(null);
+    setOpportunities((rows) => rows.map((row) => (row.id === targetId ? optimistic : row)));
+
+    try {
+      const payload = {
+        title: optimistic.title,
+        description: optimistic.description,
+        application_url: optimistic.application_url,
+        opportunity_type: optimistic.opportunity_type || undefined,
+        domain: optimistic.domain || undefined,
+        location: optimistic.location || undefined,
+        eligibility: optimistic.eligibility || undefined,
+        deadline: optimistic.deadline ? new Date(optimistic.deadline).toISOString() : undefined,
+      };
+      const res = await fetch(apiUrl(`/api/v1/employer/opportunities/${targetId}`), {
+        method: "PATCH",
+        headers: {
+          ...authHeader,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(getApiErrorMessage(body, "Unable to update opportunity"));
+      }
+      const updated = body as EmployerOpportunity;
+      setOpportunities((rows) => rows.map((row) => (row.id === targetId ? updated : row)));
+      setEditingOpportunity(null);
+      setSuccess("Opportunity updated.");
+      await refresh();
+    } catch (err) {
+      setOpportunities((rows) => rows.map((row) => (row.id === targetId ? previous : row)));
+      setError(getUnknownErrorMessage(err, "Unable to update opportunity"));
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
   if (loading) {
     return (
       <main style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "var(--bg-base)" }}>
@@ -330,6 +438,7 @@ export default function EmployerDashboardPage() {
             </p>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+            <Link href="/employer/applications" className="btn-secondary">Manage Applications</Link>
             <Link href="/profile" className="btn-secondary">View Profile</Link>
             <button
               type="button"
@@ -448,6 +557,14 @@ export default function EmployerDashboardPage() {
                           >
                             Open
                           </a>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            onClick={() => openEditDrawer(item)}
+                            style={{ whiteSpace: "nowrap" }}
+                          >
+                            Edit
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -554,6 +671,121 @@ export default function EmployerDashboardPage() {
           )}
         </section>
       </div>
+
+      {editingOpportunity && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.25)",
+            display: "flex",
+            justifyContent: "flex-end",
+            zIndex: 60,
+          }}
+          onClick={() => {
+            if (!editSaving) {
+              setEditingOpportunity(null);
+            }
+          }}
+        >
+          <aside
+            className="card-panel"
+            style={{
+              width: "min(520px, 100%)",
+              height: "100%",
+              borderRadius: 0,
+              borderLeft: "2px solid var(--border-subtle)",
+              overflowY: "auto",
+              padding: "1rem",
+            }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2 style={{ fontSize: "1.4rem", marginBottom: "0.75rem" }}>Edit Opportunity</h2>
+            <form onSubmit={handleSaveEdit} style={{ display: "grid", gap: "0.65rem" }}>
+              <label style={{ fontWeight: 700 }}>Title</label>
+              <input
+                className="input-base"
+                value={editingOpportunity.title}
+                onChange={(event) => updateEditForm("title", event.target.value)}
+                required
+              />
+              <label style={{ fontWeight: 700 }}>Description</label>
+              <textarea
+                className="input-base"
+                rows={5}
+                value={editingOpportunity.description}
+                onChange={(event) => updateEditForm("description", event.target.value)}
+                required
+              />
+              <label style={{ fontWeight: 700 }}>Application URL</label>
+              <input
+                className="input-base"
+                value={editingOpportunity.application_url}
+                onChange={(event) => updateEditForm("application_url", event.target.value)}
+                required
+              />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.6rem" }}>
+                <div>
+                  <label style={{ fontWeight: 700 }}>Type</label>
+                  <input
+                    className="input-base"
+                    value={editingOpportunity.opportunity_type}
+                    onChange={(event) => updateEditForm("opportunity_type", event.target.value)}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontWeight: 700 }}>Domain</label>
+                  <input
+                    className="input-base"
+                    value={editingOpportunity.domain}
+                    onChange={(event) => updateEditForm("domain", event.target.value)}
+                  />
+                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.6rem" }}>
+                <div>
+                  <label style={{ fontWeight: 700 }}>Location</label>
+                  <input
+                    className="input-base"
+                    value={editingOpportunity.location}
+                    onChange={(event) => updateEditForm("location", event.target.value)}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontWeight: 700 }}>Deadline</label>
+                  <input
+                    type="date"
+                    className="input-base"
+                    value={editingOpportunity.deadline}
+                    onChange={(event) => updateEditForm("deadline", event.target.value)}
+                  />
+                </div>
+              </div>
+              <label style={{ fontWeight: 700 }}>Eligibility</label>
+              <input
+                className="input-base"
+                value={editingOpportunity.eligibility}
+                onChange={(event) => updateEditForm("eligibility", event.target.value)}
+              />
+              <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", marginTop: "0.5rem" }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => setEditingOpportunity(null)}
+                  disabled={editSaving}
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="btn-primary" disabled={editSaving}>
+                  {editSaving ? "Saving..." : "Save Changes"}
+                </button>
+              </div>
+            </form>
+          </aside>
+        </div>
+      )}
     </main>
   );
 }

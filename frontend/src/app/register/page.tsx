@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import React, { useMemo, useState } from "react";
 
@@ -232,8 +233,14 @@ export default function RegisterPage() {
           }}
         >
           <BrandLogo size="md" />
-          <div style={{ borderRadius: "var(--radius-md)", overflow: "hidden", border: "2px solid rgba(0,0,0,0.12)", background: "#fff" }}>
-            <img src={visual.image} alt="Signup visual" style={{ width: "100%", height: "420px", objectFit: "cover", display: "block" }} />
+          <div style={{ borderRadius: "var(--radius-md)", overflow: "hidden", border: "2px solid rgba(0,0,0,0.12)", background: "#fff", position: "relative", height: "420px" }}>
+            <Image
+              src={visual.image}
+              alt="Signup visual"
+              fill
+              sizes="(max-width: 1100px) 100vw, 50vw"
+              style={{ objectFit: "cover", display: "block" }}
+            />
           </div>
           <div>
             <h2 style={{ fontSize: "2rem", marginBottom: "0.4rem", color: "#111" }}>{visual.heading}</h2>

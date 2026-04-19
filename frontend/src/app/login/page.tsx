@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import React, { useEffect, useMemo, useState } from "react";
 
@@ -278,12 +279,16 @@ export default function LoginPage() {
               overflow: "hidden",
               border: "2px solid rgba(0,0,0,0.12)",
               background: "#fff",
+              position: "relative",
+              height: "420px",
             }}
           >
-            <img
+            <Image
               src={visual.image}
               alt="Auth visual"
-              style={{ width: "100%", height: "420px", objectFit: "cover", display: "block" }}
+              fill
+              sizes="(max-width: 1100px) 100vw, 50vw"
+              style={{ objectFit: "cover", display: "block" }}
             />
           </div>
           <div>

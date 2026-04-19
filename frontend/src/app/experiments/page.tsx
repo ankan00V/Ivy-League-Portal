@@ -78,7 +78,8 @@ type DailyAggregate = {
   ranking_mode: string;
   experiment_key: string;
   experiment_variant: string;
-  measures: Record<string, number>;
+  measures?: Record<string, number>;
+  metrics?: Record<string, number>;
 };
 
 type FunnelAggregate = {
@@ -86,13 +87,39 @@ type FunnelAggregate = {
   experiment_key: string;
   ranking_mode: string;
   experiment_variant: string;
-  impressions: number;
-  clicks: number;
-  saves: number;
-  applies: number;
-  ctr: number;
-  save_rate: number;
+  impressions?: number;
+  clicks?: number;
+  saves?: number;
+  applies?: number;
+  ctr?: number;
+  save_rate?: number;
+  apply_rate?: number;
+  stage_counts?: Record<string, number>;
+  rates?: Record<string, number>;
+};
+
+type CohortAggregate = {
+  cohort_date: string;
+  days_since_cohort: number;
+  users_in_cohort: number;
+  active_users: number;
+  applying_users: number;
+  retention_rate: number;
   apply_rate: number;
+};
+
+type FeatureStoreRow = {
+  row_key: string;
+  date: string;
+  user_id?: string | null;
+  opportunity_id?: string | null;
+  ranking_mode?: string | null;
+  experiment_key?: string | null;
+  experiment_variant?: string | null;
+  rank_position?: number | null;
+  match_score?: number | null;
+  features?: Record<string, unknown>;
+  labels?: Record<string, unknown>;
 };
 
 function formatPct(value: number | null | undefined): string {
@@ -118,6 +145,35 @@ function formatNum(value: number | null | undefined, digits = 3): string {
   return value.toFixed(digits);
 }
 
+function readMeasure(row: DailyAggregate, key: string): number | undefined {
+  return row.measures?.[key] ?? row.metrics?.[key];
+}
+
+function readStageCount(row: FunnelAggregate, key: "impression" | "click" | "save" | "apply"): number {
+  const map = row.stage_counts || {};
+  if (key === "impression") {
+    return Number(row.impressions ?? map.impression ?? 0);
+  }
+  if (key === "click") {
+    return Number(row.clicks ?? map.click ?? 0);
+  }
+  if (key === "save") {
+    return Number(row.saves ?? map.save ?? 0);
+  }
+  return Number(row.applies ?? map.apply ?? 0);
+}
+
+function readRate(row: FunnelAggregate, key: "ctr" | "save_rate" | "apply_rate"): number {
+  const map = row.rates || {};
+  if (key === "ctr") {
+    return Number(row.ctr ?? map.click_from_impression ?? 0);
+  }
+  if (key === "save_rate") {
+    return Number(row.save_rate ?? map.save_from_click ?? 0);
+  }
+  return Number(row.apply_rate ?? map.apply_from_click ?? 0);
+}
+
 function reportSummary(report?: ExperimentReport) {
   if (!report) return null;
   const control = report.variants.find((variant) => variant.is_control) ?? report.variants[0];
@@ -139,10 +195,13 @@ function reportSummary(report?: ExperimentReport) {
 
 export default function ExperimentsPage() {
   const [days, setDays] = useState<number>(30);
+  const [analyticsTrafficType, setAnalyticsTrafficType] = useState<"real" | "simulated">("real");
   const [reports, setReports] = useState<ExperimentReport[]>([]);
   const [sideBySide, setSideBySide] = useState<SideBySideReport | null>(null);
   const [dailyAggregates, setDailyAggregates] = useState<DailyAggregate[]>([]);
   const [funnelAggregates, setFunnelAggregates] = useState<FunnelAggregate[]>([]);
+  const [cohortAggregates, setCohortAggregates] = useState<CohortAggregate[]>([]);
+  const [featureRows, setFeatureRows] = useState<FeatureStoreRow[]>([]);
   const [analyticsError, setAnalyticsError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -150,6 +209,70 @@ export default function ExperimentsPage() {
   const sortedReports = useMemo(() => {
     return [...reports].sort((a, b) => a.experiment_key.localeCompare(b.experiment_key));
   }, [reports]);
+
+  const retentionByDay = useMemo(() => {
+    const grouped: Record<number, CohortAggregate[]> = {};
+    for (const row of cohortAggregates) {
+      if (!grouped[row.days_since_cohort]) {
+        grouped[row.days_since_cohort] = [];
+      }
+      grouped[row.days_since_cohort].push(row);
+    }
+    return [0, 1, 3, 7, 14, 30].map((day) => {
+      const rows = grouped[day] || [];
+      if (rows.length === 0) {
+        return { day, retention_rate: null as number | null, apply_rate: null as number | null };
+      }
+      const retention = rows.reduce((sum, row) => sum + Number(row.retention_rate || 0), 0) / rows.length;
+      const applyRate = rows.reduce((sum, row) => sum + Number(row.apply_rate || 0), 0) / rows.length;
+      return { day, retention_rate: retention, apply_rate: applyRate };
+    });
+  }, [cohortAggregates]);
+
+  const featureQuality = useMemo(() => {
+    const totalRows = featureRows.length;
+    if (totalRows === 0) {
+      return {
+        totalRows,
+        scoredCoverage: 0,
+        labeledCoverage: 0,
+        avgFeatureCount: 0,
+        missingRankPosition: 0,
+        rankingModes: [] as string[],
+      };
+    }
+    let scoredRows = 0;
+    let labeledRows = 0;
+    let featureCountTotal = 0;
+    let missingRank = 0;
+    const modeSet = new Set<string>();
+
+    for (const row of featureRows) {
+      if (typeof row.match_score === "number") {
+        scoredRows += 1;
+      }
+      const labels = row.labels || {};
+      if (Object.keys(labels).length > 0) {
+        labeledRows += 1;
+      }
+      if (!row.rank_position || row.rank_position <= 0) {
+        missingRank += 1;
+      }
+      const features = row.features || {};
+      featureCountTotal += Object.keys(features).length;
+      if (row.ranking_mode) {
+        modeSet.add(row.ranking_mode);
+      }
+    }
+    return {
+      totalRows,
+      scoredCoverage: scoredRows / totalRows,
+      labeledCoverage: labeledRows / totalRows,
+      avgFeatureCount: featureCountTotal / totalRows,
+      missingRankPosition: missingRank,
+      rankingModes: [...modeSet].sort(),
+    };
+  }, [featureRows]);
 
   useEffect(() => {
     const load = async () => {
@@ -164,6 +287,8 @@ export default function ExperimentsPage() {
           setSideBySide(null);
           setDailyAggregates([]);
           setFunnelAggregates([]);
+          setCohortAggregates([]);
+          setFeatureRows([]);
           return;
         }
 
@@ -195,11 +320,20 @@ export default function ExperimentsPage() {
         setReports(Array.isArray(reportsData) ? (reportsData as ExperimentReport[]) : []);
         setSideBySide((sideBySideData as SideBySideReport) ?? null);
 
-        const [dailyRes, funnelRes] = await Promise.all([
-          fetch(apiUrl(`/api/v1/analytics/warehouse/daily?limit=50&traffic_type=real`), {
+        const [dailyRes, funnelRes, cohortRes, featureRes] = await Promise.all([
+          fetch(apiUrl(`/api/v1/analytics/warehouse/daily?limit=50&traffic_type=${analyticsTrafficType}`), {
             headers: { Authorization: `Bearer ${token}` },
           }),
-          fetch(apiUrl(`/api/v1/analytics/warehouse/funnels?limit=50&traffic_type=real`), {
+          fetch(apiUrl(`/api/v1/analytics/warehouse/funnels?limit=50&traffic_type=${analyticsTrafficType}`), {
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+          fetch(
+            apiUrl(`/api/v1/analytics/warehouse/cohorts?limit=120&max_days_since_cohort=30&traffic_type=${analyticsTrafficType}`),
+            {
+              headers: { Authorization: `Bearer ${token}` },
+            },
+          ),
+          fetch(apiUrl(`/api/v1/analytics/feature-store/rows?limit=120&traffic_type=${analyticsTrafficType}`), {
             headers: { Authorization: `Bearer ${token}` },
           }),
         ]);
@@ -218,7 +352,21 @@ export default function ExperimentsPage() {
           setFunnelAggregates([]);
         }
 
-        if (!dailyRes.ok || !funnelRes.ok) {
+        if (cohortRes.ok) {
+          const cohortData = await cohortRes.json().catch(() => []);
+          setCohortAggregates(Array.isArray(cohortData) ? (cohortData as CohortAggregate[]) : []);
+        } else {
+          setCohortAggregates([]);
+        }
+
+        if (featureRes.ok) {
+          const featureData = await featureRes.json().catch(() => []);
+          setFeatureRows(Array.isArray(featureData) ? (featureData as FeatureStoreRow[]) : []);
+        } else {
+          setFeatureRows([]);
+        }
+
+        if (!dailyRes.ok || !funnelRes.ok || !cohortRes.ok || !featureRes.ok) {
           setAnalyticsError("Warehouse analytics are admin-only or not initialized yet.");
         }
       } catch (err) {
@@ -228,13 +376,15 @@ export default function ExperimentsPage() {
         setSideBySide(null);
         setDailyAggregates([]);
         setFunnelAggregates([]);
+        setCohortAggregates([]);
+        setFeatureRows([]);
       } finally {
         setLoading(false);
       }
     };
 
     void load();
-  }, [days]);
+  }, [days, analyticsTrafficType]);
 
   return (
     <div
@@ -271,7 +421,7 @@ export default function ExperimentsPage() {
             </div>
           </div>
 
-          <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
+          <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", flexWrap: "wrap" }}>
             <label style={{ fontWeight: 700, color: "var(--text-muted)", fontSize: "0.85rem" }}>Window</label>
             <select
               value={days}
@@ -290,6 +440,23 @@ export default function ExperimentsPage() {
               <option value={30}>30 days</option>
               <option value={90}>90 days</option>
               <option value={180}>180 days</option>
+            </select>
+            <label style={{ fontWeight: 700, color: "var(--text-muted)", fontSize: "0.85rem" }}>Traffic</label>
+            <select
+              value={analyticsTrafficType}
+              onChange={(e) => setAnalyticsTrafficType(e.target.value as "real" | "simulated")}
+              style={{
+                background: "var(--bg-surface)",
+                border: "2px solid var(--border-subtle)",
+                borderRadius: "var(--radius-sm)",
+                padding: "0.6rem 0.75rem",
+                color: "var(--text-primary)",
+                fontWeight: 700,
+                boxShadow: "var(--shadow-sm)",
+              }}
+            >
+              <option value="real">real</option>
+              <option value="simulated">simulated</option>
             </select>
           </div>
         </motion.header>
@@ -406,7 +573,7 @@ export default function ExperimentsPage() {
             <div style={{ marginBottom: "0.8rem" }}>
               <div style={{ fontWeight: 900, letterSpacing: "-0.01em" }}>Analytics Warehouse Snapshot</div>
               <div style={{ color: "var(--text-muted)", fontWeight: 700, fontSize: "0.9rem" }}>
-                Daily aggregates and conversion funnels for real traffic.
+                Daily aggregates and conversion funnels for {analyticsTrafficType} traffic.
               </div>
               {analyticsError ? (
                 <div style={{ color: "#b45309", fontWeight: 700, marginTop: "0.35rem" }}>{analyticsError}</div>
@@ -444,8 +611,8 @@ export default function ExperimentsPage() {
                           exp {row.experiment_key}:{row.experiment_variant}
                         </div>
                         <div style={{ fontWeight: 700, fontSize: "0.84rem", marginTop: "0.2rem" }}>
-                          ctr {formatPct(row.measures?.ctr)} · apply {formatPct(row.measures?.apply_rate)} · saves{" "}
-                          {formatPct(row.measures?.save_rate)}
+                          ctr {formatPct(readMeasure(row, "ctr"))} · apply {formatPct(readMeasure(row, "apply_rate"))} · saves{" "}
+                          {formatPct(readMeasure(row, "save_rate"))}
                         </div>
                       </div>
                     ))}
@@ -480,11 +647,113 @@ export default function ExperimentsPage() {
                           {row.date} · {row.ranking_mode} · {row.experiment_variant}
                         </div>
                         <div style={{ color: "var(--text-muted)", fontWeight: 700, fontSize: "0.82rem" }}>
-                          imp {row.impressions} · click {row.clicks} · save {row.saves} · apply {row.applies}
+                          imp {readStageCount(row, "impression")} · click {readStageCount(row, "click")} · save {readStageCount(row, "save")} · apply {readStageCount(row, "apply")}
                         </div>
                         <div style={{ fontWeight: 700, fontSize: "0.84rem", marginTop: "0.2rem" }}>
-                          ctr {formatPct(row.ctr)} · save {formatPct(row.save_rate)} · apply {formatPct(row.apply_rate)}
+                          ctr {formatPct(readRate(row, "ctr"))} · save {formatPct(readRate(row, "save_rate"))} · apply {formatPct(readRate(row, "apply_rate"))}
                         </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+        ) : null}
+
+        {!loading && !error ? (
+          <section
+            style={{
+              background: "var(--bg-surface)",
+              border: "2px solid var(--border-subtle)",
+              borderRadius: "var(--radius-sm)",
+              boxShadow: "var(--shadow-sm)",
+              padding: "1.1rem 1.25rem",
+              marginBottom: "1.25rem",
+            }}
+          >
+            <div style={{ marginBottom: "0.8rem" }}>
+              <div style={{ fontWeight: 900, letterSpacing: "-0.01em" }}>Cohorts + Feature Store Quality</div>
+              <div style={{ color: "var(--text-muted)", fontWeight: 700, fontSize: "0.9rem" }}>
+                Retention behavior by cohort day and feature-store health for ranking model training.
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gap: "1rem", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))" }}>
+              <div
+                style={{
+                  background: "var(--bg-surface-hover)",
+                  border: "2px solid var(--border-subtle)",
+                  borderRadius: "var(--radius-sm)",
+                  padding: "0.9rem",
+                }}
+              >
+                <div style={{ fontWeight: 900, marginBottom: "0.6rem" }}>Retention by Cohort Day</div>
+                {cohortAggregates.length === 0 ? (
+                  <div style={{ color: "var(--text-muted)", fontWeight: 700 }}>No cohort rows yet.</div>
+                ) : (
+                  <div style={{ display: "grid", gap: "0.45rem" }}>
+                    {retentionByDay.map((row) => (
+                      <div
+                        key={`retention-${row.day}`}
+                        style={{
+                          border: "1px solid var(--border-subtle)",
+                          borderRadius: "var(--radius-sm)",
+                          padding: "0.55rem 0.65rem",
+                          background: "var(--bg-surface)",
+                          display: "flex",
+                          justifyContent: "space-between",
+                          gap: "0.7rem",
+                        }}
+                      >
+                        <div style={{ fontWeight: 800 }}>Day {row.day}</div>
+                        <div style={{ color: "var(--text-muted)", fontWeight: 700 }}>
+                          retention {formatPct(row.retention_rate)} · apply {formatPct(row.apply_rate)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div
+                style={{
+                  background: "var(--bg-surface-hover)",
+                  border: "2px solid var(--border-subtle)",
+                  borderRadius: "var(--radius-sm)",
+                  padding: "0.9rem",
+                }}
+              >
+                <div style={{ fontWeight: 900, marginBottom: "0.6rem" }}>Feature Store Quality Cards</div>
+                {featureRows.length === 0 ? (
+                  <div style={{ color: "var(--text-muted)", fontWeight: 700 }}>No feature-store rows yet.</div>
+                ) : (
+                  <div style={{ display: "grid", gap: "0.45rem" }}>
+                    {[
+                      { label: "Rows", value: String(featureQuality.totalRows) },
+                      { label: "Match Score Coverage", value: formatPct(featureQuality.scoredCoverage) },
+                      { label: "Label Coverage", value: formatPct(featureQuality.labeledCoverage) },
+                      { label: "Avg Feature Count", value: formatNum(featureQuality.avgFeatureCount, 1) },
+                      { label: "Missing Rank Position", value: String(featureQuality.missingRankPosition) },
+                      {
+                        label: "Ranking Modes",
+                        value: featureQuality.rankingModes.length > 0 ? featureQuality.rankingModes.join(", ") : "none",
+                      },
+                    ].map((card) => (
+                      <div
+                        key={card.label}
+                        style={{
+                          border: "1px solid var(--border-subtle)",
+                          borderRadius: "var(--radius-sm)",
+                          padding: "0.55rem 0.65rem",
+                          background: "var(--bg-surface)",
+                          display: "flex",
+                          justifyContent: "space-between",
+                          gap: "0.7rem",
+                        }}
+                      >
+                        <div style={{ fontWeight: 800 }}>{card.label}</div>
+                        <div style={{ color: "var(--text-muted)", fontWeight: 700, textAlign: "right" }}>{card.value}</div>
                       </div>
                     ))}
                   </div>
