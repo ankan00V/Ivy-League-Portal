@@ -2,6 +2,7 @@ import sys
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
@@ -178,6 +179,43 @@ class TestUserRankingSummary(unittest.TestCase):
         self.assertEqual(profile.total_work_experience, "1.5 years")
         self.assertIn("Machine Learning", profile.skills)
         self.assertIn("Lovely Professional University", profile.education)
+
+
+class TestOnboardingPromptSeen(unittest.IsolatedAsyncioTestCase):
+    async def test_mark_onboarding_seen_sets_flag_and_timestamp(self) -> None:
+        profile = SimpleNamespace(
+            onboarding_prompt_seen=False,
+            onboarding_first_seen_at=None,
+            save=AsyncMock(),
+        )
+        current_user = SimpleNamespace(id="user-1")
+
+        with patch.object(users_endpoint, "_get_or_create_profile_for_user", new=AsyncMock(return_value=profile)):
+            response = await users_endpoint.mark_onboarding_seen(current_user=current_user)
+
+        self.assertTrue(profile.onboarding_prompt_seen)
+        self.assertIsNotNone(profile.onboarding_first_seen_at)
+        profile.save.assert_awaited_once()
+        self.assertTrue(response.onboarding_prompt_seen)
+        self.assertIsNotNone(response.onboarding_first_seen_at)
+
+    async def test_mark_onboarding_seen_is_idempotent_when_already_seen(self) -> None:
+        fixed_timestamp = users_endpoint.datetime.now(users_endpoint.timezone.utc)
+        profile = SimpleNamespace(
+            onboarding_prompt_seen=True,
+            onboarding_first_seen_at=fixed_timestamp,
+            save=AsyncMock(),
+        )
+        current_user = SimpleNamespace(id="user-2")
+
+        with patch.object(users_endpoint, "_get_or_create_profile_for_user", new=AsyncMock(return_value=profile)):
+            response = await users_endpoint.mark_onboarding_seen(current_user=current_user)
+
+        self.assertTrue(profile.onboarding_prompt_seen)
+        self.assertEqual(profile.onboarding_first_seen_at, fixed_timestamp)
+        profile.save.assert_not_awaited()
+        self.assertTrue(response.onboarding_prompt_seen)
+        self.assertEqual(response.onboarding_first_seen_at, fixed_timestamp)
 
 
 if __name__ == "__main__":

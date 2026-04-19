@@ -721,7 +721,7 @@ async def mark_onboarding_seen(
     Marks that onboarding has been shown once for this user.
     Used to prevent forcing onboarding on every subsequent login.
     """
-    profile = await _get_or_create_profile(current_user)
+    profile = await _get_or_create_profile_for_user(current_user)
     if not bool(profile.onboarding_prompt_seen):
         profile.onboarding_prompt_seen = True
         if profile.onboarding_first_seen_at is None:

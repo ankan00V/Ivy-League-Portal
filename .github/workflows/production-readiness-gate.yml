@@ -1,0 +1,120 @@
+name: Production Readiness Gate
+
+on:
+  pull_request:
+  push:
+    branches: ["main", "master"]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  security-and-policy:
+    name: Security and Policy Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Scan for hardcoded secrets
+        run: python backend/scripts/check_secret_patterns.py
+
+      - name: Check duplicate artifact files
+        run: python backend/scripts/check_duplicate_artifacts.py
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  auth-critical-regressions:
+    name: Auth and Onboarding Regressions
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: security-and-policy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Run auth and onboarding tests
+        run: |
+          python -m unittest backend.tests.test_auth_oauth -v
+          python -m unittest backend.tests.test_users_ranking_summary -v
+
+  recommendation-regressions:
+    name: Recommendation and Analytics Regressions
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: security-and-policy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Run recommendation and analytics tests
+        run: |
+          python -m unittest backend.tests.test_recommendation_service -v
+          python -m unittest backend.tests.test_experiment_analytics_service -v
+
+  frontend-production-readiness:
+    name: Frontend Lint and Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: auth-critical-regressions
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Lint frontend
+        run: npm run lint
+
+      - name: Build frontend
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: npm run build
