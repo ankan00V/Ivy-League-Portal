@@ -140,7 +140,7 @@ class TestRecommendationService(unittest.IsolatedAsyncioTestCase):
                 ),
             ),
             patch.object(service, "_build_behavior_map", new=AsyncMock(return_value={"domain": {}, "type": {}})),
-            patch("app.services.recommendation_service.learned_ranker.feature_importance", return_value=[]),
+            patch("app.services.recommendation_service.learned_ranker.feature_importance", return_value=[], create=True),
             patch("app.services.recommendation_service.learned_ranker.score", return_value=None),
         ):
             ranked, meta = await service.rank(
