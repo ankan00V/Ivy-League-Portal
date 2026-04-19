@@ -3,9 +3,10 @@ import Sidebar from "@/components/Sidebar";
 import AskAIPanel from "@/components/AskAIPanel";
 import React, { startTransition, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { MapPin, Calendar, ExternalLink, Send, Bookmark } from "lucide-react";
+import { MapPin, Calendar, Send, Bookmark } from "lucide-react";
 import Image from "next/image";
 import { apiUrl } from "@/lib/api";
+import { getAccessToken } from "@/lib/auth-session";
 import { logTrackedOpportunityEvent, useOpportunityFeedImpressions } from "@/lib/opportunity-feed-tracker";
 
 interface Opportunity {
@@ -72,7 +73,7 @@ export default function OpportunitiesPage() {
     }, [opportunities]);
 
     const triggerLiveRefresh = useEffectEvent(async () => {
-        const token = localStorage.getItem("access_token");
+        const token = getAccessToken();
         if (!token) {
             return;
         }
@@ -90,7 +91,7 @@ export default function OpportunitiesPage() {
 
     const fetchOpportunities = useEffectEvent(async () => {
         try {
-            const token = localStorage.getItem("access_token");
+            const token = getAccessToken();
             if (token) {
                 const personalizedRes = await fetch(
                     apiUrl("/api/v1/opportunities/recommended/me?limit=100&ranking_mode=ab"),
@@ -264,10 +265,16 @@ export default function OpportunitiesPage() {
     };
 
     const handleApply = async (opportunity: Opportunity) => {
-        const token = localStorage.getItem("access_token");
+        const token = getAccessToken();
         if (!token) {
             setNotice("Sign in to use one-click application.");
             return;
+        }
+
+        try {
+            await logOpportunityEvent(opportunity, "click");
+        } catch {
+            // Best effort. Application flow should continue even if click telemetry fails.
         }
 
         setApplyingId(opportunity.id);
@@ -295,7 +302,15 @@ export default function OpportunitiesPage() {
             if (!res.ok) {
                 throw new Error(data.detail || "Application failed");
             }
-            setNotice("Application submitted successfully.");
+            setNotice("Saved to your Applications. Redirecting...");
+            if (typeof window !== "undefined") {
+                if (opportunity.url) {
+                    window.location.assign(opportunity.url);
+                    return;
+                }
+                setNotice("Saved to your Applications.");
+                return;
+            }
         } catch (error: unknown) {
             setNotice(error instanceof Error ? error.message : "Could not submit application.");
         } finally {
@@ -553,16 +568,6 @@ export default function OpportunitiesPage() {
                                 <Bookmark size={14} />
                                 {savedOpportunityIds[opp.id] ? "Saved" : "Save"}
                             </button>
-                            <a
-                                href={opp.url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="btn-secondary"
-                                style={{ padding: "0.7rem 0.95rem", fontSize: "0.9rem", display: "flex", alignItems: "center", gap: "0.3rem", border: "2px solid var(--border-subtle)" }}
-                                onClick={() => void logOpportunityEvent(opp, "click")}
-                            >
-                                Event Page <ExternalLink size={14} />
-                            </a>
                         </div>
                     </div>
                 </div>
@@ -738,16 +743,6 @@ export default function OpportunitiesPage() {
                             <Bookmark size={14} />
                             {savedOpportunityIds[opp.id] ? "Saved" : "Save"}
                         </button>
-                        <a
-                            href={opp.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="btn-secondary"
-                            style={{ padding: "0.7rem 0.95rem", fontSize: "0.9rem", display: "flex", alignItems: "center", gap: "0.3rem", border: "2px solid var(--border-subtle)" }}
-                            onClick={() => void logOpportunityEvent(opp, "click")}
-                        >
-                            Job Page <ExternalLink size={14} />
-                        </a>
                     </div>
                 </div>
             </motion.article>

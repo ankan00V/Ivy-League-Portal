@@ -155,6 +155,7 @@ test.describe("Opportunity interaction contracts", () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => {
       localStorage.setItem("access_token", "test-token");
+      localStorage.setItem("access_token_expires_at", String(Date.now() + 60 * 60 * 1000));
     });
   });
 
@@ -178,7 +179,7 @@ test.describe("Opportunity interaction contracts", () => {
       )
       .toBeTruthy();
 
-    await page.getByRole("link", { name: /Job Page|Event Page/i }).first().click();
+    await page.getByRole("button", { name: /Apply|Join/i }).first().click();
 
     await expect
       .poll(() =>
