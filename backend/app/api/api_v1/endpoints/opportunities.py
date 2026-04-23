@@ -58,6 +58,7 @@ class RecommendedOpportunityResponse(OpportunityResponse):
     ranking_mode: Optional[str] = None
     experiment_key: Optional[str] = None
     experiment_variant: Optional[str] = None
+    feature_importance_top: Optional[list[dict[str, Any]]] = None
 
 
 class InteractionEventCreate(BaseModel):
@@ -76,7 +77,7 @@ class InteractionEventCreate(BaseModel):
 
 class AskAIRequest(BaseModel):
     query: str = Field(min_length=2)
-    top_k: int = 8
+    top_k: Optional[int] = Field(default=None, ge=1, le=30)
 
 
 class AskAIFeedbackRequest(BaseModel):
@@ -87,6 +88,8 @@ class AskAIFeedbackRequest(BaseModel):
     citations: list[dict[str, Any]] = Field(default_factory=list)
     surface: str = Field(default="opportunities_page", min_length=1)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    rag_template_label: Optional[str] = None
+    rag_template_version_id: Optional[str] = None
 
 
 class RankingEvaluationRequest(BaseModel):
@@ -136,6 +139,7 @@ def _to_recommended_response(payload: dict[str, Any]) -> RecommendedOpportunityR
         ranking_mode=payload.get("ranking_mode"),
         experiment_key=payload.get("experiment_key"),
         experiment_variant=payload.get("experiment_variant"),
+        feature_importance_top=payload.get("feature_importance_top"),
     )
 
 
@@ -148,7 +152,14 @@ def _activity_sort_key(opportunity: Opportunity) -> tuple[datetime, datetime]:
 def _filter_active_opportunities(opportunities: list[Opportunity]) -> list[Opportunity]:
     from app.services.scraper import is_opportunity_active
 
-    active = [opportunity for opportunity in opportunities if is_opportunity_active(opportunity)]
+    active = []
+    for opportunity in opportunities:
+        lifecycle = (opportunity.lifecycle_status or "published").strip().lower()
+        if lifecycle not in {"published"}:
+            continue
+        if not is_opportunity_active(opportunity):
+            continue
+        active.append(opportunity)
     active.sort(key=_activity_sort_key, reverse=True)
     return active
 
@@ -243,7 +254,7 @@ async def read_opportunities(
 @router.get("/recommended/me", response_model=list[RecommendedOpportunityResponse])
 async def get_personalized_recommendations(
     limit: int = 10,
-    ranking_mode: Literal["baseline", "semantic", "ml", "ab"] = "semantic",
+    ranking_mode: Literal["baseline", "semantic", "ml", "ab"] = "ml",
     query: Optional[str] = None,
     current_user: User = Depends(get_current_active_user),
 ) -> Any:
@@ -337,7 +348,7 @@ async def get_personalized_recommendations(
 async def get_smart_shortlist(
     limit: int = 10,
     min_score: float = 35.0,
-    ranking_mode: Literal["baseline", "semantic", "ml", "ab"] = "semantic",
+    ranking_mode: Literal["baseline", "semantic", "ml", "ab"] = "ml",
     query: Optional[str] = None,
     current_user: User = Depends(get_current_active_user),
 ) -> Any:
@@ -539,7 +550,13 @@ async def ask_ai_shortlist(
     started_at = time.perf_counter()
     try:
         profile = await _get_or_create_profile(current_user.id)
-        result = await rag_service.ask(query=request.query, top_k=request.top_k, profile=profile)
+        result = await rag_service.ask(
+            query=request.query,
+            top_k=request.top_k,
+            profile=profile,
+            user_id=current_user.id,
+        )
+        governance = dict(result.get("governance") or {})
         await ranking_request_telemetry_service.log(
             request_kind="ask_ai",
             surface="ask_ai",
@@ -547,6 +564,10 @@ async def ask_ai_shortlist(
             success=True,
             user_id=current_user.id,
             results_count=len(result.get("results") or []),
+            experiment_key=(governance.get("experiment_key") or "ask_ai_rag_template"),
+            experiment_variant=(governance.get("experiment_variant") or governance.get("template_label")),
+            rag_template_label=governance.get("template_label"),
+            rag_template_version_id=governance.get("template_version_id"),
             traffic_type="real",
         )
         return result
@@ -568,15 +589,35 @@ async def log_ask_ai_feedback(
     payload: AskAIFeedbackRequest,
     current_user: User = Depends(get_current_active_user),
 ) -> Any:
+    metadata = dict(payload.metadata or {})
+    rag_template_label = (
+        (payload.rag_template_label or "").strip()
+        or str(metadata.get("rag_template_label") or "").strip()
+        or str(metadata.get("template_label") or "").strip()
+        or None
+    )
+    rag_template_version_id = (
+        (payload.rag_template_version_id or "").strip()
+        or str(metadata.get("rag_template_version_id") or "").strip()
+        or str(metadata.get("template_version_id") or "").strip()
+        or None
+    )
+    if rag_template_label and "rag_template_label" not in metadata:
+        metadata["rag_template_label"] = rag_template_label
+    if rag_template_version_id and "rag_template_version_id" not in metadata:
+        metadata["rag_template_version_id"] = rag_template_version_id
+
     event = RAGFeedbackEvent(
         user_id=current_user.id,
         request_id=payload.request_id,
         query=payload.query,
         feedback=payload.feedback,
+        rag_template_label=rag_template_label,
+        rag_template_version_id=rag_template_version_id,
         response_summary=payload.response_summary,
         citations=payload.citations,
         surface=payload.surface,
-        metadata=payload.metadata,
+        metadata=metadata,
     )
     await event.insert()
     return {"status": "ok", "request_id": payload.request_id, "feedback": payload.feedback}

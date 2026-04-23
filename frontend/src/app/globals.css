@@ -270,6 +270,31 @@ button {
   animation: fadeUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+@keyframes vvSkeletonPulse {
+  0% {
+    opacity: 0.58;
+  }
+
+  50% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0.58;
+  }
+}
+
+.vv-skeleton {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--bg-surface-hover) 86%, white 14%) 0%,
+    color-mix(in srgb, var(--bg-surface-hover) 72%, white 28%) 50%,
+    color-mix(in srgb, var(--bg-surface-hover) 86%, white 14%) 100%
+  );
+  background-size: 200% 100%;
+  animation: vvSkeletonPulse 1.4s ease-in-out infinite;
+}
+
 /* Landing Page Background (Light mode enhanced, Dark mode minimal) */
 .landing-main {
   --landing-cursor-x: 50%;

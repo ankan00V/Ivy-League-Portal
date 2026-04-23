@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import React, { useEffect, useMemo, useState } from "react";
 
 import BrandLogo from "@/components/BrandLogo";
+import { CenteredPageSkeleton } from "@/components/LoadingSkeletons";
 import { apiUrl } from "@/lib/api";
 import { clearAccessToken, getAccessToken } from "@/lib/auth-session";
 import { getApiErrorMessage, getUnknownErrorMessage } from "@/lib/error-utils";
@@ -507,11 +508,7 @@ export default function OnboardingPage() {
   };
 
   if (loading) {
-    return (
-      <main style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "var(--bg-base)" }}>
-        <p style={{ color: "var(--text-secondary)", fontWeight: 700 }}>Preparing your onboarding experience...</p>
-      </main>
-    );
+    return <CenteredPageSkeleton paneHeight="760px" />;
   }
 
   return (

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -685,7 +687,7 @@ async def read_users_me(
     """
     Get current user.
     """
-    return current_user
+    return UserResponse.model_validate(current_user)
 
 
 @router.get("/me/profile", response_model=ProfileResponse)

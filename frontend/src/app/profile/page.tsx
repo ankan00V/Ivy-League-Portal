@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import React, { useEffect, useMemo, useState } from "react";
 
 import BrandLogo from "@/components/BrandLogo";
+import { CenteredPageSkeleton } from "@/components/LoadingSkeletons";
 import { apiUrl } from "@/lib/api";
 import { getAccessToken } from "@/lib/auth-session";
 import { getApiErrorMessage, getUnknownErrorMessage } from "@/lib/error-utils";
@@ -52,12 +53,139 @@ type UserPayload = {
   email: string;
 };
 
+type ProfileUpdatePayload = {
+  account_type: AccountType;
+  first_name?: string;
+  last_name?: string;
+  mobile?: string;
+  country_code?: string;
+  user_type?: UserType;
+  domain?: string;
+  course?: string;
+  passout_year?: number | null;
+  class_grade?: number | null;
+  current_job_role?: string;
+  total_work_experience?: string;
+  college_name?: string;
+  company_name?: string;
+  company_website?: string;
+  company_size?: string;
+  company_description?: string;
+  hiring_for?: "myself" | "others";
+  goals?: string[];
+  preferred_roles?: string;
+  preferred_locations?: string;
+  pan_india: boolean;
+  prefer_wfh: boolean;
+  consent_data_processing: boolean;
+  consent_updates: boolean;
+  bio?: string;
+  skills?: string;
+  interests?: string;
+  achievements?: string;
+  education?: string;
+};
+
 function toText(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
 function toNullableNumber(value: unknown): number | null {
   return typeof value === "number" ? value : null;
+}
+
+function hydrateProfilePayload(profilePayload: Record<string, unknown>): ProfilePayload {
+  return {
+    account_type: (toText(profilePayload.account_type) || "candidate") as AccountType,
+    first_name: toText(profilePayload.first_name),
+    last_name: toText(profilePayload.last_name),
+    mobile: toText(profilePayload.mobile),
+    country_code: toText(profilePayload.country_code) || "+91",
+    user_type: (toText(profilePayload.user_type) || "") as UserType | "",
+    domain: toText(profilePayload.domain),
+    course: toText(profilePayload.course),
+    passout_year: toNullableNumber(profilePayload.passout_year),
+    class_grade: toNullableNumber(profilePayload.class_grade),
+    current_job_role: toText(profilePayload.current_job_role),
+    total_work_experience: toText(profilePayload.total_work_experience),
+    college_name: toText(profilePayload.college_name),
+    company_name: toText(profilePayload.company_name),
+    company_website: toText(profilePayload.company_website),
+    company_size: toText(profilePayload.company_size),
+    company_description: toText(profilePayload.company_description),
+    hiring_for: (toText(profilePayload.hiring_for) || "") as "myself" | "others" | "",
+    goals: Array.isArray(profilePayload.goals) ? profilePayload.goals.map((item) => String(item)) : [],
+    preferred_roles: toText(profilePayload.preferred_roles),
+    preferred_locations: toText(profilePayload.preferred_locations),
+    pan_india: Boolean(profilePayload.pan_india),
+    prefer_wfh: Boolean(profilePayload.prefer_wfh),
+    consent_data_processing: Boolean(profilePayload.consent_data_processing),
+    consent_updates: Boolean(profilePayload.consent_updates),
+    bio: toText(profilePayload.bio),
+    skills: toText(profilePayload.skills),
+    interests: toText(profilePayload.interests),
+    achievements: toText(profilePayload.achievements),
+    education: toText(profilePayload.education),
+    resume_url: toText(profilePayload.resume_url),
+    resume_filename: toText(profilePayload.resume_filename),
+    resume_uploaded_at: toText(profilePayload.resume_uploaded_at),
+  };
+}
+
+function assignOptionalText<K extends keyof ProfileUpdatePayload>(target: ProfileUpdatePayload, key: K, value: string) {
+  const trimmed = value.trim();
+  if (trimmed.length > 0) {
+    (target as Record<string, unknown>)[String(key)] = trimmed;
+  }
+}
+
+function buildProfileUpdatePayload(profile: ProfilePayload): ProfileUpdatePayload {
+  const payload: ProfileUpdatePayload = {
+    account_type: profile.account_type,
+    pan_india: profile.pan_india,
+    prefer_wfh: profile.prefer_wfh,
+    consent_data_processing: profile.consent_data_processing,
+    consent_updates: profile.consent_updates,
+  };
+
+  if (profile.user_type) {
+    payload.user_type = profile.user_type;
+  }
+  if (profile.hiring_for) {
+    payload.hiring_for = profile.hiring_for;
+  }
+  if (profile.passout_year !== null) {
+    payload.passout_year = profile.passout_year;
+  }
+  if (profile.class_grade !== null) {
+    payload.class_grade = profile.class_grade;
+  }
+  if (profile.goals.length > 0) {
+    payload.goals = [...profile.goals];
+  }
+
+  assignOptionalText(payload, "first_name", profile.first_name);
+  assignOptionalText(payload, "last_name", profile.last_name);
+  assignOptionalText(payload, "mobile", profile.mobile);
+  assignOptionalText(payload, "country_code", profile.country_code);
+  assignOptionalText(payload, "domain", profile.domain);
+  assignOptionalText(payload, "course", profile.course);
+  assignOptionalText(payload, "current_job_role", profile.current_job_role);
+  assignOptionalText(payload, "total_work_experience", profile.total_work_experience);
+  assignOptionalText(payload, "college_name", profile.college_name);
+  assignOptionalText(payload, "company_name", profile.company_name);
+  assignOptionalText(payload, "company_website", profile.company_website);
+  assignOptionalText(payload, "company_size", profile.company_size);
+  assignOptionalText(payload, "company_description", profile.company_description);
+  assignOptionalText(payload, "preferred_roles", profile.preferred_roles);
+  assignOptionalText(payload, "preferred_locations", profile.preferred_locations);
+  assignOptionalText(payload, "bio", profile.bio);
+  assignOptionalText(payload, "skills", profile.skills);
+  assignOptionalText(payload, "interests", profile.interests);
+  assignOptionalText(payload, "achievements", profile.achievements);
+  assignOptionalText(payload, "education", profile.education);
+
+  return payload;
 }
 
 export default function ProfilePage() {
@@ -121,62 +249,77 @@ export default function ProfilePage() {
       router.replace("/login");
       return;
     }
-    const run = async () => {
+    const loadProfile = async (showFatalErrors: boolean) => {
       try {
-        const [userRes, profileRes] = await Promise.all([
+        const [userResult, profileResult] = await Promise.allSettled([
           fetch(apiUrl("/api/v1/users/me"), { headers: { Authorization: `Bearer ${token}` } }),
           fetch(apiUrl("/api/v1/users/me/profile"), { headers: { Authorization: `Bearer ${token}` } }),
         ]);
-        const userPayload = (await userRes.json().catch(() => ({}))) as UserPayload;
-        const profilePayload = (await profileRes.json().catch(() => ({}))) as Record<string, unknown>;
 
-        if (!userRes.ok || !profileRes.ok) {
-          throw new Error(getApiErrorMessage(profilePayload, "Unable to load profile"));
+        let userError: string | null = null;
+        let profileError: string | null = null;
+        let hasFreshProfile = false;
+
+        if (userResult.status === "fulfilled") {
+          const userRes = userResult.value;
+          const userPayload = (await userRes.json().catch(() => ({}))) as UserPayload | Record<string, unknown>;
+          if (userRes.ok) {
+            setEmail(toText(userPayload.email));
+          } else if (showFatalErrors) {
+            userError = getApiErrorMessage(userPayload, "Unable to load user details");
+          }
+        } else if (showFatalErrors) {
+          userError = getUnknownErrorMessage(userResult.reason, "Unable to load user details");
         }
 
-        setEmail(toText(userPayload.email));
-        setProfile({
-          account_type: (toText(profilePayload.account_type) || "candidate") as AccountType,
-          first_name: toText(profilePayload.first_name),
-          last_name: toText(profilePayload.last_name),
-          mobile: toText(profilePayload.mobile),
-          country_code: toText(profilePayload.country_code) || "+91",
-          user_type: (toText(profilePayload.user_type) || "") as UserType | "",
-          domain: toText(profilePayload.domain),
-          course: toText(profilePayload.course),
-          passout_year: toNullableNumber(profilePayload.passout_year),
-          class_grade: toNullableNumber(profilePayload.class_grade),
-          current_job_role: toText(profilePayload.current_job_role),
-          total_work_experience: toText(profilePayload.total_work_experience),
-          college_name: toText(profilePayload.college_name),
-          company_name: toText(profilePayload.company_name),
-          company_website: toText(profilePayload.company_website),
-          company_size: toText(profilePayload.company_size),
-          company_description: toText(profilePayload.company_description),
-          hiring_for: (toText(profilePayload.hiring_for) || "") as "myself" | "others" | "",
-          goals: Array.isArray(profilePayload.goals) ? profilePayload.goals.map((item) => String(item)) : [],
-          preferred_roles: toText(profilePayload.preferred_roles),
-          preferred_locations: toText(profilePayload.preferred_locations),
-          pan_india: Boolean(profilePayload.pan_india),
-          prefer_wfh: Boolean(profilePayload.prefer_wfh),
-          consent_data_processing: Boolean(profilePayload.consent_data_processing),
-          consent_updates: Boolean(profilePayload.consent_updates),
-          bio: toText(profilePayload.bio),
-          skills: toText(profilePayload.skills),
-          interests: toText(profilePayload.interests),
-          achievements: toText(profilePayload.achievements),
-          education: toText(profilePayload.education),
-          resume_url: toText(profilePayload.resume_url),
-          resume_filename: toText(profilePayload.resume_filename),
-          resume_uploaded_at: toText(profilePayload.resume_uploaded_at),
-        });
+        if (profileResult.status === "fulfilled") {
+          const profileRes = profileResult.value;
+          const profilePayload = (await profileRes.json().catch(() => ({}))) as Record<string, unknown>;
+          if (profileRes.ok) {
+            setProfile(hydrateProfilePayload(profilePayload));
+            hasFreshProfile = true;
+            setError(null);
+          } else if (showFatalErrors) {
+            profileError = getApiErrorMessage(profilePayload, "Unable to load profile");
+          }
+        } else if (showFatalErrors) {
+          profileError = getUnknownErrorMessage(profileResult.reason, "Unable to load profile");
+        }
+
+        if (!showFatalErrors) {
+          return;
+        }
+
+        if (profileError) {
+          setError(profileError);
+          return;
+        }
+
+        if (!hasFreshProfile && userError) {
+          setError(userError);
+          return;
+        }
+
+        setError(null);
       } catch (err) {
-        setError(getUnknownErrorMessage(err, "Unable to load profile"));
+        if (showFatalErrors) {
+          setError(getUnknownErrorMessage(err, "Unable to load profile"));
+        }
       } finally {
         setLoading(false);
       }
     };
-    void run();
+
+    void loadProfile(true);
+
+    const handleWindowFocus = () => {
+      void loadProfile(false);
+    };
+
+    window.addEventListener("focus", handleWindowFocus);
+    return () => {
+      window.removeEventListener("focus", handleWindowFocus);
+    };
   }, [router]);
 
   const updateProfile = <K extends keyof ProfilePayload>(field: K, value: ProfilePayload[K]) => {
@@ -193,18 +336,20 @@ export default function ProfilePage() {
     setMessage(null);
     setError(null);
     try {
+      const payloadToSave = buildProfileUpdatePayload(profile);
       const res = await fetch(apiUrl("/api/v1/users/me/profile"), {
         method: "PUT",
         headers: {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(profile),
+        body: JSON.stringify(payloadToSave),
       });
-      const payload = await res.json().catch(() => ({}));
+      const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
       if (!res.ok) {
         throw new Error(getApiErrorMessage(payload, "Unable to update profile"));
       }
+      setProfile(hydrateProfilePayload(payload));
       setMessage("Profile updated successfully.");
     } catch (err) {
       setError(getUnknownErrorMessage(err, "Unable to update profile"));
@@ -232,17 +377,11 @@ export default function ProfilePage() {
         },
         body: form,
       });
-      const payload = await res.json().catch(() => ({}));
+      const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
       if (!res.ok) {
         throw new Error(getApiErrorMessage(payload, "Unable to upload resume"));
       }
-      setProfile((prev) => ({
-        ...prev,
-        skills: typeof payload.skills === "string" ? payload.skills : prev.skills,
-        resume_url: typeof payload.resume_url === "string" ? payload.resume_url : prev.resume_url,
-        resume_filename: typeof payload.resume_filename === "string" ? payload.resume_filename : file.name,
-        resume_uploaded_at: typeof payload.resume_uploaded_at === "string" ? payload.resume_uploaded_at : prev.resume_uploaded_at,
-      }));
+      setProfile(hydrateProfilePayload(payload));
       setMessage("Resume uploaded and profile signals refreshed.");
     } catch (err) {
       setError(getUnknownErrorMessage(err, "Unable to upload resume"));
@@ -265,16 +404,11 @@ export default function ProfilePage() {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });
-      const payload = await res.json().catch(() => ({}));
+      const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
       if (!res.ok) {
         throw new Error(getApiErrorMessage(payload, "Unable to remove resume"));
       }
-      setProfile((prev) => ({
-        ...prev,
-        resume_url: "",
-        resume_filename: "",
-        resume_uploaded_at: "",
-      }));
+      setProfile(hydrateProfilePayload(payload));
       setMessage("Resume removed.");
     } catch (err) {
       setError(getUnknownErrorMessage(err, "Unable to remove resume"));
@@ -313,11 +447,7 @@ export default function ProfilePage() {
   };
 
   if (loading) {
-    return (
-      <main style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "var(--bg-base)" }}>
-        <p style={{ color: "var(--text-secondary)", fontWeight: 700 }}>Loading profile...</p>
-      </main>
-    );
+    return <CenteredPageSkeleton paneHeight="680px" />;
   }
 
   return (

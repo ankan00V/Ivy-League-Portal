@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 
+import { getAccessToken } from "@/lib/auth-session";
 import { logOpportunityInteraction, type OpportunityInteractionInput, type OpportunityInteractionType } from "@/lib/opportunity-interactions";
 
 export interface FeedTrackedOpportunity {
@@ -48,7 +49,7 @@ export function useOpportunityFeedImpressions(
   const lastBatchRef = useRef<string>("");
 
   useEffect(() => {
-    const token = typeof window === "undefined" ? null : localStorage.getItem("access_token");
+    const token = getAccessToken();
     if (!token || opportunities.length === 0) {
       return;
     }

@@ -1,8 +1,11 @@
+import asyncio
 import sys
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
+
+from beanie import PydanticObjectId
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
@@ -12,6 +15,22 @@ from app.api.api_v1.endpoints import users as users_endpoint
 
 
 class TestUserRankingSummary(unittest.TestCase):
+    def test_read_users_me_serializes_object_id_to_string(self) -> None:
+        current_user = SimpleNamespace(
+            id=PydanticObjectId("69e111317cdc2b7901074b81"),
+            email="candidate@example.com",
+            full_name="Candidate Example",
+            account_type="candidate",
+            auth_provider="google",
+            is_active=True,
+            is_admin=False,
+        )
+
+        response = asyncio.run(users_endpoint.read_users_me(current_user=current_user))
+
+        self.assertEqual(response.id, "69e111317cdc2b7901074b81")
+        self.assertEqual(response.email, "candidate@example.com")
+
     def test_compute_rank_stats_top_user(self) -> None:
         top_percent, percentile = users_endpoint._compute_rank_stats(rank=1, total_users=250)
         self.assertEqual(top_percent, 0.4)

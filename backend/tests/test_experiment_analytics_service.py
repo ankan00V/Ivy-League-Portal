@@ -49,6 +49,8 @@ class TestExperimentAnalyticsService(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(report["diagnostics"]["srm"]["eligible"])
         self.assertIn("power", report["comparisons"][0])
         self.assertTrue(report["comparisons"][0]["power"]["eligible"])
+        self.assertIn("sample_size_gate", report["comparisons"][0])
+        self.assertIn("lift_label", report["comparisons"][0])
 
     async def test_report_srm_handles_no_impressions(self) -> None:
         experiment = SimpleNamespace(
@@ -106,6 +108,36 @@ class TestExperimentAnalyticsService(unittest.IsolatedAsyncioTestCase):
         self.assertIn("guardrails", report["diagnostics"])
         self.assertTrue(report["diagnostics"]["guardrails"]["should_pause"])
         self.assertIn("significant_regression", report["diagnostics"]["guardrails"]["triggered_reasons"])
+
+    async def test_report_labels_insufficient_power_when_sample_size_gate_fails(self) -> None:
+        experiment = SimpleNamespace(
+            key="ranking_mode",
+            status="active",
+            variants=[
+                ExperimentVariant(name="baseline", weight=1.0, is_control=True),
+                ExperimentVariant(name="ml", weight=1.0, is_control=False),
+            ],
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        service = ExperimentAnalyticsService()
+
+        with patch.object(
+            service,
+            "_counts_by_variant",
+            new=AsyncMock(
+                return_value={
+                    "baseline": VariantCounts(impressions=40, conversions=8),
+                    "ml": VariantCounts(impressions=45, conversions=12),
+                }
+            ),
+        ):
+            report = await service.report(experiment=experiment, days=14, conversion_types=("click",))
+
+        comparison = report["comparisons"][0]
+        self.assertFalse(comparison["sample_size_gate"]["eligible"])
+        self.assertEqual(comparison["lift_label"], "insufficient_power")
+        self.assertFalse(comparison["lift_declared"])
 
 
 if __name__ == "__main__":

@@ -17,6 +17,8 @@ class RankingRequestTelemetry(Document):
     ranking_mode: Optional[str] = Field(default=None, index=True)
     experiment_key: Optional[str] = Field(default=None, index=True)
     experiment_variant: Optional[str] = Field(default=None, index=True)
+    rag_template_label: Optional[str] = Field(default=None, index=True)
+    rag_template_version_id: Optional[str] = Field(default=None, index=True)
     model_version_id: Optional[str] = Field(default=None, index=True)
     surface: Optional[str] = Field(default=None, index=True)
     success: bool = Field(default=True, index=True)
@@ -34,6 +36,8 @@ class RankingRequestTelemetry(Document):
             "ranking_mode",
             "experiment_key",
             "experiment_variant",
+            "rag_template_label",
+            "rag_template_version_id",
             "model_version_id",
             "surface",
             "success",

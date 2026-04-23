@@ -1,6 +1,7 @@
 "use client";
 import Sidebar from "@/components/Sidebar";
 import AskAIPanel from "@/components/AskAIPanel";
+import { OpportunityCardsSkeleton } from "@/components/LoadingSkeletons";
 import React, { startTransition, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { MapPin, Calendar, Send, Bookmark } from "lucide-react";
@@ -866,19 +867,7 @@ export default function OpportunitiesPage() {
                     </div>
                 )}
                 {loading ? (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '2rem' }}>
-                        {Array.from({ length: 6 }).map((_, idx) => (
-                            <div key={`skel-${idx}`} className="card-panel" style={{ padding: 0, height: '420px', display: 'flex', flexDirection: 'column' }}>
-                                <div style={{ height: '160px', background: 'var(--bg-surface-hover)', animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite' }} />
-                                <div style={{ padding: '1.5rem', flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                                    <div style={{ height: '24px', background: 'var(--bg-surface-hover)', borderRadius: '4px', width: '80%', animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite' }} />
-                                    <div style={{ height: '16px', background: 'var(--bg-surface-hover)', borderRadius: '4px', width: '100%', animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite' }} />
-                                    <div style={{ height: '16px', background: 'var(--bg-surface-hover)', borderRadius: '4px', width: '60%', animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite' }} />
-                                    <div style={{ marginTop: 'auto', height: '40px', background: 'var(--bg-surface-hover)', borderRadius: '24px', width: '100%', animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite' }} />
-                                </div>
-                            </div>
-                        ))}
-                    </div>
+                    <OpportunityCardsSkeleton count={6} />
                 ) : (
                     <>
                         {renderSection(
@@ -900,15 +889,6 @@ export default function OpportunitiesPage() {
                         )}
                     </>
                 )}
-
-                {/* CSS for Skeleton Pulse since we didn't add it to globals.css */}
-                <style dangerouslySetInnerHTML={{
-                    __html: `
-                    @keyframes pulse {
-                        0%, 100% { opacity: 1; }
-                        50% { opacity: .5; }
-                    }
-                `}} />
             </main>
         </div>
     );

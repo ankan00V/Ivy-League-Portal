@@ -73,3 +73,4 @@ class RAGAskResponse(BaseModel):
     entities: dict[str, Any] = Field(default_factory=dict)
     results: list[RAGRetrievedOpportunity] = Field(default_factory=list)
     insights: RAGInsights
+    governance: dict[str, Any] = Field(default_factory=dict)

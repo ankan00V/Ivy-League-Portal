@@ -15,6 +15,8 @@ class RAGFeedbackEvent(Document):
     request_id: str = Field(index=True, min_length=1)
     query: str = Field(min_length=1)
     feedback: RAGFeedbackType = Field(index=True)
+    rag_template_label: Optional[str] = Field(default=None, index=True)
+    rag_template_version_id: Optional[str] = Field(default=None, index=True)
     response_summary: Optional[str] = None
     citations: list[dict[str, Any]] = Field(default_factory=list)
     surface: Optional[str] = None
@@ -27,6 +29,8 @@ class RAGFeedbackEvent(Document):
             "user_id",
             "request_id",
             "feedback",
+            "rag_template_label",
+            "rag_template_version_id",
             "surface",
             "created_at",
         ]

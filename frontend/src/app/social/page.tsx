@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { MessageSquare, Heart, Share2, Paperclip, Trophy, Hash } from "lucide-react";
 import { apiUrl } from "@/lib/api";
+import { getAccessToken } from "@/lib/auth-session";
 
 interface SocialPost {
     id: string;
@@ -42,30 +43,49 @@ export default function SocialPage() {
     };
 
     useEffect(() => {
+        let cancelled = false;
         const fetchPosts = async () => {
             try {
-                const token = localStorage.getItem("access_token");
+                const token = getAccessToken();
                 const query = activeGroup === "Global" ? "" : `?domain=${encodeURIComponent(mapGroupToDomain(activeGroup))}`;
                 const res = await fetch(apiUrl(`/api/v1/social/posts${query}`), {
                     headers: token ? { Authorization: `Bearer ${token}` } : {},
                 });
                 if (res.ok) {
                     const data = await res.json();
-                    setPosts(data);
+                    if (!cancelled) {
+                        setPosts(Array.isArray(data) ? data : []);
+                    }
                 }
             } catch (err) {
                 const message = err instanceof Error ? err.message : "unknown error";
                 console.warn(`[Social] Fetch posts failed: ${message}`);
             }
         };
+
         void fetchPosts();
+        const interval = window.setInterval(() => {
+            void fetchPosts();
+        }, 15000);
+        const handleRefresh = () => {
+            void fetchPosts();
+        };
+        window.addEventListener("focus", handleRefresh);
+        document.addEventListener("visibilitychange", handleRefresh);
+
+        return () => {
+            cancelled = true;
+            window.clearInterval(interval);
+            window.removeEventListener("focus", handleRefresh);
+            document.removeEventListener("visibilitychange", handleRefresh);
+        };
     }, [activeGroup]);
 
     const handleCreatePost = async () => {
         if (!newPostContent.trim()) {
             return;
         }
-        const token = localStorage.getItem("access_token");
+        const token = getAccessToken();
         if (!token) {
             setError("Sign in to create a post.");
             return;
@@ -99,7 +119,7 @@ export default function SocialPage() {
     };
 
     const handleLike = async (id: string) => {
-        const token = localStorage.getItem("access_token");
+        const token = getAccessToken();
         if (!token) {
             setError("Sign in to like posts.");
             return;
@@ -129,7 +149,7 @@ export default function SocialPage() {
     const fetchCommentsForPost = async (postId: string) => {
         setCommentLoadingByPost((prev) => ({ ...prev, [postId]: true }));
         try {
-            const token = localStorage.getItem("access_token");
+            const token = getAccessToken();
             const res = await fetch(apiUrl(`/api/v1/social/posts/${postId}/comments`), {
                 headers: token ? { Authorization: `Bearer ${token}` } : {},
             });
@@ -154,7 +174,7 @@ export default function SocialPage() {
     };
 
     const handleCreateComment = async (postId: string) => {
-        const token = localStorage.getItem("access_token");
+        const token = getAccessToken();
         if (!token) {
             setError("Sign in to add comments.");
             return;

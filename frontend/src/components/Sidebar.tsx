@@ -6,6 +6,7 @@ import { LayoutDashboard, Target, Briefcase, FileText, Globe, Trophy, Sun, Moon,
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import BrandLogo from '@/components/BrandLogo';
 import { apiUrl } from '@/lib/api';
+import { getAccessToken } from '@/lib/auth-session';
 import { formatTopPercent, type RankingSummary } from '@/lib/ranking-summary';
 
 export default function Sidebar() {
@@ -21,7 +22,7 @@ export default function Sidebar() {
     useEffect(() => {
         let cancelled = false;
         const loadRankingSummary = async () => {
-            const token = localStorage.getItem("access_token");
+            const token = getAccessToken();
             if (!token) {
                 if (!cancelled) {
                     setRankingSummary(null);
@@ -55,10 +56,17 @@ export default function Sidebar() {
         const interval = window.setInterval(() => {
             void loadRankingSummary();
         }, 30000);
+        const handleRefresh = () => {
+            void loadRankingSummary();
+        };
+        window.addEventListener("focus", handleRefresh);
+        document.addEventListener("visibilitychange", handleRefresh);
 
         return () => {
             cancelled = true;
             window.clearInterval(interval);
+            window.removeEventListener("focus", handleRefresh);
+            document.removeEventListener("visibilitychange", handleRefresh);
         };
     }, []);
 

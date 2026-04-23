@@ -2,7 +2,6 @@ import re
 from datetime import datetime
 
 import spacy
-from transformers import pipeline
 
 class AIEngine:
     def __init__(self):
@@ -62,6 +61,10 @@ class AIEngine:
     def _ensure_classifier(self):
         """Lazy load classifier only when required."""
         if self.classifier is None:
+            # Import transformers lazily to avoid expensive model stack loading
+            # during API boot when OTP/auth routes are the only immediate need.
+            from transformers import pipeline
+
             self.classifier = pipeline("zero-shot-classification", model="valhalla/distilbart-mnli-12-3")
         return self.classifier
 

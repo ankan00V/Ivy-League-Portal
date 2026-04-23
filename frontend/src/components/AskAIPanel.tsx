@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Bot, ExternalLink, Loader2, MessageSquareQuote, Sparkles, ThumbsDown, ThumbsUp } from "lucide-react";
 
 import { apiUrl } from "@/lib/api";
+import { getAccessToken } from "@/lib/auth-session";
 import { isMongoObjectId, logOpportunityInteraction } from "@/lib/opportunity-interactions";
 
 interface Citation {
@@ -81,7 +82,7 @@ export default function AskAIPanel({ surface, suggestedQueries }: AskAIPanelProp
       return;
     }
 
-    const token = localStorage.getItem("access_token");
+    const token = getAccessToken();
     if (!token) {
       setNotice("Sign in to use Ask AI.");
       return;
@@ -119,7 +120,7 @@ export default function AskAIPanel({ surface, suggestedQueries }: AskAIPanelProp
       return;
     }
 
-    const token = localStorage.getItem("access_token");
+    const token = getAccessToken();
     if (!token) {
       setFeedbackNotice("Sign in to send feedback.");
       return;
@@ -157,7 +158,7 @@ export default function AskAIPanel({ surface, suggestedQueries }: AskAIPanelProp
   };
 
   useEffect(() => {
-    const token = localStorage.getItem("access_token");
+    const token = getAccessToken();
     if (!token || !response || response.insights.top_opportunities.length === 0) {
       return;
     }

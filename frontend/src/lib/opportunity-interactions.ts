@@ -1,4 +1,5 @@
 import { apiUrl } from "@/lib/api";
+import { getAccessToken } from "@/lib/auth-session";
 
 export type OpportunityInteractionType = "impression" | "view" | "click" | "apply" | "save";
 export type RankingMode = "baseline" | "semantic" | "ml" | "ab";
@@ -44,7 +45,7 @@ export async function logOpportunityInteraction(input: OpportunityInteractionInp
     return false;
   }
 
-  const token = localStorage.getItem("access_token");
+  const token = getAccessToken();
   if (!token) {
     return false;
   }

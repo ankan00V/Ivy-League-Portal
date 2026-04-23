@@ -1,10 +1,16 @@
 "use client";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import Navbar from "@/components/Navbar";
 import Spline from "@splinetool/react-spline";
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { getAccessToken, getAuthStateEventName, resolvePostAuthRoute } from "@/lib/auth-session";
 
 export default function Home() {
+  const router = useRouter();
+  const [isAuthenticated, setIsAuthenticated] = useState(() => Boolean(getAccessToken()));
+  const [dashboardHref, setDashboardHref] = useState("/dashboard");
+
   const hideSplineBranding = useCallback(() => {
     const brandedAnchors = Array.from(
       document.querySelectorAll<HTMLAnchorElement>('a[href*="spline.design"], a[href*="splinetool"]')
@@ -56,6 +62,50 @@ export default function Home() {
     observer.observe(document.body, { childList: true, subtree: true });
     return () => observer.disconnect();
   }, [hideSplineBranding]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const syncDashboardHref = async () => {
+      const token = getAccessToken();
+      if (!token) {
+        if (!cancelled) {
+          setDashboardHref("/dashboard");
+        }
+        return;
+      }
+
+      const nextRoute = await resolvePostAuthRoute(token);
+      if (!cancelled) {
+        setDashboardHref(nextRoute || "/dashboard");
+      }
+    };
+
+    const syncAuthState = () => {
+      const token = getAccessToken();
+      const hasToken = Boolean(token);
+      if (!cancelled) {
+        setIsAuthenticated(hasToken);
+      }
+      void syncDashboardHref();
+    };
+
+    void syncDashboardHref();
+    const authStateEventName = getAuthStateEventName();
+    window.addEventListener("focus", syncAuthState);
+    window.addEventListener("storage", syncAuthState);
+    window.addEventListener(authStateEventName, syncAuthState);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", syncAuthState);
+      window.removeEventListener("storage", syncAuthState);
+      window.removeEventListener(authStateEventName, syncAuthState);
+    };
+  }, []);
+
+  const handlePrimaryAction = () => {
+    router.push(isAuthenticated ? "/profile" : "/register");
+  };
 
   return (
     <main
@@ -185,9 +235,10 @@ export default function Home() {
           </p>
 
           <div style={{ display: "flex", gap: "1rem", justifyContent: "center", pointerEvents: "auto" }}>
-            <Link
-              href="/register"
+            <button
+              type="button"
               className="btn-primary"
+              onClick={handlePrimaryAction}
               style={{
                 padding: "1rem 2.5rem",
                 fontSize: "1.1rem",
@@ -197,10 +248,10 @@ export default function Home() {
                   "0 12px 28px color-mix(in srgb, var(--brand-primary) 28%, transparent), var(--shadow-sm)",
               }}
             >
-              Start Your Journey
-            </Link>
+              {isAuthenticated ? "Open Profile" : "Start Your Journey"}
+            </button>
             <Link
-              href="/dashboard"
+              href={dashboardHref}
               className="btn-secondary"
               style={{
                 padding: "1rem 2.5rem",
@@ -213,7 +264,7 @@ export default function Home() {
                   "0 12px 28px color-mix(in srgb, #5a8bff 22%, transparent), var(--shadow-sm)",
               }}
             >
-              View Dashboard
+              {isAuthenticated ? "Open Dashboard" : "View Dashboard"}
             </Link>
           </div>
         </div>

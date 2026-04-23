@@ -15,6 +15,11 @@ class Opportunity(Document):
     eligibility: Optional[str] = None
     is_employer_post: bool = False
     posted_by_user_id: Optional[PydanticObjectId] = Field(default=None, index=True)
+    lifecycle_status: str = Field(default="published", index=True)  # draft | published | paused | closed
+    published_at: Optional[datetime] = None
+    paused_at: Optional[datetime] = None
+    closed_at: Optional[datetime] = None
+    lifecycle_updated_at: datetime = Field(default_factory=datetime.utcnow)
     deadline: Optional[datetime] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -22,4 +27,17 @@ class Opportunity(Document):
 
     class Settings:
         name = "opportunities"
-        indexes = ["domain", "opportunity_type", "university", "source", "deadline", "last_seen_at", "posted_by_user_id"]
+        indexes = [
+            "domain",
+            "opportunity_type",
+            "university",
+            "source",
+            "deadline",
+            "last_seen_at",
+            "posted_by_user_id",
+            "lifecycle_status",
+            "published_at",
+            "paused_at",
+            "closed_at",
+            "lifecycle_updated_at",
+        ]

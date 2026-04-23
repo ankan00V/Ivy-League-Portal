@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     # JWT Auth
     SECRET_KEY: str = "your_super_secret_key_here_for_development_change_in_production"
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 hours
     
     # Database layer (MongoDB)
     MONGODB_URL: str = "mongodb://localhost:27017"
@@ -72,6 +72,11 @@ class Settings(BaseSettings):
     # Mongo TLS controls (keep local dev easy, prod strict)
     MONGODB_TLS_FORCE: bool = False
     MONGODB_TLS_ALLOW_INVALID_CERTS: bool = False
+    MONGODB_SERVER_SELECTION_TIMEOUT_MS: int = 10000
+    MONGODB_CONNECT_TIMEOUT_MS: int = 10000
+    MONGODB_SOCKET_TIMEOUT_MS: int = 15000
+    MONGODB_STARTUP_MAX_RETRIES: int = 4
+    MONGODB_STARTUP_RETRY_BACKOFF_SECONDS: float = 1.5
     
     # Production configs
     ENVIRONMENT: str = "local"
@@ -96,6 +101,11 @@ class Settings(BaseSettings):
     # OTP delivery behavior
     OTP_ALLOW_DEBUG_FALLBACK: bool = False
     OTP_SEND_COOLDOWN_SECONDS: int = 60
+    OTP_EMAIL_MAX_RETRIES: int = 3
+    AUTH_AUDIT_ENABLED: bool = True
+    AUTH_ABUSE_MAX_FAILED_ATTEMPTS: int = 5
+    AUTH_ABUSE_WINDOW_SECONDS: int = 15 * 60
+    AUTH_ABUSE_LOCK_SECONDS: int = 30 * 60
 
     # OAuth (Google implemented, other providers surfaced as config status)
     GOOGLE_OAUTH_CLIENT_ID: Optional[str] = None
@@ -124,6 +134,25 @@ class Settings(BaseSettings):
     LLM_JUDGE_API_KEY: Optional[str] = None
     LLM_JUDGE_API_BASE_URL: Optional[str] = None
     LLM_JUDGE_MIN_SCORE: float = 0.55  # 0..1 gate when enabled
+
+    # RAG governance defaults
+    RAG_TEMPLATE_KEY_DEFAULT: str = "ask_ai"
+    RAG_DEFAULT_RETRIEVAL_TOP_K: int = 8
+    RAG_OFFLINE_EVAL_DATASET_PATH: str = "backend/benchmarks/data/gold_temporal_holdout.jsonl"
+    RAG_OFFLINE_MIN_RECALL_AT_K: float = 0.35
+    RAG_ONLINE_MIN_POSITIVE_FEEDBACK_RATE: float = 0.55
+    RAG_ONLINE_MIN_REQUESTS: int = 50
+
+    # Analytics warehouse / feature-store controls
+    ANALYTICS_WAREHOUSE_ENABLED: bool = True
+    ANALYTICS_LOOKBACK_DAYS_DEFAULT: int = 30
+    FEATURE_STORE_LABEL_WINDOW_HOURS: int = 72
+
+    # Resume storage & parsing
+    RESUME_STORAGE_DIR: str = "backend/storage/resumes"
+    RESUME_MAX_FILE_SIZE_MB: int = 8
+    ANALYTICS_WAREHOUSE_AUTORUN_ENABLED: bool = True
+    ANALYTICS_WAREHOUSE_REBUILD_INTERVAL_HOURS: int = 24
 
     # Embeddings / semantic ranking
     EMBEDDING_PROVIDER: str = "sentence_transformers"  # sentence_transformers | openai | auto
@@ -174,6 +203,8 @@ class Settings(BaseSettings):
     EXPERIMENT_SRM_P_VALUE_THRESHOLD: float = 0.01
     EXPERIMENT_SIGNIFICANCE_ALPHA: float = 0.05
     EXPERIMENT_GUARDRAIL_MIN_IMPRESSIONS_PER_VARIANT: int = 50
+    EXPERIMENT_MIN_IMPRESSIONS_PER_VARIANT_FOR_LIFT: int = 200
+    EXPERIMENT_TARGET_POWER: float = 0.8
     
     model_config = SettingsConfigDict(
         env_file=ENV_FILE,
@@ -189,11 +220,16 @@ def smtp_server_value() -> Optional[str]:
 
 
 def smtp_from_email_value() -> str:
-    return (
-        settings.SMTP_FROM_EMAIL
-        or settings.AUTH_OTP_FROM_EMAIL
-        or "noreply@vidyaverse.com"
-    ).strip()
+    default_from = "noreply@vidyaverse.com"
+    smtp_from = (settings.SMTP_FROM_EMAIL or "").strip()
+    otp_from = (settings.AUTH_OTP_FROM_EMAIL or "").strip()
+
+    # Keep backward compatibility with AUTH_OTP_FROM_EMAIL while avoiding
+    # accidental use of the placeholder default sender in SMTP providers
+    # that require a verified mailbox (for example Gmail SMTP).
+    if otp_from and (not smtp_from or smtp_from.lower() == default_from):
+        return otp_from
+    return smtp_from or otp_from or default_from
 
 
 def smtp_from_name_value() -> Optional[str]:

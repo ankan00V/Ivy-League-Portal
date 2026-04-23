@@ -1,16 +1,42 @@
 "use client";
 import Link from "next/link";
-import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useState, useEffect, useCallback } from "react";
 import BrandLogo from "@/components/BrandLogo";
+import { clearAccessToken, getAccessToken, getAuthStateEventName } from "@/lib/auth-session";
 
 export default function Navbar() {
     const [scrolled, setScrolled] = useState(false);
+    const [isAuthenticated, setIsAuthenticated] = useState(() => Boolean(getAccessToken()));
+    const router = useRouter();
 
     useEffect(() => {
         const handleScroll = () => setScrolled(window.scrollY > 20);
         window.addEventListener("scroll", handleScroll);
         return () => window.removeEventListener("scroll", handleScroll);
     }, []);
+
+    const syncAuthState = useCallback(() => {
+        setIsAuthenticated(Boolean(getAccessToken()));
+    }, []);
+
+    useEffect(() => {
+        const authStateEventName = getAuthStateEventName();
+        window.addEventListener("focus", syncAuthState);
+        window.addEventListener("storage", syncAuthState);
+        window.addEventListener(authStateEventName, syncAuthState);
+        return () => {
+            window.removeEventListener("focus", syncAuthState);
+            window.removeEventListener("storage", syncAuthState);
+            window.removeEventListener(authStateEventName, syncAuthState);
+        };
+    }, [syncAuthState]);
+
+    const handleLogout = () => {
+        clearAccessToken();
+        setIsAuthenticated(false);
+        router.push("/");
+    };
 
     return (
         <nav
@@ -27,13 +53,31 @@ export default function Navbar() {
                 padding: scrolled ? "1rem 2rem" : "1.5rem 2rem",
             }}
         >
-            <div style={{ maxWidth: 1200, margin: "0 auto", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ maxWidth: 1200, margin: "0 auto", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "1rem" }}>
                 <BrandLogo size="sm" />
-                <div style={{ display: "flex", gap: "2rem", alignItems: "center" }}>
+                <div style={{ display: "flex", gap: "2rem", alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
                     <Link href="#features" style={{ fontSize: "0.95rem", color: "var(--text-secondary)" }}>Features</Link>
                     <Link href="#incoscore" style={{ fontSize: "0.95rem", color: "var(--text-secondary)" }}>InCoScore</Link>
-                    <Link href="/login" style={{ fontSize: "0.95rem", fontWeight: 500, color: "var(--text-primary)" }}>Sign In</Link>
-                    <Link href="/register" className="btn-primary">Get Early Access</Link>
+                    {isAuthenticated ? (
+                        <>
+                            <Link href="/profile" style={{ fontSize: "0.95rem", fontWeight: 700, color: "var(--text-primary)" }}>
+                                Profile
+                            </Link>
+                            <button
+                                type="button"
+                                className="btn-secondary"
+                                onClick={handleLogout}
+                                style={{ padding: "0.75rem 1.15rem" }}
+                            >
+                                Logout
+                            </button>
+                        </>
+                    ) : (
+                        <>
+                            <Link href="/login" style={{ fontSize: "0.95rem", fontWeight: 500, color: "var(--text-primary)" }}>Sign In</Link>
+                            <Link href="/register" className="btn-primary">Get Early Access</Link>
+                        </>
+                    )}
                 </div>
             </div>
         </nav>

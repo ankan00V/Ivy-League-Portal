@@ -1,5 +1,6 @@
-from pydantic import BaseModel, EmailStr
-from typing import Optional
+from typing import Any, Optional
+
+from pydantic import BaseModel, EmailStr, field_validator
 
 class UserBase(BaseModel):
     email: EmailStr
@@ -14,6 +15,11 @@ class UserResponse(UserBase):
     auth_provider: str
     is_active: bool
     is_admin: bool
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def stringify_id(cls, value: Any) -> str:
+        return str(value)
 
     class Config:
         from_attributes = True

@@ -4,6 +4,7 @@ import json
 from typing import Any, Optional
 from uuid import uuid4
 
+from beanie import PydanticObjectId
 from openai import AsyncOpenAI
 
 from app.core.config import settings
@@ -17,6 +18,7 @@ from app.schemas.rag import (
 )
 from app.services.evaluation_service import evaluation_service
 from app.services.nlp_service import nlp_service
+from app.services.rag_template_registry_service import rag_template_registry_service
 from app.services.vector_service import opportunity_vector_service
 
 
@@ -58,7 +60,7 @@ class RAGService:
         ]
         return " | ".join(section for section in sections if section.strip())
 
-    async def retrieve(self, query: str, top_k: int = 8) -> dict[str, Any]:
+    async def retrieve(self, query: str, top_k: int = 8, retrieval_settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         intent = await nlp_service.classify_intent(query)
         entities = await nlp_service.extract_entities_with_model(query)
 
@@ -68,9 +70,16 @@ class RAGService:
             "companies": entities.get("companies", []),
         }
 
+        search_top_k = max(1, min(top_k, 30))
+        if retrieval_settings and retrieval_settings.get("top_k") is not None:
+            try:
+                search_top_k = max(1, min(int(retrieval_settings.get("top_k")), 30))
+            except Exception:
+                pass
+
         results = await opportunity_vector_service.search(
             query,
-            top_k=max(1, min(top_k, 30)),
+            top_k=search_top_k,
             filters=filters,
         )
 
@@ -232,6 +241,7 @@ class RAGService:
         query: str,
         retrieval_payload: dict[str, Any],
         profile: Optional[Profile],
+        system_prompt: Optional[str] = None,
     ) -> dict[str, Any]:
         if not self._api_key:
             return self._heuristic_insight(query, retrieval_payload.get("results", []))
@@ -262,19 +272,22 @@ class RAGService:
             {
                 "role": "system",
                 "content": (
-                    "You are an opportunity-shortlisting assistant. "
-                    "Return STRICT JSON only (no markdown). "
-                    "Schema:\n"
-                    "- summary: string\n"
-                    "- top_opportunities: array (max 3) of {opportunity_id, title, why_fit, urgency(low|medium|high), match_score(0-100), citations}\n"
-                    "- deadline_urgency: string\n"
-                    "- recommended_action: string\n"
-                    "- citations: array of {opportunity_id, url}\n"
-                    "- safety: {hallucination_checks_passed, failed_checks}\n"
-                    "Rules:\n"
-                    "- Only use opportunity_id values from candidates.\n"
-                    "- Every top_opportunity MUST include citations with the matching opportunity_id and url.\n"
-                    "- citations must reference retrieved candidates (id + url)."
+                    (system_prompt or "").strip()
+                    or (
+                        "You are an opportunity-shortlisting assistant. "
+                        "Return STRICT JSON only (no markdown). "
+                        "Schema:\n"
+                        "- summary: string\n"
+                        "- top_opportunities: array (max 3) of {opportunity_id, title, why_fit, urgency(low|medium|high), match_score(0-100), citations}\n"
+                        "- deadline_urgency: string\n"
+                        "- recommended_action: string\n"
+                        "- citations: array of {opportunity_id, url}\n"
+                        "- safety: {hallucination_checks_passed, failed_checks}\n"
+                        "Rules:\n"
+                        "- Only use opportunity_id values from candidates.\n"
+                        "- Every top_opportunity MUST include citations with the matching opportunity_id and url.\n"
+                        "- citations must reference retrieved candidates (id + url)."
+                    )
                 ),
             },
             {"role": "user", "content": json.dumps(prompt)},
@@ -301,12 +314,32 @@ class RAGService:
                 pass
         return self._heuristic_insight(query, retrieval_payload.get("results", []))
 
-    async def ask(self, *, query: str, top_k: int = 8, profile: Optional[Profile] = None) -> dict[str, Any]:
-        retrieval_payload = await self.retrieve(query=query, top_k=top_k)
+    async def ask(
+        self,
+        *,
+        query: str,
+        top_k: Optional[int] = None,
+        profile: Optional[Profile] = None,
+        user_id: Optional[PydanticObjectId] = None,
+    ) -> dict[str, Any]:
+        template_resolution = await rag_template_registry_service.resolve_template(user_id=user_id)
+        template = template_resolution.template
+        requested_top_k = int(top_k) if top_k is not None else int(template.retrieval_top_k)
+        effective_top_k = max(1, min(requested_top_k, 30))
+        retrieval_settings = dict(template.retrieval_settings or {})
+        if top_k is not None:
+            retrieval_settings.pop("top_k", None)
+
+        retrieval_payload = await self.retrieve(
+            query=query,
+            top_k=effective_top_k,
+            retrieval_settings=retrieval_settings,
+        )
         insights = await self._llm_insight(
             query=query,
             retrieval_payload=retrieval_payload,
             profile=profile,
+            system_prompt=template.system_prompt,
         )
 
         results = retrieval_payload.get("results", []) or []
@@ -320,12 +353,16 @@ class RAGService:
                 query=query,
                 candidates=results,
                 insights=insights_model.model_dump(),
+                rubric=template.judge_rubric,
             )
             if judge:
                 quality_failed: list[str] = []
                 quality_passed = True
                 judge_score = float(judge.get("score")) if judge.get("score") is not None else None
-                if judge_score is not None and judge_score < float(settings.LLM_JUDGE_MIN_SCORE):
+                min_judge_score = float(
+                    (template.acceptance_thresholds or {}).get("min_judge_score", settings.LLM_JUDGE_MIN_SCORE)
+                )
+                if judge_score is not None and judge_score < min_judge_score:
                     quality_passed = False
                     quality_failed.append("judge_below_threshold")
                     insights_model = RAGInsights.model_validate(self._heuristic_insight(query, results))
@@ -375,6 +412,17 @@ class RAGService:
                     if item.get("id") and item.get("url")
                 ],
                 "insights": insights_model.model_dump(),
+                "governance": {
+                    "template_key": template.template_key,
+                    "template_label": template.label,
+                    "template_version": template.version,
+                    "template_version_id": str(template.id),
+                    "retrieval_top_k": effective_top_k,
+                    "experiment_key": template_resolution.experiment_key,
+                    "experiment_variant": template_resolution.experiment_variant,
+                    "assigned_via_experiment": template_resolution.assigned_via_experiment,
+                    "acceptance_thresholds": dict(template.acceptance_thresholds or {}),
+                },
             }
         )
         return response.model_dump()

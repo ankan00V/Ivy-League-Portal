@@ -42,12 +42,15 @@ export default function RegisterPage() {
   const [email, setEmail] = useState("");
   const [otp, setOtp] = useState("");
   const [otpCooldownSeconds, setOtpCooldownSeconds] = useState(0);
+  const [otpCooldownKey, setOtpCooldownKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [providers, setProviders] = useState<OAuthProviderStatus>({ google: false, linkedin: false, microsoft: false });
 
   const visual = useMemo(() => REGISTER_VISUALS[accountType], [accountType]);
+  const normalizedEmail = useMemo(() => email.trim().toLowerCase(), [email]);
+  const currentOtpKey = useMemo(() => `${accountType}:${normalizedEmail}`, [accountType, normalizedEmail]);
 
   React.useEffect(() => {
     const run = async () => {
@@ -75,6 +78,17 @@ export default function RegisterPage() {
     return () => window.clearInterval(timer);
   }, [otpCooldownSeconds]);
 
+  React.useEffect(() => {
+    if (step !== "details") {
+      return;
+    }
+    if (!otpCooldownKey || otpCooldownKey === currentOtpKey) {
+      return;
+    }
+    setOtpCooldownSeconds(0);
+    setOtpCooldownKey(null);
+  }, [currentOtpKey, otpCooldownKey, step]);
+
   const fullName = useMemo(() => `${firstName} ${lastName}`.trim(), [firstName, lastName]);
 
   const resetMessages = () => {
@@ -100,7 +114,7 @@ export default function RegisterPage() {
   };
 
   const requestOtp = async () => {
-    if (otpCooldownSeconds > 0) {
+    if (otpCooldownSeconds > 0 && otpCooldownKey === currentOtpKey) {
       throw new Error(`Please wait ${otpCooldownSeconds}s before requesting another OTP.`);
     }
 
@@ -111,7 +125,7 @@ export default function RegisterPage() {
       const res = await fetch(apiUrl("/api/v1/auth/send-otp"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, purpose: "signup", account_type: accountType }),
+        body: JSON.stringify({ email: normalizedEmail, purpose: "signup", account_type: accountType }),
       });
       const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
       if (!res.ok) {
@@ -119,13 +133,17 @@ export default function RegisterPage() {
         if (res.status === 429) {
           const remaining = resolveCooldownSeconds(res, payload);
           setOtpCooldownSeconds(remaining);
-          throw new Error(`Please wait ${remaining}s before requesting another OTP.`);
+          setOtpCooldownKey(currentOtpKey);
+          setStep("otp");
+          setInfo(`OTP already sent. Check inbox/spam and retry in ${remaining}s.`);
+          return;
         }
         throw new Error(detail || "Failed to send OTP");
       }
 
       const cooldown = resolveCooldownSeconds(res, payload);
       setOtpCooldownSeconds(cooldown);
+      setOtpCooldownKey(currentOtpKey);
       if (typeof payload.debug_otp === "string" && payload.debug_otp.length === 6) {
         setOtp(payload.debug_otp);
         setInfo(`Debug OTP: ${payload.debug_otp} (local fallback)`);
@@ -265,10 +283,10 @@ export default function RegisterPage() {
               maxWidth: "360px",
             }}
           >
-            <button type="button" className={accountType === "candidate" ? "btn-primary" : "btn-secondary"} style={{ borderRadius: "999px", width: "100%" }} onClick={() => setAccountType("candidate")}>
+            <button type="button" className={accountType === "candidate" ? "btn-primary" : "btn-secondary"} style={{ borderRadius: "999px", width: "100%" }} onClick={() => setAccountType("candidate")} disabled={loading || step === "otp"}>
               Candidate
             </button>
-            <button type="button" className={accountType === "employer" ? "btn-primary" : "btn-secondary"} style={{ borderRadius: "999px", width: "100%" }} onClick={() => setAccountType("employer")}>
+            <button type="button" className={accountType === "employer" ? "btn-primary" : "btn-secondary"} style={{ borderRadius: "999px", width: "100%" }} onClick={() => setAccountType("employer")} disabled={loading || step === "otp"}>
               Employer
             </button>
           </div>

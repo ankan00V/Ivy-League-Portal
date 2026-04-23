@@ -35,6 +35,28 @@ class TestAuthOAuth(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(success_url, "https://web.test/auth/callback")
         self.assertEqual(failure_url, "https://web.test/login")
 
+    def test_resolve_google_redirect_uri_switches_localhost_host_for_local_frontend(self) -> None:
+        with patch.object(
+            auth_endpoint.settings,
+            "GOOGLE_OAUTH_REDIRECT_URI",
+            "http://127.0.0.1:8000/api/v1/auth/oauth/google/callback",
+        ):
+            redirect_uri = auth_endpoint._resolve_google_redirect_uri("http://localhost:3000")
+
+        self.assertEqual(redirect_uri, "http://localhost:8000/api/v1/auth/oauth/google/callback")
+
+    def test_is_allowed_google_redirect_uri_accepts_localhost_variant(self) -> None:
+        with patch.object(
+            auth_endpoint.settings,
+            "GOOGLE_OAUTH_REDIRECT_URI",
+            "http://127.0.0.1:8000/api/v1/auth/oauth/google/callback",
+        ):
+            self.assertTrue(
+                auth_endpoint._is_allowed_google_redirect_uri(
+                    "http://localhost:8000/api/v1/auth/oauth/google/callback"
+                )
+            )
+
     async def test_oauth_google_start_persists_frontend_origin_in_state(self) -> None:
         with (
             patch.object(auth_endpoint.settings, "GOOGLE_OAUTH_CLIENT_ID", "client-id"),
@@ -54,6 +76,29 @@ class TestAuthOAuth(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(decoded["frontend_origin"], "https://web.test")
         self.assertEqual(decoded["account_type"], "candidate")
         self.assertEqual(decoded["next"], "/auth/callback")
+
+    async def test_oauth_google_start_uses_localhost_redirect_uri_when_frontend_origin_is_localhost(self) -> None:
+        with (
+            patch.object(auth_endpoint.settings, "GOOGLE_OAUTH_CLIENT_ID", "client-id"),
+            patch.object(auth_endpoint.settings, "GOOGLE_OAUTH_CLIENT_SECRET", "client-secret"),
+            patch.object(
+                auth_endpoint.settings,
+                "GOOGLE_OAUTH_REDIRECT_URI",
+                "http://127.0.0.1:8000/api/v1/auth/oauth/google/callback",
+            ),
+        ):
+            payload = await auth_endpoint.oauth_google_start(
+                account_type="candidate",
+                next="/auth/callback",
+                frontend_origin="http://localhost:3000",
+            )
+
+        redirect_url = payload["redirect_url"]
+        query = parse_qs(urlsplit(redirect_url).query)
+        self.assertEqual(
+            query["redirect_uri"][0],
+            "http://localhost:8000/api/v1/auth/oauth/google/callback",
+        )
 
     async def test_oauth_google_callback_redirects_failures_back_to_origin(self) -> None:
         with (

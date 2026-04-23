@@ -12,9 +12,9 @@ Students discover internships, research roles, scholarships, and hackathons acro
 - Vector retrieval service with FAISS acceleration when available and NumPy cosine fallback.
 - Persistent vector index adapter (`mongo` provider) with in-memory fallback (`memory`) and text-hash invalidation.
 - RAG service (`query -> retrieval -> structured insight generation`) exposed via `POST /api/v1/opportunities/ask-ai`.
-- Recommendation stack with ranking modes: `baseline`, `semantic`, `ml`, `ab`.
+- Recommendation stack with ranking modes: `baseline`, `semantic`, `ml`, `ab` (default online inference mode: `ml` with automatic request-level fallback on model failure).
 - Interaction logging + experiment analytics endpoints (`CTR`, `lift`, experiment reports) with explicit `real` vs `simulated` traffic typing.
-- Experiment-science diagnostics: SRM checks (chi-square allocation test) and per-variant power/MDE diagnostics.
+- Experiment-science diagnostics: SRM checks (chi-square allocation test), per-variant power/MDE diagnostics, minimum sample-size gates, and explicit `insufficient_power` labeling before declaring lift.
 - Evaluation endpoints for ranking quality (`Precision@K`, `Recall@K`, `nDCG@K`, `MRR`) and LLM response quality with token/phrase PRF, rubric score, citation grounding, and judge-agreement diagnostics.
 - Semantic deduplication during scraper upserts using embedding similarity thresholds.
 - MLOps endpoints/services for retraining and drift checks.
@@ -52,10 +52,13 @@ Students discover internships, research roles, scholarships, and hackathons acro
   - Prometheus alert rules: `ops/alerts/prometheus-rules.yml`
   - Alertmanager routing template: `ops/alerts/alertmanager-routes.yml`
   - Incident runbook: `docs/runbooks/incident-response.md`
+  - Security hardening runbook: `docs/runbooks/security-hardening-final-mile.md`
 
 ### Security
 - Auth scopes embedded in JWTs (admin tokens include `admin`, `metrics:read`, `jobs:*`, `scraper:trigger`).
 - Redis-backed per-IP rate limits with stricter limits for `/api/v1/auth/*`.
+- Auth abuse lock policy for password + OTP verification with configurable thresholds (`AUTH_ABUSE_*`).
+- Structured auth security audit events (`auth_audit_events`) + active lock-state tracking (`auth_abuse_states`).
 - Production secret enforcement: refuses to boot in `ENVIRONMENT=production` if `SECRET_KEY` is left as the dev default.
 
 ## What Is Still Missing (High Impact Next)
@@ -92,6 +95,12 @@ flowchart LR
     R --> S["Drift Detection"]
 ```
 
+Portfolio publish artifacts live in:
+- `docs/portfolio/architecture.md`
+- `docs/portfolio/ablation_table.md`
+- `docs/portfolio/screenshot_pack.md`
+- `docs/portfolio/screenshots/`
+
 ## Dataset Size (Verified Snapshot)
 Snapshot date: **April 16, 2026**
 
@@ -124,6 +133,7 @@ Server: FastAPI on `127.0.0.1:8000`, 50 requests per endpoint.
 
 ## Metric Gains (Offline Retrieval Benchmark)
 Benchmark artifact: `backend/benchmarks/results.json` (12 queries, K=5).
+Labeling protocol: `docs/benchmarks/labeling-protocol.md`
 
 | Metric | Baseline | Semantic | Gain |
 |---|---:|---:|---:|
@@ -145,6 +155,29 @@ python backend/scripts/publish_model_metadata.py
 End-to-end lifecycle command (retrain on current interactions, champion activation, drift snapshot, README + artifact publish):
 ```bash
 python backend/scripts/run_model_lifecycle_pipeline.py
+```
+
+One-command reproducibility command (offline holdout benchmark + lifecycle + metadata publish):
+```bash
+./scripts/reproduce_results.sh
+```
+
+Portfolio/ATS ablation bundle publish:
+```bash
+python backend/scripts/publish_portfolio_bundle.py
+```
+
+Dashboard screenshot pack capture (with Slim-hosted frontend):
+```bash
+./scripts/capture_dashboard_screenshots.sh
+```
+
+Reproducible DS notebook:
+- `docs/notebooks/analytics_warehouse_story.ipynb`
+
+Local security secret rotation utility:
+```bash
+python backend/scripts/rotate_local_secrets.py --env-file backend/.env
 ```
 
 <!-- MODEL_VERSION_METADATA:START -->
@@ -238,6 +271,12 @@ From live `ranking_mode` experiment (baseline vs ml), 14-day window:
 - `POST /api/v1/opportunities/evaluate-llm` (token/phrase PRF, citation-grounding, rubric score, optional judge agreement)
 - `GET /api/v1/opportunities/experiments/ctr`
 - `GET /api/v1/opportunities/experiments/lift`
+- `POST /api/v1/employer/opportunities` / `PATCH /api/v1/employer/opportunities/{id}` / `POST /api/v1/employer/opportunities/{id}/lifecycle`
+- `GET /api/v1/employer/applications` / `PATCH /api/v1/employer/applications/{id}/pipeline`
+- `GET /api/v1/employer/audit-logs`
+- `POST /api/v1/analytics/warehouse/rebuild` / `GET /api/v1/analytics/warehouse/*` / `GET /api/v1/analytics/feature-store/rows`
+- `GET /api/v1/rag-governance/templates` / `POST /api/v1/rag-governance/templates` / offline+online eval + activation endpoints
+- `GET /api/v1/auth/audit-events` / `GET /api/v1/auth/abuse-locks` (admin)
 - `POST /api/v1/mlops/retrain`
 - `GET /api/v1/mlops/models`
 - `POST /api/v1/mlops/nlp/train`
@@ -318,6 +357,11 @@ slim start api --port 8000
 # Share a local preview publicly
 slim share --port 3000 --subdomain demo --ttl 2h
 ```
+
+If you enable Google OAuth while using Slim-hosted local domains, register and set:
+- `GOOGLE_OAUTH_REDIRECT_URI=https://api.test/api/v1/auth/oauth/google/callback`
+- `FRONTEND_OAUTH_SUCCESS_URL=https://web.test/auth/callback`
+- `FRONTEND_OAUTH_FAILURE_URL=https://web.test/login`
 
 ## Resume-Grade Positioning
 Built an AI-powered opportunity intelligence platform with modular NLP/ML services (embeddings, intent+NER, vector retrieval, RAG), ranking experimentation (`baseline/semantic/ml/ab`), interaction analytics, and MLOps retraining/drift pipelines on a FastAPI + Next.js architecture.

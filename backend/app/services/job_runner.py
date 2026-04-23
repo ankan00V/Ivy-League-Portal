@@ -348,8 +348,20 @@ async def _job_mlops_alert(payload: dict[str, Any]) -> dict[str, Any]:
     return await mlops_alerting_service.notify_drift_alert(report=report)
 
 
+async def _job_analytics_warehouse_rebuild(payload: dict[str, Any]) -> dict[str, Any]:
+    from app.services.analytics_warehouse_service import analytics_warehouse_service
+
+    lookback_days = int(payload.get("lookback_days") or settings.ANALYTICS_LOOKBACK_DAYS_DEFAULT)
+    traffic_type = str(payload.get("traffic_type") or "real").strip().lower() or "real"
+    return await analytics_warehouse_service.rebuild(
+        lookback_days=lookback_days,
+        traffic_type=traffic_type,
+    )
+
+
 def register_default_jobs() -> None:
     job_runner.register("scraper.run", _job_scraper)
     job_runner.register("mlops.retrain", _job_mlops_retrain)
     job_runner.register("mlops.drift", _job_mlops_drift)
     job_runner.register("mlops.alert", _job_mlops_alert)
+    job_runner.register("analytics.warehouse.rebuild", _job_analytics_warehouse_rebuild)

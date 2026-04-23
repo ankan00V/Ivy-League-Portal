@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Copyleft as Clock, Bookmark, Play, CheckCircle, Activity } from "lucide-react";
 import { apiUrl } from "@/lib/api";
+import { getAccessToken } from "@/lib/auth-session";
 
 interface ApplicationRow {
     id: string;
@@ -19,22 +20,47 @@ export default function ApplicationsPage() {
     const [applications, setApplications] = useState<ApplicationRow[]>([]);
 
     useEffect(() => {
+        let cancelled = false;
         const fetchApps = async () => {
             try {
-                const token = localStorage.getItem("access_token");
+                const token = getAccessToken();
+                if (!token) {
+                    if (!cancelled) {
+                        setApplications([]);
+                    }
+                    return;
+                }
                 const res = await fetch(apiUrl("/api/v1/applications/"), {
                     headers: { "Authorization": `Bearer ${token}` }
                 });
                 if (res.ok) {
                     const data = await res.json();
-                    setApplications(data);
+                    if (!cancelled) {
+                        setApplications(Array.isArray(data) ? data : []);
+                    }
                 }
             } catch (err) {
                 const message = err instanceof Error ? err.message : "unknown error";
                 console.warn(`[Applications] Fetch failed: ${message}`);
             }
         };
-        fetchApps();
+
+        void fetchApps();
+        const interval = window.setInterval(() => {
+            void fetchApps();
+        }, 15000);
+        const handleRefresh = () => {
+            void fetchApps();
+        };
+        window.addEventListener("focus", handleRefresh);
+        document.addEventListener("visibilitychange", handleRefresh);
+
+        return () => {
+            cancelled = true;
+            window.clearInterval(interval);
+            window.removeEventListener("focus", handleRefresh);
+            document.removeEventListener("visibilitychange", handleRefresh);
+        };
     }, []);
 
     const getStatusStyle = (status: string) => {

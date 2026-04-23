@@ -1,11 +1,13 @@
 "use client";
 import Sidebar from "@/components/Sidebar";
 import AskAIPanel from "@/components/AskAIPanel";
+import { OpportunityCardsSkeleton } from "@/components/LoadingSkeletons";
 import React, { startTransition, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { MapPin, Calendar, ExternalLink, Send, Bookmark } from "lucide-react";
+import { MapPin, Calendar, Send, Bookmark } from "lucide-react";
 import Image from "next/image";
 import { apiUrl } from "@/lib/api";
+import { getAccessToken } from "@/lib/auth-session";
 import { logTrackedOpportunityEvent, useOpportunityFeedImpressions } from "@/lib/opportunity-feed-tracker";
 
 interface Opportunity {
@@ -72,7 +74,7 @@ export default function InternshipsJobsPage() {
     }, [opportunities]);
 
     const triggerLiveRefresh = useEffectEvent(async () => {
-        const token = localStorage.getItem("access_token");
+        const token = getAccessToken();
         if (!token) {
             return;
         }
@@ -90,7 +92,7 @@ export default function InternshipsJobsPage() {
 
     const fetchOpportunities = useEffectEvent(async () => {
         try {
-            const token = localStorage.getItem("access_token");
+            const token = getAccessToken();
             if (token) {
                 const personalizedRes = await fetch(
                     apiUrl("/api/v1/opportunities/recommended/me?limit=100&ranking_mode=ab"),
@@ -264,7 +266,7 @@ export default function InternshipsJobsPage() {
     };
 
     const handleApply = async (opportunity: Opportunity) => {
-        const token = localStorage.getItem("access_token");
+        const token = getAccessToken();
         if (!token) {
             setNotice("Sign in to use one-click application.");
             return;
@@ -295,7 +297,15 @@ export default function InternshipsJobsPage() {
             if (!res.ok) {
                 throw new Error(data.detail || "Application failed");
             }
-            setNotice("Application submitted successfully.");
+            setNotice("Saved to your Applications. Redirecting...");
+            if (typeof window !== "undefined") {
+                if (opportunity.url) {
+                    window.location.assign(opportunity.url);
+                    return;
+                }
+                setNotice("Saved to your Applications.");
+                return;
+            }
         } catch (error: unknown) {
             setNotice(error instanceof Error ? error.message : "Could not submit application.");
         } finally {
@@ -553,16 +563,6 @@ export default function InternshipsJobsPage() {
                                 <Bookmark size={14} />
                                 {savedOpportunityIds[opp.id] ? "Saved" : "Save"}
                             </button>
-                            <a
-                                href={opp.url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="btn-secondary"
-                                style={{ padding: "0.7rem 0.95rem", fontSize: "0.9rem", display: "flex", alignItems: "center", gap: "0.3rem", border: "2px solid var(--border-subtle)" }}
-                                onClick={() => void logOpportunityEvent(opp, "click")}
-                            >
-                                Event Page <ExternalLink size={14} />
-                            </a>
                         </div>
                     </div>
                 </div>
@@ -738,16 +738,6 @@ export default function InternshipsJobsPage() {
                             <Bookmark size={14} />
                             {savedOpportunityIds[opp.id] ? "Saved" : "Save"}
                         </button>
-                        <a
-                            href={opp.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="btn-secondary"
-                            style={{ padding: "0.7rem 0.95rem", fontSize: "0.9rem", display: "flex", alignItems: "center", gap: "0.3rem", border: "2px solid var(--border-subtle)" }}
-                            onClick={() => void logOpportunityEvent(opp, "click")}
-                        >
-                            Job Page <ExternalLink size={14} />
-                        </a>
                     </div>
                 </div>
             </motion.article>
@@ -871,19 +861,7 @@ export default function InternshipsJobsPage() {
                     </div>
                 )}
                 {loading ? (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '2rem' }}>
-                        {Array.from({ length: 6 }).map((_, idx) => (
-                            <div key={`skel-${idx}`} className="card-panel" style={{ padding: 0, height: '420px', display: 'flex', flexDirection: 'column' }}>
-                                <div style={{ height: '160px', background: 'var(--bg-surface-hover)', animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite' }} />
-                                <div style={{ padding: '1.5rem', flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                                    <div style={{ height: '24px', background: 'var(--bg-surface-hover)', borderRadius: '4px', width: '80%', animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite' }} />
-                                    <div style={{ height: '16px', background: 'var(--bg-surface-hover)', borderRadius: '4px', width: '100%', animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite' }} />
-                                    <div style={{ height: '16px', background: 'var(--bg-surface-hover)', borderRadius: '4px', width: '60%', animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite' }} />
-                                    <div style={{ marginTop: 'auto', height: '40px', background: 'var(--bg-surface-hover)', borderRadius: '24px', width: '100%', animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite' }} />
-                                </div>
-                            </div>
-                        ))}
-                    </div>
+                    <OpportunityCardsSkeleton count={6} />
                 ) : (
                     <>
                         {renderSection(
@@ -899,15 +877,6 @@ export default function InternshipsJobsPage() {
                         )}
                     </>
                 )}
-
-                {/* CSS for Skeleton Pulse since we didn't add it to globals.css */}
-                <style dangerouslySetInnerHTML={{
-                    __html: `
-                    @keyframes pulse {
-                        0%, 100% { opacity: 1; }
-                        50% { opacity: .5; }
-                    }
-                `}} />
             </main>
         </div>
     );

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 
 import BrandLogo from "@/components/BrandLogo";
+import { TableWorkspaceSkeleton } from "@/components/LoadingSkeletons";
 import { apiUrl } from "@/lib/api";
 import { clearAccessToken, getAccessToken } from "@/lib/auth-session";
 import { getApiErrorMessage, getUnknownErrorMessage } from "@/lib/error-utils";
@@ -224,11 +225,7 @@ export default function EmployerApplicationsPage() {
   };
 
   if (loading) {
-    return (
-      <main style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "var(--bg-base)" }}>
-        <p style={{ color: "var(--text-secondary)", fontWeight: 700 }}>Loading applications workspace...</p>
-      </main>
-    );
+    return <TableWorkspaceSkeleton />;
   }
 
   return (

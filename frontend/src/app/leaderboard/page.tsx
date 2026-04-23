@@ -1,8 +1,10 @@
 "use client";
 import Sidebar from "@/components/Sidebar";
+import { LeaderboardRowsSkeleton } from "@/components/LoadingSkeletons";
 import React, { useEffect, useState } from "react";
 import { Crown, Medal, Trophy } from "lucide-react";
 import { apiUrl } from "@/lib/api";
+import { getAccessToken } from "@/lib/auth-session";
 
 interface LeaderboardEntry {
     user_id: string;
@@ -18,7 +20,7 @@ export default function LeaderboardPage() {
 
     useEffect(() => {
         const fetchLeaderboard = async () => {
-            const token = localStorage.getItem("access_token");
+            const token = getAccessToken();
             if (!token) {
                 setError("Sign in to view the leaderboard.");
                 setLoading(false);
@@ -83,11 +85,7 @@ export default function LeaderboardPage() {
                             </thead>
                             <tbody>
                                 {loading && (
-                                    <tr>
-                                        <td colSpan={4} style={{ padding: "1.25rem" }}>
-                                            Loading leaderboard...
-                                        </td>
-                                    </tr>
+                                    <LeaderboardRowsSkeleton rows={8} />
                                 )}
                                 {!loading && entries.length === 0 && (
                                     <tr>

@@ -16,6 +16,12 @@ class RankerResult:
     loaded: bool
 
 
+@dataclass(frozen=True)
+class FeatureImportanceItem:
+    feature: str
+    importance: float
+
+
 class LearnedRanker:
     """
     Lightweight wrapper around a LightGBM/XGBoost model for online scoring.
@@ -104,6 +110,40 @@ class LearnedRanker:
 
         return RankerResult(score=pred, model=self._model_kind or "unknown", loaded=True)
 
+    def feature_importance(self, *, top_k: int = 8) -> list[FeatureImportanceItem]:
+        self.reload_if_needed()
+        if not self.is_loaded:
+            return []
+
+        safe_top_k = max(1, min(int(top_k), 30))
+        names = list(self._feature_names or [])
+        if not names:
+            return []
+
+        scored: list[tuple[str, float]] = []
+        try:
+            if self._model_kind == "lightgbm":
+                gains = list(self._booster.feature_importance(importance_type="gain"))  # type: ignore[union-attr]
+                for idx, name in enumerate(names):
+                    if idx >= len(gains):
+                        break
+                    value = float(gains[idx] or 0.0)
+                    if value > 0:
+                        scored.append((name, value))
+            else:
+                score_map = dict(self._booster.get_score(importance_type="gain"))  # type: ignore[union-attr]
+                for name in names:
+                    value = float(score_map.get(name) or 0.0)
+                    if value > 0:
+                        scored.append((name, value))
+        except Exception:
+            return []
+
+        scored.sort(key=lambda row: row[1], reverse=True)
+        return [
+            FeatureImportanceItem(feature=name, importance=round(float(value), 6))
+            for name, value in scored[:safe_top_k]
+        ]
+
 
 learned_ranker = LearnedRanker()
-

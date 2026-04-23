@@ -5,6 +5,7 @@ import { motion, useMotionValue, useTransform } from "framer-motion";
 import type { HTMLMotionProps } from "framer-motion";
 import { TrendingUp, Briefcase, ShieldCheck, Activity, Sparkles, Star, CircleAlert, CircleCheck, X } from "lucide-react";
 import { apiUrl } from "@/lib/api";
+import { getAccessToken } from "@/lib/auth-session";
 import { useRouter } from "next/navigation";
 import { isMongoObjectId, logOpportunityInteraction } from "@/lib/opportunity-interactions";
 import { formatTopPercent, type RankingSummary } from "@/lib/ranking-summary";
@@ -134,6 +135,7 @@ const formatStableDate = (value: string) => {
 
 export default function DashboardPage() {
     const router = useRouter();
+    const [isAuthenticated, setIsAuthenticated] = useState(false);
     const [recommended, setRecommended] = useState<OpportunityCard[]>([]);
     const [profile, setProfile] = useState<ProfileSummary | null>(null);
     const [rankingSummary, setRankingSummary] = useState<RankingSummary | null>(null);
@@ -145,11 +147,13 @@ export default function DashboardPage() {
 
     const fetchDashboardData = useCallback(async () => {
         try {
-            const token = localStorage.getItem("access_token");
+            const token = getAccessToken();
+            const hasAuth = Boolean(token);
+            setIsAuthenticated(hasAuth);
             const authHeaders = token ? { Authorization: `Bearer ${token}` } : undefined;
 
             // 1. Fetch Profile + Applications only when authenticated
-            if (authHeaders) {
+            if (authHeaders && hasAuth) {
                 const [profileRes, appsRes, rankingRes, strengthRes] = await Promise.all([
                     fetch(apiUrl("/api/v1/users/me/profile"), { headers: authHeaders }),
                     fetch(apiUrl("/api/v1/applications/"), { headers: authHeaders }),
@@ -185,6 +189,8 @@ export default function DashboardPage() {
                     setProfileStrength(null);
                 }
             } else {
+                setProfile(null);
+                setAppCount(0);
                 setRankingSummary(null);
                 setProfileStrength(null);
             }
@@ -294,13 +300,16 @@ export default function DashboardPage() {
     );
     const activePosts = posts.length > 0 ? posts : MOCK_POSTS;
     const incoscoreValue = rankingSummary?.incoscore ?? profile?.incoscore ?? 0;
+    const profileStrengthPercent = profileStrength ? clampPercent(profileStrength.strength_percent) : 0;
+    const incoscoreDisplay = isAuthenticated ? incoscoreValue.toFixed(1) : "--";
+    const applicationDisplay = isAuthenticated ? String(appCount) : "--";
+    const profileStrengthDisplay = isAuthenticated ? `${profileStrengthPercent}%` : "--";
     const rankingTitle = rankingSummary
         ? `Top ${formatTopPercent(rankingSummary.top_percent)}% Globally`
         : "Sign in for live rank";
     const rankingDetail = rankingSummary
         ? `Rank #${rankingSummary.rank} of ${rankingSummary.total_users}`
         : "Live global percentile";
-    const profileStrengthPercent = profileStrength ? clampPercent(profileStrength.strength_percent) : 0;
     const profileStrengthHint = profileStrength
         ? `${profileStrength.completed_signals}/${profileStrength.total_signals} profile signals complete`
         : "Sign in to compute live profile strength";
@@ -322,7 +331,7 @@ export default function DashboardPage() {
     }, [profileStrength]);
 
     useEffect(() => {
-        const token = localStorage.getItem("access_token");
+        const token = getAccessToken();
         if (!token) {
             return;
         }
@@ -371,16 +380,47 @@ export default function DashboardPage() {
                     }}>
                     <div>
                         <h1 style={{ fontSize: '3.5rem', marginBottom: '0.25rem', color: '#000000', fontFamily: 'var(--font-serif)', lineHeight: 1, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                            Welcome back, Student! <Sparkles size={36} />
+                            {isAuthenticated ? "Welcome back, Student!" : "Dashboard Preview"}
+                            <Sparkles size={36} />
                         </h1>
                         <p style={{ color: 'rgba(0,0,0,0.8)', fontSize: '1.25rem', maxWidth: '500px', fontWeight: 600 }}>
-                            Your opportunity intelligence overview is ready. Discover your next big win today.
+                            {isAuthenticated
+                                ? "Your opportunity intelligence overview is ready. Discover your next big win today."
+                                : "Explore a live demo of VidyaVerse features. Sign in to unlock personalized actions."}
                         </p>
                     </div>
-                    <button className="btn-secondary" onClick={() => router.push('/profile')}>
-                        View Profile
+                    <button
+                        className="btn-secondary"
+                        onClick={() => router.push(isAuthenticated ? "/profile" : "/login")}
+                    >
+                        {isAuthenticated ? "View Profile" : "Sign In"}
                     </button>
                 </motion.header>
+                {!isAuthenticated ? (
+                    <div
+                        className="card-panel"
+                        style={{
+                            marginBottom: "2rem",
+                            background: "var(--bg-surface)",
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            gap: "1rem",
+                        }}
+                    >
+                        <div>
+                            <div style={{ fontWeight: 800, color: "var(--text-primary)", marginBottom: "0.25rem" }}>
+                                Demo Mode Active
+                            </div>
+                            <div style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
+                                Sign in to access personalized rankings, one-click actions, and live profile strength.
+                            </div>
+                        </div>
+                        <button className="btn-primary" onClick={() => router.push("/login")}>
+                            Sign In to Access
+                        </button>
+                    </div>
+                ) : null}
 
                 {/* Infinite Marquee */}
                 <div style={{ 
@@ -423,7 +463,7 @@ export default function DashboardPage() {
                             <TrendingUp size={18} /> InCoScore Ranking
                         </div>
                         <div style={{ fontSize: '4rem', fontWeight: 400, fontFamily: 'var(--font-serif)', color: '#000000', lineHeight: 1 }}>
-                            {incoscoreValue.toFixed(1)}
+                            {incoscoreDisplay}
                         </div>
                         <div style={{ fontSize: '0.9rem', color: 'rgba(0,0,0,0.8)', marginTop: '0.5rem', fontWeight: 700 }}>{rankingTitle}</div>
                         <div style={{ fontSize: '0.8rem', color: 'rgba(0,0,0,0.7)', marginTop: '0.2rem', fontWeight: 600 }}>{rankingDetail}</div>
@@ -437,9 +477,11 @@ export default function DashboardPage() {
                             <Briefcase size={18} /> Active Applications
                         </div>
                         <div style={{ fontSize: '4rem', fontWeight: 400, fontFamily: 'var(--font-serif)', color: '#000000', lineHeight: 1 }}>
-                            {appCount}
+                            {applicationDisplay}
                         </div>
-                        <div style={{ fontSize: '0.9rem', color: 'rgba(0,0,0,0.8)', marginTop: '0.5rem', fontWeight: 600 }}>Live Synchronized Tracking</div>
+                        <div style={{ fontSize: '0.9rem', color: 'rgba(0,0,0,0.8)', marginTop: '0.5rem', fontWeight: 600 }}>
+                            {isAuthenticated ? "Live Synchronized Tracking" : "Sign in to track applications"}
+                        </div>
                     </TiltCard>
 
                     <TiltCard
@@ -450,7 +492,7 @@ export default function DashboardPage() {
                         tabIndex={0}
                         onClick={() => {
                             if (!profileStrength) {
-                                router.push("/profile");
+                                router.push(isAuthenticated ? "/profile" : "/login");
                                 return;
                             }
                             setShowProfileStrengthModal(true);
@@ -459,7 +501,7 @@ export default function DashboardPage() {
                             if (event.key === "Enter" || event.key === " ") {
                                 event.preventDefault();
                                 if (!profileStrength) {
-                                    router.push("/profile");
+                                    router.push(isAuthenticated ? "/profile" : "/login");
                                     return;
                                 }
                                 setShowProfileStrengthModal(true);
@@ -470,7 +512,7 @@ export default function DashboardPage() {
                             <ShieldCheck size={18} /> Profile Strength
                         </div>
                         <div style={{ fontSize: '4rem', fontWeight: 400, fontFamily: 'var(--font-serif)', color: 'var(--text-primary)', lineHeight: 1 }}>
-                            {profileStrengthPercent}%
+                            {profileStrengthDisplay}
                         </div>
                         <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginTop: '0.5rem', fontWeight: 700 }}>{profileStrengthHint}</div>
                         <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.2rem', fontWeight: 600 }}>{profileStrengthRecommendation}</div>
@@ -507,10 +549,13 @@ export default function DashboardPage() {
                                         display: 'flex',
                                         justifyContent: 'space-between',
                                         alignItems: 'center',
-                                        cursor: 'pointer',
+                                        cursor: isAuthenticated ? 'pointer' : 'default',
                                         padding: '1rem 1.25rem'
                                     }}
                                     onClick={() => {
+                                        if (!isAuthenticated) {
+                                            return;
+                                        }
                                         void logDashboardOpportunityEvent(opp, "click");
                                         router.push('/opportunities');
                                     }}
@@ -538,6 +583,11 @@ export default function DashboardPage() {
                                         <div style={{ color: '#000000', fontWeight: 700, padding: '0.25rem 0.75rem', background: 'var(--brand-accent)', border: '2px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', fontSize: '0.85rem', whiteSpace: 'nowrap' }}>
                                             {getMatchPercent(opp.domain || 'x')}% Match
                                         </div>
+                                        {!isAuthenticated ? (
+                                            <div style={{ fontSize: "0.75rem", marginTop: "0.4rem", color: "var(--text-muted)", fontWeight: 700 }}>
+                                                Sign in to access
+                                            </div>
+                                        ) : null}
                                     </div>
                                 </div>
                             ))}

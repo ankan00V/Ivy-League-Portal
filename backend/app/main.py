@@ -1,5 +1,6 @@
 import asyncio
-from typing import Any
+import logging
+from typing import Any, Optional
 
 from fastapi import Depends, FastAPI, Response
 from fastapi.openapi.docs import get_swagger_ui_html
@@ -29,13 +30,23 @@ from app.models.experiment import Experiment, ExperimentAssignment
 from app.models.model_drift_report import ModelDriftReport
 from app.models.nlp_model_version import NLPModelVersion
 from app.models.rag_feedback_event import RAGFeedbackEvent
+from app.models.rag_template_version import RAGTemplateVersion
+from app.models.rag_template_evaluation_run import RAGTemplateEvaluationRun
 from app.models.ranking_model_version import RankingModelVersion
 from app.models.ranking_request_telemetry import RankingRequestTelemetry
 from app.models.vector_index_entry import VectorIndexEntry
 from app.models.background_job import BackgroundJob
+from app.models.recruiter_audit_log import RecruiterAuditLog
+from app.models.auth_audit_event import AuthAuditEvent
+from app.models.auth_abuse_state import AuthAbuseState
+from app.models.analytics_daily_aggregate import AnalyticsDailyAggregate
+from app.models.analytics_funnel_aggregate import AnalyticsFunnelAggregate
+from app.models.analytics_cohort_aggregate import AnalyticsCohortAggregate
+from app.models.feature_store_row import FeatureStoreRow
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.services.experiment_service import experiment_service
+from app.services.rag_template_registry_service import rag_template_registry_service
 from app.services.ranking_model_service import ranking_model_service
  
 from app.services.job_runner import job_runner, register_default_jobs
@@ -44,6 +55,8 @@ from app.core.redis import close_redis
 from app.core.metrics import CONTENT_TYPE_LATEST, init_metrics, render_metrics
 from app.core.http_middleware import ObservabilityMiddleware, RateLimitMiddleware
 from app.api.deps import get_current_admin_user, require_scopes
+
+logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -71,10 +84,50 @@ async def lifespan(app: FastAPI):
             }
         )
 
-    client = AsyncIOMotorClient(settings.MONGODB_URL, **mongo_kwargs)
+    mongo_kwargs.update(
+        {
+            "serverSelectionTimeoutMS": max(1000, int(settings.MONGODB_SERVER_SELECTION_TIMEOUT_MS)),
+            "connectTimeoutMS": max(1000, int(settings.MONGODB_CONNECT_TIMEOUT_MS)),
+            "socketTimeoutMS": max(1000, int(settings.MONGODB_SOCKET_TIMEOUT_MS)),
+        }
+    )
+
+    startup_retries = max(1, int(settings.MONGODB_STARTUP_MAX_RETRIES))
+    startup_backoff = max(0.25, float(settings.MONGODB_STARTUP_RETRY_BACKOFF_SECONDS))
+    ping_timeout_seconds = max(
+        3.0,
+        float(settings.MONGODB_SERVER_SELECTION_TIMEOUT_MS) / 1000.0 + 2.0,
+    )
+
+    client: Optional[AsyncIOMotorClient] = None
+    last_mongo_error: Exception | None = None
+    for attempt in range(1, startup_retries + 1):
+        client = AsyncIOMotorClient(settings.MONGODB_URL, **mongo_kwargs)
+        try:
+            await asyncio.wait_for(client.admin.command("ping"), timeout=ping_timeout_seconds)
+            logger.info("MongoDB ping succeeded on startup attempt %s/%s", attempt, startup_retries)
+            break
+        except Exception as exc:
+            last_mongo_error = exc
+            logger.error(
+                "MongoDB startup ping failed on attempt %s/%s: %s",
+                attempt,
+                startup_retries,
+                exc,
+            )
+            client.close()
+            client = None
+            if attempt >= startup_retries:
+                raise RuntimeError("MongoDB unavailable during startup; aborting API boot.") from exc
+            await asyncio.sleep(startup_backoff * attempt)
+    if client is None:
+        raise RuntimeError(
+            f"MongoDB client initialization failed after {startup_retries} attempts: {last_mongo_error}"
+        )
     
     # Initialize Beanie ODM with the database and document models
-    await init_beanie(
+    await asyncio.wait_for(
+        init_beanie(
         database=client[settings.MONGODB_DB_NAME],
         document_models=[
             User,
@@ -95,9 +148,20 @@ async def lifespan(app: FastAPI):
             ModelDriftReport,
             RankingRequestTelemetry,
             RAGFeedbackEvent,
+            RAGTemplateVersion,
+            RAGTemplateEvaluationRun,
             VectorIndexEntry,
             BackgroundJob,
+            RecruiterAuditLog,
+            AuthAuditEvent,
+            AuthAbuseState,
+            AnalyticsDailyAggregate,
+            AnalyticsFunnelAggregate,
+            AnalyticsCohortAggregate,
+            FeatureStoreRow,
         ]
+        ),
+        timeout=max(10.0, ping_timeout_seconds * 2.0),
     )
     try:
         init_metrics()
@@ -107,6 +171,10 @@ async def lifespan(app: FastAPI):
         await experiment_service.ensure_defaults()
     except Exception as exc:
         print(f"[Lifecycle] Experiment defaults init failed: {exc}")
+    try:
+        await rag_template_registry_service.ensure_defaults()
+    except Exception as exc:
+        print(f"[Lifecycle] RAG template defaults init failed: {exc}")
     if settings.MLOPS_BOOTSTRAP_ACTIVE_MODEL_ON_STARTUP:
         try:
             active_model = await ranking_model_service.ensure_active_model()
@@ -122,7 +190,7 @@ async def lifespan(app: FastAPI):
 
     # Initialize and start background schedulers (enqueue scraper + MLOps).
     scheduler: AsyncIOScheduler | None = None
-    if settings.SCRAPER_AUTORUN_ENABLED or settings.MLOPS_AUTORUN_ENABLED:
+    if settings.SCRAPER_AUTORUN_ENABLED or settings.MLOPS_AUTORUN_ENABLED or settings.ANALYTICS_WAREHOUSE_AUTORUN_ENABLED:
         scheduler = AsyncIOScheduler(
             timezone="UTC",
             job_defaults={
@@ -197,10 +265,38 @@ async def lifespan(app: FastAPI):
                 next_run_time=datetime.now(timezone.utc),
             )
 
+        if settings.ANALYTICS_WAREHOUSE_AUTORUN_ENABLED:
+
+            async def _safe_warehouse_rebuild() -> None:
+                try:
+                    await job_runner.enqueue(
+                        job_type="analytics.warehouse.rebuild",
+                        payload={
+                            "lookback_days": settings.ANALYTICS_LOOKBACK_DAYS_DEFAULT,
+                            "traffic_type": "real",
+                        },
+                        dedupe_key="analytics.warehouse.rebuild",
+                    )
+                    print("[Lifecycle] Analytics warehouse rebuild enqueued.")
+                except Exception as exc:
+                    print(f"[Lifecycle] Analytics warehouse rebuild enqueue failed: {exc}")
+
+            scheduler.add_job(
+                _safe_warehouse_rebuild,
+                "interval",
+                hours=max(1, int(settings.ANALYTICS_WAREHOUSE_REBUILD_INTERVAL_HOURS)),
+                id="analytics_warehouse_rebuild_job",
+                replace_existing=True,
+                next_run_time=datetime.now(timezone.utc),
+            )
+
         scheduler.start()
         print("[Lifecycle] Background Scheduler started.")
     else:
-        print("[Lifecycle] Background Scheduler disabled (SCRAPER_AUTORUN_ENABLED=false and MLOPS_AUTORUN_ENABLED=false).")
+        print(
+            "[Lifecycle] Background Scheduler disabled (SCRAPER_AUTORUN_ENABLED=false, "
+            "MLOPS_AUTORUN_ENABLED=false, ANALYTICS_WAREHOUSE_AUTORUN_ENABLED=false)."
+        )
 
     try:
         await refresh_freshness_metrics()
@@ -226,10 +322,6 @@ async def lifespan(app: FastAPI):
         scheduler.shutdown()
     if freshness_task is not None:
         freshness_task.cancel()
-        try:
-            await freshness_task
-        except Exception:
-            pass
     await job_runner.stop()
     await close_redis()
     client.close()

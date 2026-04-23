@@ -196,6 +196,35 @@ def _observed_power_and_mde(
     }
 
 
+def _z_beta_for_target_power(target_power: float) -> float:
+    # Practical defaults for common thresholds.
+    if target_power >= 0.9:
+        return 1.2815515655446004
+    if target_power >= 0.85:
+        return 1.0364333894937898
+    return 0.8416212335729143
+
+
+def _required_sample_size_per_variant(
+    *,
+    baseline_rate: float,
+    mde_absolute: float,
+    alpha: float = 0.05,
+    target_power: float = 0.8,
+) -> Optional[int]:
+    safe_p = max(1e-6, min(1.0 - 1e-6, float(baseline_rate)))
+    safe_mde = max(0.0, float(mde_absolute))
+    if safe_mde <= 0.0:
+        return None
+    z_alpha = 1.959963984540054 if alpha <= 0.05 else 1.6448536269514722
+    z_beta = _z_beta_for_target_power(target_power)
+    numerator = ((z_alpha + z_beta) ** 2) * (2.0 * safe_p * (1.0 - safe_p))
+    n = numerator / (safe_mde ** 2)
+    if not (n > 0):
+        return None
+    return int(max(1, round(n)))
+
+
 @dataclass(frozen=True)
 class VariantCounts:
     impressions: int
@@ -358,6 +387,7 @@ class ExperimentAnalyticsService:
                         n_control=int(control["impressions"]),
                         k_variant=int(variant["conversions"]),
                         n_variant=int(variant["impressions"]),
+                        target_power=float(max(0.5, min(0.99, settings.EXPERIMENT_TARGET_POWER))),
                     ),
                 }
             )
@@ -367,13 +397,68 @@ class ExperimentAnalyticsService:
         significance_failures: list[dict[str, Any]] = []
         alpha = float(max(0.0, min(1.0, settings.EXPERIMENT_SIGNIFICANCE_ALPHA)))
         min_impressions = int(max(1, settings.EXPERIMENT_GUARDRAIL_MIN_IMPRESSIONS_PER_VARIANT))
+        min_lift_impressions = int(max(1, settings.EXPERIMENT_MIN_IMPRESSIONS_PER_VARIANT_FOR_LIFT))
+        target_power = float(max(0.5, min(0.99, settings.EXPERIMENT_TARGET_POWER)))
 
         variant_impressions = {item["name"]: int(item.get("impressions") or 0) for item in variants_payload}
-        for comparison in comparisons:
+        for idx, comparison in enumerate(comparisons):
             p_value = comparison.get("p_value")
             diff = comparison.get("diff")
             variant_name = str(comparison.get("variant") or "")
             control_name_for_cmp = str(comparison.get("control") or control_name)
+            control_impressions = int(variant_impressions.get(control_name_for_cmp, 0))
+            variant_impressions_count = int(variant_impressions.get(variant_name, 0))
+            sample_size_eligible = (
+                control_impressions >= min_lift_impressions
+                and variant_impressions_count >= min_lift_impressions
+            )
+            sample_gate_reason = None if sample_size_eligible else "min_sample_size_not_met"
+            comparison["sample_size_gate"] = {
+                "eligible": bool(sample_size_eligible),
+                "reason": sample_gate_reason,
+                "min_impressions_per_variant": int(min_lift_impressions),
+                "control_impressions": int(control_impressions),
+                "variant_impressions": int(variant_impressions_count),
+            }
+
+            power_payload = dict(comparison.get("power") or {})
+            if power_payload.get("eligible"):
+                power_payload["target_power"] = round(target_power, 8)
+                power_payload["is_underpowered"] = bool(
+                    bool(power_payload.get("is_underpowered"))
+                    or not sample_size_eligible
+                )
+                power_payload["label"] = "insufficient_power" if power_payload["is_underpowered"] else "sufficient_power"
+            else:
+                power_payload["target_power"] = round(target_power, 8)
+                power_payload["is_underpowered"] = True
+                power_payload["label"] = "insufficient_power"
+
+            baseline_rate = float(control.get("conversion_rate") or 0.0)
+            observed_delta = abs(float(diff or 0.0))
+            design_mde = max(0.01, observed_delta)
+            power_payload["required_sample_size_per_variant"] = _required_sample_size_per_variant(
+                baseline_rate=baseline_rate,
+                mde_absolute=design_mde,
+                alpha=alpha,
+                target_power=target_power,
+            )
+            comparison["power"] = power_payload
+
+            if power_payload.get("label") == "insufficient_power":
+                comparison["lift_declared"] = False
+                comparison["lift_label"] = "insufficient_power"
+            elif p_value is not None and diff is not None and float(p_value) < alpha and float(diff) > 0.0:
+                comparison["lift_declared"] = True
+                comparison["lift_label"] = "significant_positive"
+            elif p_value is not None and diff is not None and float(p_value) < alpha and float(diff) < 0.0:
+                comparison["lift_declared"] = True
+                comparison["lift_label"] = "significant_negative"
+            else:
+                comparison["lift_declared"] = False
+                comparison["lift_label"] = "not_significant"
+
+            comparisons[idx] = comparison
             if p_value is None or diff is None:
                 continue
             if float(p_value) < alpha and float(diff) < 0.0:
