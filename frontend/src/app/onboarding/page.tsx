@@ -5,6 +5,10 @@ import React, { useEffect, useMemo, useState } from "react";
 
 import BrandLogo from "@/components/BrandLogo";
 import { CenteredPageSkeleton } from "@/components/LoadingSkeletons";
+import FieldGrid from "@/components/ui/FieldGrid";
+import FormSection from "@/components/ui/FormSection";
+import PillGroup from "@/components/ui/PillGroup";
+import ToggleRow from "@/components/ui/ToggleRow";
 import { useOnboardingFlow } from "@/hooks/useOnboardingFlow";
 import { INDIAN_INSTITUTION_OPTIONS, OTHER_INSTITUTION_LABEL } from "@/lib/indian-institutions";
 
@@ -120,17 +124,8 @@ const ONBOARDING_VISUALS = [
   "https://images.unsplash.com/photo-1552664730-d307ca884978?auto=format&fit=crop&w=1200&q=80",
 ];
 
-function pillButtonStyle(active: boolean): React.CSSProperties {
-  return {
-    border: active ? "2px solid var(--brand-primary)" : "2px dashed var(--border-subtle)",
-    background: active ? "rgba(59,130,246,0.08)" : "var(--bg-surface)",
-    color: "var(--text-primary)",
-    borderRadius: "999px",
-    padding: "0.55rem 0.9rem",
-    cursor: "pointer",
-    fontWeight: 700,
-    minWidth: "fit-content",
-  };
+function pillButtonClass(active: boolean): string {
+  return `vv-pill-button${active ? " active" : ""}`;
 }
 
 type OptionalStringFieldKey =
@@ -401,7 +396,7 @@ export default function OnboardingPage() {
               alt="Onboarding visual"
               fill
               sizes="(max-width: 1100px) 100vw, 50vw"
-              style={{ objectFit: "cover", display: "block" }}
+              className="onboarding-visual-image"
             />
           </div>
           <div>
@@ -419,8 +414,7 @@ export default function OnboardingPage() {
               {Array.from({ length: totalSteps }, (_, idx) => idx + 1).map((n) => (
                 <div
                   key={n}
-                  className="onboarding-progress-step"
-                  style={{ background: n <= step ? "var(--brand-primary)" : "var(--border-subtle)" }}
+                  className={`onboarding-progress-step ${n <= step ? "active" : "pending"}`}
                 />
               ))}
               <span className="onboarding-progress-text">
