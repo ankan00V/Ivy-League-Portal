@@ -36,14 +36,26 @@ PROFILE_SIGNAL_METADATA: dict[str, tuple[str, str]] = {
     "class_grade": ("Class/Grade", "Select your current class/grade."),
     "domain": ("Domain", "Select your academic/professional domain."),
     "course": ("Course", "Add your course or degree."),
+    "course_specialization": ("Course Specialization", "Add your major or specialization."),
     "passout_year": ("Passout Year", "Choose your graduation/passout year."),
     "college_name": ("College Name", "Add your institute/college name."),
     "current_job_role": ("Current Job Role", "Add your current role."),
     "total_work_experience": ("Work Experience", "Add your total work experience."),
+    "experience_summary": ("Experience Summary", "Describe your work experience."),
     "bio": ("Bio", "Write a short profile bio."),
     "skills": ("Skills", "Add your core skills."),
     "interests": ("Interests", "Add your interests."),
     "education": ("Education", "Add education details."),
+    "certificates": ("Certificates", "Add relevant certifications."),
+    "projects": ("Projects", "Add your key projects."),
+    "responsibilities": ("Responsibilities", "Add initiatives or leadership responsibilities."),
+    "gender": ("Gender", "Select your gender identity."),
+    "pronouns": ("Pronouns", "Add your pronouns."),
+    "date_of_birth": ("Date of Birth", "Add your date of birth."),
+    "current_address_line1": ("Current Address", "Add your current address."),
+    "permanent_address_line1": ("Permanent Address", "Add your permanent address."),
+    "hobbies": ("Hobbies", "Add hobbies or personal interests."),
+    "social_links": ("Social Links", "Add at least one professional or social link."),
     "resume": ("Resume", "Upload resume/CV."),
     "company_name": ("Company Name", "Add your company name."),
     "hiring_for": ("Hiring For", "Select whether you hire for yourself or others."),
@@ -61,10 +73,12 @@ class ProfileUpdate(BaseModel):
     user_type: Optional[str] = None
     domain: Optional[str] = None
     course: Optional[str] = None
+    course_specialization: Optional[str] = None
     passout_year: Optional[int] = None
     class_grade: Optional[int] = None
     current_job_role: Optional[str] = None
     total_work_experience: Optional[str] = None
+    experience_summary: Optional[str] = None
     college_name: Optional[str] = None
     company_name: Optional[str] = None
     company_website: Optional[str] = None
@@ -84,6 +98,22 @@ class ProfileUpdate(BaseModel):
     interests: Optional[str] = None
     achievements: Optional[str] = None
     education: Optional[str] = None
+    certificates: Optional[str] = None
+    projects: Optional[str] = None
+    responsibilities: Optional[str] = None
+    gender: Optional[str] = None
+    pronouns: Optional[str] = None
+    date_of_birth: Optional[str] = None
+    current_address_line1: Optional[str] = None
+    current_address_landmark: Optional[str] = None
+    current_address_region: Optional[str] = None
+    current_address_pincode: Optional[str] = None
+    permanent_address_line1: Optional[str] = None
+    permanent_address_landmark: Optional[str] = None
+    permanent_address_region: Optional[str] = None
+    permanent_address_pincode: Optional[str] = None
+    hobbies: Optional[list[str] | str] = None
+    social_links: Optional[dict[str, str]] = None
     resume_url: Optional[str] = None
     resume_filename: Optional[str] = None
     resume_content_type: Optional[str] = None
@@ -163,6 +193,41 @@ class ProfileUpdate(BaseModel):
             clean.append(part)
         return clean[:8]
 
+    @field_validator("hobbies", mode="before")
+    @classmethod
+    def normalize_hobbies(cls, value: Optional[list[str] | str]) -> Optional[list[str]]:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            parts = [chunk.strip() for chunk in value.split(",")]
+        else:
+            parts = [str(chunk).strip() for chunk in value]
+        clean: list[str] = []
+        seen: set[str] = set()
+        for part in parts:
+            key = part.lower()
+            if not part or key in seen:
+                continue
+            seen.add(key)
+            clean.append(part)
+        return clean[:12]
+
+    @field_validator("social_links", mode="before")
+    @classmethod
+    def normalize_social_links(cls, value: Optional[dict[str, Any]]) -> Optional[dict[str, str]]:
+        if value is None:
+            return None
+        if not isinstance(value, dict):
+            raise ValueError("social_links must be an object")
+        normalized: dict[str, str] = {}
+        for key, item in value.items():
+            clean_key = str(key).strip().lower()
+            clean_value = str(item).strip()
+            if not clean_key or not clean_value:
+                continue
+            normalized[clean_key] = clean_value
+        return normalized or None
+
 
 class ProfileResponse(BaseModel):
     user_id: PydanticObjectId
@@ -174,10 +239,12 @@ class ProfileResponse(BaseModel):
     user_type: Optional[str] = None
     domain: Optional[str] = None
     course: Optional[str] = None
+    course_specialization: Optional[str] = None
     passout_year: Optional[int] = None
     class_grade: Optional[int] = None
     current_job_role: Optional[str] = None
     total_work_experience: Optional[str] = None
+    experience_summary: Optional[str] = None
     college_name: Optional[str] = None
     company_name: Optional[str] = None
     company_website: Optional[str] = None
@@ -201,6 +268,22 @@ class ProfileResponse(BaseModel):
     interests: Optional[str] = None
     achievements: Optional[str] = None
     education: Optional[str] = None
+    certificates: Optional[str] = None
+    projects: Optional[str] = None
+    responsibilities: Optional[str] = None
+    gender: Optional[str] = None
+    pronouns: Optional[str] = None
+    date_of_birth: Optional[str] = None
+    current_address_line1: Optional[str] = None
+    current_address_landmark: Optional[str] = None
+    current_address_region: Optional[str] = None
+    current_address_pincode: Optional[str] = None
+    permanent_address_line1: Optional[str] = None
+    permanent_address_landmark: Optional[str] = None
+    permanent_address_region: Optional[str] = None
+    permanent_address_pincode: Optional[str] = None
+    hobbies: list[str] = Field(default_factory=list)
+    social_links: dict[str, str] = Field(default_factory=dict)
     resume_url: Optional[str] = None
     resume_filename: Optional[str] = None
     resume_content_type: Optional[str] = None
@@ -541,6 +624,7 @@ def _profile_strength_checks(profile: Profile) -> list[tuple[str, bool]]:
                 [
                     ("domain", bool((profile.domain or "").strip())),
                     ("course", bool((profile.course or "").strip())),
+                    ("course_specialization", bool((profile.course_specialization or "").strip())),
                     ("passout_year", profile.passout_year is not None),
                     ("college_name", bool((profile.college_name or "").strip())),
                 ]
@@ -550,6 +634,7 @@ def _profile_strength_checks(profile: Profile) -> list[tuple[str, bool]]:
                 [
                     ("current_job_role", bool((profile.current_job_role or "").strip())),
                     ("total_work_experience", bool((profile.total_work_experience or "").strip())),
+                    ("experience_summary", bool((profile.experience_summary or "").strip())),
                 ]
             )
 
@@ -559,6 +644,11 @@ def _profile_strength_checks(profile: Profile) -> list[tuple[str, bool]]:
                 ("skills", bool((profile.skills or "").strip())),
                 ("interests", bool((profile.interests or "").strip())),
                 ("education", bool((profile.education or "").strip())),
+                ("projects", bool((profile.projects or "").strip())),
+                ("date_of_birth", bool((profile.date_of_birth or "").strip())),
+                ("current_address_line1", bool((profile.current_address_line1 or "").strip())),
+                ("hobbies", len(profile.hobbies or []) > 0),
+                ("social_links", len(profile.social_links or {}) > 0),
                 ("resume", bool((profile.resume_url or "").strip())),
             ]
         )

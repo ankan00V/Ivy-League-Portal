@@ -13,10 +13,12 @@ class Profile(Document):
     user_type: Optional[str] = None  # school_student | college_student | fresher | professional
     domain: Optional[str] = None
     course: Optional[str] = None
+    course_specialization: Optional[str] = None
     passout_year: Optional[int] = None
     class_grade: Optional[int] = None
     current_job_role: Optional[str] = None
     total_work_experience: Optional[str] = None
+    experience_summary: Optional[str] = None
     college_name: Optional[str] = None
     company_name: Optional[str] = None
     company_website: Optional[str] = None
@@ -40,6 +42,22 @@ class Profile(Document):
     interests: Optional[str] = None
     achievements: Optional[str] = None
     education: Optional[str] = None
+    certificates: Optional[str] = None
+    projects: Optional[str] = None
+    responsibilities: Optional[str] = None
+    gender: Optional[str] = None
+    pronouns: Optional[str] = None
+    date_of_birth: Optional[str] = None
+    current_address_line1: Optional[str] = None
+    current_address_landmark: Optional[str] = None
+    current_address_region: Optional[str] = None
+    current_address_pincode: Optional[str] = None
+    permanent_address_line1: Optional[str] = None
+    permanent_address_landmark: Optional[str] = None
+    permanent_address_region: Optional[str] = None
+    permanent_address_pincode: Optional[str] = None
+    hobbies: list[str] = Field(default_factory=list)
+    social_links: dict[str, str] = Field(default_factory=dict)
     resume_url: Optional[str] = None
     resume_filename: Optional[str] = None
     resume_content_type: Optional[str] = None

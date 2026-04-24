@@ -3,15 +3,50 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import React, { useEffect, useMemo, useState } from "react";
+import type { LucideIcon } from "lucide-react";
+import {
+  Award,
+  BriefcaseBusiness,
+  CheckCircle2,
+  Circle,
+  Download,
+  FileText,
+  GraduationCap,
+  Link2,
+  MapPinned,
+  NotebookPen,
+  Save,
+  Sparkles,
+  Trash2,
+  Upload,
+  UserRound,
+  Workflow,
+  X,
+} from "lucide-react";
 
-import BrandLogo from "@/components/BrandLogo";
 import { CenteredPageSkeleton } from "@/components/LoadingSkeletons";
+import Sidebar from "@/components/Sidebar";
 import { apiUrl } from "@/lib/api";
 import { getAccessToken } from "@/lib/auth-session";
 import { getApiErrorMessage, getUnknownErrorMessage } from "@/lib/error-utils";
 
 type AccountType = "candidate" | "employer";
 type UserType = "school_student" | "college_student" | "fresher" | "professional";
+
+type SectionKey =
+  | "basic"
+  | "resume"
+  | "about"
+  | "skills"
+  | "education"
+  | "work"
+  | "accomplishments"
+  | "personal"
+  | "social";
+
+type UserPayload = {
+  email?: string;
+};
 
 type ProfilePayload = {
   account_type: AccountType;
@@ -22,10 +57,12 @@ type ProfilePayload = {
   user_type: UserType | "";
   domain: string;
   course: string;
+  course_specialization: string;
   passout_year: number | null;
   class_grade: number | null;
   current_job_role: string;
   total_work_experience: string;
+  experience_summary: string;
   college_name: string;
   company_name: string;
   company_website: string;
@@ -44,13 +81,26 @@ type ProfilePayload = {
   interests: string;
   achievements: string;
   education: string;
+  certificates: string;
+  projects: string;
+  responsibilities: string;
+  gender: string;
+  pronouns: string;
+  date_of_birth: string;
+  current_address_line1: string;
+  current_address_landmark: string;
+  current_address_region: string;
+  current_address_pincode: string;
+  permanent_address_line1: string;
+  permanent_address_landmark: string;
+  permanent_address_region: string;
+  permanent_address_pincode: string;
+  hobbies: string[];
+  social_links: Record<string, string>;
   resume_url: string;
   resume_filename: string;
+  resume_content_type: string;
   resume_uploaded_at: string;
-};
-
-type UserPayload = {
-  email: string;
 };
 
 type ProfileUpdatePayload = {
@@ -62,10 +112,12 @@ type ProfileUpdatePayload = {
   user_type?: UserType;
   domain?: string;
   course?: string;
+  course_specialization?: string;
   passout_year?: number | null;
   class_grade?: number | null;
   current_job_role?: string;
   total_work_experience?: string;
+  experience_summary?: string;
   college_name?: string;
   company_name?: string;
   company_website?: string;
@@ -84,14 +136,116 @@ type ProfileUpdatePayload = {
   interests?: string;
   achievements?: string;
   education?: string;
+  certificates?: string;
+  projects?: string;
+  responsibilities?: string;
+  gender?: string;
+  pronouns?: string;
+  date_of_birth?: string;
+  current_address_line1?: string;
+  current_address_landmark?: string;
+  current_address_region?: string;
+  current_address_pincode?: string;
+  permanent_address_line1?: string;
+  permanent_address_landmark?: string;
+  permanent_address_region?: string;
+  permanent_address_pincode?: string;
+  hobbies?: string[];
+  social_links?: Record<string, string>;
 };
+
+type SectionMeta = {
+  key: SectionKey;
+  label: string;
+  description: string;
+  icon: LucideIcon;
+  requiredCandidate?: boolean;
+  requiredEmployer?: boolean;
+};
+
+const USER_TYPE_OPTIONS: Array<{ key: UserType; label: string }> = [
+  { key: "college_student", label: "College Student" },
+  { key: "professional", label: "Professional" },
+  { key: "school_student", label: "School Student" },
+  { key: "fresher", label: "Fresher" },
+];
+
+const DOMAIN_OPTIONS = ["Engineering", "Management", "Arts & Science", "Medicine", "Law", "Other"];
+const GOAL_OPTIONS = ["To find a Job", "Compete & Upskill", "To Host an Event", "To be a Mentor"];
+const PRONOUN_OPTIONS = ["He/Him", "She/Her", "They/Them", "Prefer not to say"];
+const GENDER_OPTIONS = ["Male", "Female", "Non-binary", "Prefer not to say"];
+
+const SOCIAL_LINK_FIELDS: Array<{ key: string; label: string; placeholder: string }> = [
+  { key: "linkedin", label: "LinkedIn", placeholder: "https://linkedin.com/in/username" },
+  { key: "github", label: "GitHub", placeholder: "https://github.com/username" },
+  { key: "portfolio", label: "Portfolio", placeholder: "https://yourportfolio.com" },
+  { key: "twitter", label: "X / Twitter", placeholder: "https://x.com/username" },
+  { key: "instagram", label: "Instagram", placeholder: "https://instagram.com/username" },
+  { key: "facebook", label: "Facebook", placeholder: "https://facebook.com/username" },
+  { key: "medium", label: "Medium", placeholder: "https://medium.com/@username" },
+  { key: "dribbble", label: "Dribbble", placeholder: "https://dribbble.com/username" },
+  { key: "behance", label: "Behance", placeholder: "https://behance.net/username" },
+  { key: "codepen", label: "CodePen", placeholder: "https://codepen.io/username" },
+  { key: "reddit", label: "Reddit", placeholder: "https://reddit.com/u/username" },
+  { key: "custom", label: "Custom Link", placeholder: "https://..." },
+];
+
+const SECTION_ITEMS: SectionMeta[] = [
+  { key: "basic", label: "Basic Details", description: "Identity and account setup", icon: UserRound, requiredCandidate: true, requiredEmployer: true },
+  { key: "resume", label: "Resume", description: "Upload and manage CV", icon: FileText, requiredCandidate: true },
+  { key: "about", label: "About", description: "Short professional summary", icon: NotebookPen, requiredCandidate: true },
+  { key: "skills", label: "Skills", description: "Skills and interests", icon: Sparkles, requiredCandidate: true },
+  { key: "education", label: "Education", description: "Academic information", icon: GraduationCap, requiredCandidate: true },
+  { key: "work", label: "Work Experience", description: "Role and experience", icon: BriefcaseBusiness },
+  { key: "accomplishments", label: "Accomplishments & Initiatives", description: "Projects and achievements", icon: Award },
+  { key: "personal", label: "Personal Details", description: "Address and personal info", icon: MapPinned },
+  { key: "social", label: "Social Links", description: "External profile links", icon: Link2 },
+];
 
 function toText(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
 function toNullableNumber(value: unknown): number | null {
-  return typeof value === "number" ? value : null;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  return null;
+}
+
+function toStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const output: string[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    const text = String(item || "").trim();
+    const key = text.toLowerCase();
+    if (!text || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    output.push(text);
+  }
+  return output;
+}
+
+function toStringMap(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+  const input = value as Record<string, unknown>;
+  const output: Record<string, string> = {};
+  Object.entries(input).forEach(([key, raw]) => {
+    const cleanKey = String(key || "").trim().toLowerCase();
+    const cleanValue = String(raw || "").trim();
+    if (!cleanKey || !cleanValue) {
+      return;
+    }
+    output[cleanKey] = cleanValue;
+  });
+  return output;
 }
 
 function hydrateProfilePayload(profilePayload: Record<string, unknown>): ProfilePayload {
@@ -104,17 +258,19 @@ function hydrateProfilePayload(profilePayload: Record<string, unknown>): Profile
     user_type: (toText(profilePayload.user_type) || "") as UserType | "",
     domain: toText(profilePayload.domain),
     course: toText(profilePayload.course),
+    course_specialization: toText(profilePayload.course_specialization),
     passout_year: toNullableNumber(profilePayload.passout_year),
     class_grade: toNullableNumber(profilePayload.class_grade),
     current_job_role: toText(profilePayload.current_job_role),
     total_work_experience: toText(profilePayload.total_work_experience),
+    experience_summary: toText(profilePayload.experience_summary),
     college_name: toText(profilePayload.college_name),
     company_name: toText(profilePayload.company_name),
     company_website: toText(profilePayload.company_website),
     company_size: toText(profilePayload.company_size),
     company_description: toText(profilePayload.company_description),
     hiring_for: (toText(profilePayload.hiring_for) || "") as "myself" | "others" | "",
-    goals: Array.isArray(profilePayload.goals) ? profilePayload.goals.map((item) => String(item)) : [],
+    goals: toStringArray(profilePayload.goals),
     preferred_roles: toText(profilePayload.preferred_roles),
     preferred_locations: toText(profilePayload.preferred_locations),
     pan_india: Boolean(profilePayload.pan_india),
@@ -126,13 +282,30 @@ function hydrateProfilePayload(profilePayload: Record<string, unknown>): Profile
     interests: toText(profilePayload.interests),
     achievements: toText(profilePayload.achievements),
     education: toText(profilePayload.education),
+    certificates: toText(profilePayload.certificates),
+    projects: toText(profilePayload.projects),
+    responsibilities: toText(profilePayload.responsibilities),
+    gender: toText(profilePayload.gender),
+    pronouns: toText(profilePayload.pronouns),
+    date_of_birth: toText(profilePayload.date_of_birth),
+    current_address_line1: toText(profilePayload.current_address_line1),
+    current_address_landmark: toText(profilePayload.current_address_landmark),
+    current_address_region: toText(profilePayload.current_address_region),
+    current_address_pincode: toText(profilePayload.current_address_pincode),
+    permanent_address_line1: toText(profilePayload.permanent_address_line1),
+    permanent_address_landmark: toText(profilePayload.permanent_address_landmark),
+    permanent_address_region: toText(profilePayload.permanent_address_region),
+    permanent_address_pincode: toText(profilePayload.permanent_address_pincode),
+    hobbies: toStringArray(profilePayload.hobbies),
+    social_links: toStringMap(profilePayload.social_links),
     resume_url: toText(profilePayload.resume_url),
     resume_filename: toText(profilePayload.resume_filename),
+    resume_content_type: toText(profilePayload.resume_content_type),
     resume_uploaded_at: toText(profilePayload.resume_uploaded_at),
   };
 }
 
-function assignOptionalText<K extends keyof ProfileUpdatePayload>(target: ProfileUpdatePayload, key: K, value: string) {
+function assignOptionalText<K extends keyof ProfileUpdatePayload>(target: ProfileUpdatePayload, key: K, value: string): void {
   const trimmed = value.trim();
   if (trimmed.length > 0) {
     (target as Record<string, unknown>)[String(key)] = trimmed;
@@ -146,6 +319,13 @@ function buildProfileUpdatePayload(profile: ProfilePayload): ProfileUpdatePayloa
     prefer_wfh: profile.prefer_wfh,
     consent_data_processing: profile.consent_data_processing,
     consent_updates: profile.consent_updates,
+    goals: [...profile.goals],
+    hobbies: [...profile.hobbies],
+    social_links: Object.fromEntries(
+      Object.entries(profile.social_links)
+        .map(([key, value]) => [key.trim().toLowerCase(), value.trim()])
+        .filter(([key, value]) => key.length > 0 && value.length > 0)
+    ),
   };
 
   if (profile.user_type) {
@@ -160,9 +340,6 @@ function buildProfileUpdatePayload(profile: ProfilePayload): ProfileUpdatePayloa
   if (profile.class_grade !== null) {
     payload.class_grade = profile.class_grade;
   }
-  if (profile.goals.length > 0) {
-    payload.goals = [...profile.goals];
-  }
 
   assignOptionalText(payload, "first_name", profile.first_name);
   assignOptionalText(payload, "last_name", profile.last_name);
@@ -170,8 +347,10 @@ function buildProfileUpdatePayload(profile: ProfilePayload): ProfileUpdatePayloa
   assignOptionalText(payload, "country_code", profile.country_code);
   assignOptionalText(payload, "domain", profile.domain);
   assignOptionalText(payload, "course", profile.course);
+  assignOptionalText(payload, "course_specialization", profile.course_specialization);
   assignOptionalText(payload, "current_job_role", profile.current_job_role);
   assignOptionalText(payload, "total_work_experience", profile.total_work_experience);
+  assignOptionalText(payload, "experience_summary", profile.experience_summary);
   assignOptionalText(payload, "college_name", profile.college_name);
   assignOptionalText(payload, "company_name", profile.company_name);
   assignOptionalText(payload, "company_website", profile.company_website);
@@ -184,8 +363,43 @@ function buildProfileUpdatePayload(profile: ProfilePayload): ProfileUpdatePayloa
   assignOptionalText(payload, "interests", profile.interests);
   assignOptionalText(payload, "achievements", profile.achievements);
   assignOptionalText(payload, "education", profile.education);
+  assignOptionalText(payload, "certificates", profile.certificates);
+  assignOptionalText(payload, "projects", profile.projects);
+  assignOptionalText(payload, "responsibilities", profile.responsibilities);
+  assignOptionalText(payload, "gender", profile.gender);
+  assignOptionalText(payload, "pronouns", profile.pronouns);
+  assignOptionalText(payload, "date_of_birth", profile.date_of_birth);
+  assignOptionalText(payload, "current_address_line1", profile.current_address_line1);
+  assignOptionalText(payload, "current_address_landmark", profile.current_address_landmark);
+  assignOptionalText(payload, "current_address_region", profile.current_address_region);
+  assignOptionalText(payload, "current_address_pincode", profile.current_address_pincode);
+  assignOptionalText(payload, "permanent_address_line1", profile.permanent_address_line1);
+  assignOptionalText(payload, "permanent_address_landmark", profile.permanent_address_landmark);
+  assignOptionalText(payload, "permanent_address_region", profile.permanent_address_region);
+  assignOptionalText(payload, "permanent_address_pincode", profile.permanent_address_pincode);
 
   return payload;
+}
+
+function hasText(value: string): boolean {
+  return value.trim().length > 0;
+}
+
+function splitCommaValues(value: string): string[] {
+  const seen = new Set<string>();
+  const output: string[] = [];
+  value
+    .split(",")
+    .map((item) => item.trim())
+    .forEach((item) => {
+      const key = item.toLowerCase();
+      if (!item || seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      output.push(item);
+    });
+  return output;
 }
 
 export default function ProfilePage() {
@@ -196,6 +410,10 @@ export default function ProfilePage() {
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [activeSection, setActiveSection] = useState<SectionKey>("basic");
+  const [copyCurrentAddress, setCopyCurrentAddress] = useState(false);
+  const [hobbyInput, setHobbyInput] = useState("");
+
   const [profile, setProfile] = useState<ProfilePayload>({
     account_type: "candidate",
     first_name: "",
@@ -205,10 +423,12 @@ export default function ProfilePage() {
     user_type: "",
     domain: "",
     course: "",
+    course_specialization: "",
     passout_year: null,
     class_grade: null,
     current_job_role: "",
     total_work_experience: "",
+    experience_summary: "",
     college_name: "",
     company_name: "",
     company_website: "",
@@ -227,21 +447,27 @@ export default function ProfilePage() {
     interests: "",
     achievements: "",
     education: "",
+    certificates: "",
+    projects: "",
+    responsibilities: "",
+    gender: "",
+    pronouns: "",
+    date_of_birth: "",
+    current_address_line1: "",
+    current_address_landmark: "",
+    current_address_region: "",
+    current_address_pincode: "",
+    permanent_address_line1: "",
+    permanent_address_landmark: "",
+    permanent_address_region: "",
+    permanent_address_pincode: "",
+    hobbies: [],
+    social_links: {},
     resume_url: "",
     resume_filename: "",
+    resume_content_type: "",
     resume_uploaded_at: "",
   });
-
-  const resumeUploadedOn = useMemo(() => {
-    if (!profile.resume_uploaded_at) {
-      return "";
-    }
-    const parsed = new Date(profile.resume_uploaded_at);
-    if (Number.isNaN(parsed.getTime())) {
-      return "";
-    }
-    return parsed.toLocaleString();
-  }, [profile.resume_uploaded_at]);
 
   useEffect(() => {
     const token = getAccessToken();
@@ -249,6 +475,7 @@ export default function ProfilePage() {
       router.replace("/login");
       return;
     }
+
     const loadProfile = async (showFatalErrors: boolean) => {
       try {
         const [userResult, profileResult] = await Promise.allSettled([
@@ -276,9 +503,17 @@ export default function ProfilePage() {
           const profileRes = profileResult.value;
           const profilePayload = (await profileRes.json().catch(() => ({}))) as Record<string, unknown>;
           if (profileRes.ok) {
-            setProfile(hydrateProfilePayload(profilePayload));
+            const nextProfile = hydrateProfilePayload(profilePayload);
+            setProfile(nextProfile);
             hasFreshProfile = true;
             setError(null);
+            setCopyCurrentAddress(
+              hasText(nextProfile.current_address_line1) &&
+                nextProfile.current_address_line1 === nextProfile.permanent_address_line1 &&
+                nextProfile.current_address_landmark === nextProfile.permanent_address_landmark &&
+                nextProfile.current_address_region === nextProfile.permanent_address_region &&
+                nextProfile.current_address_pincode === nextProfile.permanent_address_pincode
+            );
           } else if (showFatalErrors) {
             profileError = getApiErrorMessage(profilePayload, "Unable to load profile");
           }
@@ -322,8 +557,73 @@ export default function ProfilePage() {
     };
   }, [router]);
 
+  useEffect(() => {
+    if (!copyCurrentAddress) {
+      return;
+    }
+    setProfile((prev) => {
+      const nextPermanentLine1 = prev.current_address_line1;
+      const nextPermanentLandmark = prev.current_address_landmark;
+      const nextPermanentRegion = prev.current_address_region;
+      const nextPermanentPincode = prev.current_address_pincode;
+
+      if (
+        prev.permanent_address_line1 === nextPermanentLine1 &&
+        prev.permanent_address_landmark === nextPermanentLandmark &&
+        prev.permanent_address_region === nextPermanentRegion &&
+        prev.permanent_address_pincode === nextPermanentPincode
+      ) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        permanent_address_line1: nextPermanentLine1,
+        permanent_address_landmark: nextPermanentLandmark,
+        permanent_address_region: nextPermanentRegion,
+        permanent_address_pincode: nextPermanentPincode,
+      };
+    });
+  }, [copyCurrentAddress, profile.current_address_line1, profile.current_address_landmark, profile.current_address_region, profile.current_address_pincode]);
+
   const updateProfile = <K extends keyof ProfilePayload>(field: K, value: ProfilePayload[K]) => {
     setProfile((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const toggleGoal = (goal: string) => {
+    updateProfile(
+      "goals",
+      profile.goals.includes(goal) ? profile.goals.filter((item) => item !== goal) : [...profile.goals, goal]
+    );
+  };
+
+  const addHobby = () => {
+    const cleaned = hobbyInput.trim();
+    if (!cleaned) {
+      return;
+    }
+    const exists = profile.hobbies.some((item) => item.toLowerCase() === cleaned.toLowerCase());
+    if (!exists) {
+      updateProfile("hobbies", [...profile.hobbies, cleaned]);
+    }
+    setHobbyInput("");
+  };
+
+  const removeHobby = (hobby: string) => {
+    updateProfile(
+      "hobbies",
+      profile.hobbies.filter((item) => item.toLowerCase() !== hobby.toLowerCase())
+    );
+  };
+
+  const updateSocialLink = (key: string, value: string) => {
+    setProfile((prev) => ({
+      ...prev,
+      social_links: {
+        ...prev.social_links,
+        [key]: value,
+      },
+    }));
   };
 
   const saveProfile = async () => {
@@ -446,167 +746,882 @@ export default function ProfilePage() {
     }
   };
 
-  if (loading) {
-    return <CenteredPageSkeleton paneHeight="680px" />;
-  }
+  const resumeUploadedOn = useMemo(() => {
+    if (!profile.resume_uploaded_at) {
+      return "";
+    }
+    const parsed = new Date(profile.resume_uploaded_at);
+    if (Number.isNaN(parsed.getTime())) {
+      return "";
+    }
+    return parsed.toLocaleString();
+  }, [profile.resume_uploaded_at]);
 
-  return (
-    <main style={{ minHeight: "100vh", background: "var(--bg-base)", padding: "1.25rem" }}>
-      <section className="card-panel" style={{ maxWidth: "980px", margin: "0 auto", display: "grid", gap: "1rem" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.8rem", flexWrap: "wrap" }}>
-          <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
-            <BrandLogo size="sm" />
-            <h1 style={{ fontSize: "2rem", margin: 0 }}>View Profile</h1>
-          </div>
-          <Link href={profile.account_type === "employer" ? "/employer/dashboard" : "/dashboard"} className="btn-secondary">
-            Back to Dashboard
-          </Link>
+  const sectionCompletion = useMemo<Record<SectionKey, boolean>>(() => {
+    const isCandidate = profile.account_type === "candidate";
+    const hasSocial = Object.values(profile.social_links).some((value) => hasText(value));
+    return {
+      basic: isCandidate
+        ? hasText(profile.first_name) && hasText(profile.mobile) && hasText(profile.user_type) && profile.consent_data_processing
+        : hasText(profile.first_name) && hasText(profile.mobile) && hasText(profile.company_name) && profile.consent_data_processing,
+      resume: isCandidate ? hasText(profile.resume_url) || hasText(profile.resume_filename) : true,
+      about: isCandidate ? hasText(profile.bio) : hasText(profile.company_description),
+      skills: isCandidate ? hasText(profile.skills) : hasText(profile.current_job_role),
+      education: isCandidate ? hasText(profile.college_name) || hasText(profile.education) : true,
+      work: hasText(profile.current_job_role) || hasText(profile.total_work_experience) || hasText(profile.experience_summary),
+      accomplishments:
+        hasText(profile.achievements) || hasText(profile.certificates) || hasText(profile.projects) || hasText(profile.responsibilities),
+      personal: hasText(profile.date_of_birth) || hasText(profile.current_address_line1) || profile.hobbies.length > 0,
+      social: hasSocial,
+    };
+  }, [profile]);
+
+  const sectionList = useMemo(
+    () =>
+      SECTION_ITEMS.map((section) => ({
+        ...section,
+        required: profile.account_type === "candidate" ? Boolean(section.requiredCandidate) : Boolean(section.requiredEmployer),
+      })),
+    [profile.account_type]
+  );
+
+  const completionPercent = useMemo(() => {
+    const completed = sectionList.filter((item) => sectionCompletion[item.key]).length;
+    return Math.round((completed / sectionList.length) * 100);
+  }, [sectionCompletion, sectionList]);
+
+  const isCandidate = profile.account_type === "candidate";
+
+  const renderSectionHeader = (title: string, subtitle: string) => (
+    <div className="profile-section-head">
+      <div>
+        <h2>{title}</h2>
+        <p>{subtitle}</p>
+      </div>
+      <span className={`profile-state-chip ${sectionCompletion[activeSection] ? "done" : "pending"}`}>
+        {sectionCompletion[activeSection] ? <CheckCircle2 size={14} /> : <Circle size={14} />} {sectionCompletion[activeSection] ? "Completed" : "Pending"}
+      </span>
+    </div>
+  );
+
+  const renderBasicSection = () => (
+    <>
+      {renderSectionHeader("Basic Details", "Identity, user type, and role preferences")}
+
+      <div className="profile-field-grid two">
+        <div className="profile-field">
+          <label>First Name *</label>
+          <input className="input-base" value={profile.first_name} onChange={(event) => updateProfile("first_name", event.target.value)} placeholder="First name" />
         </div>
-
-        {error && (
-          <div style={{ background: "rgba(239,68,68,0.08)", border: "2px solid #ef4444", color: "#b91c1c", borderRadius: "var(--radius-sm)", padding: "0.75rem" }}>
-            {error}
-          </div>
-        )}
-        {message && (
-          <div style={{ background: "rgba(34,197,94,0.08)", border: "2px solid #16a34a", color: "#166534", borderRadius: "var(--radius-sm)", padding: "0.75rem" }}>
-            {message}
-          </div>
-        )}
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
-          <div>
-            <label style={{ fontWeight: 700, display: "block", marginBottom: "0.35rem" }}>Email (Read-only)</label>
-            <input className="input-base" value={email} disabled />
-          </div>
-          <div>
-            <label style={{ fontWeight: 700, display: "block", marginBottom: "0.35rem" }}>Account Type</label>
-            <input className="input-base" value={profile.account_type} disabled />
-          </div>
+        <div className="profile-field">
+          <label>Last Name</label>
+          <input className="input-base" value={profile.last_name} onChange={(event) => updateProfile("last_name", event.target.value)} placeholder="Last name" />
         </div>
+      </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
-          <input className="input-base" placeholder="First name" value={profile.first_name} onChange={(event) => updateProfile("first_name", event.target.value)} />
-          <input className="input-base" placeholder="Last name" value={profile.last_name} onChange={(event) => updateProfile("last_name", event.target.value)} />
+      <div className="profile-field-grid two">
+        <div className="profile-field">
+          <label>Email</label>
+          <input className="input-base" value={email} disabled />
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: "0.75rem" }}>
-          <input className="input-base" placeholder="Country code" value={profile.country_code} onChange={(event) => updateProfile("country_code", event.target.value)} />
-          <input className="input-base" placeholder="Mobile" value={profile.mobile} onChange={(event) => updateProfile("mobile", event.target.value)} />
+        <div className="profile-field">
+          <label>Account Type</label>
+          <input className="input-base" value={profile.account_type === "candidate" ? "Candidate" : "Employer"} disabled />
         </div>
+      </div>
 
-        {profile.account_type === "candidate" ? (
-          <>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
-              <select className="input-base" value={profile.user_type} onChange={(event) => updateProfile("user_type", event.target.value as UserType)}>
-                <option value="">Select user type</option>
-                <option value="school_student">School Student</option>
-                <option value="college_student">College Student</option>
-                <option value="fresher">Fresher</option>
-                <option value="professional">Educator / Professional</option>
-              </select>
-              <input className="input-base" placeholder="Domain" value={profile.domain} onChange={(event) => updateProfile("domain", event.target.value)} />
+      <div className="profile-field-grid two">
+        <div className="profile-field">
+          <label>Country Code</label>
+          <input className="input-base" value={profile.country_code} onChange={(event) => updateProfile("country_code", event.target.value)} placeholder="+91" />
+        </div>
+        <div className="profile-field">
+          <label>Mobile *</label>
+          <input className="input-base" value={profile.mobile} onChange={(event) => updateProfile("mobile", event.target.value)} placeholder="Enter mobile number" />
+        </div>
+      </div>
+
+      {isCandidate ? (
+        <>
+          <div className="profile-field">
+            <label>User Type *</label>
+            <div className="profile-pill-row">
+              {USER_TYPE_OPTIONS.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={`profile-pill ${profile.user_type === item.key ? "active" : ""}`}
+                  onClick={() => updateProfile("user_type", item.key)}
+                >
+                  {item.label}
+                </button>
+              ))}
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.75rem" }}>
-              <input className="input-base" placeholder="Course" value={profile.course} onChange={(event) => updateProfile("course", event.target.value)} />
+          </div>
+
+          <div className="profile-field">
+            <label>Domain</label>
+            <div className="profile-pill-row">
+              {DOMAIN_OPTIONS.map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  className={`profile-pill ${profile.domain === item ? "active" : ""}`}
+                  onClick={() => updateProfile("domain", item)}
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="profile-field-grid two">
+            <div className="profile-field">
+              <label>Course</label>
+              <input className="input-base" value={profile.course} onChange={(event) => updateProfile("course", event.target.value)} placeholder="B.Tech / MBA / BA ..." />
+            </div>
+            <div className="profile-field">
+              <label>Course Specialization</label>
               <input
                 className="input-base"
-                placeholder="Passout year"
+                value={profile.course_specialization}
+                onChange={(event) => updateProfile("course_specialization", event.target.value)}
+                placeholder="Computer Science / Finance / Marketing ..."
+              />
+            </div>
+          </div>
+
+          <div className="profile-field-grid two">
+            <div className="profile-field">
+              <label>Passout Year</label>
+              <input
+                className="input-base"
                 type="number"
                 value={profile.passout_year ?? ""}
                 onChange={(event) => updateProfile("passout_year", event.target.value ? Number(event.target.value) : null)}
+                placeholder="2027"
               />
+            </div>
+            <div className="profile-field">
+              <label>Class / Grade</label>
               <input
                 className="input-base"
-                placeholder="Class / Grade"
                 type="number"
                 value={profile.class_grade ?? ""}
                 onChange={(event) => updateProfile("class_grade", event.target.value ? Number(event.target.value) : null)}
+                placeholder="12"
               />
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
-              <input className="input-base" placeholder="Current Job Role" value={profile.current_job_role} onChange={(event) => updateProfile("current_job_role", event.target.value)} />
-              <input className="input-base" placeholder="Total Work Experience" value={profile.total_work_experience} onChange={(event) => updateProfile("total_work_experience", event.target.value)} />
+          </div>
+
+          <div className="profile-field-grid two">
+            <div className="profile-field">
+              <label>Current Role</label>
+              <input
+                className="input-base"
+                value={profile.current_job_role}
+                onChange={(event) => updateProfile("current_job_role", event.target.value)}
+                placeholder="Student / Analyst / Developer"
+              />
             </div>
-            <input className="input-base" placeholder="College / Institution Name" value={profile.college_name} onChange={(event) => updateProfile("college_name", event.target.value)} />
-            <textarea className="input-base" rows={3} placeholder="Bio" value={profile.bio} onChange={(event) => updateProfile("bio", event.target.value)} />
-            <textarea className="input-base" rows={2} placeholder="Skills (comma separated)" value={profile.skills} onChange={(event) => updateProfile("skills", event.target.value)} />
-            <textarea className="input-base" rows={2} placeholder="Interests (comma separated)" value={profile.interests} onChange={(event) => updateProfile("interests", event.target.value)} />
-            <textarea className="input-base" rows={2} placeholder="Education details" value={profile.education} onChange={(event) => updateProfile("education", event.target.value)} />
-            <textarea className="input-base" rows={2} placeholder="Achievements" value={profile.achievements} onChange={(event) => updateProfile("achievements", event.target.value)} />
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
-              <input className="input-base" placeholder="Preferred roles" value={profile.preferred_roles} onChange={(event) => updateProfile("preferred_roles", event.target.value)} />
-              <input className="input-base" placeholder="Preferred locations" value={profile.preferred_locations} onChange={(event) => updateProfile("preferred_locations", event.target.value)} />
+            <div className="profile-field">
+              <label>Total Work Experience</label>
+              <input
+                className="input-base"
+                value={profile.total_work_experience}
+                onChange={(event) => updateProfile("total_work_experience", event.target.value)}
+                placeholder="0-1 years"
+              />
+            </div>
+          </div>
+
+          <div className="profile-field">
+            <label>College / University</label>
+            <input
+              className="input-base"
+              value={profile.college_name}
+              onChange={(event) => updateProfile("college_name", event.target.value)}
+              placeholder="Your institute name"
+            />
+          </div>
+
+          <div className="profile-field">
+            <label>Purpose / Goals</label>
+            <div className="profile-pill-row">
+              {GOAL_OPTIONS.map((goal) => (
+                <button
+                  key={goal}
+                  type="button"
+                  className={`profile-pill ${profile.goals.includes(goal) ? "active" : ""}`}
+                  onClick={() => toggleGoal(goal)}
+                >
+                  {goal}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="profile-field-grid two">
+            <div className="profile-field">
+              <label>Preferred Roles</label>
+              <input
+                className="input-base"
+                value={profile.preferred_roles}
+                onChange={(event) => updateProfile("preferred_roles", event.target.value)}
+                placeholder="Data Scientist, Software Engineer"
+              />
+            </div>
+            <div className="profile-field">
+              <label>Preferred Work Locations</label>
+              <input
+                className="input-base"
+                value={profile.preferred_locations}
+                onChange={(event) => updateProfile("preferred_locations", event.target.value)}
+                placeholder="Bangalore, Hyderabad, Remote"
+              />
+            </div>
+          </div>
+
+          <div className="profile-inline-group">
+            <label className="profile-inline-check">
+              <input type="checkbox" checked={profile.pan_india} onChange={(event) => updateProfile("pan_india", event.target.checked)} />
+              Open to opportunities across India
+            </label>
+            <label className="profile-inline-check">
+              <input type="checkbox" checked={profile.prefer_wfh} onChange={(event) => updateProfile("prefer_wfh", event.target.checked)} />
+              Prefer work from home
+            </label>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="profile-field-grid two">
+            <div className="profile-field">
+              <label>Company Name *</label>
+              <input
+                className="input-base"
+                value={profile.company_name}
+                onChange={(event) => updateProfile("company_name", event.target.value)}
+                placeholder="Your organization"
+              />
+            </div>
+            <div className="profile-field">
+              <label>Current Role</label>
+              <input
+                className="input-base"
+                value={profile.current_job_role}
+                onChange={(event) => updateProfile("current_job_role", event.target.value)}
+                placeholder="Founder / Recruiter / HR"
+              />
+            </div>
+          </div>
+
+          <div className="profile-field-grid two">
+            <div className="profile-field">
+              <label>Company Website</label>
+              <input
+                className="input-base"
+                value={profile.company_website}
+                onChange={(event) => updateProfile("company_website", event.target.value)}
+                placeholder="https://company.com"
+              />
+            </div>
+            <div className="profile-field">
+              <label>Company Size</label>
+              <input
+                className="input-base"
+                value={profile.company_size}
+                onChange={(event) => updateProfile("company_size", event.target.value)}
+                placeholder="11-50"
+              />
+            </div>
+          </div>
+
+          <div className="profile-field">
+            <label>Hiring For *</label>
+            <div className="profile-pill-row">
+              {[
+                { key: "myself", label: "Myself" },
+                { key: "others", label: "Others" },
+              ].map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={`profile-pill ${profile.hiring_for === item.key ? "active" : ""}`}
+                  onClick={() => updateProfile("hiring_for", item.key as "myself" | "others")}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+
+      <div className="profile-inline-group">
+        <label className="profile-inline-check">
+          <input
+            type="checkbox"
+            checked={profile.consent_data_processing}
+            onChange={(event) => updateProfile("consent_data_processing", event.target.checked)}
+          />
+          I agree to data processing and privacy terms *
+        </label>
+        <label className="profile-inline-check">
+          <input type="checkbox" checked={profile.consent_updates} onChange={(event) => updateProfile("consent_updates", event.target.checked)} />
+          I want product and opportunity updates
+        </label>
+      </div>
+    </>
+  );
+
+  const renderResumeSection = () => (
+    <>
+      {renderSectionHeader("Resume", "Upload your latest resume and manage download access")}
+
+      <div className="profile-resume-card">
+        {profile.resume_filename ? (
+          <>
+            <div className="profile-resume-file">
+              <FileText size={28} />
+              <div>
+                <p>{profile.resume_filename}</p>
+                <span>{resumeUploadedOn ? `Uploaded ${resumeUploadedOn}` : "Uploaded"}</span>
+              </div>
+            </div>
+            <div className="profile-resume-actions">
+              <button type="button" className="btn-secondary" onClick={() => void downloadResume()}>
+                <Download size={15} /> View / Download
+              </button>
+              <button type="button" className="btn-secondary" onClick={() => void deleteResume()} disabled={uploadingResume}>
+                <Trash2 size={15} /> Remove
+              </button>
             </div>
           </>
         ) : (
-          <>
-            <input className="input-base" placeholder="Company Name" value={profile.company_name} onChange={(event) => updateProfile("company_name", event.target.value)} />
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
-              <input className="input-base" placeholder="Current Job Role" value={profile.current_job_role} onChange={(event) => updateProfile("current_job_role", event.target.value)} />
-              <select className="input-base" value={profile.hiring_for} onChange={(event) => updateProfile("hiring_for", event.target.value as "myself" | "others" | "")}>
-                <option value="">Hiring for</option>
-                <option value="myself">Myself</option>
-                <option value="others">Others</option>
-              </select>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
-              <input className="input-base" placeholder="Company Website" value={profile.company_website} onChange={(event) => updateProfile("company_website", event.target.value)} />
-              <input className="input-base" placeholder="Company Size" value={profile.company_size} onChange={(event) => updateProfile("company_size", event.target.value)} />
-            </div>
-            <textarea className="input-base" rows={4} placeholder="Company Description" value={profile.company_description} onChange={(event) => updateProfile("company_description", event.target.value)} />
-          </>
+          <p className="profile-resume-empty">No resume uploaded yet.</p>
         )}
 
-        <section style={{ border: "2px solid var(--border-subtle)", borderRadius: "var(--radius-sm)", padding: "0.9rem", background: "var(--bg-surface)" }}>
-          <h2 style={{ margin: "0 0 0.6rem", fontSize: "1.15rem" }}>Resume</h2>
-          {profile.resume_filename ? (
-            <p style={{ fontWeight: 700, marginBottom: "0.35rem" }}>
-              {profile.resume_filename}
-              {resumeUploadedOn ? <span style={{ color: "var(--text-secondary)", fontWeight: 600 }}> · Uploaded {resumeUploadedOn}</span> : null}
-            </p>
-          ) : (
-            <p style={{ fontWeight: 700, color: "#b91c1c", marginBottom: "0.35rem" }}>No resume uploaded yet.</p>
-          )}
-          <p style={{ color: "var(--text-secondary)", fontWeight: 600, marginBottom: "0.6rem" }}>
-            Supported formats: .txt, .pdf, .doc, .docx. Resume signals are used for personalization.
-          </p>
-          <div style={{ display: "flex", gap: "0.55rem", flexWrap: "wrap" }}>
-            <label className="btn-secondary" style={{ cursor: uploadingResume ? "not-allowed" : "pointer", opacity: uploadingResume ? 0.7 : 1 }}>
-              {uploadingResume ? "Uploading..." : profile.resume_filename ? "Replace Resume" : "Upload Resume"}
-              <input
-                type="file"
-                accept=".txt,.pdf,.doc,.docx"
-                disabled={uploadingResume}
-                style={{ display: "none" }}
-                onChange={(event) => {
-                  const nextFile = event.target.files?.[0];
-                  if (!nextFile) {
-                    return;
-                  }
-                  void uploadResume(nextFile);
-                  event.currentTarget.value = "";
-                }}
-              />
-            </label>
-            {profile.resume_filename && (
-              <>
-                <button type="button" className="btn-secondary" onClick={() => void downloadResume()}>
-                  View / Download Resume
-                </button>
-                <button type="button" className="btn-secondary" onClick={() => void deleteResume()} disabled={uploadingResume}>
-                  Remove Resume
-                </button>
-              </>
-            )}
-          </div>
-        </section>
+        <label className="btn-primary profile-upload-btn" style={{ opacity: uploadingResume ? 0.7 : 1 }}>
+          <Upload size={15} /> {uploadingResume ? "Uploading..." : profile.resume_filename ? "Replace Resume" : "Upload Resume"}
+          <input
+            type="file"
+            accept=".txt,.pdf,.doc,.docx"
+            disabled={uploadingResume}
+            style={{ display: "none" }}
+            onChange={(event) => {
+              const nextFile = event.target.files?.[0];
+              if (!nextFile) {
+                return;
+              }
+              void uploadResume(nextFile);
+              event.currentTarget.value = "";
+            }}
+          />
+        </label>
+        <p className="profile-section-footnote">Supported formats: .txt, .pdf, .doc, .docx (max 8 MB).</p>
+      </div>
+    </>
+  );
 
-        <div style={{ display: "flex", justifyContent: "flex-end" }}>
-          <button type="button" className="btn-primary" disabled={saving} onClick={() => void saveProfile()}>
-            {saving ? "Saving..." : "Save Profile"}
+  const renderAboutSection = () => (
+    <>
+      {renderSectionHeader("About", "Introduce yourself in a concise, professional way")}
+      <div className="profile-field">
+        <label>{isCandidate ? "About Me" : "Company Description"} {isCandidate ? "*" : ""}</label>
+        <textarea
+          className="input-base"
+          rows={7}
+          value={isCandidate ? profile.bio : profile.company_description}
+          onChange={(event) => (isCandidate ? updateProfile("bio", event.target.value) : updateProfile("company_description", event.target.value))}
+          placeholder={
+            isCandidate
+              ? "Write a short profile summary (career goals, strengths, and interests)."
+              : "Tell candidates what your organization does and what opportunities you offer."
+          }
+        />
+      </div>
+    </>
+  );
+
+  const renderSkillsSection = () => (
+    <>
+      {renderSectionHeader("Skills", "Highlight your skills and areas of interest")}
+      <div className="profile-field-grid two">
+        <div className="profile-field">
+          <label>Skills *</label>
+          <textarea
+            className="input-base"
+            rows={5}
+            value={profile.skills}
+            onChange={(event) => updateProfile("skills", event.target.value)}
+            placeholder="Python, Data Analysis, C++, SQL, Communication"
+          />
+          {splitCommaValues(profile.skills).length > 0 ? (
+            <div className="profile-tag-row">
+              {splitCommaValues(profile.skills).map((skill) => (
+                <span key={skill} className="profile-tag">
+                  {skill}
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </div>
+        <div className="profile-field">
+          <label>Interests</label>
+          <textarea
+            className="input-base"
+            rows={5}
+            value={profile.interests}
+            onChange={(event) => updateProfile("interests", event.target.value)}
+            placeholder="Machine Learning, Product, Design, Public Speaking"
+          />
+          {splitCommaValues(profile.interests).length > 0 ? (
+            <div className="profile-tag-row">
+              {splitCommaValues(profile.interests).map((interest) => (
+                <span key={interest} className="profile-tag">
+                  {interest}
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </>
+  );
+
+  const renderEducationSection = () => (
+    <>
+      {renderSectionHeader("Education", "Academic background and qualifications")}
+      <div className="profile-field-grid two">
+        <div className="profile-field">
+          <label>Institution</label>
+          <input
+            className="input-base"
+            value={profile.college_name}
+            onChange={(event) => updateProfile("college_name", event.target.value)}
+            placeholder="College / University"
+          />
+        </div>
+        <div className="profile-field">
+          <label>Course</label>
+          <input className="input-base" value={profile.course} onChange={(event) => updateProfile("course", event.target.value)} placeholder="Degree or course" />
+        </div>
+      </div>
+      <div className="profile-field">
+        <label>Education Details</label>
+        <textarea
+          className="input-base"
+          rows={6}
+          value={profile.education}
+          onChange={(event) => updateProfile("education", event.target.value)}
+          placeholder="Include major highlights: CGPA, thesis, coursework, and relevant milestones."
+        />
+      </div>
+    </>
+  );
+
+  const renderWorkSection = () => (
+    <>
+      {renderSectionHeader("Work Experience", "Role details and summary of your work")}
+      <div className="profile-field-grid two">
+        <div className="profile-field">
+          <label>Current Job Role</label>
+          <input
+            className="input-base"
+            value={profile.current_job_role}
+            onChange={(event) => updateProfile("current_job_role", event.target.value)}
+            placeholder="IT Analyst / SDE Intern / Product Intern"
+          />
+        </div>
+        <div className="profile-field">
+          <label>Total Work Experience</label>
+          <input
+            className="input-base"
+            value={profile.total_work_experience}
+            onChange={(event) => updateProfile("total_work_experience", event.target.value)}
+            placeholder="6 months / 1.5 years"
+          />
+        </div>
+      </div>
+      <div className="profile-field">
+        <label>Experience Summary</label>
+        <textarea
+          className="input-base"
+          rows={6}
+          value={profile.experience_summary}
+          onChange={(event) => updateProfile("experience_summary", event.target.value)}
+          placeholder="Describe impact, ownership, tools used, and outcomes."
+        />
+      </div>
+    </>
+  );
+
+  const renderAccomplishmentsSection = () => (
+    <>
+      {renderSectionHeader("Accomplishments & Initiatives", "Certifications, projects, and leadership initiatives")}
+      <div className="profile-field-grid two">
+        <div className="profile-field">
+          <label>Achievements</label>
+          <textarea
+            className="input-base"
+            rows={5}
+            value={profile.achievements}
+            onChange={(event) => updateProfile("achievements", event.target.value)}
+            placeholder="Scholarships, competition ranks, notable wins"
+          />
+        </div>
+        <div className="profile-field">
+          <label>Certificates</label>
+          <textarea
+            className="input-base"
+            rows={5}
+            value={profile.certificates}
+            onChange={(event) => updateProfile("certificates", event.target.value)}
+            placeholder="Certifications from Oracle, Cisco, Coursera, etc."
+          />
+        </div>
+      </div>
+
+      <div className="profile-field-grid two">
+        <div className="profile-field">
+          <label>Projects</label>
+          <textarea
+            className="input-base"
+            rows={5}
+            value={profile.projects}
+            onChange={(event) => updateProfile("projects", event.target.value)}
+            placeholder="Major projects with short outcomes"
+          />
+        </div>
+        <div className="profile-field">
+          <label>Responsibilities / Initiatives</label>
+          <textarea
+            className="input-base"
+            rows={5}
+            value={profile.responsibilities}
+            onChange={(event) => updateProfile("responsibilities", event.target.value)}
+            placeholder="Leadership positions, clubs, volunteering, mentoring"
+          />
+        </div>
+      </div>
+    </>
+  );
+
+  const renderPersonalSection = () => (
+    <>
+      {renderSectionHeader("Personal Details", "Pronouns, DOB, address, and personal interests")}
+      <div className="profile-field">
+        <label>Pronouns</label>
+        <div className="profile-pill-row">
+          {PRONOUN_OPTIONS.map((item) => (
+            <button
+              key={item}
+              type="button"
+              className={`profile-pill ${profile.pronouns === item ? "active" : ""}`}
+              onClick={() => updateProfile("pronouns", item)}
+            >
+              {item}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="profile-field">
+        <label>Gender</label>
+        <div className="profile-pill-row">
+          {GENDER_OPTIONS.map((item) => (
+            <button key={item} type="button" className={`profile-pill ${profile.gender === item ? "active" : ""}`} onClick={() => updateProfile("gender", item)}>
+              {item}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="profile-field">
+        <label>Date of Birth</label>
+        <input
+          className="input-base"
+          value={profile.date_of_birth}
+          onChange={(event) => updateProfile("date_of_birth", event.target.value)}
+          placeholder="YYYY-MM-DD or DD/MM/YYYY"
+        />
+      </div>
+
+      <div className="profile-address-card">
+        <h3>Current Address</h3>
+        <div className="profile-field-grid two">
+          <div className="profile-field">
+            <label>Address Line 1</label>
+            <input
+              className="input-base"
+              value={profile.current_address_line1}
+              onChange={(event) => updateProfile("current_address_line1", event.target.value)}
+              placeholder="Street, locality"
+            />
+          </div>
+          <div className="profile-field">
+            <label>Landmark</label>
+            <input
+              className="input-base"
+              value={profile.current_address_landmark}
+              onChange={(event) => updateProfile("current_address_landmark", event.target.value)}
+              placeholder="Landmark"
+            />
+          </div>
+        </div>
+        <div className="profile-field-grid two">
+          <div className="profile-field">
+            <label>City / Region</label>
+            <input
+              className="input-base"
+              value={profile.current_address_region}
+              onChange={(event) => updateProfile("current_address_region", event.target.value)}
+              placeholder="City, State, Country"
+            />
+          </div>
+          <div className="profile-field">
+            <label>Pincode</label>
+            <input
+              className="input-base"
+              value={profile.current_address_pincode}
+              onChange={(event) => updateProfile("current_address_pincode", event.target.value)}
+              placeholder="144411"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="profile-address-card">
+        <div className="profile-address-head">
+          <h3>Permanent Address</h3>
+          <label className="profile-inline-check">
+            <input type="checkbox" checked={copyCurrentAddress} onChange={(event) => setCopyCurrentAddress(event.target.checked)} />
+            Copy current address
+          </label>
+        </div>
+
+        <div className="profile-field-grid two">
+          <div className="profile-field">
+            <label>Address Line 1</label>
+            <input
+              className="input-base"
+              value={profile.permanent_address_line1}
+              onChange={(event) => updateProfile("permanent_address_line1", event.target.value)}
+              placeholder="Street, locality"
+            />
+          </div>
+          <div className="profile-field">
+            <label>Landmark</label>
+            <input
+              className="input-base"
+              value={profile.permanent_address_landmark}
+              onChange={(event) => updateProfile("permanent_address_landmark", event.target.value)}
+              placeholder="Landmark"
+            />
+          </div>
+        </div>
+
+        <div className="profile-field-grid two">
+          <div className="profile-field">
+            <label>City / Region</label>
+            <input
+              className="input-base"
+              value={profile.permanent_address_region}
+              onChange={(event) => updateProfile("permanent_address_region", event.target.value)}
+              placeholder="City, State, Country"
+            />
+          </div>
+          <div className="profile-field">
+            <label>Pincode</label>
+            <input
+              className="input-base"
+              value={profile.permanent_address_pincode}
+              onChange={(event) => updateProfile("permanent_address_pincode", event.target.value)}
+              placeholder="713358"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="profile-field">
+        <label>Hobbies</label>
+        <div className="profile-hobby-input-row">
+          <input
+            className="input-base"
+            value={hobbyInput}
+            onChange={(event) => setHobbyInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === ",") {
+                event.preventDefault();
+                addHobby();
+              }
+            }}
+            placeholder="Type hobby and press Enter"
+          />
+          <button type="button" className="btn-secondary" onClick={addHobby}>
+            Add
           </button>
         </div>
-      </section>
-    </main>
+        {profile.hobbies.length > 0 ? (
+          <div className="profile-tag-row">
+            {profile.hobbies.map((hobby) => (
+              <span key={hobby} className="profile-tag removable">
+                {hobby}
+                <button type="button" onClick={() => removeHobby(hobby)} aria-label={`Remove ${hobby}`}>
+                  <X size={12} />
+                </button>
+              </span>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </>
+  );
+
+  const renderSocialSection = () => {
+    const knownKeys = new Set(SOCIAL_LINK_FIELDS.map((field) => field.key));
+    const extraSocialEntries = Object.entries(profile.social_links).filter(([key]) => !knownKeys.has(key));
+
+    return (
+      <>
+        {renderSectionHeader("Social Links", "Add public links to your profiles and portfolio")}
+        <div className="profile-social-grid">
+          {SOCIAL_LINK_FIELDS.map((field) => (
+            <div key={field.key} className="profile-field">
+              <label>{field.label}</label>
+              <input
+                className="input-base"
+                value={profile.social_links[field.key] || ""}
+                onChange={(event) => updateSocialLink(field.key, event.target.value)}
+                placeholder={field.placeholder}
+              />
+            </div>
+          ))}
+
+          {extraSocialEntries.map(([key, value]) => (
+            <div key={key} className="profile-field">
+              <label>{key.replace(/_/g, " ")}</label>
+              <input className="input-base" value={value} onChange={(event) => updateSocialLink(key, event.target.value)} placeholder="https://..." />
+            </div>
+          ))}
+        </div>
+      </>
+    );
+  };
+
+  const renderActiveSection = () => {
+    switch (activeSection) {
+      case "basic":
+        return renderBasicSection();
+      case "resume":
+        return renderResumeSection();
+      case "about":
+        return renderAboutSection();
+      case "skills":
+        return renderSkillsSection();
+      case "education":
+        return renderEducationSection();
+      case "work":
+        return renderWorkSection();
+      case "accomplishments":
+        return renderAccomplishmentsSection();
+      case "personal":
+        return renderPersonalSection();
+      case "social":
+        return renderSocialSection();
+      default:
+        return renderBasicSection();
+    }
+  };
+
+  if (loading) {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", background: "var(--bg-base)" }}>
+        <Sidebar />
+        <main className="main-content">
+          <CenteredPageSkeleton paneHeight="700px" />
+        </main>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", background: "var(--bg-base)" }}>
+      <Sidebar />
+      <main className="main-content">
+        <section className="card-panel profile-editor-shell">
+          <header className="profile-editor-header">
+            <div className="profile-title-wrap">
+              <span className="profile-title-icon">
+                <Workflow size={20} />
+              </span>
+              <div>
+                <h1>Edit Profile</h1>
+                <p>Professional profile builder aligned with your app theme.</p>
+              </div>
+            </div>
+            <div className="profile-header-actions">
+              <Link href={profile.account_type === "employer" ? "/employer/dashboard" : "/dashboard"} className="btn-secondary">
+                Back
+              </Link>
+              <button type="button" className="btn-primary" onClick={() => void saveProfile()} disabled={saving}>
+                <Save size={15} /> {saving ? "Saving..." : "Save"}
+              </button>
+            </div>
+          </header>
+
+          {error ? <div className="profile-alert error">{error}</div> : null}
+          {message ? <div className="profile-alert success">{message}</div> : null}
+
+          <div className="profile-workspace">
+            <aside className="profile-nav-pane">
+              <div className="profile-progress-card">
+                <div className="profile-progress-head">
+                  <span>Profile completion</span>
+                  <strong>{completionPercent}%</strong>
+                </div>
+                <div className="profile-progress-track" aria-hidden>
+                  <span style={{ width: `${completionPercent}%` }} />
+                </div>
+                <p>
+                  Complete required sections to improve profile strength and recommendation quality.
+                </p>
+                <button type="button" className="profile-mini-nav-link" onClick={() => setActiveSection("resume")}>Create or update resume</button>
+              </div>
+
+              <nav className="profile-nav-list" aria-label="Profile sections">
+                {sectionList.map((section) => {
+                  const Icon = section.icon;
+                  const isActive = activeSection === section.key;
+                  const completed = sectionCompletion[section.key];
+
+                  return (
+                    <button
+                      key={section.key}
+                      type="button"
+                      className={`profile-nav-item ${isActive ? "active" : ""}`}
+                      onClick={() => setActiveSection(section.key)}
+                    >
+                      <div className="profile-nav-main">
+                        <div className="profile-nav-label-line">
+                          {completed ? <CheckCircle2 size={16} color="#16a34a" /> : <Circle size={16} />}
+                          <Icon size={15} />
+                          <span>{section.label}</span>
+                        </div>
+                        {section.required ? <span className="profile-required-badge">Required</span> : null}
+                      </div>
+                      <small>{section.description}</small>
+                    </button>
+                  );
+                })}
+              </nav>
+            </aside>
+
+            <section className="profile-section-panel">{renderActiveSection()}</section>
+          </div>
+        </section>
+      </main>
+    </div>
   );
 }
