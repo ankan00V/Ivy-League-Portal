@@ -605,61 +605,67 @@ async def _build_ranking_summary(profile: Profile) -> RankingSummaryResponse:
 
 
 def _profile_strength_checks(profile: Profile) -> list[tuple[str, bool]]:
+    def _value(field: str, default: object = None) -> object:
+        return getattr(profile, field, default)
+
+    def _text_present(field: str) -> bool:
+        return bool(str(_value(field, "") or "").strip())
+
     checks: list[tuple[str, bool]] = [
-        ("first_name", bool((profile.first_name or "").strip())),
-        ("last_name", bool((profile.last_name or "").strip())),
-        ("mobile", bool((profile.mobile or "").strip())),
-        ("consent_data_processing", bool(profile.consent_data_processing)),
+        ("first_name", _text_present("first_name")),
+        ("last_name", _text_present("last_name")),
+        ("mobile", _text_present("mobile")),
+        ("consent_data_processing", bool(_value("consent_data_processing", False))),
     ]
 
-    scope = _normalize_account_scope(profile.account_type)
+    scope = _normalize_account_scope(_value("account_type"))
     if scope == "candidate":
-        user_type = str(profile.user_type or "").strip().lower()
+        user_type = str(_value("user_type", "") or "").strip().lower()
         checks.append(("user_type", user_type in VALID_USER_TYPES))
 
         if user_type == "school_student":
-            checks.append(("class_grade", profile.class_grade is not None))
+            checks.append(("class_grade", _value("class_grade") is not None))
         elif user_type in {"college_student", "fresher"}:
             checks.extend(
                 [
-                    ("domain", bool((profile.domain or "").strip())),
-                    ("course", bool((profile.course or "").strip())),
-                    ("course_specialization", bool((profile.course_specialization or "").strip())),
-                    ("passout_year", profile.passout_year is not None),
-                    ("college_name", bool((profile.college_name or "").strip())),
+                    ("domain", _text_present("domain")),
+                    ("course", _text_present("course")),
+                    ("course_specialization", _text_present("course_specialization")),
+                    ("passout_year", _value("passout_year") is not None),
+                    ("college_name", _text_present("college_name")),
                 ]
             )
         elif user_type == "professional":
             checks.extend(
                 [
-                    ("current_job_role", bool((profile.current_job_role or "").strip())),
-                    ("total_work_experience", bool((profile.total_work_experience or "").strip())),
-                    ("experience_summary", bool((profile.experience_summary or "").strip())),
+                    ("current_job_role", _text_present("current_job_role")),
+                    ("total_work_experience", _text_present("total_work_experience")),
+                    ("experience_summary", _text_present("experience_summary")),
                 ]
             )
 
         checks.extend(
             [
-                ("bio", bool((profile.bio or "").strip())),
-                ("skills", bool((profile.skills or "").strip())),
-                ("interests", bool((profile.interests or "").strip())),
-                ("education", bool((profile.education or "").strip())),
-                ("projects", bool((profile.projects or "").strip())),
-                ("date_of_birth", bool((profile.date_of_birth or "").strip())),
-                ("current_address_line1", bool((profile.current_address_line1 or "").strip())),
-                ("hobbies", len(profile.hobbies or []) > 0),
-                ("social_links", len(profile.social_links or {}) > 0),
-                ("resume", bool((profile.resume_url or "").strip())),
+                ("bio", _text_present("bio")),
+                ("skills", _text_present("skills")),
+                ("interests", _text_present("interests")),
+                ("education", _text_present("education")),
+                ("projects", _text_present("projects")),
+                ("date_of_birth", _text_present("date_of_birth")),
+                ("current_address_line1", _text_present("current_address_line1")),
+                ("hobbies", len(_value("hobbies", []) or []) > 0),
+                ("social_links", len(_value("social_links", {}) or {}) > 0),
+                ("resume", _text_present("resume_url")),
             ]
         )
     else:
         checks.extend(
             [
-                ("company_name", bool((profile.company_name or "").strip())),
-                ("current_job_role", bool((profile.current_job_role or "").strip())),
-                ("hiring_for", str(profile.hiring_for or "").strip().lower() in VALID_HIRING_FOR),
-                ("company_website", bool((profile.company_website or "").strip())),
-                ("company_description", bool((profile.company_description or "").strip())),
+                ("company_name", _text_present("company_name")),
+                ("current_job_role", _text_present("current_job_role")),
+                ("hiring_for", str(_value("hiring_for", "") or "").strip().lower() in VALID_HIRING_FOR),
+                ("company_website", _text_present("company_website")),
+                ("company_description", _text_present("company_description")),
             ]
         )
 
