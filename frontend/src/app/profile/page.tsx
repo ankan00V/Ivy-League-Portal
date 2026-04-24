@@ -25,6 +25,12 @@ import {
 
 import { CenteredPageSkeleton } from "@/components/LoadingSkeletons";
 import Sidebar from "@/components/Sidebar";
+import FormSection from "@/components/ui/FormSection";
+import PillGroup from "@/components/ui/PillGroup";
+import SelectField from "@/components/ui/SelectField";
+import TextareaField from "@/components/ui/TextareaField";
+import TextField from "@/components/ui/TextField";
+import ToggleRow from "@/components/ui/ToggleRow";
 import { useProfileData } from "@/hooks/useProfileData";
 import { INDIAN_INSTITUTION_OPTIONS, OTHER_INSTITUTION_LABEL } from "@/lib/indian-institutions";
 
@@ -640,23 +646,22 @@ export default function ProfilePage() {
 
   const renderUniversityField = (label: string, placeholder: string) => (
     <>
-      <div className="profile-field">
-        <label>{label}</label>
-        <select
-          className="input-base"
-          value={selectedUniversity}
-          onChange={(event) => {
-            const selected = event.target.value;
-            setSelectedUniversity(selected);
-            if (selected === OTHER_UNIVERSITY_VALUE) {
-              if (UNIVERSITY_OPTION_VALUES.has(profile.college_name)) {
-                updateProfile("college_name", "");
-              }
-              return;
+      <SelectField
+        wrapperClassName="profile-field"
+        label={label}
+        value={selectedUniversity}
+        onChange={(event) => {
+          const selected = event.target.value;
+          setSelectedUniversity(selected);
+          if (selected === OTHER_UNIVERSITY_VALUE) {
+            if (UNIVERSITY_OPTION_VALUES.has(profile.college_name)) {
+              updateProfile("college_name", "");
             }
-            updateProfile("college_name", selected);
-          }}
-        >
+            return;
+          }
+          updateProfile("college_name", selected);
+        }}
+      >
           <option value="">Select your university</option>
           {UNIVERSITY_OPTIONS.map((option) => (
             <option key={option} value={option}>
@@ -664,18 +669,15 @@ export default function ProfilePage() {
             </option>
           ))}
           <option value={OTHER_UNIVERSITY_VALUE}>{OTHER_INSTITUTION_LABEL}</option>
-        </select>
-      </div>
+      </SelectField>
       {selectedUniversity === OTHER_UNIVERSITY_VALUE ? (
-        <div className="profile-field">
-          <label>Enter University Name</label>
-          <input
-            className="input-base"
-            value={profile.college_name}
-            onChange={(event) => updateProfile("college_name", event.target.value)}
-            placeholder={placeholder}
-          />
-        </div>
+        <TextField
+          wrapperClassName="profile-field"
+          label="Enter University Name"
+          value={profile.college_name}
+          onChange={(event) => updateProfile("college_name", event.target.value)}
+          placeholder={placeholder}
+        />
       ) : null}
     </>
   );
@@ -685,43 +687,53 @@ export default function ProfilePage() {
       {renderSectionHeader("Basic Details", "Identity, user type, and role preferences")}
 
       <div className="profile-field-grid two">
-        <div className="profile-field">
-          <label>First Name *</label>
-          <input className="input-base" value={profile.first_name} onChange={(event) => updateProfile("first_name", event.target.value)} placeholder="First name" />
-        </div>
-        <div className="profile-field">
-          <label>Last Name</label>
-          <input className="input-base" value={profile.last_name} onChange={(event) => updateProfile("last_name", event.target.value)} placeholder="Last name" />
-        </div>
+        <TextField
+          wrapperClassName="profile-field"
+          label="First Name *"
+          value={profile.first_name}
+          onChange={(event) => updateProfile("first_name", event.target.value)}
+          placeholder="First name"
+        />
+        <TextField
+          wrapperClassName="profile-field"
+          label="Last Name"
+          value={profile.last_name}
+          onChange={(event) => updateProfile("last_name", event.target.value)}
+          placeholder="Last name"
+        />
       </div>
 
       <div className="profile-field-grid two">
-        <div className="profile-field">
-          <label>Email</label>
-          <input className="input-base" value={email} disabled />
-        </div>
-        <div className="profile-field">
-          <label>Account Type</label>
-          <input className="input-base" value={profile.account_type === "candidate" ? "Candidate" : "Employer"} disabled />
-        </div>
+        <TextField wrapperClassName="profile-field" label="Email" value={email} disabled />
+        <TextField
+          wrapperClassName="profile-field"
+          label="Account Type"
+          value={profile.account_type === "candidate" ? "Candidate" : "Employer"}
+          disabled
+        />
       </div>
 
       <div className="profile-field-grid two">
-        <div className="profile-field">
-          <label>Country Code</label>
-          <input className="input-base" value={profile.country_code} onChange={(event) => updateProfile("country_code", event.target.value)} placeholder="+91" />
-        </div>
-        <div className="profile-field">
-          <label>Mobile *</label>
-          <input className="input-base" value={profile.mobile} onChange={(event) => updateProfile("mobile", event.target.value)} placeholder="Enter mobile number" />
-        </div>
+        <TextField
+          wrapperClassName="profile-field"
+          label="Country Code"
+          value={profile.country_code}
+          onChange={(event) => updateProfile("country_code", event.target.value)}
+          placeholder="+91"
+        />
+        <TextField
+          wrapperClassName="profile-field"
+          label="Mobile *"
+          value={profile.mobile}
+          onChange={(event) => updateProfile("mobile", event.target.value)}
+          placeholder="Enter mobile number"
+        />
       </div>
 
       {isCandidate ? (
         <>
-          <div className="profile-field">
-            <label>User Type *</label>
-            <div className="profile-pill-row">
+          <FormSection className="profile-field" label="User Type *">
+            <PillGroup className="profile-pill-row">
               {USER_TYPE_OPTIONS.map((item) => (
                 <button
                   key={item.key}
@@ -732,12 +744,11 @@ export default function ProfilePage() {
                   {item.label}
                 </button>
               ))}
-            </div>
-          </div>
+            </PillGroup>
+          </FormSection>
 
-          <div className="profile-field">
-            <label>Domain</label>
-            <div className="profile-pill-row">
+          <FormSection className="profile-field" label="Domain">
+            <PillGroup className="profile-pill-row">
               {DOMAIN_OPTIONS.map((item) => (
                 <button
                   key={item}
@@ -748,86 +759,76 @@ export default function ProfilePage() {
                   {item}
                 </button>
               ))}
-            </div>
+            </PillGroup>
+          </FormSection>
+
+          <div className="profile-field-grid two">
+            <TextField
+              wrapperClassName="profile-field"
+              label="Course"
+              value={profile.course}
+              onChange={(event) => updateProfile("course", event.target.value)}
+              placeholder="B.Tech / MBA / BA ..."
+            />
+            <TextField
+              wrapperClassName="profile-field"
+              label="Course Specialization"
+              value={profile.course_specialization}
+              onChange={(event) => updateProfile("course_specialization", event.target.value)}
+              placeholder="Computer Science / Finance / Marketing ..."
+            />
           </div>
 
           <div className="profile-field-grid two">
-            <div className="profile-field">
-              <label>Course</label>
-              <input className="input-base" value={profile.course} onChange={(event) => updateProfile("course", event.target.value)} placeholder="B.Tech / MBA / BA ..." />
-            </div>
-            <div className="profile-field">
-              <label>Course Specialization</label>
-              <input
-                className="input-base"
-                value={profile.course_specialization}
-                onChange={(event) => updateProfile("course_specialization", event.target.value)}
-                placeholder="Computer Science / Finance / Marketing ..."
-              />
-            </div>
+            <TextField
+              wrapperClassName="profile-field"
+              label="Passout Year"
+              type="number"
+              value={profile.passout_year ?? ""}
+              onChange={(event) => updateProfile("passout_year", event.target.value ? Number(event.target.value) : null)}
+              placeholder="2027"
+            />
+            <TextField
+              wrapperClassName="profile-field"
+              label="Class / Grade"
+              type="number"
+              value={profile.class_grade ?? ""}
+              onChange={(event) => updateProfile("class_grade", event.target.value ? Number(event.target.value) : null)}
+              placeholder="12"
+            />
           </div>
 
           <div className="profile-field-grid two">
-            <div className="profile-field">
-              <label>Passout Year</label>
-              <input
-                className="input-base"
-                type="number"
-                value={profile.passout_year ?? ""}
-                onChange={(event) => updateProfile("passout_year", event.target.value ? Number(event.target.value) : null)}
-                placeholder="2027"
-              />
-            </div>
-            <div className="profile-field">
-              <label>Class / Grade</label>
-              <input
-                className="input-base"
-                type="number"
-                value={profile.class_grade ?? ""}
-                onChange={(event) => updateProfile("class_grade", event.target.value ? Number(event.target.value) : null)}
-                placeholder="12"
-              />
-            </div>
-          </div>
-
-          <div className="profile-field-grid two">
-            <div className="profile-field">
-              <label>Current Role</label>
-              <input
-                className="input-base"
-                value={profile.current_job_role}
-                onChange={(event) => updateProfile("current_job_role", event.target.value)}
-                placeholder="Student / Analyst / Developer"
-              />
-            </div>
-            <div className="profile-field">
-              <label>Total Work Experience</label>
-              <input
-                className="input-base"
-                value={profile.total_work_experience}
-                onChange={(event) => updateProfile("total_work_experience", event.target.value)}
-                placeholder="0-1 years"
-              />
-            </div>
+            <TextField
+              wrapperClassName="profile-field"
+              label="Current Role"
+              value={profile.current_job_role}
+              onChange={(event) => updateProfile("current_job_role", event.target.value)}
+              placeholder="Student / Analyst / Developer"
+            />
+            <TextField
+              wrapperClassName="profile-field"
+              label="Total Work Experience"
+              value={profile.total_work_experience}
+              onChange={(event) => updateProfile("total_work_experience", event.target.value)}
+              placeholder="0-1 years"
+            />
           </div>
 
           {isStudentUniversityFlow
             ? renderUniversityField("College / University", "Type your university name manually")
             : (
-                <div className="profile-field">
-                  <label>College / University</label>
-                  <input
-                    className="input-base"
-                    value={profile.college_name}
-                    onChange={(event) => updateProfile("college_name", event.target.value)}
-                    placeholder="Your institute name"
-                  />
-                </div>
+                <TextField
+                  wrapperClassName="profile-field"
+                  label="College / University"
+                  value={profile.college_name}
+                  onChange={(event) => updateProfile("college_name", event.target.value)}
+                  placeholder="Your institute name"
+                />
               )}
 
-          <div className="profile-field">
-            <label>Purpose / Goals</label>
-            <div className="profile-pill-row">
+          <FormSection className="profile-field" label="Purpose / Goals">
+            <PillGroup className="profile-pill-row">
               {GOAL_OPTIONS.map((goal) => (
                 <button
                   key={goal}
@@ -838,88 +839,73 @@ export default function ProfilePage() {
                   {goal}
                 </button>
               ))}
-            </div>
-          </div>
+            </PillGroup>
+          </FormSection>
 
           <div className="profile-field-grid two">
-            <div className="profile-field">
-              <label>Preferred Roles</label>
-              <input
-                className="input-base"
-                value={profile.preferred_roles}
-                onChange={(event) => updateProfile("preferred_roles", event.target.value)}
-                placeholder="Data Scientist, Software Engineer"
-              />
-            </div>
-            <div className="profile-field">
-              <label>Preferred Work Locations</label>
-              <input
-                className="input-base"
-                value={profile.preferred_locations}
-                onChange={(event) => updateProfile("preferred_locations", event.target.value)}
-                placeholder="Bangalore, Hyderabad, Remote"
-              />
-            </div>
+            <TextField
+              wrapperClassName="profile-field"
+              label="Preferred Roles"
+              value={profile.preferred_roles}
+              onChange={(event) => updateProfile("preferred_roles", event.target.value)}
+              placeholder="Data Scientist, Software Engineer"
+            />
+            <TextField
+              wrapperClassName="profile-field"
+              label="Preferred Work Locations"
+              value={profile.preferred_locations}
+              onChange={(event) => updateProfile("preferred_locations", event.target.value)}
+              placeholder="Bangalore, Hyderabad, Remote"
+            />
           </div>
 
           <div className="profile-inline-group">
-            <label className="profile-inline-check">
-              <input type="checkbox" checked={profile.pan_india} onChange={(event) => updateProfile("pan_india", event.target.checked)} />
+            <ToggleRow className="profile-inline-check" checked={profile.pan_india} onChange={(checked) => updateProfile("pan_india", checked)}>
               Open to opportunities across India
-            </label>
-            <label className="profile-inline-check">
-              <input type="checkbox" checked={profile.prefer_wfh} onChange={(event) => updateProfile("prefer_wfh", event.target.checked)} />
+            </ToggleRow>
+            <ToggleRow className="profile-inline-check" checked={profile.prefer_wfh} onChange={(checked) => updateProfile("prefer_wfh", checked)}>
               Prefer work from home
-            </label>
+            </ToggleRow>
           </div>
         </>
       ) : (
         <>
           <div className="profile-field-grid two">
-            <div className="profile-field">
-              <label>Company Name *</label>
-              <input
-                className="input-base"
-                value={profile.company_name}
-                onChange={(event) => updateProfile("company_name", event.target.value)}
-                placeholder="Your organization"
-              />
-            </div>
-            <div className="profile-field">
-              <label>Current Role</label>
-              <input
-                className="input-base"
-                value={profile.current_job_role}
-                onChange={(event) => updateProfile("current_job_role", event.target.value)}
-                placeholder="Founder / Recruiter / HR"
-              />
-            </div>
+            <TextField
+              wrapperClassName="profile-field"
+              label="Company Name *"
+              value={profile.company_name}
+              onChange={(event) => updateProfile("company_name", event.target.value)}
+              placeholder="Your organization"
+            />
+            <TextField
+              wrapperClassName="profile-field"
+              label="Current Role"
+              value={profile.current_job_role}
+              onChange={(event) => updateProfile("current_job_role", event.target.value)}
+              placeholder="Founder / Recruiter / HR"
+            />
           </div>
 
           <div className="profile-field-grid two">
-            <div className="profile-field">
-              <label>Company Website</label>
-              <input
-                className="input-base"
-                value={profile.company_website}
-                onChange={(event) => updateProfile("company_website", event.target.value)}
-                placeholder="https://company.com"
-              />
-            </div>
-            <div className="profile-field">
-              <label>Company Size</label>
-              <input
-                className="input-base"
-                value={profile.company_size}
-                onChange={(event) => updateProfile("company_size", event.target.value)}
-                placeholder="11-50"
-              />
-            </div>
+            <TextField
+              wrapperClassName="profile-field"
+              label="Company Website"
+              value={profile.company_website}
+              onChange={(event) => updateProfile("company_website", event.target.value)}
+              placeholder="https://company.com"
+            />
+            <TextField
+              wrapperClassName="profile-field"
+              label="Company Size"
+              value={profile.company_size}
+              onChange={(event) => updateProfile("company_size", event.target.value)}
+              placeholder="11-50"
+            />
           </div>
 
-          <div className="profile-field">
-            <label>Hiring For *</label>
-            <div className="profile-pill-row">
+          <FormSection className="profile-field" label="Hiring For *">
+            <PillGroup className="profile-pill-row">
               {[
                 { key: "myself", label: "Myself" },
                 { key: "others", label: "Others" },
@@ -933,24 +919,22 @@ export default function ProfilePage() {
                   {item.label}
                 </button>
               ))}
-            </div>
-          </div>
+            </PillGroup>
+          </FormSection>
         </>
       )}
 
       <div className="profile-inline-group">
-        <label className="profile-inline-check">
-          <input
-            type="checkbox"
-            checked={profile.consent_data_processing}
-            onChange={(event) => updateProfile("consent_data_processing", event.target.checked)}
-          />
+        <ToggleRow
+          className="profile-inline-check"
+          checked={profile.consent_data_processing}
+          onChange={(checked) => updateProfile("consent_data_processing", checked)}
+        >
           I agree to data processing and privacy terms *
-        </label>
-        <label className="profile-inline-check">
-          <input type="checkbox" checked={profile.consent_updates} onChange={(event) => updateProfile("consent_updates", event.target.checked)} />
+        </ToggleRow>
+        <ToggleRow className="profile-inline-check" checked={profile.consent_updates} onChange={(checked) => updateProfile("consent_updates", checked)}>
           I want product and opportunity updates
-        </label>
+        </ToggleRow>
       </div>
     </>
   );
@@ -982,13 +966,13 @@ export default function ProfilePage() {
           <p className="profile-resume-empty">No resume uploaded yet.</p>
         )}
 
-        <label className="btn-primary profile-upload-btn" style={{ opacity: uploadingResume ? 0.7 : 1 }}>
+        <label className={`btn-primary profile-upload-btn ${uploadingResume ? "is-disabled" : ""}`}>
           <Upload size={15} /> {uploadingResume ? "Uploading..." : profile.resume_filename ? "Replace Resume" : "Upload Resume"}
           <input
             type="file"
             accept=".txt,.pdf,.doc,.docx"
             disabled={uploadingResume}
-            style={{ display: "none" }}
+            className="vv-hidden-input"
             onChange={(event) => {
               const nextFile = event.target.files?.[0];
               if (!nextFile) {
@@ -1007,20 +991,18 @@ export default function ProfilePage() {
   const renderAboutSection = () => (
     <>
       {renderSectionHeader("About", "Introduce yourself in a concise, professional way")}
-      <div className="profile-field">
-        <label>{isCandidate ? "About Me" : "Company Description"} {isCandidate ? "*" : ""}</label>
-        <textarea
-          className="input-base"
-          rows={7}
-          value={isCandidate ? profile.bio : profile.company_description}
-          onChange={(event) => (isCandidate ? updateProfile("bio", event.target.value) : updateProfile("company_description", event.target.value))}
-          placeholder={
-            isCandidate
-              ? "Write a short profile summary (career goals, strengths, and interests)."
-              : "Tell candidates what your organization does and what opportunities you offer."
-          }
-        />
-      </div>
+      <TextareaField
+        wrapperClassName="profile-field"
+        label={`${isCandidate ? "About Me" : "Company Description"} ${isCandidate ? "*" : ""}`}
+        rows={7}
+        value={isCandidate ? profile.bio : profile.company_description}
+        onChange={(event) => (isCandidate ? updateProfile("bio", event.target.value) : updateProfile("company_description", event.target.value))}
+        placeholder={
+          isCandidate
+            ? "Write a short profile summary (career goals, strengths, and interests)."
+            : "Tell candidates what your organization does and what opportunities you offer."
+        }
+      />
     </>
   );
 
@@ -1028,10 +1010,10 @@ export default function ProfilePage() {
     <>
       {renderSectionHeader("Skills", "Highlight your skills and areas of interest")}
       <div className="profile-field-grid two">
-        <div className="profile-field">
-          <label>Skills *</label>
-          <textarea
-            className="input-base"
+        <div>
+          <TextareaField
+            wrapperClassName="profile-field"
+            label="Skills *"
             rows={5}
             value={profile.skills}
             onChange={(event) => updateProfile("skills", event.target.value)}
@@ -1047,10 +1029,10 @@ export default function ProfilePage() {
             </div>
           ) : null}
         </div>
-        <div className="profile-field">
-          <label>Interests</label>
-          <textarea
-            className="input-base"
+        <div>
+          <TextareaField
+            wrapperClassName="profile-field"
+            label="Interests"
             rows={5}
             value={profile.interests}
             onChange={(event) => updateProfile("interests", event.target.value)}
@@ -1077,31 +1059,30 @@ export default function ProfilePage() {
         {isStudentUniversityFlow
           ? renderUniversityField("Institution", "Type your university name manually")
           : (
-              <div className="profile-field">
-                <label>Institution</label>
-                <input
-                  className="input-base"
-                  value={profile.college_name}
-                  onChange={(event) => updateProfile("college_name", event.target.value)}
-                  placeholder="College / University"
-                />
-              </div>
+              <TextField
+                wrapperClassName="profile-field"
+                label="Institution"
+                value={profile.college_name}
+                onChange={(event) => updateProfile("college_name", event.target.value)}
+                placeholder="College / University"
+              />
             )}
-        <div className="profile-field">
-          <label>Course</label>
-          <input className="input-base" value={profile.course} onChange={(event) => updateProfile("course", event.target.value)} placeholder="Degree or course" />
-        </div>
-      </div>
-      <div className="profile-field">
-        <label>Education Details</label>
-        <textarea
-          className="input-base"
-          rows={6}
-          value={profile.education}
-          onChange={(event) => updateProfile("education", event.target.value)}
-          placeholder="Include major highlights: CGPA, thesis, coursework, and relevant milestones."
+        <TextField
+          wrapperClassName="profile-field"
+          label="Course"
+          value={profile.course}
+          onChange={(event) => updateProfile("course", event.target.value)}
+          placeholder="Degree or course"
         />
       </div>
+      <TextareaField
+        wrapperClassName="profile-field"
+        label="Education Details"
+        rows={6}
+        value={profile.education}
+        onChange={(event) => updateProfile("education", event.target.value)}
+        placeholder="Include major highlights: CGPA, thesis, coursework, and relevant milestones."
+      />
     </>
   );
 
@@ -1109,35 +1090,29 @@ export default function ProfilePage() {
     <>
       {renderSectionHeader("Work Experience", "Role details and summary of your work")}
       <div className="profile-field-grid two">
-        <div className="profile-field">
-          <label>Current Job Role</label>
-          <input
-            className="input-base"
-            value={profile.current_job_role}
-            onChange={(event) => updateProfile("current_job_role", event.target.value)}
-            placeholder="IT Analyst / SDE Intern / Product Intern"
-          />
-        </div>
-        <div className="profile-field">
-          <label>Total Work Experience</label>
-          <input
-            className="input-base"
-            value={profile.total_work_experience}
-            onChange={(event) => updateProfile("total_work_experience", event.target.value)}
-            placeholder="6 months / 1.5 years"
-          />
-        </div>
-      </div>
-      <div className="profile-field">
-        <label>Experience Summary</label>
-        <textarea
-          className="input-base"
-          rows={6}
-          value={profile.experience_summary}
-          onChange={(event) => updateProfile("experience_summary", event.target.value)}
-          placeholder="Describe impact, ownership, tools used, and outcomes."
+        <TextField
+          wrapperClassName="profile-field"
+          label="Current Job Role"
+          value={profile.current_job_role}
+          onChange={(event) => updateProfile("current_job_role", event.target.value)}
+          placeholder="IT Analyst / SDE Intern / Product Intern"
+        />
+        <TextField
+          wrapperClassName="profile-field"
+          label="Total Work Experience"
+          value={profile.total_work_experience}
+          onChange={(event) => updateProfile("total_work_experience", event.target.value)}
+          placeholder="6 months / 1.5 years"
         />
       </div>
+      <TextareaField
+        wrapperClassName="profile-field"
+        label="Experience Summary"
+        rows={6}
+        value={profile.experience_summary}
+        onChange={(event) => updateProfile("experience_summary", event.target.value)}
+        placeholder="Describe impact, ownership, tools used, and outcomes."
+      />
     </>
   );
 
@@ -1145,49 +1120,41 @@ export default function ProfilePage() {
     <>
       {renderSectionHeader("Accomplishments & Initiatives", "Certifications, projects, and leadership initiatives")}
       <div className="profile-field-grid two">
-        <div className="profile-field">
-          <label>Achievements</label>
-          <textarea
-            className="input-base"
-            rows={5}
-            value={profile.achievements}
-            onChange={(event) => updateProfile("achievements", event.target.value)}
-            placeholder="Scholarships, competition ranks, notable wins"
-          />
-        </div>
-        <div className="profile-field">
-          <label>Certificates</label>
-          <textarea
-            className="input-base"
-            rows={5}
-            value={profile.certificates}
-            onChange={(event) => updateProfile("certificates", event.target.value)}
-            placeholder="Certifications from Oracle, Cisco, Coursera, etc."
-          />
-        </div>
+        <TextareaField
+          wrapperClassName="profile-field"
+          label="Achievements"
+          rows={5}
+          value={profile.achievements}
+          onChange={(event) => updateProfile("achievements", event.target.value)}
+          placeholder="Scholarships, competition ranks, notable wins"
+        />
+        <TextareaField
+          wrapperClassName="profile-field"
+          label="Certificates"
+          rows={5}
+          value={profile.certificates}
+          onChange={(event) => updateProfile("certificates", event.target.value)}
+          placeholder="Certifications from Oracle, Cisco, Coursera, etc."
+        />
       </div>
 
       <div className="profile-field-grid two">
-        <div className="profile-field">
-          <label>Projects</label>
-          <textarea
-            className="input-base"
-            rows={5}
-            value={profile.projects}
-            onChange={(event) => updateProfile("projects", event.target.value)}
-            placeholder="Major projects with short outcomes"
-          />
-        </div>
-        <div className="profile-field">
-          <label>Responsibilities / Initiatives</label>
-          <textarea
-            className="input-base"
-            rows={5}
-            value={profile.responsibilities}
-            onChange={(event) => updateProfile("responsibilities", event.target.value)}
-            placeholder="Leadership positions, clubs, volunteering, mentoring"
-          />
-        </div>
+        <TextareaField
+          wrapperClassName="profile-field"
+          label="Projects"
+          rows={5}
+          value={profile.projects}
+          onChange={(event) => updateProfile("projects", event.target.value)}
+          placeholder="Major projects with short outcomes"
+        />
+        <TextareaField
+          wrapperClassName="profile-field"
+          label="Responsibilities / Initiatives"
+          rows={5}
+          value={profile.responsibilities}
+          onChange={(event) => updateProfile("responsibilities", event.target.value)}
+          placeholder="Leadership positions, clubs, volunteering, mentoring"
+        />
       </div>
     </>
   );
@@ -1195,9 +1162,8 @@ export default function ProfilePage() {
   const renderPersonalSection = () => (
     <>
       {renderSectionHeader("Personal Details", "Pronouns, DOB, address, and personal interests")}
-      <div className="profile-field">
-        <label>Pronouns</label>
-        <div className="profile-pill-row">
+      <FormSection className="profile-field" label="Pronouns">
+        <PillGroup className="profile-pill-row">
           {PRONOUN_OPTIONS.map((item) => (
             <button
               key={item}
@@ -1208,128 +1174,107 @@ export default function ProfilePage() {
               {item}
             </button>
           ))}
-        </div>
-      </div>
+        </PillGroup>
+      </FormSection>
 
-      <div className="profile-field">
-        <label>Gender</label>
-        <div className="profile-pill-row">
+      <FormSection className="profile-field" label="Gender">
+        <PillGroup className="profile-pill-row">
           {GENDER_OPTIONS.map((item) => (
             <button key={item} type="button" className={`profile-pill ${profile.gender === item ? "active" : ""}`} onClick={() => updateProfile("gender", item)}>
               {item}
             </button>
           ))}
-        </div>
-      </div>
+        </PillGroup>
+      </FormSection>
 
-      <div className="profile-field">
-        <label>Date of Birth</label>
-        <input
-          className="input-base"
-          value={profile.date_of_birth}
-          onChange={(event) => updateProfile("date_of_birth", event.target.value)}
-          placeholder="YYYY-MM-DD or DD/MM/YYYY"
-        />
-      </div>
+      <TextField
+        wrapperClassName="profile-field"
+        label="Date of Birth"
+        value={profile.date_of_birth}
+        onChange={(event) => updateProfile("date_of_birth", event.target.value)}
+        placeholder="YYYY-MM-DD or DD/MM/YYYY"
+      />
 
       <div className="profile-address-card">
         <h3>Current Address</h3>
         <div className="profile-field-grid two">
-          <div className="profile-field">
-            <label>Address Line 1</label>
-            <input
-              className="input-base"
-              value={profile.current_address_line1}
-              onChange={(event) => updateProfile("current_address_line1", event.target.value)}
-              placeholder="Street, locality"
-            />
-          </div>
-          <div className="profile-field">
-            <label>Landmark</label>
-            <input
-              className="input-base"
-              value={profile.current_address_landmark}
-              onChange={(event) => updateProfile("current_address_landmark", event.target.value)}
-              placeholder="Landmark"
-            />
-          </div>
+          <TextField
+            wrapperClassName="profile-field"
+            label="Address Line 1"
+            value={profile.current_address_line1}
+            onChange={(event) => updateProfile("current_address_line1", event.target.value)}
+            placeholder="Street, locality"
+          />
+          <TextField
+            wrapperClassName="profile-field"
+            label="Landmark"
+            value={profile.current_address_landmark}
+            onChange={(event) => updateProfile("current_address_landmark", event.target.value)}
+            placeholder="Landmark"
+          />
         </div>
         <div className="profile-field-grid two">
-          <div className="profile-field">
-            <label>City / Region</label>
-            <input
-              className="input-base"
-              value={profile.current_address_region}
-              onChange={(event) => updateProfile("current_address_region", event.target.value)}
-              placeholder="City, State, Country"
-            />
-          </div>
-          <div className="profile-field">
-            <label>Pincode</label>
-            <input
-              className="input-base"
-              value={profile.current_address_pincode}
-              onChange={(event) => updateProfile("current_address_pincode", event.target.value)}
-              placeholder="144411"
-            />
-          </div>
+          <TextField
+            wrapperClassName="profile-field"
+            label="City / Region"
+            value={profile.current_address_region}
+            onChange={(event) => updateProfile("current_address_region", event.target.value)}
+            placeholder="City, State, Country"
+          />
+          <TextField
+            wrapperClassName="profile-field"
+            label="Pincode"
+            value={profile.current_address_pincode}
+            onChange={(event) => updateProfile("current_address_pincode", event.target.value)}
+            placeholder="144411"
+          />
         </div>
       </div>
 
       <div className="profile-address-card">
         <div className="profile-address-head">
           <h3>Permanent Address</h3>
-          <label className="profile-inline-check">
-            <input type="checkbox" checked={copyCurrentAddress} onChange={(event) => handleCopyCurrentAddressChange(event.target.checked)} />
+          <ToggleRow className="profile-inline-check" checked={copyCurrentAddress} onChange={handleCopyCurrentAddressChange}>
             Copy current address
-          </label>
+          </ToggleRow>
         </div>
 
         <div className="profile-field-grid two">
-          <div className="profile-field">
-            <label>Address Line 1</label>
-            <input
-              className="input-base"
-              value={profile.permanent_address_line1}
-              onChange={(event) => updateProfile("permanent_address_line1", event.target.value)}
-              placeholder="Street, locality"
-            />
-          </div>
-          <div className="profile-field">
-            <label>Landmark</label>
-            <input
-              className="input-base"
-              value={profile.permanent_address_landmark}
-              onChange={(event) => updateProfile("permanent_address_landmark", event.target.value)}
-              placeholder="Landmark"
-            />
-          </div>
+          <TextField
+            wrapperClassName="profile-field"
+            label="Address Line 1"
+            value={profile.permanent_address_line1}
+            onChange={(event) => updateProfile("permanent_address_line1", event.target.value)}
+            placeholder="Street, locality"
+          />
+          <TextField
+            wrapperClassName="profile-field"
+            label="Landmark"
+            value={profile.permanent_address_landmark}
+            onChange={(event) => updateProfile("permanent_address_landmark", event.target.value)}
+            placeholder="Landmark"
+          />
         </div>
 
         <div className="profile-field-grid two">
-          <div className="profile-field">
-            <label>City / Region</label>
-            <input
-              className="input-base"
-              value={profile.permanent_address_region}
-              onChange={(event) => updateProfile("permanent_address_region", event.target.value)}
-              placeholder="City, State, Country"
-            />
-          </div>
-          <div className="profile-field">
-            <label>Pincode</label>
-            <input
-              className="input-base"
-              value={profile.permanent_address_pincode}
-              onChange={(event) => updateProfile("permanent_address_pincode", event.target.value)}
-              placeholder="713358"
-            />
-          </div>
+          <TextField
+            wrapperClassName="profile-field"
+            label="City / Region"
+            value={profile.permanent_address_region}
+            onChange={(event) => updateProfile("permanent_address_region", event.target.value)}
+            placeholder="City, State, Country"
+          />
+          <TextField
+            wrapperClassName="profile-field"
+            label="Pincode"
+            value={profile.permanent_address_pincode}
+            onChange={(event) => updateProfile("permanent_address_pincode", event.target.value)}
+            placeholder="713358"
+          />
         </div>
       </div>
 
-      <div className="profile-field">
-        <label>Hobbies</label>
+      <FormSection className="profile-field" label="Hobbies">
         <div className="profile-hobby-input-row">
           <input
             className="input-base"
@@ -1359,7 +1304,7 @@ export default function ProfilePage() {
             ))}
           </div>
         ) : null}
-      </div>
+      </FormSection>
     </>
   );
 
@@ -1372,22 +1317,25 @@ export default function ProfilePage() {
         {renderSectionHeader("Social Links", "Add public links to your profiles and portfolio")}
         <div className="profile-social-grid">
           {SOCIAL_LINK_FIELDS.map((field) => (
-            <div key={field.key} className="profile-field">
-              <label>{field.label}</label>
-              <input
-                className="input-base"
-                value={profile.social_links[field.key] || ""}
-                onChange={(event) => updateSocialLink(field.key, event.target.value)}
-                placeholder={field.placeholder}
-              />
-            </div>
+            <TextField
+              key={field.key}
+              wrapperClassName="profile-field"
+              label={field.label}
+              value={profile.social_links[field.key] || ""}
+              onChange={(event) => updateSocialLink(field.key, event.target.value)}
+              placeholder={field.placeholder}
+            />
           ))}
 
           {extraSocialEntries.map(([key, value]) => (
-            <div key={key} className="profile-field">
-              <label>{key.replace(/_/g, " ")}</label>
-              <input className="input-base" value={value} onChange={(event) => updateSocialLink(key, event.target.value)} placeholder="https://..." />
-            </div>
+            <TextField
+              key={key}
+              wrapperClassName="profile-field"
+              label={key.replace(/_/g, " ")}
+              value={value}
+              onChange={(event) => updateSocialLink(key, event.target.value)}
+              placeholder="https://..."
+            />
           ))}
         </div>
       </>

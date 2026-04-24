@@ -869,6 +869,79 @@ button {
   display: none;
 }
 
+.experiments-page-root,
+.opportunities-page-root {
+  min-height: 100vh;
+  display: flex;
+  background: var(--bg-base);
+  position: relative;
+}
+
+.experiments-page-root {
+  overflow: hidden;
+}
+
+.experiments-main-content {
+  width: 100%;
+}
+
+.experiments-inline-state {
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+.experiments-inline-state-error {
+  background: var(--bg-surface);
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 1.25rem;
+  box-shadow: var(--shadow-sm);
+  color: var(--text-primary);
+}
+
+.opportunities-highlight-chip {
+  background: var(--brand-accent);
+  padding: 0.2rem 0.5rem;
+  border: 2px solid var(--border-subtle);
+  box-shadow: var(--shadow-sm);
+  display: inline-block;
+  transform: rotate(-2deg);
+  color: #000;
+}
+
+.opportunities-domain-tabs {
+  margin-bottom: 2.5rem;
+  overflow-x: auto;
+  padding-bottom: 1rem;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  flex-wrap: nowrap;
+}
+
+.opportunities-domain-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.opportunities-domain-tab {
+  padding: 0.75rem 1.75rem;
+  border-radius: var(--radius-sm);
+  font-weight: 700;
+  font-size: 1rem;
+  white-space: nowrap;
+  transition: var(--bounce-transition);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border: 2px solid var(--border-subtle);
+  box-shadow: var(--shadow-md);
+}
+
+.opportunities-domain-tab.active {
+  background: var(--brand-primary);
+  color: #000000;
+  box-shadow: var(--shadow-sm);
+  transform: translate(2px, 2px);
+}
+
 .profile-page-root {
   min-height: 100vh;
   display: flex;
@@ -1247,6 +1320,11 @@ button {
   width: fit-content;
 }
 
+.profile-upload-btn.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
 .profile-resume-empty {
   color: #991b1b;
   font-weight: 700;
@@ -1357,6 +1435,14 @@ button {
   grid-template-columns: 160px minmax(0, 1fr);
 }
 
+.vv-select-base {
+  border-width: 2px;
+  border-radius: var(--radius-sm);
+  padding: 0.6rem 0.75rem;
+  font-weight: 700;
+  box-shadow: var(--shadow-sm);
+}
+
 .vv-pill-group {
   display: flex;
   gap: 0.6rem;
@@ -1406,6 +1492,26 @@ button {
 
 .vv-form-helper.warning {
   color: #b91c1c;
+}
+
+.vv-header-field-group {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+}
+
+.vv-header-field {
+  min-width: 120px;
+}
+
+.vv-header-field .vv-field-label {
+  margin-bottom: 0.28rem;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 900;
 }
 
 .vv-page-header {

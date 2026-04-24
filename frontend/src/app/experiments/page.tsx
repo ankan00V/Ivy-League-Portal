@@ -7,6 +7,7 @@ import { getAccessToken } from "@/lib/auth-session";
 import { motion } from "framer-motion";
 import PageHeader from "@/components/ui/PageHeader";
 import SectionCard from "@/components/ui/SectionCard";
+import SelectField from "@/components/ui/SelectField";
 import StatusBadge from "@/components/ui/StatusBadge";
 import DataTable from "@/components/ui/DataTable";
 import TimeseriesChart from "@/components/charts/TimeseriesChart";
@@ -487,18 +488,10 @@ export default function ExperimentsPage() {
   }, [days, analyticsTrafficType]);
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        background: "var(--bg-base)",
-        position: "relative",
-        overflow: "hidden",
-      }}
-    >
+    <div className="experiments-page-root">
       <Sidebar />
 
-      <main className="main-content" style={{ width: "100%" }}>
+      <main className="main-content experiments-main-content">
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
           <PageHeader
             title="Experiments"
@@ -510,69 +503,46 @@ export default function ExperimentsPage() {
               </>
             }
             actions={
-              <>
-                <label style={{ fontWeight: 700, color: "var(--text-muted)", fontSize: "0.85rem" }}>Window</label>
-                <select
+              <div className="vv-header-field-group">
+                <SelectField
+                  wrapperClassName="vv-header-field"
+                  className="vv-select-base"
+                  label="Window"
                   value={days}
                   onChange={(e) => setDays(Number(e.target.value))}
-                  style={{
-                    background: "var(--bg-surface)",
-                    border: "2px solid var(--border-subtle)",
-                    borderRadius: "var(--radius-sm)",
-                    padding: "0.6rem 0.75rem",
-                    color: "var(--text-primary)",
-                    fontWeight: 700,
-                    boxShadow: "var(--shadow-sm)",
-                  }}
                 >
                   <option value={7}>7 days</option>
                   <option value={30}>30 days</option>
                   <option value={90}>90 days</option>
                   <option value={180}>180 days</option>
-                </select>
-                <label style={{ fontWeight: 700, color: "var(--text-muted)", fontSize: "0.85rem" }}>Traffic</label>
-                <select
+                </SelectField>
+                <SelectField
+                  wrapperClassName="vv-header-field"
+                  className="vv-select-base"
+                  label="Traffic"
                   value={analyticsTrafficType}
                   onChange={(e) => setAnalyticsTrafficType(e.target.value as "real" | "simulated")}
-                  style={{
-                    background: "var(--bg-surface)",
-                    border: "2px solid var(--border-subtle)",
-                    borderRadius: "var(--radius-sm)",
-                    padding: "0.6rem 0.75rem",
-                    color: "var(--text-primary)",
-                    fontWeight: 700,
-                    boxShadow: "var(--shadow-sm)",
-                  }}
                 >
                   <option value="real">real</option>
                   <option value="simulated">simulated</option>
-                </select>
-              </>
+                </SelectField>
+              </div>
             }
           />
         </motion.div>
 
         {error ? (
-          <div
-            style={{
-              background: "var(--bg-surface)",
-              border: "2px solid var(--border-subtle)",
-              borderRadius: "var(--radius-sm)",
-              padding: "1.25rem",
-              boxShadow: "var(--shadow-sm)",
-              fontWeight: 700,
-            }}
-          >
+          <div className="experiments-inline-state experiments-inline-state-error">
             {error}
           </div>
         ) : null}
 
         {loading ? (
-          <div style={{ color: "var(--text-muted)", fontWeight: 700 }}>Loading…</div>
+          <div className="experiments-inline-state">Loading…</div>
         ) : null}
 
         {!loading && !error && sortedReports.length === 0 ? (
-          <div style={{ color: "var(--text-muted)", fontWeight: 700 }}>No experiments found.</div>
+          <div className="experiments-inline-state">No experiments found.</div>
         ) : null}
 
         {!loading && !error && sideBySide ? (

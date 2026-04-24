@@ -2,6 +2,8 @@
 import Sidebar from "@/components/Sidebar";
 import AskAIPanel from "@/components/AskAIPanel";
 import { OpportunityCardsSkeleton } from "@/components/LoadingSkeletons";
+import PageHeader from "@/components/ui/PageHeader";
+import PillGroup from "@/components/ui/PillGroup";
 import React from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { MapPin, Calendar, Send, Bookmark } from "lucide-react";
@@ -505,52 +507,26 @@ export default function OpportunitiesPage() {
     };
 
     return (
-        <div style={{ minHeight: '100vh', display: 'flex', background: 'var(--bg-base)', position: 'relative' }}>
+        <div className="opportunities-page-root">
 
             <Sidebar />
             <main className="main-content">
-                <header style={{ marginBottom: '3rem' }}>
-                    <h1 style={{ fontSize: '3rem', marginBottom: '0.75rem', fontWeight: 400, fontFamily: 'var(--font-serif)', color: 'var(--text-primary)', lineHeight: 1.1 }}>
-                        Discover <span style={{ background: 'var(--brand-accent)', padding: '0.2rem 0.5rem', border: '2px solid var(--border-subtle)', boxShadow: 'var(--shadow-sm)', display: 'inline-block', transform: 'rotate(-2deg)' }}>Opportunities</span>
-                    </h1>
-                    <p style={{ color: 'var(--text-secondary)', fontSize: '1.25rem', maxWidth: '600px', fontWeight: 600 }}>
-                        Compete in hackathons, quizzes, workshops, and other non-hiring tracks from top universities and global companies.
-                    </p>
-                </header>
+                <PageHeader
+                    title={<><span>Discover </span><span className="opportunities-highlight-chip">Opportunities</span></>}
+                    subtitle="Compete in hackathons, quizzes, workshops, and other non-hiring tracks from top universities and global companies."
+                />
 
-                {/* Brutalist Navigation Filters */}
-                <div style={{
-                    display: 'flex',
-                    gap: '1rem',
-                    marginBottom: '2.5rem',
-                    overflowX: 'auto',
-                    paddingBottom: '1rem',
-                    /* Hide scrollbar for cleaner look */
-                    scrollbarWidth: 'none',
-                    msOverflowStyle: 'none'
-                }}>
+                <PillGroup className="opportunities-domain-tabs">
                     {domains.map(domain => (
                         <button
                             key={domain}
                             onClick={() => setActiveTab(domain)}
-                            style={{
-                                padding: '0.75rem 1.75rem',
-                                borderRadius: 'var(--radius-sm)',
-                                fontWeight: 700,
-                                fontSize: '1rem',
-                                whiteSpace: 'nowrap',
-                                transition: 'var(--bounce-transition)',
-                                background: activeTab === domain ? 'var(--brand-primary)' : 'var(--bg-surface)',
-                                color: activeTab === domain ? '#000000' : 'var(--text-primary)',
-                                border: '2px solid var(--border-subtle)',
-                                boxShadow: activeTab === domain ? 'var(--shadow-sm)' : 'var(--shadow-md)',
-                                transform: activeTab === domain ? 'translate(2px, 2px)' : 'none'
-                            }}
+                            className={`opportunities-domain-tab ${activeTab === domain ? "active" : ""}`}
                         >
                             {domain}
                         </button>
                     ))}
-                </div>
+                </PillGroup>
 
                 <AskAIPanel
                     surface="opportunities_page"
