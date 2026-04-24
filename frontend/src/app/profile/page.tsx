@@ -29,6 +29,7 @@ import Sidebar from "@/components/Sidebar";
 import { apiUrl } from "@/lib/api";
 import { getAccessToken } from "@/lib/auth-session";
 import { getApiErrorMessage, getUnknownErrorMessage } from "@/lib/error-utils";
+import { INDIAN_INSTITUTION_OPTIONS, OTHER_INSTITUTION_LABEL } from "@/lib/indian-institutions";
 
 type AccountType = "candidate" | "employer";
 type UserType = "school_student" | "college_student" | "fresher" | "professional";
@@ -174,6 +175,9 @@ const DOMAIN_OPTIONS = ["Engineering", "Management", "Arts & Science", "Medicine
 const GOAL_OPTIONS = ["To find a Job", "Compete & Upskill", "To Host an Event", "To be a Mentor"];
 const PRONOUN_OPTIONS = ["He/Him", "She/Her", "They/Them", "Prefer not to say"];
 const GENDER_OPTIONS = ["Male", "Female", "Non-binary", "Prefer not to say"];
+const OTHER_UNIVERSITY_VALUE = "__other__";
+const UNIVERSITY_OPTION_VALUES = new Set<string>(INDIAN_INSTITUTION_OPTIONS.map((item) => item.label));
+const UNIVERSITY_OPTIONS = Array.from(UNIVERSITY_OPTION_VALUES);
 
 const SOCIAL_LINK_FIELDS: Array<{ key: string; label: string; placeholder: string }> = [
   { key: "linkedin", label: "LinkedIn", placeholder: "https://linkedin.com/in/username" },
@@ -402,6 +406,14 @@ function splitCommaValues(value: string): string[] {
   return output;
 }
 
+function deriveUniversitySelection(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+  return UNIVERSITY_OPTION_VALUES.has(trimmed) ? trimmed : OTHER_UNIVERSITY_VALUE;
+}
+
 export default function ProfilePage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -413,6 +425,7 @@ export default function ProfilePage() {
   const [activeSection, setActiveSection] = useState<SectionKey>("basic");
   const [copyCurrentAddress, setCopyCurrentAddress] = useState(false);
   const [hobbyInput, setHobbyInput] = useState("");
+  const [selectedUniversity, setSelectedUniversity] = useState<string>("");
 
   const [profile, setProfile] = useState<ProfilePayload>({
     account_type: "candidate",
@@ -505,6 +518,7 @@ export default function ProfilePage() {
           if (profileRes.ok) {
             const nextProfile = hydrateProfilePayload(profilePayload);
             setProfile(nextProfile);
+            setSelectedUniversity(deriveUniversitySelection(nextProfile.college_name));
             hasFreshProfile = true;
             setError(null);
             setCopyCurrentAddress(
@@ -650,6 +664,7 @@ export default function ProfilePage() {
         throw new Error(getApiErrorMessage(payload, "Unable to update profile"));
       }
       setProfile(hydrateProfilePayload(payload));
+      setSelectedUniversity(deriveUniversitySelection(String(payload.college_name || "")));
       setMessage("Profile updated successfully.");
     } catch (err) {
       setError(getUnknownErrorMessage(err, "Unable to update profile"));
@@ -791,6 +806,7 @@ export default function ProfilePage() {
   }, [sectionCompletion, sectionList]);
 
   const isCandidate = profile.account_type === "candidate";
+  const isStudentUniversityFlow = isCandidate && (profile.user_type === "college_student" || profile.user_type === "fresher");
 
   const renderSectionHeader = (title: string, subtitle: string) => (
     <div className="profile-section-head">
@@ -802,6 +818,48 @@ export default function ProfilePage() {
         {sectionCompletion[activeSection] ? <CheckCircle2 size={14} /> : <Circle size={14} />} {sectionCompletion[activeSection] ? "Completed" : "Pending"}
       </span>
     </div>
+  );
+
+  const renderUniversityField = (label: string, placeholder: string) => (
+    <>
+      <div className="profile-field">
+        <label>{label}</label>
+        <select
+          className="input-base"
+          value={selectedUniversity}
+          onChange={(event) => {
+            const selected = event.target.value;
+            setSelectedUniversity(selected);
+            if (selected === OTHER_UNIVERSITY_VALUE) {
+              if (UNIVERSITY_OPTION_VALUES.has(profile.college_name)) {
+                updateProfile("college_name", "");
+              }
+              return;
+            }
+            updateProfile("college_name", selected);
+          }}
+        >
+          <option value="">Select your university</option>
+          {UNIVERSITY_OPTIONS.map((option) => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))}
+          <option value={OTHER_UNIVERSITY_VALUE}>{OTHER_INSTITUTION_LABEL}</option>
+        </select>
+      </div>
+      {selectedUniversity === OTHER_UNIVERSITY_VALUE ? (
+        <div className="profile-field">
+          <label>Enter University Name</label>
+          <input
+            className="input-base"
+            value={profile.college_name}
+            onChange={(event) => updateProfile("college_name", event.target.value)}
+            placeholder={placeholder}
+          />
+        </div>
+      ) : null}
+    </>
   );
 
   const renderBasicSection = () => (
@@ -935,15 +993,19 @@ export default function ProfilePage() {
             </div>
           </div>
 
-          <div className="profile-field">
-            <label>College / University</label>
-            <input
-              className="input-base"
-              value={profile.college_name}
-              onChange={(event) => updateProfile("college_name", event.target.value)}
-              placeholder="Your institute name"
-            />
-          </div>
+          {isStudentUniversityFlow
+            ? renderUniversityField("College / University", "Type your university name manually")
+            : (
+                <div className="profile-field">
+                  <label>College / University</label>
+                  <input
+                    className="input-base"
+                    value={profile.college_name}
+                    onChange={(event) => updateProfile("college_name", event.target.value)}
+                    placeholder="Your institute name"
+                  />
+                </div>
+              )}
 
           <div className="profile-field">
             <label>Purpose / Goals</label>
@@ -1194,15 +1256,19 @@ export default function ProfilePage() {
     <>
       {renderSectionHeader("Education", "Academic background and qualifications")}
       <div className="profile-field-grid two">
-        <div className="profile-field">
-          <label>Institution</label>
-          <input
-            className="input-base"
-            value={profile.college_name}
-            onChange={(event) => updateProfile("college_name", event.target.value)}
-            placeholder="College / University"
-          />
-        </div>
+        {isStudentUniversityFlow
+          ? renderUniversityField("Institution", "Type your university name manually")
+          : (
+              <div className="profile-field">
+                <label>Institution</label>
+                <input
+                  className="input-base"
+                  value={profile.college_name}
+                  onChange={(event) => updateProfile("college_name", event.target.value)}
+                  placeholder="College / University"
+                />
+              </div>
+            )}
         <div className="profile-field">
           <label>Course</label>
           <input className="input-base" value={profile.course} onChange={(event) => updateProfile("course", event.target.value)} placeholder="Degree or course" />

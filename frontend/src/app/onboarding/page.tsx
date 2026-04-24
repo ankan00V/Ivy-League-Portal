@@ -9,6 +9,7 @@ import { CenteredPageSkeleton } from "@/components/LoadingSkeletons";
 import { apiUrl } from "@/lib/api";
 import { clearAccessToken, getAccessToken } from "@/lib/auth-session";
 import { getApiErrorMessage, getUnknownErrorMessage } from "@/lib/error-utils";
+import { INDIAN_INSTITUTION_OPTIONS, OTHER_INSTITUTION_LABEL } from "@/lib/indian-institutions";
 
 type AccountType = "candidate" | "employer";
 type UserType = "school_student" | "college_student" | "fresher" | "professional";
@@ -112,6 +113,9 @@ const EMPLOYER_ORGANIZATION_SUGGESTIONS = [
 const DEFAULT_YEARS = [2026, 2027, 2028, 2029, 2030, 2031];
 const SCHOOL_GRADES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 const RESUME_REQUIRED_USER_TYPES = new Set<UserType>(["college_student", "fresher", "professional"]);
+const OTHER_UNIVERSITY_VALUE = "__other__";
+const UNIVERSITY_OPTION_VALUES = new Set<string>(INDIAN_INSTITUTION_OPTIONS.map((item) => item.label));
+const UNIVERSITY_OPTIONS = Array.from(UNIVERSITY_OPTION_VALUES);
 
 const ONBOARDING_VISUALS = [
   "https://images.unsplash.com/photo-1529074963764-98f45c47344b?auto=format&fit=crop&w=1200&q=80",
@@ -155,6 +159,14 @@ function withOptionalString(target: OnboardingUpdatePayload, key: OptionalString
   if (trimmed.length > 0) {
     target[key] = trimmed;
   }
+}
+
+function deriveUniversitySelection(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+  return UNIVERSITY_OPTION_VALUES.has(trimmed) ? trimmed : OTHER_UNIVERSITY_VALUE;
 }
 
 function buildOnboardingPayload(profile: ProfilePayload): OnboardingUpdatePayload {
@@ -214,6 +226,7 @@ export default function OnboardingPage() {
   const [error, setError] = useState<string | null>(null);
   const [resumeUploading, setResumeUploading] = useState(false);
   const [employerRoleSelection, setEmployerRoleSelection] = useState<string>("");
+  const [selectedUniversity, setSelectedUniversity] = useState<string>("");
   const [status, setStatus] = useState<OnboardingStatus | null>(null);
   const [profile, setProfile] = useState<ProfilePayload>({
     account_type: "candidate",
@@ -328,6 +341,8 @@ export default function OnboardingPage() {
           achievements: asText(profilePayload.achievements),
           education: asText(profilePayload.education),
         }));
+        const existingCollegeName = asText(profilePayload.college_name);
+        setSelectedUniversity(deriveUniversitySelection(existingCollegeName));
         const existingRole = String(profilePayload.current_job_role || "").trim();
         if (existingRole.length === 0) {
           setEmployerRoleSelection("");
@@ -703,8 +718,46 @@ export default function OnboardingPage() {
                     </div>
                     <div>
                       <label style={{ fontWeight: 700, display: "block", marginBottom: "0.35rem" }}>College Name</label>
-                      <input className="input-base" value={profile.college_name} onChange={(e) => updateProfile("college_name", e.target.value)} placeholder="Your college / university" />
+                      <select
+                        className="input-base"
+                        value={selectedUniversity}
+                        onChange={(e) => {
+                          const selected = e.target.value;
+                          setSelectedUniversity(selected);
+                          if (selected === OTHER_UNIVERSITY_VALUE) {
+                            if (UNIVERSITY_OPTION_VALUES.has(profile.college_name)) {
+                              updateProfile("college_name", "");
+                            }
+                            return;
+                          }
+                          updateProfile("college_name", selected);
+                        }}
+                      >
+                        <option value="">Select your university</option>
+                        {UNIVERSITY_OPTIONS.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                        <option value={OTHER_UNIVERSITY_VALUE}>{OTHER_INSTITUTION_LABEL}</option>
+                      </select>
                     </div>
+                    {selectedUniversity === OTHER_UNIVERSITY_VALUE && (
+                      <div>
+                        <label style={{ fontWeight: 700, display: "block", marginBottom: "0.35rem" }}>Enter University Name</label>
+                        <input
+                          className="input-base"
+                          value={profile.college_name}
+                          onChange={(e) => updateProfile("college_name", e.target.value)}
+                          placeholder="Type your university name manually"
+                        />
+                      </div>
+                    )}
+                    {selectedUniversity !== OTHER_UNIVERSITY_VALUE && profile.college_name.trim().length > 0 && !UNIVERSITY_OPTION_VALUES.has(profile.college_name) && (
+                      <div style={{ color: "var(--text-secondary)", fontSize: "0.85rem", fontWeight: 600 }}>
+                        Existing university not in the current list. Choose &quot;{OTHER_INSTITUTION_LABEL}&quot; to edit manually.
+                      </div>
+                    )}
                   </>
                 )}
 
@@ -720,7 +773,7 @@ export default function OnboardingPage() {
                     </div>
                   </div>
                 )}
-
+ 
                 {profile.account_type === "candidate" && profile.user_type === "professional" && (
                   <>
                     <div>
