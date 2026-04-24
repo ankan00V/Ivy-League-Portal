@@ -3,6 +3,23 @@
 ## Problem
 Students discover internships, research roles, scholarships, and hackathons across fragmented portals. Most systems rely on keyword filtering, weak personalization, and manual shortlisting, which leads to low relevance and poor application conversion.
 
+## Latest Build Update (April 24, 2026)
+- Infrastructure baseline aligned to MongoDB + Redis (local and production compose files no longer imply Postgres).
+- Canonical Slim config added (`.slim.yaml`) and root `Makefile` workflows added (`make up`, `make dev`, `make doctor`).
+- Session-cookie auth hardening shipped (HttpOnly cookie issuance on login/signup/OAuth, cookie-aware auth dependency, explicit logout endpoint).
+- Ranking feature store widened with geo-fit + user-sequence dynamics to support stronger learned-ranker training.
+- Dataset versioning script added: `backend/scripts/version_datasets.py` (anonymized user IDs + manifest checksums).
+- Live-backend Playwright smoke test scaffold added (`frontend/e2e/live-backend-smoke.spec.ts`) for non-mocked staging verification.
+- Complete localStorage token persistence removal: bearer tokens are no longer stored in browser localStorage.
+- Slack + PagerDuty alert channel integrations added, with automatic incident creation and MLOps incident APIs.
+- Offline/online parity gates added to activation policy (minimum real-traffic thresholds + regression checks).
+- Integrated staging Playwright flow added for register/login/protected-page verification without mocked routes.
+- Weekly incident-learning scorecard automation added via `backend/scripts/publish_weekly_mlops_scorecard.py` and CI workflow.
+- CSRF protection middleware added for cookie-authenticated unsafe requests (origin/referer enforcement + trusted-origin controls).
+- Browser security headers + nonce-based strict `script-src` CSP (no `unsafe-inline`/`unsafe-eval`) with enforced Trusted Types added (frontend + backend responses).
+- Staging integrated E2E expanded with role/failure-path coverage (`frontend/e2e/staging-role-and-failure.spec.ts`).
+- Ops secret-readiness workflow added to enforce staging/alert-channel ownership (`.github/workflows/ops-secrets-readiness.yml`).
+
 ## What Is Implemented (Current State)
 ### AI/ML and Data Components
 - Modular embedding service with `sentence-transformers` primary path and OpenAI embedding fallback support.
@@ -19,12 +36,16 @@ Students discover internships, research roles, scholarships, and hackathons acro
 - Semantic deduplication during scraper upserts using embedding similarity thresholds.
 - MLOps endpoints/services for retraining and drift checks.
 - NLP model lifecycle endpoints for training, evaluation, model listing, and activation (`/api/v1/mlops/nlp/*`) with centroid-vs-linear-head macro-F1 uplift reporting and dedicated NER eval-set support.
+- Expanded learned-ranker feature layer with geo-fit, source trust bucketing, freshness decay, deadline urgency, and user sequence dynamics (`recent_interactions_*`, `sequence_ctr_30d`, `last_interaction_hours`).
 
 ### Platform and Data Pipeline
 - Multi-source ingestion: Ivy RSS + Indian opportunity sources.
 - Resilient scraper runtime status + source-level run reports.
 - Automatic updates via scheduler (default every 30 minutes).
 - FastAPI backend + Next.js frontend with proxy routing.
+- Versioned dataset snapshots with checksums + anonymized user IDs for reproducible ML datasets:
+  - `python backend/scripts/version_datasets.py --name weekly --lookback-days 180`
+  - output: `backend/benchmarks/datasets/<version>/manifest.json`
 
 ## Production Engineering Credibility
 ### Background Jobs (Retries + Dead-Letter Queue)
@@ -60,11 +81,18 @@ Students discover internships, research roles, scholarships, and hackathons acro
 - Auth abuse lock policy for password + OTP verification with configurable thresholds (`AUTH_ABUSE_*`).
 - Structured auth security audit events (`auth_audit_events`) + active lock-state tracking (`auth_abuse_states`).
 - Production secret enforcement: refuses to boot in `ENVIRONMENT=production` if `SECRET_KEY` is left as the dev default.
+- Session-cookie support added (HttpOnly, SameSite-configurable, secure in production) with bearer fallback for compatibility:
+  - new endpoint: `POST /api/v1/auth/logout`
+  - auth dependency now accepts bearer token **or** session cookie.
+- Frontend auth no longer persists bearer tokens in `localStorage`; browser state is a non-sensitive session marker + expiry while auth trust is cookie/session based.
+- CSRF middleware now blocks unsafe cookie-session requests when origin/referer is missing or untrusted.
+- Security headers now include CSP + Trusted Types directives and standard browser hardening headers.
 
 ## What Is Still Missing (High Impact Next)
 - Sustained real-user traffic volume for statistically stable experiment reads across all three arms (`baseline`, `semantic`, `ml`).
-- Production-grade alert integrations wired to live Slack/PagerDuty credentials (templates are committed, secrets are environment-owned).
-- Continuous post-incident learning loop (blameless postmortems + permanent mitigation tracking) beyond code-level guardrails.
+- Live Slack/PagerDuty secret wiring and escalation policies in staging+production (code integrations are now implemented; environment credentials and routing policy ownership remain).
+- Continuous post-incident learning loop operations (auto incident creation/timeline APIs and weekly scorecard automation are implemented; recurring review cadence and ownership SLAs must be enforced).
+- Full multi-role staging E2E maturity with seeded employer/admin credentials across environments (current suite supports optional secret-gated checks and candidate/failure paths).
 
 ## Architecture Diagram
 ```mermaid
@@ -165,6 +193,11 @@ One-command reproducibility command (offline holdout benchmark + lifecycle + met
 Portfolio/ATS ablation bundle publish:
 ```bash
 python backend/scripts/publish_portfolio_bundle.py
+```
+
+Weekly MLOps incident-learning scorecard publish:
+```bash
+python backend/scripts/publish_weekly_mlops_scorecard.py --days 7
 ```
 
 Dashboard screenshot pack capture (with Slim-hosted frontend):
@@ -276,7 +309,7 @@ From live `ranking_mode` experiment (baseline vs ml), 14-day window:
 - `GET /api/v1/employer/audit-logs`
 - `POST /api/v1/analytics/warehouse/rebuild` / `GET /api/v1/analytics/warehouse/*` / `GET /api/v1/analytics/feature-store/rows`
 - `GET /api/v1/rag-governance/templates` / `POST /api/v1/rag-governance/templates` / offline+online eval + activation endpoints
-- `GET /api/v1/auth/audit-events` / `GET /api/v1/auth/abuse-locks` (admin)
+- `POST /api/v1/auth/logout` / `GET /api/v1/auth/audit-events` / `GET /api/v1/auth/abuse-locks` (admin)
 - `POST /api/v1/mlops/retrain`
 - `GET /api/v1/mlops/models`
 - `POST /api/v1/mlops/nlp/train`
@@ -285,10 +318,17 @@ From live `ranking_mode` experiment (baseline vs ml), 14-day window:
 - `POST /api/v1/mlops/nlp/models/{model_id}/activate`
 - `GET /api/v1/mlops/drift`
 - `GET /api/v1/mlops/lifecycle`
+- `GET /api/v1/mlops/incidents` / `GET /api/v1/mlops/incidents/{incident_id}` / `PATCH /api/v1/mlops/incidents/{incident_id}` / `POST /api/v1/mlops/incidents/{incident_id}/timeline`
 - `GET /api/v1/admin/openapi.json` (admin-authenticated OpenAPI export, production-safe)
 - `GET /api/v1/admin/docs` (admin-authenticated Swagger UI, production-safe)
 
 ## Local Run
+### Dependencies (Mongo + Redis)
+```bash
+make up
+# or: docker compose up -d mongo redis
+```
+
 ### Backend
 ```bash
 cd backend
@@ -304,6 +344,40 @@ Production env templates:
 backend/.env.example
 backend/.env.production.example
 ```
+
+Auth session cookie controls:
+- `AUTH_SESSION_COOKIE_ENABLED`
+- `AUTH_SESSION_COOKIE_NAME`
+- `AUTH_SESSION_COOKIE_SECURE` (set `true` in production)
+- `AUTH_SESSION_COOKIE_SAMESITE`
+- `AUTH_SESSION_COOKIE_MAX_AGE_SECONDS`
+
+CSRF + browser security controls:
+- `CSRF_PROTECTION_ENABLED`
+- `CSRF_ENFORCE_ON_AUTH_COOKIE`
+- `CSRF_TRUSTED_ORIGINS`
+- `SECURITY_HEADERS_ENABLED`
+- `SECURITY_CSP_ENABLED`
+- `SECURITY_CSP_REPORT_ONLY`
+- optional CSP override: `SECURITY_CSP_VALUE`
+
+MLOps alert channels + incident loop controls:
+- `MLOPS_ALERT_SLACK_WEBHOOK_URL`
+- `MLOPS_ALERT_PAGERDUTY_ROUTING_KEY`
+- `MLOPS_ALERT_PAGERDUTY_SEVERITY`
+- `MLOPS_INCIDENT_AUTO_CREATE`
+- `MLOPS_INCIDENT_REVIEW_DUE_HOURS`
+- `MLOPS_INCIDENT_BREACH_SLA_HOURS`
+- `MLOPS_ENFORCE_LIVE_ALERT_CHANNELS_IN_PRODUCTION`
+- `MLOPS_ENFORCE_OWNER_IN_PRODUCTION`
+
+Offline/online parity controls for auto-activation:
+- `MLOPS_PARITY_ENABLED`
+- `MLOPS_PARITY_MIN_REAL_IMPRESSIONS_PER_MODE`
+- `MLOPS_PARITY_MIN_REAL_REQUESTS_PER_MODE`
+- `MLOPS_PARITY_MAX_CTR_REGRESSION`
+- `MLOPS_PARITY_MAX_APPLY_RATE_REGRESSION`
+- `MLOPS_PARITY_MIN_OFFLINE_AUC_GAIN_FOR_ONLINE_GATES`
 
 OpenAI-compatible LLM routing (NVIDIA/OpenRouter/etc) is controlled by:
 - `LLM_API_BASE_URL`
@@ -335,6 +409,39 @@ npx playwright install chromium
 npm run e2e
 ```
 
+Integrated live-backend smoke checks (no route mocks):
+```bash
+cd frontend
+PLAYWRIGHT_LIVE_BACKEND=1 npm run e2e -- --grep "Live backend smoke"
+```
+
+Integrated staging auth + protected-page checks (no route mocks):
+```bash
+cd frontend
+PLAYWRIGHT_STAGING_URL=https://your-staging-web-domain.com \
+PLAYWRIGHT_INTEGRATED_AUTH=1 \
+npm run e2e:staging
+```
+
+Optional deeper staging role-path coverage secrets:
+- `PLAYWRIGHT_STAGING_ADMIN_BEARER`
+- `PLAYWRIGHT_STAGING_EMPLOYER_EMAIL`
+- `PLAYWRIGHT_STAGING_EMPLOYER_PASSWORD`
+
+Ops secret bootstrap helper (GitHub secrets + vars):
+```bash
+STAGING_PLAYWRIGHT_BASE_URL=https://staging.example.com \
+MLOPS_ALERT_SLACK_WEBHOOK_URL=https://hooks.slack.com/services/... \
+MLOPS_ALERT_PAGERDUTY_ROUTING_KEY=... \
+MLOPS_INCIDENT_DEFAULT_OWNER=oncall-ml@your-company.com \
+./scripts/configure_ops_secrets.sh owner/repo
+```
+
+Real-traffic rollout readiness report:
+```bash
+python backend/scripts/check_real_traffic_rollout_readiness.py --days 14
+```
+
 Unified PR quality gate (backend tests + frontend lint/build + Playwright smoke):
 ```bash
 .github/workflows/pr-quality-gate.yml
@@ -348,20 +455,30 @@ python scripts/bootstrap_ranking_pipeline.py --clear-existing --run-retrain --au
 
 ### Slim Domains (Preferred Workflow)
 ```bash
-slim start web --port 3000
+make dev
+# reads .slim.yaml via `slim up`
 # https://web.test -> localhost:3000
-
-slim start api --port 8000
 # https://api.test -> localhost:8000
 
 # Share a local preview publicly
 slim share --port 3000 --subdomain demo --ttl 2h
 ```
 
+Manual equivalent:
+```bash
+slim start web --port 3000
+slim start api --port 8000
+```
+
 If you enable Google OAuth while using Slim-hosted local domains, register and set:
 - `GOOGLE_OAUTH_REDIRECT_URI=https://api.test/api/v1/auth/oauth/google/callback`
 - `FRONTEND_OAUTH_SUCCESS_URL=https://web.test/auth/callback`
 - `FRONTEND_OAUTH_FAILURE_URL=https://web.test/login`
+
+### Versioned Dataset Snapshots
+```bash
+python backend/scripts/version_datasets.py --name weekly --lookback-days 180
+```
 
 ## Resume-Grade Positioning
 Built an AI-powered opportunity intelligence platform with modular NLP/ML services (embeddings, intent+NER, vector retrieval, RAG), ranking experimentation (`baseline/semantic/ml/ab`), interaction analytics, and MLOps retraining/drift pipelines on a FastAPI + Next.js architecture.

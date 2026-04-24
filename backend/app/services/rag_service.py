@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 from typing import Any, Optional
 from uuid import uuid4
 
@@ -21,6 +23,8 @@ from app.services.nlp_service import nlp_service
 from app.services.rag_template_registry_service import rag_template_registry_service
 from app.services.vector_service import opportunity_vector_service
 
+logger = logging.getLogger(__name__)
+
 
 class RAGService:
     def __init__(self) -> None:
@@ -35,6 +39,19 @@ class RAGService:
             or (settings.OPENROUTER_MODEL or "").strip()
             or "meta-llama/llama-3-8b-instruct:free"
         )
+        configured_rag_model = (settings.RAG_LLM_MODEL or "").strip()
+        if configured_rag_model:
+            self._rag_model = configured_rag_model
+        elif "integrate.api.nvidia.com" in self._api_base_url.lower() and "deepseek-ai/deepseek-v3" in self._model:
+            # NVIDIA-hosted deepseek-v3 variants can be high-latency for interactive Ask AI flows.
+            self._rag_model = "meta/llama-3.1-8b-instruct"
+            logger.warning(
+                "RAG model auto-switched from %s to %s for lower interactive latency.",
+                self._model,
+                self._rag_model,
+            )
+        else:
+            self._rag_model = self._model
         self._client = AsyncOpenAI(
             base_url=self._api_base_url,
             api_key=self._api_key or "dummy_key_to_prevent_boot_crash",
@@ -61,8 +78,10 @@ class RAGService:
         return " | ".join(section for section in sections if section.strip())
 
     async def retrieve(self, query: str, top_k: int = 8, retrieval_settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
-        intent = await nlp_service.classify_intent(query)
-        entities = await nlp_service.extract_entities_with_model(query)
+        intent, entities = await asyncio.gather(
+            nlp_service.classify_intent(query),
+            nlp_service.extract_entities_with_model(query),
+        )
 
         filters = {
             "intent": intent.get("intent"),
@@ -246,6 +265,10 @@ class RAGService:
         if not self._api_key:
             return self._heuristic_insight(query, retrieval_payload.get("results", []))
 
+        # If nothing was retrieved, skip expensive LLM invocation and return deterministic fallback.
+        if not (retrieval_payload.get("results") or []):
+            return self._heuristic_insight(query, retrieval_payload.get("results", []))
+
         top_candidates = retrieval_payload.get("results", [])[:6]
         prompt = {
             "query": query,
@@ -257,7 +280,7 @@ class RAGService:
                     "id": item.get("id"),
                     "title": item.get("title"),
                     "url": item.get("url"),
-                    "description": item.get("description"),
+                    "description": str(item.get("description") or "")[:480],
                     "domain": item.get("domain"),
                     "opportunity_type": item.get("opportunity_type"),
                     "university": item.get("university"),
@@ -293,11 +316,24 @@ class RAGService:
             {"role": "user", "content": json.dumps(prompt)},
         ]
 
-        response = await self._client.chat.completions.create(
-            model=self._model,
-            messages=messages,
-            extra_headers=self._extra_headers(title="VidyaVerse RAG"),
-        )
+        try:
+            response = await asyncio.wait_for(
+                self._client.chat.completions.create(
+                    model=self._rag_model,
+                    messages=messages,
+                    extra_headers=self._extra_headers(title="VidyaVerse RAG"),
+                    response_format={"type": "json_object"},
+                    temperature=0,
+                    max_tokens=700,
+                ),
+                timeout=max(3.0, float(getattr(settings, "RAG_LLM_TIMEOUT_SECONDS", 15.0))),
+            )
+        except asyncio.TimeoutError:
+            logger.warning("RAG LLM generation timed out; serving heuristic fallback.")
+            return self._heuristic_insight(query, retrieval_payload.get("results", []))
+        except Exception as exc:
+            logger.warning("RAG LLM generation failed; serving heuristic fallback: %s", exc)
+            return self._heuristic_insight(query, retrieval_payload.get("results", []))
 
         content = ""
         if response.choices and response.choices[0].message:
@@ -330,11 +366,22 @@ class RAGService:
         if top_k is not None:
             retrieval_settings.pop("top_k", None)
 
-        retrieval_payload = await self.retrieve(
-            query=query,
-            top_k=effective_top_k,
-            retrieval_settings=retrieval_settings,
-        )
+        try:
+            retrieval_payload = await asyncio.wait_for(
+                self.retrieve(
+                    query=query,
+                    top_k=effective_top_k,
+                    retrieval_settings=retrieval_settings,
+                ),
+                timeout=max(2.0, float(getattr(settings, "RAG_RETRIEVAL_TIMEOUT_SECONDS", 45.0))),
+            )
+        except asyncio.TimeoutError:
+            logger.warning("RAG retrieval timed out; returning empty retrieval payload.")
+            retrieval_payload = {"intent": {}, "entities": {}, "results": [], "filters": {}}
+        except Exception as exc:
+            logger.warning("RAG retrieval failed; returning empty retrieval payload: %s", exc)
+            retrieval_payload = {"intent": {}, "entities": {}, "results": [], "filters": {}}
+
         insights = await self._llm_insight(
             query=query,
             retrieval_payload=retrieval_payload,
@@ -349,12 +396,22 @@ class RAGService:
 
         # Optional LLM-as-judge quality gate (disabled by default).
         if settings.LLM_JUDGE_ENABLED and self._api_key:
-            judge = await evaluation_service.judge_rag_response(
-                query=query,
-                candidates=results,
-                insights=insights_model.model_dump(),
-                rubric=template.judge_rubric,
-            )
+            try:
+                judge = await asyncio.wait_for(
+                    evaluation_service.judge_rag_response(
+                        query=query,
+                        candidates=results,
+                        insights=insights_model.model_dump(),
+                        rubric=template.judge_rubric,
+                    ),
+                    timeout=max(2.0, float(getattr(settings, "RAG_JUDGE_TIMEOUT_SECONDS", 8.0))),
+                )
+            except asyncio.TimeoutError:
+                logger.warning("RAG judge timed out; continuing without judge signal.")
+                judge = None
+            except Exception as exc:
+                logger.warning("RAG judge failed; continuing without judge signal: %s", exc)
+                judge = None
             if judge:
                 quality_failed: list[str] = []
                 quality_passed = True

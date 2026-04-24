@@ -1,0 +1,50 @@
+name: MLOps Incident Scorecard
+
+on:
+  schedule:
+    - cron: "40 4 * * 1"
+  workflow_dispatch:
+
+jobs:
+  publish-scorecard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      MONGODB_URL: ${{ secrets.MONGODB_URL }}
+      MONGODB_DB_NAME: ${{ secrets.MONGODB_DB_NAME }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Validate required secrets
+        run: |
+          if [ -z "${MONGODB_URL}" ] || [ -z "${MONGODB_DB_NAME}" ]; then
+            echo "Missing MONGODB_URL or MONGODB_DB_NAME secrets. Skipping scorecard run."
+            exit 0
+          fi
+
+      - name: Publish weekly scorecard artifacts
+        run: |
+          python backend/scripts/publish_weekly_mlops_scorecard.py --days 7
+
+      - name: Upload scorecard artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mlops-weekly-scorecard
+          path: |
+            docs/portfolio/weekly_mlops_scorecard.md
+            backend/benchmarks/weekly_mlops_scorecard.json
+          if-no-files-found: ignore

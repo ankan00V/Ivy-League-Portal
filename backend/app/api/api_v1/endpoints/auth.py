@@ -9,7 +9,7 @@ from typing import Any, Literal, Optional
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import requests as http_requests
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr, field_validator
@@ -206,6 +206,43 @@ def _request_context(request: Optional[Request]) -> tuple[Optional[str], Optiona
     return ip_address, user_agent
 
 
+def _set_session_cookie(response: Optional[Response], token: str) -> None:
+    if response is None:
+        return
+    if not settings.AUTH_SESSION_COOKIE_ENABLED:
+        return
+    cookie_name = (settings.AUTH_SESSION_COOKIE_NAME or "").strip()
+    if not cookie_name:
+        return
+    same_site = str(settings.AUTH_SESSION_COOKIE_SAMESITE or "lax").strip().lower()
+    if same_site not in {"lax", "strict", "none"}:
+        same_site = "lax"
+
+    response.set_cookie(
+        key=cookie_name,
+        value=token,
+        max_age=max(60, int(settings.AUTH_SESSION_COOKIE_MAX_AGE_SECONDS)),
+        httponly=True,
+        secure=bool(settings.AUTH_SESSION_COOKIE_SECURE),
+        samesite=same_site,
+        path=(settings.AUTH_SESSION_COOKIE_PATH or "/").strip() or "/",
+        domain=(settings.AUTH_SESSION_COOKIE_DOMAIN or "").strip() or None,
+    )
+
+
+def _clear_session_cookie(response: Optional[Response]) -> None:
+    if response is None:
+        return
+    cookie_name = (settings.AUTH_SESSION_COOKIE_NAME or "").strip()
+    if not cookie_name:
+        return
+    response.delete_cookie(
+        key=cookie_name,
+        path=(settings.AUTH_SESSION_COOKIE_PATH or "/").strip() or "/",
+        domain=(settings.AUTH_SESSION_COOKIE_DOMAIN or "").strip() or None,
+    )
+
+
 @router.post("/register", response_model=UserResponse)
 async def register_user(
     user_in: UserCreate
@@ -235,6 +272,7 @@ async def register_user(
 async def login_access_token(
     form_data: OAuth2PasswordRequestForm = Depends(),
     request: Request = None,  # type: ignore[assignment]
+    response: Response = None,  # type: ignore[assignment]
 ) -> Any:
     """
     OAuth2 compatible token login, get an access token for future requests.
@@ -310,14 +348,13 @@ async def login_access_token(
     )
 
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    return {
-        "access_token": create_access_token(
-            str(user.id),
-            expires_delta=access_token_expires,
-            scopes=_scopes_for_user(user),
-        ),
-        "token_type": "bearer",
-    }
+    token = create_access_token(
+        str(user.id),
+        expires_delta=access_token_expires,
+        scopes=_scopes_for_user(user),
+    )
+    _set_session_cookie(response, token)
+    return {"access_token": token, "token_type": "bearer"}
 
 
 class OTPSendRequest(BaseModel):
@@ -654,16 +691,18 @@ async def oauth_google_callback(
             user_id=user.id,
         )
 
-        target = _append_query(
-            success_url,
-            {
-                "access_token": api_token,
-                "token_type": "bearer",
-                "provider": "google",
-                "next": next_path,
-            },
-        )
-        return RedirectResponse(target, status_code=302)
+        success_query: dict[str, str] = {
+            "token_type": "bearer",
+            "provider": "google",
+            "next": next_path,
+        }
+        # Keep URL token fallback only when cookie sessions are disabled.
+        if not settings.AUTH_SESSION_COOKIE_ENABLED:
+            success_query["access_token"] = api_token
+        target = _append_query(success_url, success_query)
+        redirect = RedirectResponse(target, status_code=302)
+        _set_session_cookie(redirect, api_token)
+        return redirect
 
     except Exception as exc:
         logger.exception("Google OAuth callback failed")
@@ -815,6 +854,7 @@ async def send_otp(request: OTPSendRequest, http_request: Request = None):  # ty
 async def verify_otp(
     request: OTPVerifyRequest,
     http_request: Request = None,  # type: ignore[assignment]
+    response: Response = None,  # type: ignore[assignment]
 ) -> Any:
     """
     Verify the 6-digit OTP from MongoDB.
@@ -938,14 +978,19 @@ async def verify_otp(
     )
 
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    return {
-        "access_token": create_access_token(
-            str(user.id),
-            expires_delta=access_token_expires,
-            scopes=_scopes_for_user(user),
-        ),
-        "token_type": "bearer",
-    }
+    token = create_access_token(
+        str(user.id),
+        expires_delta=access_token_expires,
+        scopes=_scopes_for_user(user),
+    )
+    _set_session_cookie(response, token)
+    return {"access_token": token, "token_type": "bearer"}
+
+
+@router.post("/logout", response_model=dict)
+async def logout(response: Response) -> Any:
+    _clear_session_cookie(response)
+    return {"status": "ok"}
 
 
 @router.get("/audit-events", response_model=list[AuthAuditEventResponse])

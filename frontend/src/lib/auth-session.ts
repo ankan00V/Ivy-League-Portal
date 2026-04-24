@@ -1,9 +1,14 @@
 import { apiUrl } from "@/lib/api";
 
+// Kept for backward cleanup compatibility only. Tokens are no longer persisted.
 export const ACCESS_TOKEN_KEY = "access_token";
 export const ACCESS_TOKEN_EXPIRES_AT_KEY = "access_token_expires_at";
+export const AUTH_SESSION_PRESENT_KEY = "auth_session_present";
+export const COOKIE_SESSION_SENTINEL = "__cookie_session__";
 export const AUTH_STATE_EVENT = "auth-state-changed";
 export const ACCESS_TOKEN_LIFETIME_MS = 24 * 60 * 60 * 1000;
+
+let volatileAccessToken: string | null = null;
 
 type AuthStateReason = "login" | "logout" | "expired";
 
@@ -20,11 +25,22 @@ function dispatchAuthState(reason: AuthStateReason): void {
 function removeStoredAuth(): void {
   localStorage.removeItem(ACCESS_TOKEN_KEY);
   localStorage.removeItem(ACCESS_TOKEN_EXPIRES_AT_KEY);
+  localStorage.removeItem(AUTH_SESSION_PRESENT_KEY);
 }
 
 function clearStoredAuth(reason: AuthStateReason): void {
   removeStoredAuth();
+  volatileAccessToken = null;
   dispatchAuthState(reason);
+}
+
+function markAuthSessionPresentInternal(): void {
+  localStorage.setItem(AUTH_SESSION_PRESENT_KEY, "1");
+  localStorage.setItem(
+    ACCESS_TOKEN_EXPIRES_AT_KEY,
+    String(Date.now() + ACCESS_TOKEN_LIFETIME_MS),
+  );
+  localStorage.removeItem(ACCESS_TOKEN_KEY);
 }
 
 export function getAccessTokenExpiry(): number | null {
@@ -40,36 +56,42 @@ export function getAccessToken(): string | null {
   if (typeof window === "undefined") {
     return null;
   }
-  const token = localStorage.getItem(ACCESS_TOKEN_KEY);
-  if (!token) {
-    localStorage.removeItem(ACCESS_TOKEN_EXPIRES_AT_KEY);
-    return null;
+
+  if (volatileAccessToken) {
+    return volatileAccessToken;
   }
+
+  const marker = localStorage.getItem(AUTH_SESSION_PRESENT_KEY);
   const expiresAt = getAccessTokenExpiry();
-  if (!expiresAt) {
-    // Backward compatibility for sessions created before expiry tracking existed.
-    localStorage.setItem(
-      ACCESS_TOKEN_EXPIRES_AT_KEY,
-      String(Date.now() + ACCESS_TOKEN_LIFETIME_MS),
-    );
-    return token;
-  }
-  if (expiresAt <= Date.now()) {
+  if (marker !== "1" || !expiresAt || expiresAt <= Date.now()) {
     removeStoredAuth();
     return null;
   }
-  return token;
+  return COOKIE_SESSION_SENTINEL;
+}
+
+export function hasAuthSession(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  const token = getAccessToken();
+  return Boolean(token);
 }
 
 export function setAccessToken(token: string): void {
   if (typeof window === "undefined") {
     return;
   }
-  localStorage.setItem(ACCESS_TOKEN_KEY, token);
-  localStorage.setItem(
-    ACCESS_TOKEN_EXPIRES_AT_KEY,
-    String(Date.now() + ACCESS_TOKEN_LIFETIME_MS),
-  );
+  volatileAccessToken = token || null;
+  markAuthSessionPresentInternal();
+  dispatchAuthState("login");
+}
+
+export function markAuthSessionPresent(): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  markAuthSessionPresentInternal();
   dispatchAuthState("login");
 }
 
@@ -77,6 +99,13 @@ export function clearAccessToken(reason: AuthStateReason = "logout"): void {
   if (typeof window === "undefined") {
     return;
   }
+  volatileAccessToken = null;
+  void fetch(apiUrl("/api/v1/auth/logout"), {
+    method: "POST",
+    credentials: "include",
+  }).catch(() => {
+    // Best-effort cookie invalidation.
+  });
   clearStoredAuth(reason);
 }
 
@@ -84,14 +113,18 @@ export function getAuthStateEventName(): string {
   return AUTH_STATE_EVENT;
 }
 
-export async function resolvePostAuthRoute(token: string): Promise<string> {
+export async function resolvePostAuthRoute(token?: string | null): Promise<string> {
+  const normalizedToken = token && token !== COOKIE_SESSION_SENTINEL ? token : null;
+  const headers = normalizedToken ? { Authorization: `Bearer ${normalizedToken}` } : undefined;
   try {
     const res = await fetch(apiUrl("/api/v1/users/me/profile"), {
-      headers: { Authorization: `Bearer ${token}` },
+      credentials: "include",
+      headers,
     });
     if (!res.ok) {
       return "/dashboard";
     }
+    markAuthSessionPresentInternal();
     const status = (await res.json()) as OnboardingStatus;
     const accountType = String(status.account_type || "candidate").toLowerCase();
     const onboardingCompleted = Boolean(status.onboarding_completed);
@@ -101,7 +134,8 @@ export async function resolvePostAuthRoute(token: string): Promise<string> {
         try {
           await fetch(apiUrl("/api/v1/users/me/onboarding/mark-seen"), {
             method: "POST",
-            headers: { Authorization: `Bearer ${token}` },
+            credentials: "include",
+            headers,
           });
         } catch {
           // Non-blocking best effort.

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-__all__ = ["drift_service", "retraining_service", "mlops_alerting_service"]
+__all__ = ["drift_service", "retraining_service", "mlops_alerting_service", "mlops_incident_service"]
 
 
 def __getattr__(name: str) -> Any:
@@ -18,4 +18,8 @@ def __getattr__(name: str) -> Any:
         from app.services.mlops.alerting_service import mlops_alerting_service
 
         return mlops_alerting_service
+    if name == "mlops_incident_service":
+        from app.services.mlops.incident_service import mlops_incident_service
+
+        return mlops_incident_service
     raise AttributeError(name)

@@ -88,6 +88,10 @@ function buildResponseHeaders(upstreamResponse: Response): Headers {
   return headers;
 }
 
+async function wait(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function proxy(request: NextRequest, context: { params: Promise<{ path: string[] }> }) {
   const { path } = await context.params;
   const method = request.method.toUpperCase();
@@ -112,38 +116,49 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
 
   const fallbackCandidates = safeCandidates.length > 0 ? safeCandidates : ["http://127.0.0.1:8000"];
   const failureDetails: Array<{ upstream: string; reason: string }> = [];
+  const maxAttemptsPerTarget = 3;
 
   for (const target of fallbackCandidates) {
     const upstreamUrl = buildBackendUrl(target, request, path);
-    try {
-      const upstreamResponse = await fetch(upstreamUrl, requestInit);
-      // Retry only on gateway-like upstream failures.
-      // Do NOT swallow application-level 4xx responses (e.g., OTP validation 404),
-      // otherwise the client sees a fake "backend unavailable" message.
-      if ([502, 503, 504].includes(upstreamResponse.status)) {
-        failureDetails.push({
-          upstream: upstreamUrl,
-          reason: `upstream responded with ${upstreamResponse.status}`,
+    for (let attempt = 1; attempt <= maxAttemptsPerTarget; attempt += 1) {
+      try {
+        const upstreamResponse = await fetch(upstreamUrl, requestInit);
+        // Retry only on gateway-like upstream failures.
+        // Do NOT swallow application-level 4xx responses (e.g., OTP validation 404),
+        // otherwise the client sees a fake "backend unavailable" message.
+        if ([502, 503, 504].includes(upstreamResponse.status)) {
+          if (attempt < maxAttemptsPerTarget) {
+            await wait(150 * attempt);
+            continue;
+          }
+          failureDetails.push({
+            upstream: upstreamUrl,
+            reason: `upstream responded with ${upstreamResponse.status}`,
+          });
+          break;
+        }
+
+        const responseHeaders = buildResponseHeaders(upstreamResponse);
+        const location = responseHeaders.get("location");
+
+        if (location && location.startsWith(target)) {
+          responseHeaders.set("location", location.replace(target, ""));
+        }
+
+        const responseBody = await upstreamResponse.arrayBuffer();
+
+        return new NextResponse(responseBody, {
+          status: upstreamResponse.status,
+          headers: responseHeaders,
         });
-        continue;
+      } catch (error) {
+        if (attempt < maxAttemptsPerTarget) {
+          await wait(150 * attempt);
+          continue;
+        }
+        const reason = formatFetchError(error);
+        failureDetails.push({ upstream: upstreamUrl, reason });
       }
-
-      const responseHeaders = buildResponseHeaders(upstreamResponse);
-      const location = responseHeaders.get("location");
-
-      if (location && location.startsWith(target)) {
-        responseHeaders.set("location", location.replace(target, ""));
-      }
-
-      const responseBody = await upstreamResponse.arrayBuffer();
-
-      return new NextResponse(responseBody, {
-        status: upstreamResponse.status,
-        headers: responseHeaders,
-      });
-    } catch (error) {
-      const reason = formatFetchError(error);
-      failureDetails.push({ upstream: upstreamUrl, reason });
     }
   }
 

@@ -3,17 +3,19 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 import numpy as np
 from pydantic import BaseModel, Field
 
 from app.api.deps import get_current_admin_user
 from app.core.config import settings
 from app.models.model_drift_report import ModelDriftReport
+from app.models.mlops_incident import MlopsIncident
 from app.models.nlp_model_version import NLPModelVersion
 from app.models.ranking_model_version import RankingModelVersion
 from app.models.user import User
 from app.services.mlops.drift_service import drift_service
+from app.services.mlops.incident_service import mlops_incident_service
 from app.services.mlops.retraining_service import retraining_service
 from app.services.nlp_model_service import ENTITY_KEYS, nlp_model_service
 from app.services.nlp_service import nlp_service
@@ -92,6 +94,74 @@ class NLPModelVersionResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     notes: Optional[str] = None
+
+
+class IncidentResponse(BaseModel):
+    id: str
+    incident_key: str
+    source_type: str
+    source_id: str
+    report_id: Optional[str] = None
+    model_version_id: Optional[str] = None
+    severity: str
+    status: str
+    title: str
+    summary: str
+    owner: Optional[str] = None
+    root_cause: Optional[str] = None
+    mitigation: Optional[str] = None
+    lessons_learned: Optional[str] = None
+    review_due_at: Optional[datetime] = None
+    breached_sla: bool
+    resolved_at: Optional[datetime] = None
+    timeline: list[dict[str, Any]] = Field(default_factory=list)
+    action_items: list[dict[str, Any]] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+
+
+class IncidentUpdateRequest(BaseModel):
+    status: Optional[str] = Field(default=None, pattern="^(open|acknowledged|resolved)$")
+    owner: Optional[str] = None
+    summary: Optional[str] = None
+    root_cause: Optional[str] = None
+    mitigation: Optional[str] = None
+    lessons_learned: Optional[str] = None
+    action_items: Optional[list[dict[str, Any]]] = None
+
+
+class IncidentTimelineAppendRequest(BaseModel):
+    event: str = Field(min_length=1, max_length=80)
+    message: str = Field(min_length=1, max_length=500)
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+def _serialize_incident(incident: MlopsIncident) -> IncidentResponse:
+    return IncidentResponse(
+        id=str(incident.id),
+        incident_key=incident.incident_key,
+        source_type=incident.source_type,
+        source_id=incident.source_id,
+        report_id=incident.report_id,
+        model_version_id=incident.model_version_id,
+        severity=incident.severity,
+        status=incident.status,
+        title=incident.title,
+        summary=incident.summary,
+        owner=incident.owner,
+        root_cause=incident.root_cause,
+        mitigation=incident.mitigation,
+        lessons_learned=incident.lessons_learned,
+        review_due_at=incident.review_due_at,
+        breached_sla=bool(incident.breached_sla),
+        resolved_at=incident.resolved_at,
+        timeline=list(incident.timeline or []),
+        action_items=list(incident.action_items or []),
+        metadata=dict(incident.metadata or {}),
+        created_at=incident.created_at,
+        updated_at=incident.updated_at,
+    )
 
 
 def _f1(precision: float, recall: float) -> float:
@@ -441,14 +511,111 @@ async def lifecycle_status(_: User = Depends(get_current_admin_user)) -> Any:
             "max_freshness_regression_seconds": float(settings.MLOPS_GUARDRAIL_MAX_FRESHNESS_REGRESSION_SECONDS),
             "max_latency_p95_regression_ms": float(settings.MLOPS_GUARDRAIL_MAX_LATENCY_P95_REGRESSION_MS),
             "max_failure_rate_regression": float(settings.MLOPS_GUARDRAIL_MAX_FAILURE_RATE_REGRESSION),
+            "parity_enabled": bool(settings.MLOPS_PARITY_ENABLED),
+            "parity_min_real_impressions_per_mode": int(settings.MLOPS_PARITY_MIN_REAL_IMPRESSIONS_PER_MODE),
+            "parity_min_real_requests_per_mode": int(settings.MLOPS_PARITY_MIN_REAL_REQUESTS_PER_MODE),
+            "parity_max_ctr_regression": float(settings.MLOPS_PARITY_MAX_CTR_REGRESSION),
+            "parity_max_apply_rate_regression": float(settings.MLOPS_PARITY_MAX_APPLY_RATE_REGRESSION),
+            "parity_min_offline_auc_gain_for_online_gates": float(
+                settings.MLOPS_PARITY_MIN_OFFLINE_AUC_GAIN_FOR_ONLINE_GATES
+            ),
         },
         "alerts": {
             "enabled": bool(settings.MLOPS_ALERTS_ENABLED),
             "webhook_configured": bool((settings.MLOPS_ALERT_WEBHOOK_URL or "").strip()),
+            "slack_configured": bool((settings.MLOPS_ALERT_SLACK_WEBHOOK_URL or "").strip()),
+            "pagerduty_configured": bool((settings.MLOPS_ALERT_PAGERDUTY_ROUTING_KEY or "").strip()),
             "cooldown_minutes": int(settings.MLOPS_ALERT_COOLDOWN_MINUTES),
             "psi_alert_threshold": float(settings.MLOPS_DRIFT_PSI_ALERT_THRESHOLD),
             "z_alert_threshold": float(settings.MLOPS_DRIFT_Z_ALERT_THRESHOLD),
+            "incident_auto_create": bool(settings.MLOPS_INCIDENT_AUTO_CREATE),
+            "incident_review_due_hours": int(settings.MLOPS_INCIDENT_REVIEW_DUE_HOURS),
+            "incident_breach_sla_hours": int(settings.MLOPS_INCIDENT_BREACH_SLA_HOURS),
         },
         "active_model": model_payload,
         "latest_drift": drift_payload,
     }
+
+
+@router.get("/incidents", response_model=list[IncidentResponse])
+async def list_incidents(
+    status: Optional[str] = None,
+    severity: Optional[str] = None,
+    breached_sla: Optional[bool] = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+    _: User = Depends(get_current_admin_user),
+) -> Any:
+    filters: list[Any] = []
+    if status:
+        filters.append(MlopsIncident.status == status.strip().lower())
+    if severity:
+        filters.append(MlopsIncident.severity == severity.strip().lower())
+    if breached_sla is not None:
+        filters.append(MlopsIncident.breached_sla == bool(breached_sla))
+    rows = await MlopsIncident.find_many(*filters).sort("-created_at").limit(int(limit)).to_list()
+    output: list[IncidentResponse] = []
+    for row in rows:
+        refreshed = await mlops_incident_service.refresh_sla(row)
+        output.append(_serialize_incident(refreshed))
+    return output
+
+
+@router.get("/incidents/{incident_id}", response_model=IncidentResponse)
+async def get_incident(incident_id: str, _: User = Depends(get_current_admin_user)) -> Any:
+    incident = await MlopsIncident.get(incident_id)
+    if incident is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    incident = await mlops_incident_service.refresh_sla(incident)
+    return _serialize_incident(incident)
+
+
+@router.patch("/incidents/{incident_id}", response_model=IncidentResponse)
+async def update_incident(
+    incident_id: str,
+    request: IncidentUpdateRequest,
+    _: User = Depends(get_current_admin_user),
+) -> Any:
+    incident = await MlopsIncident.get(incident_id)
+    if incident is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    if request.status is not None:
+        incident.status = request.status.strip().lower()
+        if incident.status == "resolved":
+            incident.resolved_at = datetime.utcnow()
+    if request.owner is not None:
+        incident.owner = request.owner.strip() or None
+    if request.summary is not None:
+        incident.summary = request.summary.strip()
+    if request.root_cause is not None:
+        incident.root_cause = request.root_cause.strip() or None
+    if request.mitigation is not None:
+        incident.mitigation = request.mitigation.strip() or None
+    if request.lessons_learned is not None:
+        incident.lessons_learned = request.lessons_learned.strip() or None
+    if request.action_items is not None:
+        incident.action_items = list(request.action_items)
+
+    incident.updated_at = datetime.utcnow()
+    await incident.save()
+    incident = await mlops_incident_service.refresh_sla(incident)
+    return _serialize_incident(incident)
+
+
+@router.post("/incidents/{incident_id}/timeline", response_model=IncidentResponse)
+async def append_incident_timeline(
+    incident_id: str,
+    request: IncidentTimelineAppendRequest,
+    _: User = Depends(get_current_admin_user),
+) -> Any:
+    incident = await MlopsIncident.get(incident_id)
+    if incident is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    incident = await mlops_incident_service.append_timeline(
+        incident=incident,
+        event=request.event,
+        message=request.message,
+        payload=request.payload,
+    )
+    incident = await mlops_incident_service.refresh_sla(incident)
+    return _serialize_incident(incident)

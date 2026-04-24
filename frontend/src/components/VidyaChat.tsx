@@ -191,6 +191,7 @@ export default function VidyaChat() {
         whileHover={{ scale: 1.05 }}
         whileTap={{ scale: 0.95, y: 4, boxShadow: '0px 0px 0px #000000' }}
         onClick={() => setIsOpen(true)}
+        aria-label="Open Vidya AI chat"
         initial={{ opacity: 0, scale: 0 }}
         animate={{ opacity: isOpen ? 0 : 1, scale: isOpen ? 0 : 1 }}
       >
@@ -236,6 +237,7 @@ export default function VidyaChat() {
               </div>
               <button 
                 onClick={() => setIsOpen(false)}
+                aria-label="Close Vidya AI chat"
                 style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#000000', padding: '0.25rem' }}
               >
                 <X size={24} />
@@ -351,6 +353,7 @@ export default function VidyaChat() {
               <motion.button
                 type="submit"
                 disabled={!inputMessage.trim() || isLoading}
+                aria-label="Send chat message"
                 whileHover={inputMessage.trim() && !isLoading ? { scale: 1.05 } : {}}
                 whileTap={inputMessage.trim() && !isLoading ? { scale: 0.95 } : {}}
                 style={{

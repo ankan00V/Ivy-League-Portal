@@ -35,7 +35,7 @@ test("login OTP request enforces 60s cooldown in UI", async ({ page }) => {
 
 test("completed onboarding redirects users away from onboarding page", async ({ page }) => {
   await page.addInitScript(() => {
-    localStorage.setItem("access_token", "test-token");
+    localStorage.setItem("auth_session_present", "1");
     localStorage.setItem("access_token_expires_at", String(Date.now() + 60 * 60 * 1000));
   });
 
@@ -78,7 +78,7 @@ test("completed onboarding redirects users away from onboarding page", async ({ 
 
 test("employer lifecycle update posts expected transition", async ({ page }) => {
   await page.addInitScript(() => {
-    localStorage.setItem("access_token", "test-token");
+    localStorage.setItem("auth_session_present", "1");
     localStorage.setItem("access_token_expires_at", String(Date.now() + 60 * 60 * 1000));
   });
 
@@ -183,7 +183,7 @@ test("employer lifecycle update posts expected transition", async ({ page }) => 
 
 test("apply flow persists application and redirects to opportunity URL", async ({ page }) => {
   await page.addInitScript(() => {
-    localStorage.setItem("access_token", "test-token");
+    localStorage.setItem("auth_session_present", "1");
     localStorage.setItem("access_token_expires_at", String(Date.now() + 60 * 60 * 1000));
   });
 

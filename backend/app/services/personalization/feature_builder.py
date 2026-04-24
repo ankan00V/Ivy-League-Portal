@@ -35,6 +35,52 @@ def _opportunity_text(opportunity: Opportunity) -> str:
     ).strip()
 
 
+def _location_tokens(value: Optional[str]) -> set[str]:
+    if not value:
+        return set()
+    tokens = _tokens(value)
+    return {token for token in tokens if len(token) >= 3}
+
+
+def _profile_location_tokens(profile: Profile) -> set[str]:
+    candidates = [
+        str(getattr(profile, "preferred_locations", "") or ""),
+        str(getattr(profile, "current_address_region", "") or ""),
+        str(getattr(profile, "permanent_address_region", "") or ""),
+        str(getattr(profile, "college_name", "") or ""),
+    ]
+    merged: set[str] = set()
+    for item in candidates:
+        merged.update(_location_tokens(item))
+    return merged
+
+
+def _opportunity_location_tokens(opportunity: Opportunity) -> set[str]:
+    candidates = [
+        str(getattr(opportunity, "location", "") or ""),
+        str(getattr(opportunity, "university", "") or ""),
+        str(getattr(opportunity, "title", "") or ""),
+        str(getattr(opportunity, "description", "") or ""),
+    ]
+    merged: set[str] = set()
+    for item in candidates:
+        merged.update(_location_tokens(item))
+    return merged
+
+
+def _geo_match_score(profile: Profile, opportunity: Opportunity) -> float:
+    profile_tokens = _profile_location_tokens(profile)
+    if not profile_tokens:
+        if bool(getattr(profile, "pan_india", False) or getattr(profile, "prefer_wfh", False)):
+            return 1.0
+        return 0.0
+    opportunity_tokens = _opportunity_location_tokens(opportunity)
+    if not opportunity_tokens:
+        return 0.0
+    overlap = len(profile_tokens.intersection(opportunity_tokens))
+    return float(overlap / max(1, len(profile_tokens)))
+
+
 def _deadline_days_left(deadline: datetime | None, *, now: datetime) -> float:
     if not deadline:
         return 9999.0
@@ -58,7 +104,7 @@ def _recency_hours(last_seen_at: datetime | None, *, now: datetime) -> float:
 
 
 def _source_trust(opportunity: Opportunity) -> float:
-    raw = (opportunity.source or "").strip().lower()
+    raw = (str(getattr(opportunity, "source", "") or "")).strip().lower()
     if raw:
         mapping = {
             "unstop": 0.85,
@@ -94,7 +140,7 @@ def _source_trust(opportunity: Opportunity) -> float:
                 return float(score)
 
     try:
-        host = (urlparse(opportunity.url or "").hostname or "").lower()
+        host = (urlparse(str(getattr(opportunity, "url", "") or "")).hostname or "").lower()
     except Exception:
         host = ""
 
@@ -125,6 +171,13 @@ def build_ranker_features(
     behavior_score: float,
     behavior_domain_pref: float,
     behavior_type_pref: float,
+    user_recent_interactions_7d: float = 0.0,
+    user_recent_interactions_30d: float = 0.0,
+    user_recent_applies_30d: float = 0.0,
+    user_recent_clicks_30d: float = 0.0,
+    user_recent_impressions_30d: float = 0.0,
+    user_last_interaction_hours: float = 9999.0,
+    sequence_ctr_30d: float = 0.0,
     now: datetime | None = None,
 ) -> RankerFeatures:
     """
@@ -150,6 +203,11 @@ def build_ranker_features(
 
     deadline_days = _deadline_days_left(opportunity.deadline, now=now)
     recency = _recency_hours(opportunity.last_seen_at, now=now)
+    geo_match = _geo_match_score(profile, opportunity)
+    source_trust = _source_trust(opportunity)
+    user_recent_impressions_safe = max(0.0, float(user_recent_impressions_30d))
+    user_recent_clicks_safe = max(0.0, float(user_recent_clicks_30d))
+    user_ctr = float(user_recent_clicks_safe / max(1.0, user_recent_impressions_safe))
 
     values: dict[str, float] = {
         # Core signals
@@ -168,13 +226,29 @@ def build_ranker_features(
         "deadline_days_left": float(max(-9999.0, min(deadline_days, 9999.0))),
         "deadline_is_past": 1.0 if deadline_days < 0 else 0.0,
         "has_deadline": 1.0 if opportunity.deadline is not None else 0.0,
+        "deadline_urgency_score": float(1.0 / (1.0 + max(0.0, deadline_days))),
+        "freshness_decay_24h": float(math.exp(-min(recency, 2400.0) / 24.0)),
         # Source trust
-        "source_trust": float(_source_trust(opportunity)),
+        "source_trust": float(source_trust),
+        "source_trust_bucket": float(2.0 if source_trust >= 0.82 else 1.0 if source_trust >= 0.7 else 0.0),
         # Behavior preferences (normalized)
         "behavior_domain_pref": float(behavior_domain_pref),
         "behavior_type_pref": float(behavior_type_pref),
         "behavior_domain_pref_norm": float(behavior_domain_pref / 100.0),
         "behavior_type_pref_norm": float(behavior_type_pref / 100.0),
+        # User sequence dynamics
+        "user_recent_interactions_7d": float(max(0.0, user_recent_interactions_7d)),
+        "user_recent_interactions_30d": float(max(0.0, user_recent_interactions_30d)),
+        "user_recent_applies_30d": float(max(0.0, user_recent_applies_30d)),
+        "user_recent_clicks_30d": float(user_recent_clicks_safe),
+        "user_recent_impressions_30d": float(user_recent_impressions_safe),
+        "user_last_interaction_hours": float(max(0.0, user_last_interaction_hours)),
+        "user_last_interaction_log1p": float(math.log1p(max(0.0, user_last_interaction_hours))),
+        "sequence_ctr_30d": float(max(0.0, min(1.0, sequence_ctr_30d))),
+        "user_ctr_30d": float(max(0.0, min(1.0, user_ctr))),
+        # Geo fit
+        "geo_match_score": float(max(0.0, min(1.0, geo_match))),
+        "has_geo_preference": 1.0 if _profile_location_tokens(profile) else 0.0,
         # Text stats
         "opp_text_len": float(len(opportunity_text)),
         "opp_token_count": float(len(opp_tokens)),

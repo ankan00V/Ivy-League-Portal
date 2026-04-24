@@ -1,8 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
   Award,
@@ -26,9 +25,7 @@ import {
 
 import { CenteredPageSkeleton } from "@/components/LoadingSkeletons";
 import Sidebar from "@/components/Sidebar";
-import { apiUrl } from "@/lib/api";
-import { getAccessToken } from "@/lib/auth-session";
-import { getApiErrorMessage, getUnknownErrorMessage } from "@/lib/error-utils";
+import { useProfileData } from "@/hooks/useProfileData";
 import { INDIAN_INSTITUTION_OPTIONS, OTHER_INSTITUTION_LABEL } from "@/lib/indian-institutions";
 
 type AccountType = "candidate" | "employer";
@@ -44,10 +41,6 @@ type SectionKey =
   | "accomplishments"
   | "personal"
   | "social";
-
-type UserPayload = {
-  email?: string;
-};
 
 type ProfilePayload = {
   account_type: AccountType;
@@ -414,14 +407,14 @@ function deriveUniversitySelection(value: string): string {
   return UNIVERSITY_OPTION_VALUES.has(trimmed) ? trimmed : OTHER_UNIVERSITY_VALUE;
 }
 
+const CURRENT_TO_PERMANENT_ADDRESS_FIELD: Partial<Record<keyof ProfilePayload, keyof ProfilePayload>> = {
+  current_address_line1: "permanent_address_line1",
+  current_address_landmark: "permanent_address_landmark",
+  current_address_region: "permanent_address_region",
+  current_address_pincode: "permanent_address_pincode",
+};
+
 export default function ProfilePage() {
-  const router = useRouter();
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [uploadingResume, setUploadingResume] = useState(false);
-  const [email, setEmail] = useState("");
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState<SectionKey>("basic");
   const [copyCurrentAddress, setCopyCurrentAddress] = useState(false);
   const [hobbyInput, setHobbyInput] = useState("");
@@ -481,127 +474,73 @@ export default function ProfilePage() {
     resume_content_type: "",
     resume_uploaded_at: "",
   });
+  const {
+    loading,
+    saving,
+    uploadingResume,
+    email,
+    message,
+    error,
+    saveProfile,
+    uploadResume,
+    deleteResume,
+    downloadResume,
+  } = useProfileData<ProfilePayload, ProfileUpdatePayload>({
+    profile,
+    setProfile,
+    hydrateProfilePayload,
+    buildProfileUpdatePayload,
+    deriveUniversitySelection,
+    hasText,
+    getCollegeName: (value) => value.college_name,
+    getCurrentAddress: (value) => ({
+      line1: value.current_address_line1,
+      landmark: value.current_address_landmark,
+      region: value.current_address_region,
+      pincode: value.current_address_pincode,
+    }),
+    getPermanentAddress: (value) => ({
+      line1: value.permanent_address_line1,
+      landmark: value.permanent_address_landmark,
+      region: value.permanent_address_region,
+      pincode: value.permanent_address_pincode,
+    }),
+    getResumeFilename: (value) => value.resume_filename,
+    setSelectedUniversity,
+    setCopyCurrentAddress,
+  });
 
-  useEffect(() => {
-    const token = getAccessToken();
-    if (!token) {
-      router.replace("/login");
-      return;
-    }
-
-    const loadProfile = async (showFatalErrors: boolean) => {
-      try {
-        const [userResult, profileResult] = await Promise.allSettled([
-          fetch(apiUrl("/api/v1/users/me"), { headers: { Authorization: `Bearer ${token}` } }),
-          fetch(apiUrl("/api/v1/users/me/profile"), { headers: { Authorization: `Bearer ${token}` } }),
-        ]);
-
-        let userError: string | null = null;
-        let profileError: string | null = null;
-        let hasFreshProfile = false;
-
-        if (userResult.status === "fulfilled") {
-          const userRes = userResult.value;
-          const userPayload = (await userRes.json().catch(() => ({}))) as UserPayload | Record<string, unknown>;
-          if (userRes.ok) {
-            setEmail(toText(userPayload.email));
-          } else if (showFatalErrors) {
-            userError = getApiErrorMessage(userPayload, "Unable to load user details");
-          }
-        } else if (showFatalErrors) {
-          userError = getUnknownErrorMessage(userResult.reason, "Unable to load user details");
-        }
-
-        if (profileResult.status === "fulfilled") {
-          const profileRes = profileResult.value;
-          const profilePayload = (await profileRes.json().catch(() => ({}))) as Record<string, unknown>;
-          if (profileRes.ok) {
-            const nextProfile = hydrateProfilePayload(profilePayload);
-            setProfile(nextProfile);
-            setSelectedUniversity(deriveUniversitySelection(nextProfile.college_name));
-            hasFreshProfile = true;
-            setError(null);
-            setCopyCurrentAddress(
-              hasText(nextProfile.current_address_line1) &&
-                nextProfile.current_address_line1 === nextProfile.permanent_address_line1 &&
-                nextProfile.current_address_landmark === nextProfile.permanent_address_landmark &&
-                nextProfile.current_address_region === nextProfile.permanent_address_region &&
-                nextProfile.current_address_pincode === nextProfile.permanent_address_pincode
-            );
-          } else if (showFatalErrors) {
-            profileError = getApiErrorMessage(profilePayload, "Unable to load profile");
-          }
-        } else if (showFatalErrors) {
-          profileError = getUnknownErrorMessage(profileResult.reason, "Unable to load profile");
-        }
-
-        if (!showFatalErrors) {
-          return;
-        }
-
-        if (profileError) {
-          setError(profileError);
-          return;
-        }
-
-        if (!hasFreshProfile && userError) {
-          setError(userError);
-          return;
-        }
-
-        setError(null);
-      } catch (err) {
-        if (showFatalErrors) {
-          setError(getUnknownErrorMessage(err, "Unable to load profile"));
-        }
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    void loadProfile(true);
-
-    const handleWindowFocus = () => {
-      void loadProfile(false);
-    };
-
-    window.addEventListener("focus", handleWindowFocus);
-    return () => {
-      window.removeEventListener("focus", handleWindowFocus);
-    };
-  }, [router]);
-
-  useEffect(() => {
-    if (!copyCurrentAddress) {
-      return;
-    }
+  const updateProfile = <K extends keyof ProfilePayload>(field: K, value: ProfilePayload[K]) => {
     setProfile((prev) => {
-      const nextPermanentLine1 = prev.current_address_line1;
-      const nextPermanentLandmark = prev.current_address_landmark;
-      const nextPermanentRegion = prev.current_address_region;
-      const nextPermanentPincode = prev.current_address_pincode;
+      const nextProfile = { ...prev, [field]: value };
+      if (!copyCurrentAddress) {
+        return nextProfile;
+      }
 
-      if (
-        prev.permanent_address_line1 === nextPermanentLine1 &&
-        prev.permanent_address_landmark === nextPermanentLandmark &&
-        prev.permanent_address_region === nextPermanentRegion &&
-        prev.permanent_address_pincode === nextPermanentPincode
-      ) {
-        return prev;
+      const mirroredField = CURRENT_TO_PERMANENT_ADDRESS_FIELD[field];
+      if (!mirroredField) {
+        return nextProfile;
       }
 
       return {
-        ...prev,
-        permanent_address_line1: nextPermanentLine1,
-        permanent_address_landmark: nextPermanentLandmark,
-        permanent_address_region: nextPermanentRegion,
-        permanent_address_pincode: nextPermanentPincode,
+        ...nextProfile,
+        [mirroredField]: value,
       };
     });
-  }, [copyCurrentAddress, profile.current_address_line1, profile.current_address_landmark, profile.current_address_region, profile.current_address_pincode]);
+  };
 
-  const updateProfile = <K extends keyof ProfilePayload>(field: K, value: ProfilePayload[K]) => {
-    setProfile((prev) => ({ ...prev, [field]: value }));
+  const handleCopyCurrentAddressChange = (checked: boolean) => {
+    setCopyCurrentAddress(checked);
+    if (!checked) {
+      return;
+    }
+    setProfile((prev) => ({
+      ...prev,
+      permanent_address_line1: prev.current_address_line1,
+      permanent_address_landmark: prev.current_address_landmark,
+      permanent_address_region: prev.current_address_region,
+      permanent_address_pincode: prev.current_address_pincode,
+    }));
   };
 
   const toggleGoal = (goal: string) => {
@@ -638,127 +577,6 @@ export default function ProfilePage() {
         [key]: value,
       },
     }));
-  };
-
-  const saveProfile = async () => {
-    const token = getAccessToken();
-    if (!token) {
-      router.replace("/login");
-      return;
-    }
-    setSaving(true);
-    setMessage(null);
-    setError(null);
-    try {
-      const payloadToSave = buildProfileUpdatePayload(profile);
-      const res = await fetch(apiUrl("/api/v1/users/me/profile"), {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payloadToSave),
-      });
-      const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-      if (!res.ok) {
-        throw new Error(getApiErrorMessage(payload, "Unable to update profile"));
-      }
-      setProfile(hydrateProfilePayload(payload));
-      setSelectedUniversity(deriveUniversitySelection(String(payload.college_name || "")));
-      setMessage("Profile updated successfully.");
-    } catch (err) {
-      setError(getUnknownErrorMessage(err, "Unable to update profile"));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const uploadResume = async (file: File) => {
-    const token = getAccessToken();
-    if (!token) {
-      router.replace("/login");
-      return;
-    }
-    setUploadingResume(true);
-    setMessage(null);
-    setError(null);
-    try {
-      const form = new FormData();
-      form.append("file", file);
-      const res = await fetch(apiUrl("/api/v1/users/me/resume"), {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        body: form,
-      });
-      const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-      if (!res.ok) {
-        throw new Error(getApiErrorMessage(payload, "Unable to upload resume"));
-      }
-      setProfile(hydrateProfilePayload(payload));
-      setMessage("Resume uploaded and profile signals refreshed.");
-    } catch (err) {
-      setError(getUnknownErrorMessage(err, "Unable to upload resume"));
-    } finally {
-      setUploadingResume(false);
-    }
-  };
-
-  const deleteResume = async () => {
-    const token = getAccessToken();
-    if (!token) {
-      router.replace("/login");
-      return;
-    }
-    setUploadingResume(true);
-    setMessage(null);
-    setError(null);
-    try {
-      const res = await fetch(apiUrl("/api/v1/users/me/resume"), {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-      if (!res.ok) {
-        throw new Error(getApiErrorMessage(payload, "Unable to remove resume"));
-      }
-      setProfile(hydrateProfilePayload(payload));
-      setMessage("Resume removed.");
-    } catch (err) {
-      setError(getUnknownErrorMessage(err, "Unable to remove resume"));
-    } finally {
-      setUploadingResume(false);
-    }
-  };
-
-  const downloadResume = async () => {
-    const token = getAccessToken();
-    if (!token) {
-      router.replace("/login");
-      return;
-    }
-    setError(null);
-    try {
-      const res = await fetch(apiUrl("/api/v1/users/me/resume/download"), {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) {
-        const payload = await res.json().catch(() => ({}));
-        throw new Error(getApiErrorMessage(payload, "Unable to download resume"));
-      }
-      const blob = await res.blob();
-      const link = document.createElement("a");
-      const objectUrl = URL.createObjectURL(blob);
-      link.href = objectUrl;
-      link.download = profile.resume_filename || "resume";
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(objectUrl);
-    } catch (err) {
-      setError(getUnknownErrorMessage(err, "Unable to download resume"));
-    }
   };
 
   const resumeUploadedOn = useMemo(() => {
@@ -1462,7 +1280,7 @@ export default function ProfilePage() {
         <div className="profile-address-head">
           <h3>Permanent Address</h3>
           <label className="profile-inline-check">
-            <input type="checkbox" checked={copyCurrentAddress} onChange={(event) => setCopyCurrentAddress(event.target.checked)} />
+            <input type="checkbox" checked={copyCurrentAddress} onChange={(event) => handleCopyCurrentAddressChange(event.target.checked)} />
             Copy current address
           </label>
         </div>
@@ -1603,7 +1421,7 @@ export default function ProfilePage() {
 
   if (loading) {
     return (
-      <div style={{ minHeight: "100vh", display: "flex", background: "var(--bg-base)" }}>
+      <div className="profile-page-root">
         <Sidebar />
         <main className="main-content">
           <CenteredPageSkeleton paneHeight="700px" />
@@ -1613,7 +1431,7 @@ export default function ProfilePage() {
   }
 
   return (
-    <div style={{ minHeight: "100vh", display: "flex", background: "var(--bg-base)" }}>
+    <div className="profile-page-root">
       <Sidebar />
       <main className="main-content">
         <section className="card-panel profile-editor-shell">

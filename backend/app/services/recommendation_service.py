@@ -154,7 +154,29 @@ class RecommendationService:
             OpportunityInteraction.created_at >= since,
         ).to_list()
         if not interactions:
-            return {"domain": {}, "type": {}}
+            return {
+                "domain": {},
+                "type": {},
+                "stats": {
+                    "recent_interactions_7d": 0.0,
+                    "recent_interactions_30d": 0.0,
+                    "recent_applies_30d": 0.0,
+                    "recent_clicks_30d": 0.0,
+                    "recent_impressions_30d": 0.0,
+                    "sequence_ctr_30d": 0.0,
+                    "last_interaction_hours": 9999.0,
+                },
+            }
+
+        now = datetime.utcnow()
+        window_7d = now - timedelta(days=7)
+        window_30d = now - timedelta(days=30)
+        recent_interactions_7d = 0
+        recent_interactions_30d = 0
+        recent_applies_30d = 0
+        recent_clicks_30d = 0
+        recent_impressions_30d = 0
+        last_interaction_at: datetime | None = None
 
         opp_ids = list({item.opportunity_id for item in interactions})
         opportunities = await Opportunity.find_many(In(Opportunity.id, opp_ids)).to_list()
@@ -172,9 +194,25 @@ class RecommendationService:
         type_score: dict[str, float] = defaultdict(float)
 
         for interaction in interactions:
+            created_at = interaction.created_at
+            if created_at >= window_7d:
+                recent_interactions_7d += 1
+            if created_at >= window_30d:
+                recent_interactions_30d += 1
+                action = (interaction.interaction_type or "").strip().lower()
+                if action == "apply":
+                    recent_applies_30d += 1
+                elif action == "click":
+                    recent_clicks_30d += 1
+                elif action == "impression":
+                    recent_impressions_30d += 1
+            if last_interaction_at is None or created_at > last_interaction_at:
+                last_interaction_at = created_at
+
             opportunity = opportunity_map.get(str(interaction.opportunity_id))
             if not opportunity:
                 continue
+
             weight = action_weights.get(interaction.interaction_type, 0.5)
             if opportunity.domain:
                 domain_score[opportunity.domain.lower()] += weight
@@ -192,6 +230,19 @@ class RecommendationService:
         return {
             "domain": _normalize(domain_score),
             "type": _normalize(type_score),
+            "stats": {
+                "recent_interactions_7d": float(recent_interactions_7d),
+                "recent_interactions_30d": float(recent_interactions_30d),
+                "recent_applies_30d": float(recent_applies_30d),
+                "recent_clicks_30d": float(recent_clicks_30d),
+                "recent_impressions_30d": float(recent_impressions_30d),
+                "sequence_ctr_30d": float(recent_clicks_30d / max(1, recent_impressions_30d)),
+                "last_interaction_hours": float(
+                    max(0.0, (now - last_interaction_at).total_seconds() / 3600.0)
+                )
+                if last_interaction_at is not None
+                else 9999.0,
+            },
         }
 
     def _behavior_score(self, opportunity: Opportunity, behavior_map: dict[str, dict[str, float]]) -> float:
@@ -264,6 +315,7 @@ class RecommendationService:
             meta["feature_importance_top"] = []
 
         behavior_map = await self._build_behavior_map(user_id)
+        behavior_stats = dict(behavior_map.get("stats") or {})
         semantic_scores: dict[str, float] = {}
 
         semantic_query = (query or "").strip() or _profile_query(profile)
@@ -293,21 +345,28 @@ class RecommendationService:
                 + (weights["behavior"] * behavior_score),
                 3,
             )
+            features = build_ranker_features(
+                profile=profile,
+                opportunity=opportunity,
+                semantic_score=semantic_score,
+                skills_overlap_score=overlap_score,
+                baseline_score=baseline_score,
+                behavior_score=behavior_score,
+                behavior_domain_pref=behavior_domain_pref,
+                behavior_type_pref=behavior_type_pref,
+                user_recent_interactions_7d=float(behavior_stats.get("recent_interactions_7d") or 0.0),
+                user_recent_interactions_30d=float(behavior_stats.get("recent_interactions_30d") or 0.0),
+                user_recent_applies_30d=float(behavior_stats.get("recent_applies_30d") or 0.0),
+                user_recent_clicks_30d=float(behavior_stats.get("recent_clicks_30d") or 0.0),
+                user_recent_impressions_30d=float(behavior_stats.get("recent_impressions_30d") or 0.0),
+                user_last_interaction_hours=float(behavior_stats.get("last_interaction_hours") or 9999.0),
+                sequence_ctr_30d=float(behavior_stats.get("sequence_ctr_30d") or 0.0),
+            )
 
             reasons = list(baseline_reasons)
             ml_raw_score: float | None = None
 
             if effective_mode == "ml":
-                features = build_ranker_features(
-                    profile=profile,
-                    opportunity=opportunity,
-                    semantic_score=semantic_score,
-                    skills_overlap_score=overlap_score,
-                    baseline_score=baseline_score,
-                    behavior_score=behavior_score,
-                    behavior_domain_pref=behavior_domain_pref,
-                    behavior_type_pref=behavior_type_pref,
-                )
                 ranker_result = learned_ranker.score(features)
                 if ranker_result is None:
                     ml_request_failed = True
@@ -335,6 +394,13 @@ class RecommendationService:
                     "behavior_type_pref": round(float(behavior_type_pref), 6),
                     "heuristic_blend_score": heuristic_blend_score,
                     "ml_raw_score": ml_raw_score,
+                    "geo_match_score": float(features.values.get("geo_match_score") or 0.0),
+                    "source_trust": float(features.values.get("source_trust") or 0.0),
+                    "sequence_ctr_30d": float(features.values.get("sequence_ctr_30d") or 0.0),
+                    "user_recent_interactions_30d": float(
+                        features.values.get("user_recent_interactions_30d") or 0.0
+                    ),
+                    "ranker_features": dict(features.values),
                     "match_reasons": reasons,
                 }
             )
@@ -376,6 +442,11 @@ class RecommendationService:
                     "skills_overlap_score": candidate["skills_overlap_score"],
                     "behavior_domain_pref": candidate["behavior_domain_pref"],
                     "behavior_type_pref": candidate["behavior_type_pref"],
+                    "geo_match_score": candidate["geo_match_score"],
+                    "source_trust": candidate["source_trust"],
+                    "sequence_ctr_30d": candidate["sequence_ctr_30d"],
+                    "user_recent_interactions_30d": candidate["user_recent_interactions_30d"],
+                    "ranker_features": candidate["ranker_features"],
                     "ranking_mode": final_mode,
                     "model_version_id": active_model.model_version_id,
                     "weights": dict(weights),

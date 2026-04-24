@@ -10,6 +10,8 @@ import { useRouter } from "next/navigation";
 import { isMongoObjectId, logOpportunityInteraction } from "@/lib/opportunity-interactions";
 import { formatTopPercent, type RankingSummary } from "@/lib/ranking-summary";
 import { clampPercent, type ProfileStrengthSummary } from "@/lib/profile-strength";
+import StatusBadge from "@/components/ui/StatusBadge";
+import MetricCard from "@/components/ui/MetricCard";
 
 interface OpportunityCard {
     id: string;
@@ -36,6 +38,8 @@ interface ProfileSummary {
     skills?: string;
     account_type?: string;
 }
+
+type DataSourceState = "live" | "simulated" | "no_data";
 
 const PROFILE_SIGNAL_FALLBACK: Record<string, { label: string; description: string }> = {
     first_name: { label: "First Name", description: "Add your first name." },
@@ -112,14 +116,13 @@ const MARQUEE_COMPANIES = [
     "OpenAI", "Anthropic", "Tesla", "NVIDIA", "Palantir", "Databricks"
 ];
 
-// --- GENUINE INFO MOCKS ---
-const MOCK_OPPORTUNITIES = [
+const DEV_SIMULATED_OPPORTUNITIES = [
     { id: 'm1', title: 'Google Summer of Code 2026', domain: 'Engineering', ranking_mode: 'baseline', experiment_key: 'ranking_mode', experiment_variant: 'baseline', rank_position: 1 },
     { id: 'm2', title: 'Meta Hacker Cup - Round 1', domain: 'Competitive Programming', ranking_mode: 'baseline', experiment_key: 'ranking_mode', experiment_variant: 'baseline', rank_position: 2 },
     { id: 'm3', title: 'Stripe API Design Challenge', domain: 'Backend', ranking_mode: 'baseline', experiment_key: 'ranking_mode', experiment_variant: 'baseline', rank_position: 3 },
 ];
 
-const MOCK_POSTS = [
+const DEV_SIMULATED_POSTS = [
     { id: 'p1', created_at: '2026-03-02T00:00:00.000Z', content: 'Just secured a position at Palantir through the latest InCo hiring drive! 🚀 Highly recommend tracking their portal.' },
     { id: 'p2', created_at: '2026-03-01T00:00:00.000Z', content: 'The new AWS Cloud Architect challenge is live. Who else is participating this weekend?' }
 ];
@@ -135,14 +138,17 @@ const formatStableDate = (value: string) => {
 
 export default function DashboardPage() {
     const router = useRouter();
+    const allowSimulatedFallback = process.env.NODE_ENV !== "production";
     const [isAuthenticated, setIsAuthenticated] = useState(false);
     const [recommended, setRecommended] = useState<OpportunityCard[]>([]);
+    const [recommendationsSource, setRecommendationsSource] = useState<DataSourceState>("no_data");
     const [profile, setProfile] = useState<ProfileSummary | null>(null);
     const [rankingSummary, setRankingSummary] = useState<RankingSummary | null>(null);
     const [profileStrength, setProfileStrength] = useState<ProfileStrengthSummary | null>(null);
     const [showProfileStrengthModal, setShowProfileStrengthModal] = useState(false);
     const [appCount, setAppCount] = useState<number>(0);
     const [posts, setPosts] = useState<ActivityPost[]>([]);
+    const [postsSource, setPostsSource] = useState<DataSourceState>("no_data");
     const lastImpressionBatchRef = useRef("");
 
     const fetchDashboardData = useCallback(async () => {
@@ -201,16 +207,19 @@ export default function DashboardPage() {
                 const oppsRes = await fetch(apiUrl("/api/v1/opportunities/recommended/me?limit=3"), { headers: authHeaders });
                 if (oppsRes.ok) {
                     const oData: OpportunityCard[] = await oppsRes.json();
-                    setRecommended(
-                        oData.map((item, idx) => ({
-                            ...item,
-                            ranking_mode: item.ranking_mode || "baseline",
-                            experiment_key: item.experiment_key || "ranking_mode",
-                            experiment_variant: item.experiment_variant || item.ranking_mode || "baseline",
-                            rank_position: item.rank_position ?? idx + 1,
-                        }))
-                    );
-                    recommendationLoaded = true;
+                    if (oData.length > 0) {
+                        setRecommended(
+                            oData.map((item, idx) => ({
+                                ...item,
+                                ranking_mode: item.ranking_mode || "baseline",
+                                experiment_key: item.experiment_key || "ranking_mode",
+                                experiment_variant: item.experiment_variant || item.ranking_mode || "baseline",
+                                rank_position: item.rank_position ?? idx + 1,
+                            }))
+                        );
+                        setRecommendationsSource("live");
+                        recommendationLoaded = true;
+                    }
                 }
             }
 
@@ -218,15 +227,29 @@ export default function DashboardPage() {
                 const fallback = await fetch(apiUrl("/api/v1/opportunities/?limit=3"));
                 if (fallback.ok) {
                     const fallbackData: OpportunityCard[] = await fallback.json();
-                    setRecommended(
-                        fallbackData.map((item, idx) => ({
-                            ...item,
-                            ranking_mode: item.ranking_mode || "baseline",
-                            experiment_key: item.experiment_key || "ranking_mode",
-                            experiment_variant: item.experiment_variant || item.ranking_mode || "baseline",
-                            rank_position: item.rank_position ?? idx + 1,
-                        }))
-                    );
+                    if (fallbackData.length > 0) {
+                        setRecommended(
+                            fallbackData.map((item, idx) => ({
+                                ...item,
+                                ranking_mode: item.ranking_mode || "baseline",
+                                experiment_key: item.experiment_key || "ranking_mode",
+                                experiment_variant: item.experiment_variant || item.ranking_mode || "baseline",
+                                rank_position: item.rank_position ?? idx + 1,
+                            }))
+                        );
+                        setRecommendationsSource("live");
+                        recommendationLoaded = true;
+                    }
+                }
+            }
+
+            if (!recommendationLoaded) {
+                if (allowSimulatedFallback) {
+                    setRecommended(DEV_SIMULATED_OPPORTUNITIES);
+                    setRecommendationsSource("simulated");
+                } else {
+                    setRecommended([]);
+                    setRecommendationsSource("no_data");
                 }
             }
 
@@ -237,13 +260,39 @@ export default function DashboardPage() {
             );
             if (postsRes.ok) {
                 const pData = await postsRes.json();
-                setPosts(pData);
+                if (Array.isArray(pData) && pData.length > 0) {
+                    setPosts(pData);
+                    setPostsSource("live");
+                } else if (allowSimulatedFallback) {
+                    setPosts(DEV_SIMULATED_POSTS);
+                    setPostsSource("simulated");
+                } else {
+                    setPosts([]);
+                    setPostsSource("no_data");
+                }
+            } else if (allowSimulatedFallback) {
+                setPosts(DEV_SIMULATED_POSTS);
+                setPostsSource("simulated");
+            } else {
+                setPosts([]);
+                setPostsSource("no_data");
             }
         } catch (error) {
             const message = error instanceof Error ? error.message : "unknown error";
             console.warn(`[Dashboard] Data refresh failed: ${message}`);
+            if (allowSimulatedFallback) {
+                setRecommended(DEV_SIMULATED_OPPORTUNITIES);
+                setPosts(DEV_SIMULATED_POSTS);
+                setRecommendationsSource("simulated");
+                setPostsSource("simulated");
+            } else {
+                setRecommended([]);
+                setPosts([]);
+                setRecommendationsSource("no_data");
+                setPostsSource("no_data");
+            }
         }
-    }, [router]);
+    }, [allowSimulatedFallback, router]);
 
     useEffect(() => {
         const firstRun = window.setTimeout(() => {
@@ -289,7 +338,7 @@ export default function DashboardPage() {
 
     const activeRecommendations = useMemo(
         () =>
-            (recommended.length > 0 ? recommended : MOCK_OPPORTUNITIES).map((opportunity, idx) => ({
+            recommended.map((opportunity, idx) => ({
                 ...opportunity,
                 ranking_mode: opportunity.ranking_mode || "baseline",
                 experiment_key: opportunity.experiment_key || "ranking_mode",
@@ -298,7 +347,7 @@ export default function DashboardPage() {
             })),
         [recommended]
     );
-    const activePosts = posts.length > 0 ? posts : MOCK_POSTS;
+    const activePosts = posts;
     const incoscoreValue = rankingSummary?.incoscore ?? profile?.incoscore ?? 0;
     const profileStrengthPercent = profileStrength ? clampPercent(profileStrength.strength_percent) : 0;
     const incoscoreDisplay = isAuthenticated ? incoscoreValue.toFixed(1) : "--";
@@ -314,6 +363,16 @@ export default function DashboardPage() {
         ? `${profileStrength.completed_signals}/${profileStrength.total_signals} profile signals complete`
         : "Sign in to compute live profile strength";
     const profileStrengthRecommendation = profileStrength?.recommendation || "Complete profile fields for better matching.";
+    const sourceLabelMap: Record<DataSourceState, string> = {
+        live: "LIVE",
+        simulated: "SIMULATED",
+        no_data: "NO DATA",
+    };
+    const sourceToneMap: Record<DataSourceState, "live" | "simulated" | "no_data"> = {
+        live: "live",
+        simulated: "simulated",
+        no_data: "no_data",
+    };
     const profileStrengthMissingDetails = useMemo(() => {
         if (!profileStrength) return [];
         const apiDetails = profileStrength.missing_signal_details;
@@ -388,6 +447,10 @@ export default function DashboardPage() {
                                 ? "Your opportunity intelligence overview is ready. Discover your next big win today."
                                 : "Explore a live demo of VidyaVerse features. Sign in to unlock personalized actions."}
                         </p>
+                        <div style={{ marginTop: "0.7rem", display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
+                            <StatusBadge tone={sourceToneMap[recommendationsSource]} label={`Recommendations ${sourceLabelMap[recommendationsSource]}`} />
+                            <StatusBadge tone={sourceToneMap[postsSource]} label={`Network Feed ${sourceLabelMap[postsSource]}`} />
+                        </div>
                     </div>
                     <button
                         className="btn-secondary"
@@ -396,7 +459,7 @@ export default function DashboardPage() {
                         {isAuthenticated ? "View Profile" : "Sign In"}
                     </button>
                 </motion.header>
-                {!isAuthenticated ? (
+                {!isAuthenticated || recommendationsSource !== "live" || postsSource !== "live" ? (
                     <div
                         className="card-panel"
                         style={{
@@ -410,15 +473,19 @@ export default function DashboardPage() {
                     >
                         <div>
                             <div style={{ fontWeight: 800, color: "var(--text-primary)", marginBottom: "0.25rem" }}>
-                                Demo Mode Active
+                                {isAuthenticated ? "Data trust state" : "Demo Mode Active"}
                             </div>
                             <div style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
-                                Sign in to access personalized rankings, one-click actions, and live profile strength.
+                                {isAuthenticated
+                                    ? "LIVE means backend-backed data, SIMULATED means development fallback, and NO DATA means backend had no results."
+                                    : "Sign in to access personalized rankings, one-click actions, and live profile strength."}
                             </div>
                         </div>
-                        <button className="btn-primary" onClick={() => router.push("/login")}>
-                            Sign In to Access
-                        </button>
+                        {!isAuthenticated ? (
+                            <button className="btn-primary" onClick={() => router.push("/login")}>
+                                Sign In to Access
+                            </button>
+                        ) : null}
                     </div>
                 ) : null}
 
@@ -453,35 +520,31 @@ export default function DashboardPage() {
                 <motion.div
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1, transition: { staggerChildren: 0.1 } }}
-                    style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1.5rem', marginBottom: '3rem' }}
+                    style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1.5rem', marginBottom: '3rem' }}
                 >
                     <TiltCard
                         className="card-panel"
                         style={{ background: 'var(--brand-primary)', color: '#000000' }}
                     >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', color: 'rgba(0,0,0,0.7)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.25rem', fontWeight: 700 }}>
-                            <TrendingUp size={18} /> InCoScore Ranking
-                        </div>
-                        <div style={{ fontSize: '4rem', fontWeight: 400, fontFamily: 'var(--font-serif)', color: '#000000', lineHeight: 1 }}>
-                            {incoscoreDisplay}
-                        </div>
-                        <div style={{ fontSize: '0.9rem', color: 'rgba(0,0,0,0.8)', marginTop: '0.5rem', fontWeight: 700 }}>{rankingTitle}</div>
-                        <div style={{ fontSize: '0.8rem', color: 'rgba(0,0,0,0.7)', marginTop: '0.2rem', fontWeight: 600 }}>{rankingDetail}</div>
+                        <MetricCard
+                            tone="primary"
+                            label={<span style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}><TrendingUp size={16} /> InCoScore Ranking</span>}
+                            value={incoscoreDisplay}
+                            hint={rankingTitle}
+                            detail={rankingDetail}
+                        />
                     </TiltCard>
 
                     <TiltCard
                         className="card-panel"
                         style={{ background: 'var(--brand-accent)', color: '#000000' }}
                     >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', color: 'rgba(0,0,0,0.7)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.25rem', fontWeight: 700 }}>
-                            <Briefcase size={18} /> Active Applications
-                        </div>
-                        <div style={{ fontSize: '4rem', fontWeight: 400, fontFamily: 'var(--font-serif)', color: '#000000', lineHeight: 1 }}>
-                            {applicationDisplay}
-                        </div>
-                        <div style={{ fontSize: '0.9rem', color: 'rgba(0,0,0,0.8)', marginTop: '0.5rem', fontWeight: 600 }}>
-                            {isAuthenticated ? "Live Synchronized Tracking" : "Sign in to track applications"}
-                        </div>
+                        <MetricCard
+                            tone="accent"
+                            label={<span style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}><Briefcase size={16} /> Active Applications</span>}
+                            value={applicationDisplay}
+                            hint={isAuthenticated ? "Live Synchronized Tracking" : "Sign in to track applications"}
+                        />
                     </TiltCard>
 
                     <TiltCard
@@ -508,17 +571,14 @@ export default function DashboardPage() {
                             }
                         }}
                     >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.25rem', fontWeight: 700 }}>
-                            <ShieldCheck size={18} /> Profile Strength
-                        </div>
-                        <div style={{ fontSize: '4rem', fontWeight: 400, fontFamily: 'var(--font-serif)', color: 'var(--text-primary)', lineHeight: 1 }}>
-                            {profileStrengthDisplay}
-                        </div>
-                        <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginTop: '0.5rem', fontWeight: 700 }}>{profileStrengthHint}</div>
-                        <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.2rem', fontWeight: 600 }}>{profileStrengthRecommendation}</div>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.45rem', fontWeight: 700 }}>
-                            Click to view missing details
-                        </div>
+                        <MetricCard
+                            label={<span style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}><ShieldCheck size={16} /> Profile Strength</span>}
+                            value={profileStrengthDisplay}
+                            hint={profileStrengthHint}
+                            detail={`${profileStrengthRecommendation} · Click to view missing details`}
+                            role="button"
+                            tabIndex={0}
+                        />
                     </TiltCard>
                 </motion.div>
 
@@ -535,12 +595,21 @@ export default function DashboardPage() {
                     >
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
                             <h2 style={{ fontSize: '1.5rem' }}>Live Recommendations</h2>
-                            <span style={{ fontSize: '0.85rem', padding: '0.25rem 0.6rem', background: 'var(--bg-surface-hover)', color: 'var(--text-primary)', borderRadius: '12px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                            <div style={{ display: "inline-flex", alignItems: "center", gap: "0.45rem" }}>
                                 <Activity size={14} className="animate-pulse" style={{ color: '#10b981' }} />
-                                Real-Time Feed
-                            </span>
+                                <StatusBadge
+                                    tone={sourceToneMap[recommendationsSource]}
+                                    label={sourceLabelMap[recommendationsSource]}
+                                    title="Recommendation feed trust state"
+                                />
+                            </div>
                         </div>
 
+                        {activeRecommendations.length === 0 ? (
+                            <div className="card-panel" style={{ fontWeight: 700, color: "var(--text-secondary)" }}>
+                                No recommendation rows are available right now.
+                            </div>
+                        ) : (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                             {activeRecommendations.map((opp, idx) => (
                                 <div key={opp.id || idx}
@@ -592,6 +661,7 @@ export default function DashboardPage() {
                                 </div>
                             ))}
                         </div>
+                        )}
                     </motion.section>
 
                     {/* Network Feed Snippet */}
@@ -600,7 +670,13 @@ export default function DashboardPage() {
                         animate={{ opacity: 1, y: 0, transition: { type: "spring", stiffness: 300, damping: 24 } }}
                         className="card-panel"
                     >
-                        <h2 style={{ fontSize: '1.5rem', marginBottom: '1.5rem', fontFamily: 'var(--font-serif)', fontWeight: 400 }}>Live Network Activity</h2>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: "0.8rem", flexWrap: "wrap", marginBottom: "1.2rem" }}>
+                            <h2 style={{ fontSize: '1.5rem', fontFamily: 'var(--font-serif)', fontWeight: 400 }}>Live Network Activity</h2>
+                            <StatusBadge tone={sourceToneMap[postsSource]} label={sourceLabelMap[postsSource]} />
+                        </div>
+                        {activePosts.length === 0 ? (
+                            <div style={{ fontWeight: 700, color: "var(--text-secondary)" }}>No social timeline rows are available.</div>
+                        ) : (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
                             {activePosts.map((post, index) => (
                                 <div key={post.id || index} style={{ borderBottom: index !== activePosts.length - 1 ? '2px solid var(--border-subtle)' : 'none', paddingBottom: index !== activePosts.length - 1 ? '1.25rem' : '0' }}>
@@ -621,6 +697,7 @@ export default function DashboardPage() {
                                 </div>
                             ))}
                         </div>
+                        )}
                     </motion.section>
                 </motion.div>
 

@@ -1,11 +1,24 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Bot, ExternalLink, Loader2, MessageSquareQuote, Sparkles, ThumbsDown, ThumbsUp } from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Bot,
+  BookmarkPlus,
+  ExternalLink,
+  GitCompare,
+  Loader2,
+  MessageSquareQuote,
+  Sparkles,
+  ThumbsDown,
+  ThumbsUp,
+  TimerReset,
+} from "lucide-react";
 
 import { apiUrl } from "@/lib/api";
 import { getAccessToken } from "@/lib/auth-session";
 import { isMongoObjectId, logOpportunityInteraction } from "@/lib/opportunity-interactions";
+import StatusBadge from "@/components/ui/StatusBadge";
+import SectionCard from "@/components/ui/SectionCard";
 
 interface Citation {
   opportunity_id: string;
@@ -38,14 +51,210 @@ interface AskAIPanelProps {
   suggestedQueries: string[];
 }
 
+type StoredTopOpportunity = {
+  opportunity_id: string;
+  title: string;
+  match_score: number;
+};
+
+type AskAIHistoryEntry = {
+  request_id: string;
+  query: string;
+  created_at: string;
+  top_opportunities: StoredTopOpportunity[];
+};
+
+type AskAIHistoryApiEntry = {
+  request_id: string;
+  query: string;
+  created_at: string;
+  top_opportunities?: Array<{
+    opportunity_id?: string;
+    title?: string;
+    match_score?: number;
+  }>;
+};
+
+type AskAISavedQueryApiEntry = {
+  query: string;
+  surface: string;
+  last_used_at: string;
+};
+
+type TimelineTone = "info" | "success" | "warning";
+
+type AskAITimelineEvent = {
+  id: string;
+  timestamp: string;
+  label: string;
+  detail: string;
+  tone: TimelineTone;
+};
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+
+function safeParse<T>(raw: string | null, fallback: T): T {
+  if (!raw) {
+    return fallback;
+  }
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function toHistoryEntry(response: AskAIResponse): AskAIHistoryEntry {
+  return {
+    request_id: response.request_id,
+    query: response.query,
+    created_at: new Date().toISOString(),
+    top_opportunities: response.insights.top_opportunities.map((item) => ({
+      opportunity_id: item.opportunity_id,
+      title: item.title,
+      match_score: item.match_score,
+    })),
+  };
+}
+
+function toHistoryEntryFromApi(entry: AskAIHistoryApiEntry): AskAIHistoryEntry {
+  return {
+    request_id: entry.request_id,
+    query: entry.query,
+    created_at: entry.created_at,
+    top_opportunities: (entry.top_opportunities || [])
+      .map((item) => ({
+        opportunity_id: String(item.opportunity_id || ""),
+        title: String(item.title || ""),
+        match_score: typeof item.match_score === "number" ? item.match_score : 0,
+      }))
+      .filter((item) => item.opportunity_id.length > 0),
+  };
+}
+
 export default function AskAIPanel({ surface, suggestedQueries }: AskAIPanelProps) {
+  const askAiTimeoutMs = 30000;
+  const storagePrefix = `vidyaverse.ask_ai.${surface}`;
+  const savedQueriesStorageKey = `${storagePrefix}.saved_queries`;
+  const historyStorageKey = `${storagePrefix}.history`;
+
   const [query, setQuery] = useState("");
   const [response, setResponse] = useState<AskAIResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<"up" | "down" | null>(null);
   const [feedbackNotice, setFeedbackNotice] = useState<string | null>(null);
+  const [savedQueries, setSavedQueries] = useState<string[]>([]);
+  const [history, setHistory] = useState<AskAIHistoryEntry[]>([]);
+  const [compareBaseline, setCompareBaseline] = useState<AskAIHistoryEntry | null>(null);
+  const [timelineEvents, setTimelineEvents] = useState<AskAITimelineEvent[]>([]);
+
   const lastImpressionBatchRef = useRef<string>("");
+
+  const appendTimeline = useCallback((label: string, detail: string, tone: TimelineTone = "info") => {
+    setTimelineEvents((current) => [
+      {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        timestamp: new Date().toISOString(),
+        label,
+        detail,
+        tone,
+      },
+      ...current,
+    ].slice(0, 12));
+  }, []);
+
+  const persistSavedQuery = useCallback(async (nextQuery: string) => {
+    const token = getAccessToken();
+    if (!token || nextQuery.trim().length < 2) {
+      return;
+    }
+    try {
+      await fetch(apiUrl("/api/v1/opportunities/ask-ai/saved-queries"), {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          query: nextQuery.trim(),
+          surface,
+        }),
+      });
+    } catch {
+      // Best effort. Local cache still preserves UX.
+    }
+  }, [surface]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    setSavedQueries(safeParse<string[]>(window.localStorage.getItem(savedQueriesStorageKey), []));
+    setHistory(safeParse<AskAIHistoryEntry[]>(window.localStorage.getItem(historyStorageKey), []));
+  }, [historyStorageKey, savedQueriesStorageKey]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.localStorage.setItem(savedQueriesStorageKey, JSON.stringify(savedQueries.slice(0, 12)));
+  }, [savedQueries, savedQueriesStorageKey]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.localStorage.setItem(historyStorageKey, JSON.stringify(history.slice(0, 40)));
+  }, [history, historyStorageKey]);
+
+  useEffect(() => {
+    const token = getAccessToken();
+    if (!token) {
+      return;
+    }
+    let cancelled = false;
+
+    const loadServerState = async () => {
+      try {
+        const [savedRes, historyRes] = await Promise.all([
+          fetch(apiUrl(`/api/v1/opportunities/ask-ai/saved-queries?surface=${encodeURIComponent(surface)}&limit=12`), {
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+          fetch(apiUrl(`/api/v1/opportunities/ask-ai/history?surface=${encodeURIComponent(surface)}&limit=40`), {
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+        ]);
+
+        if (!cancelled && savedRes.ok) {
+          const savedPayload = (await savedRes.json().catch(() => [])) as AskAISavedQueryApiEntry[];
+          const nextSavedQueries = uniqueStrings(savedPayload.map((item) => String(item.query || "")));
+          if (nextSavedQueries.length > 0) {
+            setSavedQueries(nextSavedQueries.slice(0, 12));
+          }
+        }
+
+        if (!cancelled && historyRes.ok) {
+          const historyPayload = (await historyRes.json().catch(() => [])) as AskAIHistoryApiEntry[];
+          const nextHistory = historyPayload
+            .map((entry) => toHistoryEntryFromApi(entry))
+            .filter((entry) => entry.request_id.trim().length > 0);
+          if (nextHistory.length > 0) {
+            setHistory(nextHistory.slice(0, 40));
+          }
+        }
+      } catch {
+        // Local storage fallback remains available.
+      }
+    };
+
+    void loadServerState();
+    return () => {
+      cancelled = true;
+    };
+  }, [surface]);
 
   const logAskAIInteraction = useCallback(async (
     item: AskAIResponse["insights"]["top_opportunities"][number],
@@ -92,6 +301,10 @@ export default function AskAIPanel({ surface, suggestedQueries }: AskAIPanelProp
     setNotice(null);
     setFeedback(null);
     setFeedbackNotice(null);
+    appendTimeline("Query submitted", resolvedQuery, "info");
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), askAiTimeoutMs);
     try {
       const res = await fetch(apiUrl("/api/v1/opportunities/ask-ai"), {
         method: "POST",
@@ -99,6 +312,7 @@ export default function AskAIPanel({ surface, suggestedQueries }: AskAIPanelProp
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
+        signal: controller.signal,
         body: JSON.stringify({ query: resolvedQuery, top_k: 8 }),
       });
       const data = (await res.json().catch(() => null)) as AskAIResponse | { detail?: string } | null;
@@ -108,9 +322,25 @@ export default function AskAIPanel({ surface, suggestedQueries }: AskAIPanelProp
       }
       setQuery(resolvedQuery);
       setResponse(data);
+      setSavedQueries((current) => uniqueStrings([resolvedQuery, ...current]).slice(0, 12));
+      setHistory((current) => [toHistoryEntry(data), ...current.filter((entry) => entry.request_id !== data.request_id)].slice(0, 40));
+      void persistSavedQuery(resolvedQuery);
+      appendTimeline(
+        "Retriever response",
+        `${data.insights.top_opportunities.length} shortlisted opportunities with ${data.insights.citations.length} citations.`,
+        "success",
+      );
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Ask AI failed.");
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setNotice("Ask AI timed out. Please try again.");
+        appendTimeline("Timeout", "Ask AI request exceeded 30 seconds.", "warning");
+      } else {
+        const detail = error instanceof Error ? error.message : "Ask AI failed.";
+        setNotice(detail);
+        appendTimeline("Request failed", detail, "warning");
+      }
     } finally {
+      window.clearTimeout(timeoutId);
       setLoading(false);
     }
   };
@@ -126,6 +356,8 @@ export default function AskAIPanel({ surface, suggestedQueries }: AskAIPanelProp
       return;
     }
 
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 15000);
     try {
       const res = await fetch(apiUrl("/api/v1/opportunities/ask-ai/feedback"), {
         method: "POST",
@@ -133,6 +365,7 @@ export default function AskAIPanel({ surface, suggestedQueries }: AskAIPanelProp
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
+        signal: controller.signal,
         body: JSON.stringify({
           request_id: response.request_id,
           query: response.query,
@@ -152,9 +385,30 @@ export default function AskAIPanel({ surface, suggestedQueries }: AskAIPanelProp
       }
       setFeedback(value);
       setFeedbackNotice(value === "up" ? "Helpful answer logged." : "Feedback logged for improvement.");
+      appendTimeline(
+        value === "up" ? "Positive feedback" : "Corrective feedback",
+        value === "up" ? "User marked response as helpful." : "User marked response as missed.",
+        value === "up" ? "success" : "warning",
+      );
     } catch (error) {
-      setFeedbackNotice(error instanceof Error ? error.message : "Could not save feedback.");
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setFeedbackNotice("Feedback request timed out.");
+      } else {
+        setFeedbackNotice(error instanceof Error ? error.message : "Could not save feedback.");
+      }
+    } finally {
+      window.clearTimeout(timeoutId);
     }
+  };
+
+  const saveCurrentQuery = () => {
+    const normalized = query.trim();
+    if (!normalized) {
+      return;
+    }
+    setSavedQueries((current) => uniqueStrings([normalized, ...current]).slice(0, 12));
+    void persistSavedQuery(normalized);
+    appendTimeline("Saved query", normalized, "info");
   };
 
   useEffect(() => {
@@ -179,30 +433,74 @@ export default function AskAIPanel({ surface, suggestedQueries }: AskAIPanelProp
     );
   }, [logAskAIInteraction, response]);
 
+  const compareSummary = useMemo(() => {
+    if (!response || !compareBaseline) {
+      return null;
+    }
+
+    const currentMap = new Map(
+      response.insights.top_opportunities.map((item) => [item.opportunity_id, item.title]),
+    );
+    const baselineMap = new Map(
+      compareBaseline.top_opportunities.map((item) => [item.opportunity_id, item.title]),
+    );
+
+    const retained = Array.from(currentMap.keys()).filter((id) => baselineMap.has(id));
+    const added = Array.from(currentMap.keys()).filter((id) => !baselineMap.has(id));
+    const dropped = Array.from(baselineMap.keys()).filter((id) => !currentMap.has(id));
+
+    return {
+      retained: retained.map((id) => currentMap.get(id) || id),
+      added: added.map((id) => currentMap.get(id) || id),
+      dropped: dropped.map((id) => baselineMap.get(id) || id),
+    };
+  }, [compareBaseline, response]);
+
+  const dayAgoDiff = useMemo(() => {
+    if (!response) {
+      return null;
+    }
+
+    const now = Date.now();
+    const oneDayMs = 24 * 60 * 60 * 1000;
+    const previous = history.find((entry) => {
+      if (entry.request_id === response.request_id) {
+        return false;
+      }
+      const createdAt = new Date(entry.created_at).getTime();
+      return Number.isFinite(createdAt) && now - createdAt >= oneDayMs;
+    });
+
+    if (!previous) {
+      return null;
+    }
+
+    const currentIds = new Set(response.insights.top_opportunities.map((item) => item.opportunity_id));
+    const previousIds = new Set(previous.top_opportunities.map((item) => item.opportunity_id));
+
+    const newRows = response.insights.top_opportunities
+      .filter((item) => !previousIds.has(item.opportunity_id))
+      .map((item) => item.title);
+    const removedRows = previous.top_opportunities
+      .filter((item) => !currentIds.has(item.opportunity_id))
+      .map((item) => item.title);
+
+    return {
+      baselineDate: previous.created_at,
+      newRows,
+      removedRows,
+    };
+  }, [history, response]);
+
+  const badgeTone = (tone: TimelineTone): "info" | "success" | "warning" => {
+    return tone;
+  };
+
   return (
-    <section
-      className="card-panel"
-      style={{
-        marginBottom: "2rem",
-        display: "grid",
-        gap: "1.1rem",
-        background:
-          "linear-gradient(135deg, color-mix(in srgb, var(--brand-primary) 10%, transparent), var(--bg-surface) 60%)",
-      }}
-    >
-      <div style={{ display: "flex", justifyContent: "space-between", gap: "1rem", alignItems: "start", flexWrap: "wrap" }}>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ display: "inline-flex", alignItems: "center", gap: "0.45rem", marginBottom: "0.7rem", fontSize: "0.78rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", padding: "0.35rem 0.65rem", borderRadius: "999px", border: "2px solid var(--border-subtle)", background: "#ffffff", color: "#000000" }}>
-            <Sparkles size={14} />
-            Ask AI
-          </div>
-          <h2 style={{ margin: 0, fontSize: "1.7rem", fontWeight: 900, color: "var(--text-primary)" }}>
-            Ask for a grounded shortlist
-          </h2>
-          <p style={{ margin: "0.5rem 0 0", color: "var(--text-secondary)", fontWeight: 600, maxWidth: "720px" }}>
-            Query the ranking stack directly, inspect citations, and send feedback on whether the answer actually helped.
-          </p>
-        </div>
+    <SectionCard
+      title="Ask for a grounded shortlist"
+      subtitle="Query the ranking stack directly, inspect citations, compare shortlist drift, and capture user feedback."
+      aside={
         <div style={{ minWidth: "220px", padding: "0.85rem 1rem", border: "2px solid var(--border-subtle)", borderRadius: "var(--radius-md)", background: "var(--bg-base)", boxShadow: "var(--shadow-sm)" }}>
           <div style={{ fontSize: "0.76rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-secondary)", marginBottom: "0.35rem" }}>
             Product Loop
@@ -212,20 +510,28 @@ export default function AskAIPanel({ surface, suggestedQueries }: AskAIPanelProp
             {" -> "}
             cited answer
             {" -> "}
-            user feedback
+            feedback
           </div>
         </div>
-      </div>
-
+      }
+      status={<StatusBadge tone="live" label="Copilot" />}
+      style={{ marginBottom: "2rem" }}
+    >
       <div style={{ display: "grid", gap: "0.85rem" }}>
         <label htmlFor={`${surface}-ask-ai`} style={{ fontSize: "0.82rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-secondary)" }}>
           What should the retriever solve?
         </label>
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: "0.8rem" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto auto", gap: "0.8rem" }}>
           <input
             id={`${surface}-ask-ai`}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                void runAskAI();
+              }
+            }}
             placeholder="Example: research internships in NLP with recent deadlines and strong fit for Python + evaluation"
             style={{
               width: "100%",
@@ -239,6 +545,17 @@ export default function AskAIPanel({ surface, suggestedQueries }: AskAIPanelProp
             }}
           />
           <button
+            type="button"
+            className="btn-secondary"
+            onClick={saveCurrentQuery}
+            disabled={query.trim().length < 2}
+            style={{ minWidth: "120px", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: "0.35rem", border: "2px solid var(--border-subtle)" }}
+          >
+            <BookmarkPlus size={15} />
+            Save
+          </button>
+          <button
+            type="button"
             className="btn-primary"
             onClick={() => void runAskAI()}
             disabled={loading || query.trim().length < 2}
@@ -248,10 +565,12 @@ export default function AskAIPanel({ surface, suggestedQueries }: AskAIPanelProp
             {loading ? "Thinking..." : "Ask AI"}
           </button>
         </div>
+
         <div style={{ display: "flex", flexWrap: "wrap", gap: "0.6rem" }}>
-          {suggestedQueries.map((suggestion) => (
+          {[...savedQueries.slice(0, 6), ...suggestedQueries].slice(0, 8).map((suggestion) => (
             <button
               key={suggestion}
+              type="button"
               className="btn-secondary"
               onClick={() => void runAskAI(suggestion)}
               disabled={loading}
@@ -261,6 +580,7 @@ export default function AskAIPanel({ surface, suggestedQueries }: AskAIPanelProp
             </button>
           ))}
         </div>
+
         {notice && (
           <div style={{ color: "#8a1f1f", fontWeight: 700 }}>
             {notice}
@@ -269,7 +589,7 @@ export default function AskAIPanel({ surface, suggestedQueries }: AskAIPanelProp
       </div>
 
       {response && (
-        <div style={{ display: "grid", gap: "1rem" }}>
+        <div style={{ display: "grid", gap: "1rem", marginTop: "1rem" }}>
           <div style={{ padding: "1rem 1.1rem", borderRadius: "var(--radius-md)", border: "2px solid var(--border-subtle)", background: "var(--bg-base)", boxShadow: "var(--shadow-sm)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: "1rem", alignItems: "start", flexWrap: "wrap", marginBottom: "0.75rem" }}>
               <div>
@@ -280,11 +600,35 @@ export default function AskAIPanel({ surface, suggestedQueries }: AskAIPanelProp
                   {response.insights.summary}
                 </div>
               </div>
-              <div style={{ minWidth: "210px", display: "grid", gap: "0.45rem" }}>
+              <div style={{ minWidth: "220px", display: "grid", gap: "0.45rem" }}>
                 <div style={{ fontSize: "0.78rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-secondary)" }}>
                   Request ID
                 </div>
                 <code style={{ fontSize: "0.82rem", fontWeight: 700 }}>{response.request_id}</code>
+                <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => {
+                      setCompareBaseline(toHistoryEntry(response));
+                      appendTimeline("Baseline set", "Current shortlist saved for compare mode.", "info");
+                    }}
+                    style={{ border: "2px solid var(--border-subtle)", fontSize: "0.82rem", padding: "0.42rem 0.62rem" }}
+                  >
+                    <GitCompare size={14} /> Set Baseline
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => {
+                      setCompareBaseline(null);
+                      appendTimeline("Compare reset", "Cleared compare baseline.", "info");
+                    }}
+                    style={{ border: "2px solid var(--border-subtle)", fontSize: "0.82rem", padding: "0.42rem 0.62rem" }}
+                  >
+                    <TimerReset size={14} /> Reset
+                  </button>
+                </div>
               </div>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "0.85rem" }}>
@@ -302,6 +646,58 @@ export default function AskAIPanel({ surface, suggestedQueries }: AskAIPanelProp
               </div>
             </div>
           </div>
+
+          {compareBaseline && compareSummary ? (
+            <div className="card-panel" style={{ display: "grid", gap: "0.7rem", background: "var(--bg-base)" }}>
+              <div style={{ fontWeight: 900 }}>Compare Two Shortlists</div>
+              <div style={{ color: "var(--text-muted)", fontWeight: 700, fontSize: "0.86rem" }}>
+                Baseline: {new Date(compareBaseline.created_at).toLocaleString()} · Query: {compareBaseline.query}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: "0.7rem" }}>
+                <div style={{ border: "2px solid var(--border-subtle)", borderRadius: "var(--radius-sm)", padding: "0.7rem" }}>
+                  <div style={{ fontWeight: 900, marginBottom: "0.35rem" }}>Retained ({compareSummary.retained.length})</div>
+                  <div style={{ color: "var(--text-secondary)", fontWeight: 700, fontSize: "0.85rem" }}>
+                    {compareSummary.retained.slice(0, 4).join(" · ") || "None"}
+                  </div>
+                </div>
+                <div style={{ border: "2px solid var(--border-subtle)", borderRadius: "var(--radius-sm)", padding: "0.7rem" }}>
+                  <div style={{ fontWeight: 900, marginBottom: "0.35rem" }}>New ({compareSummary.added.length})</div>
+                  <div style={{ color: "var(--text-secondary)", fontWeight: 700, fontSize: "0.85rem" }}>
+                    {compareSummary.added.slice(0, 4).join(" · ") || "None"}
+                  </div>
+                </div>
+                <div style={{ border: "2px solid var(--border-subtle)", borderRadius: "var(--radius-sm)", padding: "0.7rem" }}>
+                  <div style={{ fontWeight: 900, marginBottom: "0.35rem" }}>Dropped ({compareSummary.dropped.length})</div>
+                  <div style={{ color: "var(--text-secondary)", fontWeight: 700, fontSize: "0.85rem" }}>
+                    {compareSummary.dropped.slice(0, 4).join(" · ") || "None"}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {dayAgoDiff ? (
+            <div className="card-panel" style={{ display: "grid", gap: "0.65rem", background: "var(--bg-base)" }}>
+              <div style={{ fontWeight: 900 }}>Why this changed since yesterday</div>
+              <div style={{ color: "var(--text-muted)", fontWeight: 700, fontSize: "0.86rem" }}>
+                Compared against snapshot from {new Date(dayAgoDiff.baselineDate).toLocaleString()}.
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "0.7rem" }}>
+                <div style={{ border: "2px solid var(--border-subtle)", borderRadius: "var(--radius-sm)", padding: "0.7rem" }}>
+                  <div style={{ fontWeight: 800, marginBottom: "0.25rem" }}>New recommendations</div>
+                  <div style={{ color: "var(--text-secondary)", fontWeight: 700, fontSize: "0.85rem" }}>
+                    {dayAgoDiff.newRows.slice(0, 5).join(" · ") || "No changes"}
+                  </div>
+                </div>
+                <div style={{ border: "2px solid var(--border-subtle)", borderRadius: "var(--radius-sm)", padding: "0.7rem" }}>
+                  <div style={{ fontWeight: 800, marginBottom: "0.25rem" }}>Removed recommendations</div>
+                  <div style={{ color: "var(--text-secondary)", fontWeight: 700, fontSize: "0.85rem" }}>
+                    {dayAgoDiff.removedRows.slice(0, 5).join(" · ") || "No removals"}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : null}
 
           <div style={{ display: "grid", gap: "0.85rem" }}>
             {response.insights.top_opportunities.map((item, index) => (
@@ -364,6 +760,7 @@ export default function AskAIPanel({ surface, suggestedQueries }: AskAIPanelProp
               </div>
               <div style={{ display: "flex", gap: "0.6rem" }}>
                 <button
+                  type="button"
                   className="btn-secondary"
                   onClick={() => void submitFeedback("up")}
                   disabled={Boolean(feedback)}
@@ -373,6 +770,7 @@ export default function AskAIPanel({ surface, suggestedQueries }: AskAIPanelProp
                   Helpful
                 </button>
                 <button
+                  type="button"
                   className="btn-secondary"
                   onClick={() => void submitFeedback("down")}
                   disabled={Boolean(feedback)}
@@ -385,8 +783,47 @@ export default function AskAIPanel({ surface, suggestedQueries }: AskAIPanelProp
             </div>
             {feedbackNotice && <div style={{ color: "var(--text-secondary)", fontWeight: 700 }}>{feedbackNotice}</div>}
           </div>
+
+          <div className="card-panel" style={{ display: "grid", gap: "0.6rem", background: "var(--bg-base)" }}>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: "0.45rem", fontWeight: 900 }}>
+              <Sparkles size={14} /> Reasoning Timeline
+            </div>
+            {timelineEvents.length === 0 ? (
+              <div style={{ color: "var(--text-muted)", fontWeight: 700 }}>Timeline will appear after the first query.</div>
+            ) : (
+              <div style={{ display: "grid", gap: "0.45rem" }}>
+                {timelineEvents.map((event) => (
+                  <div
+                    key={event.id}
+                    style={{
+                      border: "2px solid var(--border-subtle)",
+                      borderRadius: "var(--radius-sm)",
+                      padding: "0.55rem 0.7rem",
+                      background: "var(--bg-surface)",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "flex-start",
+                      gap: "0.6rem",
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 900 }}>{event.label}</div>
+                      <div style={{ color: "var(--text-secondary)", fontWeight: 700, fontSize: "0.84rem" }}>{event.detail}</div>
+                    </div>
+                    <div style={{ display: "grid", justifyItems: "end", gap: "0.25rem" }}>
+                      <StatusBadge tone={badgeTone(event.tone)} label={event.tone} />
+                      <span style={{ color: "var(--text-muted)", fontSize: "0.76rem", fontWeight: 700 }}>
+                        {new Date(event.timestamp).toLocaleTimeString()}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
-    </section>
+    </SectionCard>
   );
 }

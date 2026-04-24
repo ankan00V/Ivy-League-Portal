@@ -11,6 +11,63 @@ from app.models.model_drift_report import ModelDriftReport
 
 
 class MlopsAlertingService:
+    async def _post_json(self, *, url: str, payload: dict[str, Any], timeout: float) -> None:
+        response = await asyncio.to_thread(
+            requests.post,
+            url,
+            json=payload,
+            timeout=timeout,
+        )
+        response.raise_for_status()
+
+    def _slack_payload(self, *, payload: dict[str, Any]) -> dict[str, Any]:
+        metrics = payload.get("metrics") or {}
+        return {
+            "text": "VidyaVerse MLOps Drift Alert",
+            "blocks": [
+                {
+                    "type": "header",
+                    "text": {"type": "plain_text", "text": "VidyaVerse MLOps Drift Alert"},
+                },
+                {
+                    "type": "section",
+                    "fields": [
+                        {"type": "mrkdwn", "text": f"*Report ID*\n`{payload.get('report_id')}`"},
+                        {"type": "mrkdwn", "text": f"*Model Version*\n`{payload.get('model_version_id')}`"},
+                        {"type": "mrkdwn", "text": f"*PSI*\n{metrics.get('query_bucket_psi')}"},
+                        {"type": "mrkdwn", "text": f"*Max Feature Z*\n{metrics.get('max_feature_mean_z')}"},
+                    ],
+                },
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": f"*Window*\n{payload.get('window_start')} -> {payload.get('window_end')}",
+                    },
+                },
+            ],
+        }
+
+    def _pagerduty_payload(self, *, payload: dict[str, Any]) -> dict[str, Any]:
+        severity = str(settings.MLOPS_ALERT_PAGERDUTY_SEVERITY or "error").strip().lower() or "error"
+        return {
+            "routing_key": (settings.MLOPS_ALERT_PAGERDUTY_ROUTING_KEY or "").strip(),
+            "event_action": "trigger",
+            "payload": {
+                "summary": (
+                    f"VidyaVerse drift alert report={payload.get('report_id')} "
+                    f"model={payload.get('model_version_id')}"
+                ),
+                "source": "vidyaverse-mlops",
+                "severity": severity,
+                "timestamp": payload.get("reported_at"),
+                "component": "ranking_monitoring",
+                "group": "mlops",
+                "class": "drift",
+                "custom_details": payload,
+            },
+        }
+
     async def _is_within_cooldown(self, *, current_report_id: str) -> tuple[bool, str | None]:
         cooldown_minutes = max(0, int(settings.MLOPS_ALERT_COOLDOWN_MINUTES))
         if cooldown_minutes <= 0:
@@ -77,20 +134,60 @@ class MlopsAlertingService:
         }
 
         webhook_url = (settings.MLOPS_ALERT_WEBHOOK_URL or "").strip()
+        slack_webhook_url = (settings.MLOPS_ALERT_SLACK_WEBHOOK_URL or "").strip()
+        pagerduty_routing_key = (settings.MLOPS_ALERT_PAGERDUTY_ROUTING_KEY or "").strip()
+        timeout = max(1.0, float(settings.MLOPS_ALERT_WEBHOOK_TIMEOUT_SECONDS))
+
         webhook_sent = False
+        slack_sent = False
+        pagerduty_sent = False
+        channel_errors: dict[str, str] = {}
+
         if webhook_url:
-            timeout = max(1.0, float(settings.MLOPS_ALERT_WEBHOOK_TIMEOUT_SECONDS))
             try:
-                response = await asyncio.to_thread(
-                    requests.post,
-                    webhook_url,
-                    json=payload,
-                    timeout=timeout,
-                )
-                response.raise_for_status()
+                await self._post_json(url=webhook_url, payload=payload, timeout=timeout)
                 webhook_sent = True
             except Exception as exc:
-                raise RuntimeError(f"webhook_delivery_failed:{exc}") from exc
+                channel_errors["webhook"] = str(exc)
+
+        if slack_webhook_url:
+            try:
+                await self._post_json(
+                    url=slack_webhook_url,
+                    payload=self._slack_payload(payload=payload),
+                    timeout=timeout,
+                )
+                slack_sent = True
+            except Exception as exc:
+                channel_errors["slack"] = str(exc)
+
+        if pagerduty_routing_key:
+            try:
+                pagerduty_payload = self._pagerduty_payload(payload=payload)
+                await self._post_json(
+                    url="https://events.pagerduty.com/v2/enqueue",
+                    payload=pagerduty_payload,
+                    timeout=timeout,
+                )
+                pagerduty_sent = True
+            except Exception as exc:
+                channel_errors["pagerduty"] = str(exc)
+
+        incident_id: str | None = None
+        if bool(settings.MLOPS_INCIDENT_AUTO_CREATE):
+            try:
+                from app.services.mlops.incident_service import mlops_incident_service
+
+                incident = await mlops_incident_service.create_from_drift_alert(
+                    report=report,
+                    alert_payload=payload,
+                )
+                incident_id = str(incident.id)
+            except Exception as exc:
+                channel_errors["incident"] = str(exc)
+
+        if channel_errors and not (webhook_sent or slack_sent or pagerduty_sent):
+            raise RuntimeError(f"alert_delivery_failed:{channel_errors}")
 
         now = datetime.utcnow()
         report.alert_notified_at = now
@@ -99,10 +196,13 @@ class MlopsAlertingService:
         print(f"[MLOps Alert] {payload}")
 
         return {
-            "status": "sent" if webhook_sent else "logged",
+            "status": "sent" if (webhook_sent or slack_sent or pagerduty_sent) else "logged",
             "report_id": str(report.id),
             "webhook_sent": bool(webhook_sent),
-            "webhook_error": None,
+            "slack_sent": bool(slack_sent),
+            "pagerduty_sent": bool(pagerduty_sent),
+            "incident_id": incident_id,
+            "channel_errors": channel_errors,
             "alert_notified_at": now.isoformat(),
         }
 

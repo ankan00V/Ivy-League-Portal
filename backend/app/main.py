@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from typing import Any, Optional
 
 from fastapi import Depends, FastAPI, Response
@@ -30,6 +31,8 @@ from app.models.experiment import Experiment, ExperimentAssignment
 from app.models.model_drift_report import ModelDriftReport
 from app.models.nlp_model_version import NLPModelVersion
 from app.models.rag_feedback_event import RAGFeedbackEvent
+from app.models.ask_ai_query_snapshot import AskAIQuerySnapshot
+from app.models.ask_ai_saved_query import AskAISavedQuery
 from app.models.rag_template_version import RAGTemplateVersion
 from app.models.rag_template_evaluation_run import RAGTemplateEvaluationRun
 from app.models.ranking_model_version import RankingModelVersion
@@ -43,6 +46,7 @@ from app.models.analytics_daily_aggregate import AnalyticsDailyAggregate
 from app.models.analytics_funnel_aggregate import AnalyticsFunnelAggregate
 from app.models.analytics_cohort_aggregate import AnalyticsCohortAggregate
 from app.models.feature_store_row import FeatureStoreRow
+from app.models.mlops_incident import MlopsIncident
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.services.experiment_service import experiment_service
@@ -51,9 +55,17 @@ from app.services.ranking_model_service import ranking_model_service
  
 from app.services.job_runner import job_runner, register_default_jobs
 from app.services.system_metrics import refresh_freshness_metrics
+from app.services.embedding_service import embedding_service
+from app.services.nlp_service import nlp_service
+from app.services.vector_service import opportunity_vector_service
 from app.core.redis import close_redis
 from app.core.metrics import CONTENT_TYPE_LATEST, init_metrics, render_metrics
-from app.core.http_middleware import ObservabilityMiddleware, RateLimitMiddleware
+from app.core.http_middleware import (
+    CSRFMiddleware,
+    ObservabilityMiddleware,
+    RateLimitMiddleware,
+    SecurityHeadersMiddleware,
+)
 from app.api.deps import get_current_admin_user, require_scopes
 
 logger = logging.getLogger(__name__)
@@ -65,6 +77,26 @@ async def lifespan(app: FastAPI):
             raise RuntimeError("SECRET_KEY must be set via environment in production.")
         if bool(settings.MONGODB_TLS_ALLOW_INVALID_CERTS):
             raise RuntimeError("MONGODB_TLS_ALLOW_INVALID_CERTS must be false in production.")
+        if settings.MLOPS_ALERTS_ENABLED and settings.MLOPS_ENFORCE_LIVE_ALERT_CHANNELS_IN_PRODUCTION:
+            has_live_channel = any(
+                [
+                    bool((settings.MLOPS_ALERT_WEBHOOK_URL or "").strip()),
+                    bool((settings.MLOPS_ALERT_SLACK_WEBHOOK_URL or "").strip()),
+                    bool((settings.MLOPS_ALERT_PAGERDUTY_ROUTING_KEY or "").strip()),
+                ]
+            )
+            if not has_live_channel:
+                raise RuntimeError(
+                    "MLOPS alerts are enabled in production, but no live alert channel is configured."
+                )
+        if (
+            settings.MLOPS_INCIDENT_AUTO_CREATE
+            and settings.MLOPS_ENFORCE_OWNER_IN_PRODUCTION
+            and not (settings.MLOPS_INCIDENT_DEFAULT_OWNER or "").strip()
+        ):
+            raise RuntimeError(
+                "MLOPS incident auto-create requires MLOPS_INCIDENT_DEFAULT_OWNER in production."
+            )
 
     # Initialize MongoDB connection using explicit cert verification parameters
     mongo_kwargs = {}
@@ -148,6 +180,8 @@ async def lifespan(app: FastAPI):
             ModelDriftReport,
             RankingRequestTelemetry,
             RAGFeedbackEvent,
+            AskAIQuerySnapshot,
+            AskAISavedQuery,
             RAGTemplateVersion,
             RAGTemplateEvaluationRun,
             VectorIndexEntry,
@@ -159,6 +193,7 @@ async def lifespan(app: FastAPI):
             AnalyticsFunnelAggregate,
             AnalyticsCohortAggregate,
             FeatureStoreRow,
+            MlopsIncident,
         ]
         ),
         timeout=max(10.0, ping_timeout_seconds * 2.0),
@@ -303,6 +338,17 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
+    if settings.RAG_WARMUP_ON_STARTUP:
+        warmup_started_at = time.perf_counter()
+        try:
+            await asyncio.wait_for(
+                _warmup_rag_components(),
+                timeout=max(10.0, float(settings.RAG_WARMUP_TIMEOUT_SECONDS)),
+            )
+            logger.info("RAG warmup completed in %.2fs", time.perf_counter() - warmup_started_at)
+        except Exception as exc:
+            logger.warning("RAG warmup skipped/failed: %s", exc)
+
     freshness_task: asyncio.Task[None] | None = None
     if settings.METRICS_ENABLED:
         async def _freshness_loop() -> None:
@@ -326,6 +372,13 @@ async def lifespan(app: FastAPI):
     await close_redis()
     client.close()
 
+
+async def _warmup_rag_components() -> None:
+    # Preload embeddings + vector index so first Ask AI request isn't penalized by cold starts.
+    await embedding_service.embed_query("warmup query")
+    await nlp_service.classify_intent("data science internships")
+    await opportunity_vector_service.rebuild(force=False)
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     openapi_url=f"{settings.API_V1_STR}/openapi.json" if settings.ENVIRONMENT != "production" else None,
@@ -340,6 +393,8 @@ app.include_router(api_router, prefix=settings.API_V1_STR)
 # Security/observability middleware (order matters)
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(ObservabilityMiddleware)
+app.add_middleware(CSRFMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 
 # Security Middlewares
 app.add_middleware(

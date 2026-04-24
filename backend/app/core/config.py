@@ -12,6 +12,35 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "your_super_secret_key_here_for_development_change_in_production"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 hours
+    AUTH_SESSION_COOKIE_ENABLED: bool = True
+    AUTH_SESSION_COOKIE_NAME: str = "vidyaverse_session"
+    AUTH_SESSION_COOKIE_SECURE: bool = False
+    AUTH_SESSION_COOKIE_SAMESITE: str = "lax"  # none | lax | strict
+    AUTH_SESSION_COOKIE_PATH: str = "/"
+    AUTH_SESSION_COOKIE_DOMAIN: Optional[str] = None
+    AUTH_SESSION_COOKIE_MAX_AGE_SECONDS: int = 60 * 60 * 24  # 24h
+    CSRF_PROTECTION_ENABLED: bool = True
+    CSRF_ENFORCE_ON_AUTH_COOKIE: bool = True
+    CSRF_TRUSTED_ORIGINS: list[str] = []
+    SECURITY_HEADERS_ENABLED: bool = True
+    SECURITY_CSP_ENABLED: bool = True
+    SECURITY_CSP_REPORT_ONLY: bool = False
+    SECURITY_CSP_VALUE: str = (
+        "default-src 'self'; "
+        "base-uri 'self'; "
+        "object-src 'none'; "
+        "frame-ancestors 'none'; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; "
+        "style-src 'self' 'unsafe-inline' https:; "
+        "img-src 'self' data: blob: https:; "
+        "font-src 'self' data: https:; "
+        "connect-src 'self' https: http: ws: wss:; "
+        "worker-src 'self' blob:; "
+        "manifest-src 'self'; "
+        "form-action 'self'; "
+        "require-trusted-types-for 'script'; "
+        "trusted-types default"
+    )
     
     # Database layer (MongoDB)
     MONGODB_URL: str = "mongodb://localhost:27017"
@@ -140,6 +169,14 @@ class Settings(BaseSettings):
     # RAG governance defaults
     RAG_TEMPLATE_KEY_DEFAULT: str = "ask_ai"
     RAG_DEFAULT_RETRIEVAL_TOP_K: int = 8
+    RAG_LLM_MODEL: Optional[str] = None
+    RAG_JUDGE_MODEL: Optional[str] = None
+    RAG_WARMUP_ON_STARTUP: bool = True
+    RAG_WARMUP_TIMEOUT_SECONDS: float = 120.0
+    RAG_REQUEST_TIMEOUT_SECONDS: float = 25.0
+    RAG_RETRIEVAL_TIMEOUT_SECONDS: float = 45.0
+    RAG_LLM_TIMEOUT_SECONDS: float = 15.0
+    RAG_JUDGE_TIMEOUT_SECONDS: float = 8.0
     RAG_OFFLINE_EVAL_DATASET_PATH: str = "backend/benchmarks/data/gold_temporal_holdout.jsonl"
     RAG_OFFLINE_MIN_RECALL_AT_K: float = 0.35
     RAG_ONLINE_MIN_POSITIVE_FEEDBACK_RATE: float = 0.55
@@ -198,6 +235,23 @@ class Settings(BaseSettings):
     MLOPS_ALERT_WEBHOOK_URL: Optional[str] = None
     MLOPS_ALERT_WEBHOOK_TIMEOUT_SECONDS: float = 8.0
     MLOPS_ALERT_COOLDOWN_MINUTES: int = 120
+    MLOPS_ALERT_SLACK_WEBHOOK_URL: Optional[str] = None
+    MLOPS_ALERT_PAGERDUTY_ROUTING_KEY: Optional[str] = None
+    MLOPS_ALERT_PAGERDUTY_SEVERITY: str = "error"
+    MLOPS_INCIDENT_AUTO_CREATE: bool = True
+    MLOPS_INCIDENT_DEFAULT_OWNER: Optional[str] = None
+    MLOPS_INCIDENT_REVIEW_DUE_HOURS: int = 24
+    MLOPS_INCIDENT_BREACH_SLA_HOURS: int = 72
+    MLOPS_ENFORCE_LIVE_ALERT_CHANNELS_IN_PRODUCTION: bool = True
+    MLOPS_ENFORCE_OWNER_IN_PRODUCTION: bool = True
+
+    # Offline/online parity gate (auto-activation safety)
+    MLOPS_PARITY_ENABLED: bool = True
+    MLOPS_PARITY_MIN_REAL_IMPRESSIONS_PER_MODE: int = 200
+    MLOPS_PARITY_MIN_REAL_REQUESTS_PER_MODE: int = 100
+    MLOPS_PARITY_MAX_CTR_REGRESSION: float = 0.0
+    MLOPS_PARITY_MAX_APPLY_RATE_REGRESSION: float = 0.0
+    MLOPS_PARITY_MIN_OFFLINE_AUC_GAIN_FOR_ONLINE_GATES: float = 0.0
     MLOPS_TRIGGER_RETRAIN_ON_DRIFT_ALERT: bool = True
 
     # Experiment guardrails / auto-pause

@@ -228,7 +228,11 @@ class EvaluationService:
         if not self._judge_api_key:
             return None
 
-        model = ((settings.LLM_JUDGE_MODEL or "").strip() or self._default_model).strip()
+        model = (
+            (settings.RAG_JUDGE_MODEL or "").strip()
+            or (settings.LLM_JUDGE_MODEL or "").strip()
+            or self._default_model
+        ).strip()
         judge_prompt = {
             "generated_text": generated_text,
             "expected_keywords": expected_keywords,
@@ -253,6 +257,9 @@ class EvaluationService:
                 {"role": "user", "content": json.dumps(judge_prompt)},
             ],
             extra_headers=self._judge_headers(title="VidyaVerse LLM Judge"),
+            response_format={"type": "json_object"},
+            temperature=0,
+            max_tokens=220,
         )
 
         content = ""
@@ -291,7 +298,11 @@ class EvaluationService:
         if not self._judge_api_key:
             return None
 
-        model = ((settings.LLM_JUDGE_MODEL or "").strip() or self._default_model).strip()
+        model = (
+            (settings.RAG_JUDGE_MODEL or "").strip()
+            or (settings.LLM_JUDGE_MODEL or "").strip()
+            or self._default_model
+        ).strip()
         judge_prompt = {
             "query": query,
             "candidates": [
@@ -327,6 +338,9 @@ class EvaluationService:
                 {"role": "user", "content": json.dumps(judge_prompt)},
             ],
             extra_headers=self._judge_headers(title="VidyaVerse RAG Judge"),
+            response_format={"type": "json_object"},
+            temperature=0,
+            max_tokens=220,
         )
 
         content = ""

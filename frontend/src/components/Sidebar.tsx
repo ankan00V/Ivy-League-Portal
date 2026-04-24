@@ -1,255 +1,246 @@
 "use client";
-import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { useTheme } from '@/context/ThemeContext';
-import { LayoutDashboard, Target, Briefcase, FileText, Globe, Trophy, Sun, Moon, BarChart3 } from 'lucide-react';
-import { useEffect, useState, useSyncExternalStore } from 'react';
-import BrandLogo from '@/components/BrandLogo';
-import { apiUrl } from '@/lib/api';
-import { getAccessToken } from '@/lib/auth-session';
-import { formatTopPercent, type RankingSummary } from '@/lib/ranking-summary';
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import {
+  BarChart3,
+  Briefcase,
+  FileText,
+  Globe,
+  LayoutDashboard,
+  Menu,
+  Moon,
+  Sun,
+  Target,
+  Trophy,
+  X,
+} from "lucide-react";
+
+import BrandLogo from "@/components/BrandLogo";
+import { useTheme } from "@/context/ThemeContext";
+import { apiUrl } from "@/lib/api";
+import { getAccessToken } from "@/lib/auth-session";
+import { formatTopPercent, type RankingSummary } from "@/lib/ranking-summary";
+
+type NavLink = {
+  name: string;
+  href: string;
+  icon: React.ReactNode;
+  mobileLabel?: string;
+};
+
+const links: NavLink[] = [
+  { name: "Dashboard", href: "/dashboard", icon: <LayoutDashboard size={18} />, mobileLabel: "Home" },
+  { name: "Opportunities", href: "/opportunities", icon: <Target size={18} />, mobileLabel: "Opps" },
+  { name: "Internships/Jobs", href: "/internships-jobs", icon: <Briefcase size={18} />, mobileLabel: "Jobs" },
+  { name: "Applications", href: "/applications", icon: <FileText size={18} />, mobileLabel: "Applied" },
+  { name: "Social Network", href: "/social", icon: <Globe size={18} />, mobileLabel: "Social" },
+  { name: "Leaderboard", href: "/leaderboard", icon: <Trophy size={18} /> },
+  { name: "Experiments", href: "/experiments", icon: <BarChart3 size={18} /> },
+];
+
+const mobilePrimaryLinks = links.slice(0, 5);
 
 export default function Sidebar() {
-    const pathname = usePathname();
-    const { theme, toggleTheme } = useTheme();
-    const [rankingSummary, setRankingSummary] = useState<RankingSummary | null>(null);
-    const isHydrated = useSyncExternalStore(
-        () => () => { },
-        () => true,
-        () => false
-    );
+  const pathname = usePathname();
+  const { theme, toggleTheme } = useTheme();
+  const [rankingSummary, setRankingSummary] = useState<RankingSummary | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const isHydrated = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  );
 
-    useEffect(() => {
-        let cancelled = false;
-        const loadRankingSummary = async () => {
-            const token = getAccessToken();
-            if (!token) {
-                if (!cancelled) {
-                    setRankingSummary(null);
-                }
-                return;
-            }
-            try {
-                const res = await fetch(apiUrl("/api/v1/users/me/ranking-summary"), {
-                    headers: {
-                        Authorization: `Bearer ${token}`,
-                    },
-                });
-                if (!res.ok) {
-                    if (!cancelled) {
-                        setRankingSummary(null);
-                    }
-                    return;
-                }
-                const payload: RankingSummary = await res.json();
-                if (!cancelled) {
-                    setRankingSummary(payload);
-                }
-            } catch {
-                if (!cancelled) {
-                    setRankingSummary(null);
-                }
-            }
-        };
+  useEffect(() => {
+    let cancelled = false;
 
-        void loadRankingSummary();
-        const interval = window.setInterval(() => {
-            void loadRankingSummary();
-        }, 30000);
-        const handleRefresh = () => {
-            void loadRankingSummary();
-        };
-        window.addEventListener("focus", handleRefresh);
-        document.addEventListener("visibilitychange", handleRefresh);
+    const loadRankingSummary = async () => {
+      const token = getAccessToken();
+      if (!token) {
+        if (!cancelled) {
+          setRankingSummary(null);
+        }
+        return;
+      }
+      try {
+        const res = await fetch(apiUrl("/api/v1/users/me/ranking-summary"), {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        if (!res.ok) {
+          if (!cancelled) {
+            setRankingSummary(null);
+          }
+          return;
+        }
+        const payload: RankingSummary = await res.json();
+        if (!cancelled) {
+          setRankingSummary(payload);
+        }
+      } catch {
+        if (!cancelled) {
+          setRankingSummary(null);
+        }
+      }
+    };
 
-        return () => {
-            cancelled = true;
-            window.clearInterval(interval);
-            window.removeEventListener("focus", handleRefresh);
-            document.removeEventListener("visibilitychange", handleRefresh);
-        };
-    }, []);
+    void loadRankingSummary();
+    const interval = window.setInterval(() => {
+      void loadRankingSummary();
+    }, 30000);
+    const handleRefresh = () => {
+      void loadRankingSummary();
+    };
 
-    const globalRankTitle = rankingSummary
-        ? `Top ${formatTopPercent(rankingSummary.top_percent)}%`
-        : "--";
-    const globalRankSubtitle = rankingSummary
-        ? `Rank #${rankingSummary.rank} of ${rankingSummary.total_users}`
-        : "Live rank unavailable";
+    window.addEventListener("focus", handleRefresh);
+    document.addEventListener("visibilitychange", handleRefresh);
 
-    const links = [
-        { name: 'Dashboard', href: '/dashboard', icon: <LayoutDashboard size={20} /> },
-        { name: 'Opportunities', href: '/opportunities', icon: <Target size={20} /> },
-        { name: 'Internships/Jobs', href: '/internships-jobs', icon: <Briefcase size={20} /> },
-        { name: 'Applications', href: '/applications', icon: <FileText size={20} /> },
-        { name: 'Social Network', href: '/social', icon: <Globe size={20} /> },
-        { name: 'Leaderboard', href: '/leaderboard', icon: <Trophy size={20} /> },
-        { name: 'Experiments', href: '/experiments', icon: <BarChart3 size={20} /> },
-    ];
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      window.removeEventListener("focus", handleRefresh);
+      document.removeEventListener("visibilitychange", handleRefresh);
+    };
+  }, []);
 
-    return (
-        <div
-            style={{
-                width: 'var(--sidebar-width)',
-                flexShrink: 0,
-                alignSelf: 'stretch',
-                position: 'relative',
-            }}
-        >
-        <aside style={{
-            width: '100%',
-            background: 'var(--bg-sidebar)',
-            height: '100vh',
-            minHeight: '100vh',
-            position: 'sticky',
-            top: 0,
-            display: 'flex',
-            flexDirection: 'column',
-            padding: '2.5rem 1.5rem max(1.25rem, env(safe-area-inset-bottom)) 1.5rem',
-            zIndex: 40,
-            transition: 'var(--standard-transition)',
-            overflow: 'hidden'
-        }}>
-            <div style={{ marginBottom: '2.5rem', paddingLeft: '0.2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <BrandLogo size="lg" />
-            </div>
+  useEffect(() => {
+    if (!drawerOpen) {
+      return;
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setDrawerOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [drawerOpen]);
 
-            <nav style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '0.75rem',
-                flex: 1,
-                minHeight: 0,
-                overflowY: 'auto',
-                paddingTop: '0.35rem',
-                paddingBottom: '0.35rem',
-                paddingRight: '0.25rem',
-                position: 'relative'
-            }}>
-                {links.map((link) => {
-                    const isActive = pathname === link.href;
-                    return (
-                        <Link
-                            key={link.name}
-                            href={link.href}
-                            style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '1rem',
-                                padding: '1rem 1.25rem',
-                                color: isActive ? '#000000' : 'var(--text-primary)',
-                                fontWeight: 600,
-                                background: isActive ? 'var(--brand-primary)' : 'transparent',
-                                border: isActive ? '2px solid var(--border-subtle)' : '2px solid transparent',
-                                boxShadow: isActive ? 'var(--shadow-sm)' : 'none',
-                                transition: 'var(--standard-transition)',
-                                borderRadius: 'var(--radius-sm)',
-                                transform: 'none'
-                            }}
-                            onMouseEnter={(e) => {
-                                if (!isActive) {
-                                    e.currentTarget.style.background = 'var(--bg-surface-hover)';
-                                    e.currentTarget.style.border = '2px solid var(--border-subtle)';
-                                    e.currentTarget.style.boxShadow = 'var(--shadow-sm)';
-                                    e.currentTarget.style.transform = 'translateY(-1px)';
-                                }
-                            }}
-                            onMouseLeave={(e) => {
-                                if (!isActive) {
-                                    e.currentTarget.style.background = 'transparent';
-                                    e.currentTarget.style.border = '2px solid transparent';
-                                    e.currentTarget.style.boxShadow = 'none';
-                                    e.currentTarget.style.transform = 'none';
-                                }
-                            }}
-                        >
-                            <span style={{ display: 'flex', alignItems: 'center' }}>{link.icon}</span>
-                            <span>{link.name}</span>
-                        </Link>
-                    );
-                })}
-            </nav>
+  const globalRankTitle = rankingSummary ? `Top ${formatTopPercent(rankingSummary.top_percent)}%` : "--";
+  const globalRankSubtitle = rankingSummary
+    ? `Rank #${rankingSummary.rank} of ${rankingSummary.total_users}`
+    : "Live rank unavailable";
 
-            <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem', paddingTop: '1rem', flexShrink: 0 }}>
-                {/* Theme Toggle Button */}
-                <button
-                    onClick={toggleTheme}
-                    style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '0.75rem',
-                        padding: '1rem',
-                        background: 'var(--bg-surface)',
-                        border: '2px solid var(--border-subtle)',
-                        borderRadius: 'var(--radius-sm)',
-                        color: 'var(--text-primary)',
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                        boxShadow: 'var(--shadow-sm)',
-                        transition: 'var(--standard-transition)',
-                        width: '100%'
-                    }}
-                    onMouseEnter={(e) => {
-                        e.currentTarget.style.transform = 'translateY(-2px)';
-                        e.currentTarget.style.boxShadow = 'var(--shadow-md)';
-                    }}
-                    onMouseLeave={(e) => {
-                        e.currentTarget.style.transform = 'none';
-                        e.currentTarget.style.boxShadow = 'var(--shadow-sm)';
-                    }}
-                    onMouseDown={(e) => {
-                        e.currentTarget.style.transform = 'translateY(2px)';
-                        e.currentTarget.style.boxShadow = 'none';
-                    }}
-                    onMouseUp={(e) => {
-                        e.currentTarget.style.transform = 'translateY(-2px)';
-                        e.currentTarget.style.boxShadow = 'var(--shadow-md)';
-                    }}
+  const themeLabel = useMemo(() => {
+    if (!isHydrated) {
+      return "Theme";
+    }
+    return theme === "dark" ? "Light Mode" : "Dark Mode";
+  }, [isHydrated, theme]);
+
+  return (
+    <>
+      <div className="app-shell-nav-root" aria-hidden>
+        <aside className="desktop-sidebar">
+          <div className="sidebar-top">
+            <BrandLogo size="lg" />
+          </div>
+
+          <nav className="sidebar-links" aria-label="Primary">
+            {links.map((link) => {
+              const isActive = pathname === link.href;
+              return (
+                <Link
+                  key={link.name}
+                  href={link.href}
+                  className={`sidebar-link ${isActive ? "active" : ""}`}
+                  onClick={() => setDrawerOpen(false)}
                 >
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.75rem' }}>
-                        {!isHydrated ? (
-                            <><Sun size={20} /> Theme</>
-                        ) : theme === 'dark' ? (
-                            <><Sun size={20} /> Light Mode</>
-                        ) : (
-                            <><Moon size={20} /> Dark Mode</>
-                        )}
-                    </span>
-                </button>
+                  <span className="sidebar-link-icon">{link.icon}</span>
+                  <span>{link.name}</span>
+                </Link>
+              );
+            })}
+          </nav>
 
-                {/* Global Rank Snippet */}
-                <div style={{
-                    padding: '1.25rem',
-                    background: 'var(--brand-accent)',
-                    borderRadius: 'var(--radius-sm)',
-                    border: '2px solid var(--border-subtle)',
-                    boxShadow: 'var(--shadow-sm)',
-                    textAlign: 'center',
-                    color: '#000000',
-                    transition: 'var(--standard-transition)',
-                    width: '100%'
-                }}>
-                    <div style={{ fontSize: '0.875rem', marginBottom: '0.25rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Global Rank</div>
-                    <div style={{ fontSize: '2rem', fontWeight: 400, fontFamily: 'var(--font-serif)', lineHeight: 1, margin: '0.5rem 0' }}>{globalRankTitle}</div>
-                    <div style={{ fontSize: '0.85rem', fontWeight: 700 }}>{globalRankSubtitle}</div>
-                </div>
+          <div className="sidebar-foot">
+            <button type="button" onClick={toggleTheme} className="sidebar-theme-btn">
+              <span className="sidebar-link-icon">{theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}</span>
+              <span>{themeLabel}</span>
+            </button>
+            <div className="sidebar-rank-card">
+              <div className="sidebar-rank-title">Global Rank</div>
+              <div className="sidebar-rank-value">{globalRankTitle}</div>
+              <div className="sidebar-rank-detail">{globalRankSubtitle}</div>
             </div>
-
+          </div>
         </aside>
-        <div
-            aria-hidden
-            style={{
-                position: 'absolute',
-                top: 0,
-                bottom: 0,
-                right: '-5px',
-                width: '2px',
-                background: 'var(--border-subtle)',
-                pointerEvents: 'none',
-                zIndex: 45,
-            }}
-        />
+      </div>
+
+      <header className="mobile-topbar">
+        <BrandLogo size="sm" />
+        <div style={{ display: "flex", gap: "0.45rem", alignItems: "center" }}>
+          <button type="button" className="mobile-icon-btn" onClick={toggleTheme} aria-label={themeLabel}>
+            {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
+          </button>
+          <button
+            type="button"
+            className="mobile-icon-btn"
+            onClick={() => setDrawerOpen(true)}
+            aria-label="Open navigation menu"
+            aria-expanded={drawerOpen}
+          >
+            <Menu size={18} />
+          </button>
         </div>
-    );
+      </header>
+
+      <div className={`mobile-drawer-backdrop ${drawerOpen ? "open" : ""}`} onClick={() => setDrawerOpen(false)} />
+      <aside className={`mobile-drawer ${drawerOpen ? "open" : ""}`} aria-hidden={!drawerOpen}>
+        <div className="mobile-drawer-head">
+          <BrandLogo size="sm" />
+          <button
+            type="button"
+            className="mobile-icon-btn"
+            onClick={() => setDrawerOpen(false)}
+            aria-label="Close navigation menu"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <nav className="mobile-drawer-links" aria-label="Mobile navigation">
+          {links.map((link) => {
+            const isActive = pathname === link.href;
+            return (
+              <Link
+                key={link.name}
+                href={link.href}
+                className={`mobile-drawer-link ${isActive ? "active" : ""}`}
+                onClick={() => setDrawerOpen(false)}
+              >
+                <span className="sidebar-link-icon">{link.icon}</span>
+                <span>{link.name}</span>
+              </Link>
+            );
+          })}
+        </nav>
+
+        <div className="mobile-drawer-foot">
+          <div className="sidebar-rank-card">
+            <div className="sidebar-rank-title">Global Rank</div>
+            <div className="sidebar-rank-value">{globalRankTitle}</div>
+            <div className="sidebar-rank-detail">{globalRankSubtitle}</div>
+          </div>
+        </div>
+      </aside>
+
+      <nav className="mobile-bottom-nav" aria-label="Primary mobile routes">
+        {mobilePrimaryLinks.map((link) => {
+          const isActive = pathname === link.href;
+          return (
+            <Link key={link.name} href={link.href} className={`mobile-bottom-item ${isActive ? "active" : ""}`}>
+              <span className="sidebar-link-icon">{link.icon}</span>
+              <span>{link.mobileLabel || link.name}</span>
+            </Link>
+          );
+        })}
+      </nav>
+    </>
+  );
 }

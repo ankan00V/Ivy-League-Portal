@@ -104,6 +104,87 @@ class TestActivationPolicy(unittest.TestCase):
         self.assertFalse(decision.should_activate)
         self.assertTrue(decision.reason.startswith("guardrail_apply_rate_regression"))
 
+    def test_parity_gate_blocks_when_real_traffic_is_insufficient(self) -> None:
+        decision = evaluate_activation_policy(
+            auto_activate=True,
+            policy="guarded",
+            auc_gain=0.07,
+            min_auc_gain=0.01,
+            positive_rate=0.11,
+            min_positive_rate=0.01,
+            learned_weights={"semantic": 0.6, "baseline": 0.25, "behavior": 0.15},
+            baseline_weights={"semantic": 0.55, "baseline": 0.3, "behavior": 0.15},
+            max_weight_shift=0.35,
+            guardrail_report={
+                "data_complete": True,
+                "candidate": {"impressions": 20, "requests": 12},
+                "baseline": {"impressions": 21, "requests": 11},
+                "deltas": {"ctr": 0.01, "apply_rate": 0.0, "freshness_seconds": 0.0, "latency_p95_ms": 0.0, "failure_rate": 0.0},
+            },
+            require_online_kpis=True,
+            parity_enabled=True,
+            min_real_impressions_per_mode=200,
+            min_real_requests_per_mode=100,
+        )
+        self.assertFalse(decision.should_activate)
+        self.assertTrue(decision.reason.startswith("parity_insufficient_real_impressions"))
+
+    def test_parity_gate_blocks_when_offline_gain_but_online_ctr_regresses(self) -> None:
+        decision = evaluate_activation_policy(
+            auto_activate=True,
+            policy="guarded",
+            auc_gain=0.05,
+            min_auc_gain=0.01,
+            positive_rate=0.12,
+            min_positive_rate=0.01,
+            learned_weights={"semantic": 0.6, "baseline": 0.25, "behavior": 0.15},
+            baseline_weights={"semantic": 0.55, "baseline": 0.3, "behavior": 0.15},
+            max_weight_shift=0.35,
+            guardrail_report={
+                "data_complete": True,
+                "candidate": {"impressions": 300, "requests": 160},
+                "baseline": {"impressions": 300, "requests": 160},
+                "deltas": {"ctr": -0.02, "apply_rate": -0.01, "freshness_seconds": 0.0, "latency_p95_ms": 0.0, "failure_rate": 0.0},
+            },
+            require_online_kpis=True,
+            parity_enabled=True,
+            min_real_impressions_per_mode=200,
+            min_real_requests_per_mode=100,
+            max_ctr_regression=0.0,
+            max_apply_rate_regression=0.0,
+            min_offline_auc_gain_for_online_gates=0.0,
+        )
+        self.assertFalse(decision.should_activate)
+        self.assertTrue(decision.reason.startswith("parity_ctr_regression"))
+
+    def test_parity_gate_blocks_apply_rate_regression_when_ctr_not_improving(self) -> None:
+        decision = evaluate_activation_policy(
+            auto_activate=True,
+            policy="guarded",
+            auc_gain=0.05,
+            min_auc_gain=0.01,
+            positive_rate=0.12,
+            min_positive_rate=0.01,
+            learned_weights={"semantic": 0.6, "baseline": 0.25, "behavior": 0.15},
+            baseline_weights={"semantic": 0.55, "baseline": 0.3, "behavior": 0.15},
+            max_weight_shift=0.35,
+            guardrail_report={
+                "data_complete": True,
+                "candidate": {"impressions": 300, "requests": 160},
+                "baseline": {"impressions": 300, "requests": 160},
+                "deltas": {"ctr": 0.0, "apply_rate": -0.02, "freshness_seconds": 0.0, "latency_p95_ms": 0.0, "failure_rate": 0.0},
+            },
+            require_online_kpis=True,
+            parity_enabled=True,
+            min_real_impressions_per_mode=200,
+            min_real_requests_per_mode=100,
+            max_ctr_regression=0.0,
+            max_apply_rate_regression=0.0,
+            min_offline_auc_gain_for_online_gates=0.0,
+        )
+        self.assertFalse(decision.should_activate)
+        self.assertTrue(decision.reason.startswith("parity_apply_rate_regression"))
+
 
 if __name__ == "__main__":
     unittest.main()

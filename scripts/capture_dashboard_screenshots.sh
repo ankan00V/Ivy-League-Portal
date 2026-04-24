@@ -44,8 +44,18 @@ async function main() {
   if (authToken) {
     await page.addInitScript((token) => {
       try {
-        localStorage.setItem('token', token);
-        localStorage.setItem('access_token', token);
+        const now = Date.now();
+        localStorage.setItem('auth_session_present', '1');
+        localStorage.setItem('access_token_expires_at', String(now + 24 * 60 * 60 * 1000));
+        const originalFetch = window.fetch.bind(window);
+        window.fetch = (input, init = {}) => {
+          const headers = new Headers(init.headers || {});
+          const currentAuth = headers.get('Authorization');
+          if (!currentAuth || currentAuth.includes('__cookie_session__')) {
+            headers.set('Authorization', `Bearer ${token}`);
+          }
+          return originalFetch(input, { ...init, headers });
+        };
       } catch (_) {}
     }, authToken);
   }

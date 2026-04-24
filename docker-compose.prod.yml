@@ -1,6 +1,21 @@
-version: '3.8'
+version: "3.8"
 
 services:
+  mongo:
+    image: mongo:7
+    restart: always
+    environment:
+      MONGO_INITDB_DATABASE: ${MONGODB_DB_NAME:-vidyaverse}
+    volumes:
+      - mongo_data:/data/db
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redis_data:/data
+
   backend:
     build:
       context: ./backend
@@ -10,14 +25,25 @@ services:
       - "8000:8000"
     environment:
       - ENVIRONMENT=production
-      - DATABASE_URL=${DATABASE_URL}
-      - REDIS_URL=redis://redis:6379/0
-      # Use an exact list of origins for production
-      - BACKEND_CORS_ORIGINS=["http://localhost:3000"]
-      - ALLOWED_HOSTS=["*"]
-      # Provide JWT Secret keys, API keys, etc.
       - SECRET_KEY=${SECRET_KEY}
+      - MONGODB_URL=${MONGODB_URL:-mongodb://mongo:27017}
+      - MONGODB_DB_NAME=${MONGODB_DB_NAME:-vidyaverse}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - BACKEND_CORS_ORIGINS=${BACKEND_CORS_ORIGINS:-["https://web.test"]}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS:-["api.test"]}
+      - LLM_API_BASE_URL=${LLM_API_BASE_URL:-}
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - LLM_MODEL=${LLM_MODEL:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_API_BASE_URL=${OPENAI_API_BASE_URL:-}
+      - OPENAI_EMBEDDING_MODEL=${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
+      - GOOGLE_OAUTH_CLIENT_ID=${GOOGLE_OAUTH_CLIENT_ID:-}
+      - GOOGLE_OAUTH_CLIENT_SECRET=${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      - GOOGLE_OAUTH_REDIRECT_URI=${GOOGLE_OAUTH_REDIRECT_URI:-}
+      - FRONTEND_OAUTH_SUCCESS_URL=${FRONTEND_OAUTH_SUCCESS_URL:-https://web.test/auth/callback}
+      - FRONTEND_OAUTH_FAILURE_URL=${FRONTEND_OAUTH_FAILURE_URL:-https://web.test/login}
     depends_on:
+      - mongo
       - redis
     restart: always
     logging:
@@ -35,17 +61,12 @@ services:
       - "3000:3000"
     environment:
       - NODE_ENV=production
-      - NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1 # Note: Update this to relative or full domain for actual prod
+      - NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL:-https://api.test}
+      - BACKEND_INTERNAL_URL=${BACKEND_INTERNAL_URL:-http://backend:8000}
     depends_on:
       - backend
     restart: always
 
-  redis:
-    image: redis:7-alpine
-    restart: always
-    command: redis-server --save 60 1 --loglevel warning
-    volumes:
-      - redis_data:/data
-
 volumes:
+  mongo_data:
   redis_data:

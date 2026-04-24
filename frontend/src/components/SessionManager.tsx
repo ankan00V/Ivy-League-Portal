@@ -8,6 +8,7 @@ import {
   getAccessToken,
   getAccessTokenExpiry,
   getAuthStateEventName,
+  hasAuthSession,
 } from "@/lib/auth-session";
 
 const PUBLIC_PATHS = new Set(["/", "/login", "/register", "/auth/callback"]);
@@ -37,11 +38,12 @@ export default function SessionManager() {
 
     const syncSession = () => {
       const token = getAccessToken();
+      const hasSession = hasAuthSession();
       const expiresAt = getAccessTokenExpiry();
 
       stopExpiryTimer();
 
-      if (!token || !expiresAt) {
+      if ((!token && !hasSession) || !expiresAt) {
         redirectIfProtected();
         return;
       }

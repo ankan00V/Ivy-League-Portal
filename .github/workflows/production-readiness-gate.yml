@@ -61,6 +61,8 @@ jobs:
       - name: Run auth and onboarding tests
         run: |
           python -m unittest backend.tests.test_auth_oauth -v
+          python -m unittest backend.tests.test_auth_cookie_session -v
+          python -m unittest backend.tests.test_http_security_middleware -v
           python -m unittest backend.tests.test_users_ranking_summary -v
 
   recommendation-regressions:
@@ -86,6 +88,7 @@ jobs:
 
       - name: Run recommendation and analytics tests
         run: |
+          python -m unittest backend.tests.test_activation_policy -v
           python -m unittest backend.tests.test_recommendation_service -v
           python -m unittest backend.tests.test_experiment_analytics_service -v
 
@@ -118,3 +121,6 @@ jobs:
         env:
           NEXT_TELEMETRY_DISABLED: "1"
         run: npm run build
+
+      - name: Validate browser security headers
+        run: npm run e2e -- --project=chromium --grep "Browser security headers"

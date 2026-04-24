@@ -3,11 +3,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useEffect, useCallback } from "react";
 import BrandLogo from "@/components/BrandLogo";
-import { clearAccessToken, getAccessToken, getAuthStateEventName } from "@/lib/auth-session";
+import { clearAccessToken, getAuthStateEventName, hasAuthSession } from "@/lib/auth-session";
 
 export default function Navbar() {
     const [scrolled, setScrolled] = useState(false);
-    const [isAuthenticated, setIsAuthenticated] = useState(() => Boolean(getAccessToken()));
+    const [isAuthenticated, setIsAuthenticated] = useState(() => hasAuthSession());
     const router = useRouter();
 
     useEffect(() => {
@@ -17,7 +17,7 @@ export default function Navbar() {
     }, []);
 
     const syncAuthState = useCallback(() => {
-        setIsAuthenticated(Boolean(getAccessToken()));
+        setIsAuthenticated(hasAuthSession());
     }, []);
 
     useEffect(() => {

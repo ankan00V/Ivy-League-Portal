@@ -5,6 +5,13 @@ import Sidebar from "@/components/Sidebar";
 import { apiUrl } from "@/lib/api";
 import { getAccessToken } from "@/lib/auth-session";
 import { motion } from "framer-motion";
+import PageHeader from "@/components/ui/PageHeader";
+import SectionCard from "@/components/ui/SectionCard";
+import StatusBadge from "@/components/ui/StatusBadge";
+import DataTable from "@/components/ui/DataTable";
+import TimeseriesChart from "@/components/charts/TimeseriesChart";
+import CohortHeatmap from "@/components/charts/CohortHeatmap";
+import LiftConfidenceChart from "@/components/charts/LiftConfidenceChart";
 
 type VariantRow = {
   name: string;
@@ -274,6 +281,99 @@ export default function ExperimentsPage() {
     };
   }, [featureRows]);
 
+  const dailyCtrSeries = useMemo(
+    () =>
+      dailyAggregates
+        .slice(0, 14)
+        .reverse()
+        .map((row) => ({
+          label: row.date.slice(5),
+          value: Number(readMeasure(row, "ctr") ?? 0),
+        })),
+    [dailyAggregates],
+  );
+
+  const funnelApplySeries = useMemo(
+    () =>
+      funnelAggregates
+        .slice(0, 14)
+        .reverse()
+        .map((row) => ({
+          label: row.date.slice(5),
+          value: Number(readRate(row, "apply_rate") ?? 0),
+        })),
+    [funnelAggregates],
+  );
+
+  const featureCoverageSeries = useMemo(() => {
+    const grouped = new Map<string, { total: number; withMatch: number }>();
+    for (const row of featureRows) {
+      const date = (row.date || "").slice(0, 10);
+      if (!date) continue;
+      const entry = grouped.get(date) ?? { total: 0, withMatch: 0 };
+      entry.total += 1;
+      if (typeof row.match_score === "number") {
+        entry.withMatch += 1;
+      }
+      grouped.set(date, entry);
+    }
+    return Array.from(grouped.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .slice(-14)
+      .map(([date, item]) => ({
+        label: date.slice(5),
+        value: item.total > 0 ? item.withMatch / item.total : 0,
+      }));
+  }, [featureRows]);
+
+  const cohortHeatmapData = useMemo(() => {
+    const dayBuckets = [0, 1, 3, 7, 14, 30];
+    const cohortLabels = Array.from(new Set(cohortAggregates.map((row) => row.cohort_date)))
+      .sort((a, b) => b.localeCompare(a))
+      .slice(0, 6)
+      .reverse();
+
+    const cells = cohortLabels.flatMap((cohortLabel) =>
+      dayBuckets.map((day) => {
+        const rows = cohortAggregates.filter(
+          (row) => row.cohort_date === cohortLabel && row.days_since_cohort === day,
+        );
+        const avgRetention =
+          rows.length > 0
+            ? rows.reduce((sum, row) => sum + Number(row.retention_rate || 0), 0) / rows.length
+            : 0;
+        return {
+          cohortLabel,
+          dayLabel: `D${day}`,
+          value: avgRetention,
+        };
+      }),
+    );
+
+    return {
+      rows: cohortLabels,
+      columns: dayBuckets.map((day) => `D${day}`),
+      cells,
+    };
+  }, [cohortAggregates]);
+
+  const liftRows = useMemo(
+    () =>
+      sortedReports
+        .flatMap((report) =>
+          report.comparisons
+            .filter((comparison) => comparison.variant !== comparison.control)
+            .map((comparison) => ({
+              label: `${report.experiment_key}:${comparison.variant}`,
+              diff: comparison.diff,
+              low: comparison.diff_ci_low,
+              high: comparison.diff_ci_high,
+            })),
+        )
+        .slice(0, 8),
+    [sortedReports],
+  );
+
   useEffect(() => {
     const load = async () => {
       setLoading(true);
@@ -399,67 +499,58 @@ export default function ExperimentsPage() {
       <Sidebar />
 
       <main className="main-content" style={{ width: "100%" }}>
-        <motion.header
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "flex-end",
-            gap: "1rem",
-            padding: "1.5rem 0 1rem",
-            borderBottom: "2px solid var(--border-subtle)",
-            marginBottom: "1.25rem",
-          }}
-        >
-          <div>
-            <div style={{ fontFamily: "var(--font-serif)", fontSize: "2rem", fontWeight: 400 }}>
-              Experiments
-            </div>
-            <div style={{ color: "var(--text-muted)", fontWeight: 600 }}>
-              Variant performance with confidence intervals and significance tests.
-            </div>
-          </div>
-
-          <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", flexWrap: "wrap" }}>
-            <label style={{ fontWeight: 700, color: "var(--text-muted)", fontSize: "0.85rem" }}>Window</label>
-            <select
-              value={days}
-              onChange={(e) => setDays(Number(e.target.value))}
-              style={{
-                background: "var(--bg-surface)",
-                border: "2px solid var(--border-subtle)",
-                borderRadius: "var(--radius-sm)",
-                padding: "0.6rem 0.75rem",
-                color: "var(--text-primary)",
-                fontWeight: 700,
-                boxShadow: "var(--shadow-sm)",
-              }}
-            >
-              <option value={7}>7 days</option>
-              <option value={30}>30 days</option>
-              <option value={90}>90 days</option>
-              <option value={180}>180 days</option>
-            </select>
-            <label style={{ fontWeight: 700, color: "var(--text-muted)", fontSize: "0.85rem" }}>Traffic</label>
-            <select
-              value={analyticsTrafficType}
-              onChange={(e) => setAnalyticsTrafficType(e.target.value as "real" | "simulated")}
-              style={{
-                background: "var(--bg-surface)",
-                border: "2px solid var(--border-subtle)",
-                borderRadius: "var(--radius-sm)",
-                padding: "0.6rem 0.75rem",
-                color: "var(--text-primary)",
-                fontWeight: 700,
-                boxShadow: "var(--shadow-sm)",
-              }}
-            >
-              <option value="real">real</option>
-              <option value="simulated">simulated</option>
-            </select>
-          </div>
-        </motion.header>
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+          <PageHeader
+            title="Experiments"
+            subtitle="Variant performance with confidence intervals, power checks, and warehouse diagnostics."
+            status={
+              <>
+                <StatusBadge tone={analyticsTrafficType === "real" ? "live" : "simulated"} label={analyticsTrafficType} />
+                <StatusBadge tone="info" label={`${days}d window`} />
+              </>
+            }
+            actions={
+              <>
+                <label style={{ fontWeight: 700, color: "var(--text-muted)", fontSize: "0.85rem" }}>Window</label>
+                <select
+                  value={days}
+                  onChange={(e) => setDays(Number(e.target.value))}
+                  style={{
+                    background: "var(--bg-surface)",
+                    border: "2px solid var(--border-subtle)",
+                    borderRadius: "var(--radius-sm)",
+                    padding: "0.6rem 0.75rem",
+                    color: "var(--text-primary)",
+                    fontWeight: 700,
+                    boxShadow: "var(--shadow-sm)",
+                  }}
+                >
+                  <option value={7}>7 days</option>
+                  <option value={30}>30 days</option>
+                  <option value={90}>90 days</option>
+                  <option value={180}>180 days</option>
+                </select>
+                <label style={{ fontWeight: 700, color: "var(--text-muted)", fontSize: "0.85rem" }}>Traffic</label>
+                <select
+                  value={analyticsTrafficType}
+                  onChange={(e) => setAnalyticsTrafficType(e.target.value as "real" | "simulated")}
+                  style={{
+                    background: "var(--bg-surface)",
+                    border: "2px solid var(--border-subtle)",
+                    borderRadius: "var(--radius-sm)",
+                    padding: "0.6rem 0.75rem",
+                    color: "var(--text-primary)",
+                    fontWeight: 700,
+                    boxShadow: "var(--shadow-sm)",
+                  }}
+                >
+                  <option value="real">real</option>
+                  <option value="simulated">simulated</option>
+                </select>
+              </>
+            }
+          />
+        </motion.div>
 
         {error ? (
           <div
@@ -557,6 +648,41 @@ export default function ExperimentsPage() {
               ))}
             </div>
           </section>
+        ) : null}
+
+        {!loading && !error ? (
+          <SectionCard
+            title="Visual Diagnostics"
+            subtitle="Time-series and confidence visuals for faster interpretation across funnel, cohorts, and model-feature quality."
+            status={<StatusBadge tone="info" label="Charts" />}
+          >
+            <div style={{ display: "grid", gap: "1rem", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
+              <div style={{ border: "2px solid var(--border-subtle)", borderRadius: "var(--radius-sm)", padding: "0.8rem", background: "var(--bg-surface-hover)" }}>
+                <div style={{ fontWeight: 900, marginBottom: "0.45rem" }}>Daily CTR Trend</div>
+                <TimeseriesChart points={dailyCtrSeries} color="var(--accent-cyan)" valueFormatter={(value) => formatPct(value)} />
+              </div>
+              <div style={{ border: "2px solid var(--border-subtle)", borderRadius: "var(--radius-sm)", padding: "0.8rem", background: "var(--bg-surface-hover)" }}>
+                <div style={{ fontWeight: 900, marginBottom: "0.45rem" }}>Funnel Apply-Rate Trend</div>
+                <TimeseriesChart points={funnelApplySeries} color="var(--brand-accent)" valueFormatter={(value) => formatPct(value)} />
+              </div>
+              <div style={{ border: "2px solid var(--border-subtle)", borderRadius: "var(--radius-sm)", padding: "0.8rem", background: "var(--bg-surface-hover)" }}>
+                <div style={{ fontWeight: 900, marginBottom: "0.45rem" }}>Feature Coverage Trend</div>
+                <TimeseriesChart points={featureCoverageSeries} color="var(--brand-primary)" valueFormatter={(value) => formatPct(value)} />
+              </div>
+              <div style={{ border: "2px solid var(--border-subtle)", borderRadius: "var(--radius-sm)", padding: "0.8rem", background: "var(--bg-surface-hover)" }}>
+                <div style={{ fontWeight: 900, marginBottom: "0.45rem" }}>Lift Confidence</div>
+                <LiftConfidenceChart rows={liftRows} />
+              </div>
+            </div>
+            <div style={{ marginTop: "1rem", border: "2px solid var(--border-subtle)", borderRadius: "var(--radius-sm)", padding: "0.8rem", background: "var(--bg-surface-hover)" }}>
+              <div style={{ fontWeight: 900, marginBottom: "0.45rem" }}>Cohort Retention Heatmap</div>
+              {cohortHeatmapData.rows.length === 0 ? (
+                <div style={{ color: "var(--text-muted)", fontWeight: 700 }}>No cohort rows yet.</div>
+              ) : (
+                <CohortHeatmap rows={cohortHeatmapData.rows} columns={cohortHeatmapData.columns} cells={cohortHeatmapData.cells} />
+              )}
+            </div>
+          </SectionCard>
         ) : null}
 
         {!loading && !error ? (
@@ -834,8 +960,7 @@ export default function ExperimentsPage() {
                 ) : null}
 
                 <div style={{ padding: "1.25rem" }}>
-                  <div style={{ overflowX: "auto" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 980 }}>
+                  <DataTable minWidth={980}>
                       <thead>
                         <tr style={{ textAlign: "left", color: "var(--text-muted)", fontWeight: 900 }}>
                           <th style={{ padding: "0.6rem 0.5rem" }}>Variant</th>
@@ -915,8 +1040,7 @@ export default function ExperimentsPage() {
                           );
                         })}
                       </tbody>
-                    </table>
-                  </div>
+                  </DataTable>
                 </div>
               </section>
             );

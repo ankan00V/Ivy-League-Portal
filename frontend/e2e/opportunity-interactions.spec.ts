@@ -154,7 +154,7 @@ async function stubOpportunityRoutes(page: Page, captured: InteractionPayload[])
 test.describe("Opportunity interaction contracts", () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => {
-      localStorage.setItem("access_token", "test-token");
+      localStorage.setItem("auth_session_present", "1");
       localStorage.setItem("access_token_expires_at", String(Date.now() + 60 * 60 * 1000));
     });
   });

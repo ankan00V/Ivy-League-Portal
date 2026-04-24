@@ -4,11 +4,11 @@ import { useRouter } from "next/navigation";
 import Navbar from "@/components/Navbar";
 import Spline from "@splinetool/react-spline";
 import { useCallback, useEffect, useState } from "react";
-import { getAccessToken, getAuthStateEventName, resolvePostAuthRoute } from "@/lib/auth-session";
+import { getAccessToken, getAuthStateEventName, hasAuthSession, resolvePostAuthRoute } from "@/lib/auth-session";
 
 export default function Home() {
   const router = useRouter();
-  const [isAuthenticated, setIsAuthenticated] = useState(() => Boolean(getAccessToken()));
+  const [isAuthenticated, setIsAuthenticated] = useState(() => hasAuthSession());
   const [dashboardHref, setDashboardHref] = useState("/dashboard");
 
   const hideSplineBranding = useCallback(() => {
@@ -68,14 +68,14 @@ export default function Home() {
 
     const syncDashboardHref = async () => {
       const token = getAccessToken();
-      if (!token) {
+      if (!token && !hasAuthSession()) {
         if (!cancelled) {
           setDashboardHref("/dashboard");
         }
         return;
       }
 
-      const nextRoute = await resolvePostAuthRoute(token);
+      const nextRoute = await resolvePostAuthRoute(token || null);
       if (!cancelled) {
         setDashboardHref(nextRoute || "/dashboard");
       }
@@ -83,9 +83,9 @@ export default function Home() {
 
     const syncAuthState = () => {
       const token = getAccessToken();
-      const hasToken = Boolean(token);
+      const isAuthed = Boolean(token) || hasAuthSession();
       if (!cancelled) {
-        setIsAuthenticated(hasToken);
+        setIsAuthenticated(isAuthed);
       }
       void syncDashboardHref();
     };

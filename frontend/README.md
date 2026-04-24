@@ -41,6 +41,13 @@ The frontend uses `src/lib/api.ts` plus `src/app/api/[...path]/route.ts` to deci
 
 This proxy setup is especially useful when the frontend is served via `https://web.test` through `slim` while the backend still runs locally on plain HTTP.
 
+## Auth Session Mode
+
+- Backend now issues an HttpOnly session cookie on successful OTP/password/OAuth login.
+- Frontend no longer persists bearer tokens in `localStorage`; auth state uses cookie session + non-sensitive session marker.
+- Existing bearer header logic remains backward-compatible during migration, but session cookie is the primary auth mechanism.
+- Frontend responses now include nonce-based strict `script-src` CSP + enforced Trusted Types security headers from `src/proxy.ts`.
+
 ## Preferred Local Hosting
 
 Once the backend is running on port `8000`, map local domains with:
@@ -72,3 +79,22 @@ npm install
 npx playwright install chromium
 npm run e2e
 ```
+
+Integrated live-backend smoke (no mocked API routes):
+
+```bash
+PLAYWRIGHT_LIVE_BACKEND=1 npm run e2e -- --grep "Live backend smoke"
+```
+
+Integrated staging auth + protected-flow checks (no mocked API routes):
+
+```bash
+PLAYWRIGHT_STAGING_URL=https://your-staging-web-domain.com \
+PLAYWRIGHT_INTEGRATED_AUTH=1 \
+npm run e2e:staging
+```
+
+Optional deeper staging checks can be enabled with:
+- `PLAYWRIGHT_STAGING_ADMIN_BEARER`
+- `PLAYWRIGHT_STAGING_EMPLOYER_EMAIL`
+- `PLAYWRIGHT_STAGING_EMPLOYER_PASSWORD`

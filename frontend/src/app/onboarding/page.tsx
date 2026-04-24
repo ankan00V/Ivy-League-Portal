@@ -1,14 +1,11 @@
 "use client";
 
 import Image from "next/image";
-import { useRouter } from "next/navigation";
 import React, { useEffect, useMemo, useState } from "react";
 
 import BrandLogo from "@/components/BrandLogo";
 import { CenteredPageSkeleton } from "@/components/LoadingSkeletons";
-import { apiUrl } from "@/lib/api";
-import { clearAccessToken, getAccessToken } from "@/lib/auth-session";
-import { getApiErrorMessage, getUnknownErrorMessage } from "@/lib/error-utils";
+import { useOnboardingFlow } from "@/hooks/useOnboardingFlow";
 import { INDIAN_INSTITUTION_OPTIONS, OTHER_INSTITUTION_LABEL } from "@/lib/indian-institutions";
 
 type AccountType = "candidate" | "employer";
@@ -218,16 +215,51 @@ function buildOnboardingPayload(profile: ProfilePayload): OnboardingUpdatePayloa
   return payload;
 }
 
+function hydrateOnboardingProfilePayload(payload: Record<string, unknown>, previous: ProfilePayload): ProfilePayload {
+  const asText = (value: unknown, fallback: string): string => (typeof value === "string" ? value : fallback);
+  const asNullableNumber = (value: unknown, fallback: number | null): number | null => (typeof value === "number" ? value : fallback);
+  const asBoolean = (key: keyof ProfilePayload, fallback: boolean): boolean =>
+    Object.prototype.hasOwnProperty.call(payload, key) ? Boolean(payload[key]) : fallback;
+
+  return {
+    ...previous,
+    account_type: (typeof payload.account_type === "string" ? payload.account_type : previous.account_type) as AccountType,
+    first_name: asText(payload.first_name, previous.first_name),
+    last_name: asText(payload.last_name, previous.last_name),
+    mobile: asText(payload.mobile, previous.mobile),
+    country_code: asText(payload.country_code, previous.country_code || "+91") || "+91",
+    user_type: (typeof payload.user_type === "string" ? payload.user_type : previous.user_type) as UserType | "",
+    domain: asText(payload.domain, previous.domain),
+    course: asText(payload.course, previous.course),
+    passout_year: asNullableNumber(payload.passout_year, previous.passout_year),
+    class_grade: asNullableNumber(payload.class_grade, previous.class_grade),
+    current_job_role: asText(payload.current_job_role, previous.current_job_role),
+    total_work_experience: asText(payload.total_work_experience, previous.total_work_experience),
+    college_name: asText(payload.college_name, previous.college_name),
+    company_name: asText(payload.company_name, previous.company_name),
+    company_website: asText(payload.company_website, previous.company_website),
+    company_size: asText(payload.company_size, previous.company_size),
+    company_description: asText(payload.company_description, previous.company_description),
+    hiring_for: (typeof payload.hiring_for === "string" ? payload.hiring_for : previous.hiring_for) as "myself" | "others" | "",
+    goals: Array.isArray(payload.goals) ? payload.goals.map((item) => String(item)) : previous.goals,
+    preferred_roles: asText(payload.preferred_roles, previous.preferred_roles),
+    preferred_locations: asText(payload.preferred_locations, previous.preferred_locations),
+    pan_india: asBoolean("pan_india", previous.pan_india),
+    prefer_wfh: asBoolean("prefer_wfh", previous.prefer_wfh),
+    consent_data_processing: asBoolean("consent_data_processing", previous.consent_data_processing),
+    consent_updates: asBoolean("consent_updates", previous.consent_updates),
+    resume_url: asText(payload.resume_url, previous.resume_url),
+    resume_filename: asText(payload.resume_filename, previous.resume_filename),
+    resume_uploaded_at: asText(payload.resume_uploaded_at, previous.resume_uploaded_at),
+    bio: asText(payload.bio, previous.bio),
+    skills: asText(payload.skills, previous.skills),
+    interests: asText(payload.interests, previous.interests),
+    achievements: asText(payload.achievements, previous.achievements),
+    education: asText(payload.education, previous.education),
+  };
+}
+
 export default function OnboardingPage() {
-  const router = useRouter();
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [step, setStep] = useState(1);
-  const [error, setError] = useState<string | null>(null);
-  const [resumeUploading, setResumeUploading] = useState(false);
-  const [employerRoleSelection, setEmployerRoleSelection] = useState<string>("");
-  const [selectedUniversity, setSelectedUniversity] = useState<string>("");
-  const [status, setStatus] = useState<OnboardingStatus | null>(null);
   const [profile, setProfile] = useState<ProfilePayload>({
     account_type: "candidate",
     first_name: "",
@@ -263,6 +295,34 @@ export default function OnboardingPage() {
     achievements: "",
     education: "",
   });
+  const {
+    loading,
+    saving,
+    step,
+    setStep,
+    error,
+    resumeUploading,
+    employerRoleSelection,
+    setEmployerRoleSelection,
+    selectedUniversity,
+    setSelectedUniversity,
+    status,
+    handleResumeUpload,
+    handleResumeDelete,
+    handleSave,
+    logout,
+  } = useOnboardingFlow<ProfilePayload, OnboardingUpdatePayload, OnboardingStatus>({
+    profile,
+    setProfile,
+    hydrateProfilePayload: hydrateOnboardingProfilePayload,
+    buildOnboardingPayload,
+    deriveUniversitySelection,
+    employerRoleOptions: EMPLOYER_ROLE_OPTIONS,
+    getAccountTypeFromProfile: (value) => value.account_type,
+    getCollegeNameFromProfile: (value) => value.college_name,
+    getCurrentRoleFromProfile: (value) => value.current_job_role,
+    resolveRouteForAccountType: (accountType) => (accountType === "employer" ? "/employer/dashboard" : "/dashboard"),
+  });
 
   const totalSteps = profile.account_type === "employer" ? 2 : 3;
   const visual = useMemo(() => ONBOARDING_VISUALS[(step - 1) % ONBOARDING_VISUALS.length], [step]);
@@ -271,94 +331,7 @@ export default function OnboardingPage() {
     if (step > totalSteps) {
       setStep(totalSteps);
     }
-  }, [step, totalSteps]);
-
-  useEffect(() => {
-    const token = getAccessToken();
-    if (!token) {
-      router.replace("/login");
-      return;
-    }
-
-    const run = async () => {
-      try {
-        const [profileRes, statusRes] = await Promise.all([
-          fetch(apiUrl("/api/v1/users/me/profile"), {
-            headers: { Authorization: `Bearer ${token}` },
-          }),
-          fetch(apiUrl("/api/v1/users/me/onboarding-status"), {
-            headers: { Authorization: `Bearer ${token}` },
-          }),
-        ]);
-        if (!profileRes.ok) {
-          throw new Error("Failed to load profile");
-        }
-        const profilePayload = await profileRes.json();
-        const onboardingStatus = statusRes.ok ? ((await statusRes.json()) as OnboardingStatus) : null;
-        if (onboardingStatus?.completed) {
-          const accountType = String(profilePayload.account_type || "candidate").toLowerCase();
-          router.replace(accountType === "employer" ? "/employer/dashboard" : "/dashboard");
-          return;
-        }
-        const asText = (value: unknown): string => (typeof value === "string" ? value : "");
-        const asBool = (value: unknown): boolean => Boolean(value);
-        const asNullableNumber = (value: unknown): number | null => (typeof value === "number" ? value : null);
-
-        setStatus(onboardingStatus);
-        setProfile((prev) => ({
-          ...prev,
-          account_type: (profilePayload.account_type || "candidate") as AccountType,
-          first_name: asText(profilePayload.first_name),
-          last_name: asText(profilePayload.last_name),
-          mobile: asText(profilePayload.mobile),
-          country_code: asText(profilePayload.country_code) || "+91",
-          user_type: (profilePayload.user_type || "") as UserType | "",
-          domain: asText(profilePayload.domain),
-          course: asText(profilePayload.course),
-          passout_year: asNullableNumber(profilePayload.passout_year),
-          class_grade: asNullableNumber(profilePayload.class_grade),
-          current_job_role: asText(profilePayload.current_job_role),
-          total_work_experience: asText(profilePayload.total_work_experience),
-          college_name: asText(profilePayload.college_name),
-          company_name: asText(profilePayload.company_name),
-          company_website: asText(profilePayload.company_website),
-          company_size: asText(profilePayload.company_size),
-          company_description: asText(profilePayload.company_description),
-          hiring_for: (profilePayload.hiring_for || "") as "myself" | "others" | "",
-          goals: Array.isArray(profilePayload.goals) ? profilePayload.goals.map((item: unknown) => String(item)) : [],
-          preferred_roles: asText(profilePayload.preferred_roles),
-          preferred_locations: asText(profilePayload.preferred_locations),
-          pan_india: asBool(profilePayload.pan_india),
-          prefer_wfh: asBool(profilePayload.prefer_wfh),
-          consent_data_processing: asBool(profilePayload.consent_data_processing),
-          consent_updates: asBool(profilePayload.consent_updates),
-          resume_url: asText(profilePayload.resume_url),
-          resume_filename: asText(profilePayload.resume_filename),
-          resume_uploaded_at: asText(profilePayload.resume_uploaded_at),
-          bio: asText(profilePayload.bio),
-          skills: asText(profilePayload.skills),
-          interests: asText(profilePayload.interests),
-          achievements: asText(profilePayload.achievements),
-          education: asText(profilePayload.education),
-        }));
-        const existingCollegeName = asText(profilePayload.college_name);
-        setSelectedUniversity(deriveUniversitySelection(existingCollegeName));
-        const existingRole = String(profilePayload.current_job_role || "").trim();
-        if (existingRole.length === 0) {
-          setEmployerRoleSelection("");
-        } else if (EMPLOYER_ROLE_OPTIONS.includes(existingRole)) {
-          setEmployerRoleSelection(existingRole);
-        } else {
-          setEmployerRoleSelection("Other");
-        }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Unable to load onboarding");
-      } finally {
-        setLoading(false);
-      }
-    };
-    void run();
-  }, [router]);
+  }, [setStep, step, totalSteps]);
 
   const missingConsent = !profile.consent_data_processing;
   const requiresUserType = profile.account_type === "candidate";
@@ -413,152 +386,16 @@ export default function OnboardingPage() {
     });
   };
 
-  const handleResumeUpload = async (file: File) => {
-    const token = getAccessToken();
-    if (!token) {
-      router.replace("/login");
-      return;
-    }
-    setResumeUploading(true);
-    setError(null);
-    try {
-      const form = new FormData();
-      form.append("file", file);
-      const res = await fetch(apiUrl("/api/v1/users/me/resume"), {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        body: form,
-      });
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(getApiErrorMessage(payload, "Unable to upload resume"));
-      }
-      setProfile((prev) => ({
-        ...prev,
-        resume_url: typeof payload.resume_url === "string" ? payload.resume_url : prev.resume_url,
-        resume_filename: typeof payload.resume_filename === "string" ? payload.resume_filename : file.name,
-        resume_uploaded_at: typeof payload.resume_uploaded_at === "string" ? payload.resume_uploaded_at : prev.resume_uploaded_at,
-      }));
-    } catch (err) {
-      setError(getUnknownErrorMessage(err, "Unable to upload resume"));
-    } finally {
-      setResumeUploading(false);
-    }
-  };
-
-  const handleResumeDelete = async () => {
-    const token = getAccessToken();
-    if (!token) {
-      router.replace("/login");
-      return;
-    }
-    setResumeUploading(true);
-    setError(null);
-    try {
-      const res = await fetch(apiUrl("/api/v1/users/me/resume"), {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(getApiErrorMessage(payload, "Unable to remove resume"));
-      }
-      setProfile((prev) => ({
-        ...prev,
-        resume_url: "",
-        resume_filename: "",
-        resume_uploaded_at: "",
-      }));
-    } catch (err) {
-      setError(getUnknownErrorMessage(err, "Unable to remove resume"));
-    } finally {
-      setResumeUploading(false);
-    }
-  };
-
-  const handleSave = async (finish: boolean) => {
-    const token = getAccessToken();
-    if (!token) {
-      router.replace("/login");
-      return;
-    }
-    setSaving(true);
-    setError(null);
-    try {
-      const payloadToSave = buildOnboardingPayload(profile);
-      const res = await fetch(apiUrl("/api/v1/users/me/onboarding"), {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payloadToSave),
-      });
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(getApiErrorMessage(payload, "Unable to save onboarding"));
-      }
-
-      const statusRes = await fetch(apiUrl("/api/v1/users/me/onboarding-status"), {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const onboardingStatus = statusRes.ok ? ((await statusRes.json()) as OnboardingStatus) : null;
-      setStatus(onboardingStatus);
-
-      if (finish && onboardingStatus?.completed) {
-        router.push(profile.account_type === "employer" ? "/employer/dashboard" : "/dashboard");
-      } else if (finish) {
-        const missing = onboardingStatus?.missing_fields?.join(", ") || "some required fields";
-        setError(`Please complete: ${missing}`);
-      } else {
-        setStep((current) => Math.min(totalSteps, current + 1));
-      }
-    } catch (err) {
-      setError(getUnknownErrorMessage(err, "Unable to save onboarding"));
-    } finally {
-      setSaving(false);
-    }
-  };
-
   if (loading) {
     return <CenteredPageSkeleton paneHeight="760px" />;
   }
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        display: "grid",
-        placeItems: "center",
-        background:
-          "radial-gradient(circle at 10% 20%, rgba(251,191,36,0.08), transparent 30%), radial-gradient(circle at 85% 15%, rgba(59,130,246,0.07), transparent 26%), var(--bg-base)",
-        padding: "1.5rem",
-      }}
-    >
-      <section
-        className="card-panel auth-shell"
-        style={{
-          width: "min(1120px, 100%)",
-          minHeight: "760px",
-          padding: 0,
-          overflow: "hidden",
-        }}
-      >
-        <aside
-          className="auth-left-pane"
-          style={{
-            background: "#f7c948",
-            padding: "1.25rem",
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: "space-between",
-            borderRight: "2px solid var(--border-subtle)",
-          }}
-        >
+    <main className="onboarding-page-root">
+      <section className="card-panel auth-shell onboarding-shell">
+        <aside className="auth-left-pane onboarding-left-pane">
           <BrandLogo size="md" />
-          <div style={{ borderRadius: "var(--radius-md)", overflow: "hidden", border: "2px solid rgba(0,0,0,0.12)", background: "#fff", position: "relative", height: "420px" }}>
+          <div className="onboarding-visual-frame">
             <Image
               src={visual}
               alt="Onboarding visual"
@@ -568,41 +405,37 @@ export default function OnboardingPage() {
             />
           </div>
           <div>
-            <h2 style={{ fontSize: "1.95rem", marginBottom: "0.45rem", color: "#111" }}>Set up your profile</h2>
-            <p style={{ color: "rgba(0,0,0,0.78)", fontWeight: 600 }}>
+            <h2 className="onboarding-hero-title">Set up your profile</h2>
+            <p className="onboarding-hero-subtitle">
               We personalize recommendations and matching based on this setup.
             </p>
           </div>
         </aside>
 
-        <div className="auth-right-pane" style={{ padding: "1.75rem", display: "flex", flexDirection: "column", gap: "1rem" }}>
+        <div className="auth-right-pane onboarding-right-pane">
           <div>
-            <h1 style={{ fontSize: "2rem", marginBottom: "0.5rem" }}>You&apos;re almost there</h1>
-            <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+            <h1 className="onboarding-page-title">You&apos;re almost there</h1>
+            <div className="onboarding-progress-wrap">
               {Array.from({ length: totalSteps }, (_, idx) => idx + 1).map((n) => (
                 <div
                   key={n}
-                  style={{
-                    height: "6px",
-                    borderRadius: "999px",
-                    width: "68px",
-                    background: n <= step ? "var(--brand-primary)" : "var(--border-subtle)",
-                  }}
+                  className="onboarding-progress-step"
+                  style={{ background: n <= step ? "var(--brand-primary)" : "var(--border-subtle)" }}
                 />
               ))}
-              <span style={{ marginLeft: "0.5rem", color: "var(--text-secondary)", fontWeight: 700 }}>
+              <span className="onboarding-progress-text">
                 {status?.progress_percent ?? 0}% complete
               </span>
             </div>
           </div>
 
           {error && (
-            <div style={{ background: "rgba(239,68,68,0.08)", border: "2px solid #ef4444", color: "#b91c1c", borderRadius: "var(--radius-sm)", padding: "0.75rem" }}>
+            <div className="onboarding-alert-error">
               {error}
             </div>
           )}
 
-          <div style={{ flex: 1, overflowY: "auto", display: "grid", gap: "1rem", paddingRight: "0.5rem" }}>
+          <div className="onboarding-form-body">
             {step === 1 && (
               <>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
@@ -958,18 +791,15 @@ export default function OnboardingPage() {
             )}
           </div>
 
-          <div style={{ borderTop: "2px solid var(--border-subtle)", paddingTop: "1rem", display: "flex", justifyContent: "space-between", gap: "0.8rem" }}>
+          <div className="onboarding-footer">
             <button
               type="button"
               className="btn-secondary"
-              onClick={() => {
-                clearAccessToken();
-                router.replace("/login");
-              }}
+              onClick={logout}
             >
               Logout
             </button>
-            <div style={{ display: "flex", gap: "0.6rem" }}>
+            <div className="onboarding-footer-actions">
               {step > 1 && (
                 <button type="button" className="btn-secondary" onClick={() => setStep((current) => Math.max(1, current - 1))}>
                   Back
@@ -980,12 +810,12 @@ export default function OnboardingPage() {
                   type="button"
                   className="btn-primary"
                   disabled={saving || (step === 1 ? !canContinueStep1 : !canContinueStep2)}
-                  onClick={() => void handleSave(false)}
+                  onClick={() => void handleSave(false, totalSteps)}
                 >
                   Continue
                 </button>
               ) : (
-                <button type="button" className="btn-primary" disabled={saving} onClick={() => void handleSave(true)}>
+                <button type="button" className="btn-primary" disabled={saving} onClick={() => void handleSave(true, totalSteps)}>
                   {saving ? "Finishing..." : "Finish"}
                 </button>
               )}

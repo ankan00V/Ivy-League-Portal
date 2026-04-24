@@ -1,0 +1,7 @@
+services:
+  - domain: web
+    port: 3000
+  - domain: api
+    port: 8000
+
+log_mode: minimal

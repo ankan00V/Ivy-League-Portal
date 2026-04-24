@@ -7,7 +7,7 @@ import React, { useEffect, useMemo, useState } from "react";
 
 import BrandLogo from "@/components/BrandLogo";
 import { apiUrl } from "@/lib/api";
-import { getAccessToken, resolvePostAuthRoute, setAccessToken } from "@/lib/auth-session";
+import { getAccessToken, hasAuthSession, resolvePostAuthRoute, setAccessToken } from "@/lib/auth-session";
 import { getApiErrorMessage, getUnknownErrorMessage } from "@/lib/error-utils";
 
 type AuthStep = "email" | "otp" | "password";
@@ -59,10 +59,10 @@ export default function LoginPage() {
 
   useEffect(() => {
     const token = getAccessToken();
-    if (!token) {
+    if (!token && !hasAuthSession()) {
       return;
     }
-    void resolvePostAuthRoute(token).then((nextRoute) => router.replace(nextRoute));
+    void resolvePostAuthRoute(token || null).then((nextRoute) => router.replace(nextRoute));
   }, [router]);
 
   useEffect(() => {

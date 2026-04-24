@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import time
+from urllib.parse import urlsplit
 from typing import Callable
 
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
 from starlette.responses import Response
 
 from app.core.config import settings
@@ -27,6 +29,56 @@ def _route_label(request: Request) -> str:
     if isinstance(path, str) and path:
         return path
     return request.url.path
+
+
+def _origin_from_value(value: str | None) -> str | None:
+    candidate = str(value or "").strip()
+    if not candidate:
+        return None
+    split = urlsplit(candidate)
+    if split.scheme not in {"http", "https"} or not split.netloc:
+        return None
+    return f"{split.scheme}://{split.netloc}"
+
+
+def _trusted_csrf_origins() -> set[str]:
+    explicit_origins = {
+        origin
+        for origin in (_origin_from_value(item) for item in list(settings.CSRF_TRUSTED_ORIGINS or []))
+        if origin
+    }
+    if explicit_origins:
+        trusted = set(explicit_origins)
+    else:
+        trusted = {
+            origin
+            for origin in (_origin_from_value(item) for item in list(settings.BACKEND_CORS_ORIGINS or []))
+            if origin
+        }
+
+    for extra in (settings.FRONTEND_OAUTH_SUCCESS_URL, settings.FRONTEND_OAUTH_FAILURE_URL):
+        origin = _origin_from_value(extra)
+        if origin:
+            trusted.add(origin)
+    return trusted
+
+
+def _request_origin(request: Request) -> str | None:
+    origin = _origin_from_value(request.headers.get("origin"))
+    if origin:
+        return origin
+    return _origin_from_value(request.headers.get("referer"))
+
+
+def _response_with_vary_origin(response: Response) -> Response:
+    existing = response.headers.get("vary")
+    if not existing:
+        response.headers["Vary"] = "Origin"
+        return response
+    normalized = [item.strip().lower() for item in existing.split(",") if item.strip()]
+    if "origin" not in normalized:
+        response.headers["Vary"] = f"{existing}, Origin"
+    return response
 
 
 class ObservabilityMiddleware(BaseHTTPMiddleware):
@@ -89,4 +141,79 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if decision is not None:
             response.headers["X-RateLimit-Limit"] = str(decision.limit)
             response.headers["X-RateLimit-Remaining"] = str(decision.remaining)
+        return response
+
+
+class CSRFMiddleware(BaseHTTPMiddleware):
+    _SAFE_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
+
+    async def dispatch(self, request: Request, call_next: Callable):  # type: ignore[override]
+        if not settings.CSRF_PROTECTION_ENABLED:
+            return await call_next(request)
+
+        if request.method.upper() in self._SAFE_METHODS:
+            return await call_next(request)
+
+        path = request.url.path
+        if path.startswith("/metrics") or path.startswith("/health"):
+            return await call_next(request)
+
+        if not settings.AUTH_SESSION_COOKIE_ENABLED or not settings.CSRF_ENFORCE_ON_AUTH_COOKIE:
+            return await call_next(request)
+
+        cookie_name = (settings.AUTH_SESSION_COOKIE_NAME or "").strip()
+        if not cookie_name:
+            return await call_next(request)
+        session_cookie_value = (request.cookies.get(cookie_name) or "").strip()
+        if not session_cookie_value:
+            return await call_next(request)
+
+        origin = _request_origin(request)
+        if not origin:
+            return JSONResponse(status_code=403, content={"detail": "csrf_origin_missing"})
+
+        trusted_origins = _trusted_csrf_origins()
+        same_origin = origin == f"{request.url.scheme}://{request.url.netloc}"
+        if not same_origin and origin not in trusted_origins:
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "detail": "csrf_origin_mismatch",
+                    "origin": origin,
+                },
+            )
+
+        response = await call_next(request)
+        return _response_with_vary_origin(response)
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next: Callable):  # type: ignore[override]
+        response = await call_next(request)
+        if not settings.SECURITY_HEADERS_ENABLED:
+            return response
+
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault(
+            "Permissions-Policy",
+            "camera=(), microphone=(), geolocation=(), payment=()",
+        )
+        response.headers.setdefault("X-DNS-Prefetch-Control", "off")
+        response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+        response.headers.setdefault("Cross-Origin-Resource-Policy", "same-site")
+        response.headers.setdefault("X-Permitted-Cross-Domain-Policies", "none")
+
+        if settings.SECURITY_CSP_ENABLED:
+            csp_key = (
+                "Content-Security-Policy-Report-Only"
+                if settings.SECURITY_CSP_REPORT_ONLY
+                else "Content-Security-Policy"
+            )
+            response.headers.setdefault(csp_key, str(settings.SECURITY_CSP_VALUE or "").strip())
+
+        if settings.ENVIRONMENT.strip().lower() == "production" or settings.AUTH_SESSION_COOKIE_SECURE:
+            response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+
         return response

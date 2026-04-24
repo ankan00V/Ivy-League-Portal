@@ -18,27 +18,26 @@ function OAuthCallbackInner() {
     if (callbackError) {
       return message || callbackError || "OAuth sign-in failed.";
     }
-    if (!token) {
-      return "OAuth callback did not return an access token.";
-    }
     return null;
-  }, [callbackError, message, token]);
+  }, [callbackError, message]);
   const status = error ? "Unable to complete sign-in." : "Completing sign-in...";
 
   useEffect(() => {
-    if (error || !token) {
+    if (error) {
       return;
     }
 
     let cancelled = false;
     const run = async () => {
-      setAccessToken(token);
+      if (token) {
+        setAccessToken(token);
+      }
       const nextRoute =
         requestedNext &&
         requestedNext.startsWith("/") &&
         requestedNext !== "/auth/callback"
           ? requestedNext
-          : await resolvePostAuthRoute(token);
+          : await resolvePostAuthRoute(token || null);
       if (!cancelled) {
         router.replace(nextRoute);
       }

@@ -593,6 +593,12 @@ class RetrainingService:
             max_freshness_regression_seconds=float(settings.MLOPS_GUARDRAIL_MAX_FRESHNESS_REGRESSION_SECONDS),
             max_latency_p95_regression_ms=float(settings.MLOPS_GUARDRAIL_MAX_LATENCY_P95_REGRESSION_MS),
             max_failure_rate_regression=float(settings.MLOPS_GUARDRAIL_MAX_FAILURE_RATE_REGRESSION),
+            parity_enabled=bool(settings.MLOPS_PARITY_ENABLED),
+            min_real_impressions_per_mode=int(settings.MLOPS_PARITY_MIN_REAL_IMPRESSIONS_PER_MODE),
+            min_real_requests_per_mode=int(settings.MLOPS_PARITY_MIN_REAL_REQUESTS_PER_MODE),
+            max_ctr_regression=float(settings.MLOPS_PARITY_MAX_CTR_REGRESSION),
+            max_apply_rate_regression=float(settings.MLOPS_PARITY_MAX_APPLY_RATE_REGRESSION),
+            min_offline_auc_gain_for_online_gates=float(settings.MLOPS_PARITY_MIN_OFFLINE_AUC_GAIN_FOR_ONLINE_GATES),
         )
         should_activate = bool(decision.should_activate)
         activation_reason = decision.reason
