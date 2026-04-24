@@ -3,6 +3,9 @@ import aiosmtplib
 from email.message import EmailMessage
 from email.utils import formataddr
 import logging
+from pathlib import Path
+
+import certifi
 
 from app.core.config import settings, smtp_from_email_value, smtp_from_name_value, smtp_server_value
 
@@ -88,6 +91,19 @@ def _otp_html_body(*, otp: str, expiry_minutes: int = 5) -> str:
 """
 
 
+def _resolve_smtp_cert_bundle() -> str | None:
+    configured_bundle = str(settings.SMTP_TLS_CA_FILE or "").strip()
+    if configured_bundle:
+        candidate = Path(configured_bundle).expanduser()
+        if candidate.is_file():
+            return str(candidate)
+        logger.warning("Configured SMTP TLS CA bundle path was not found: %s", configured_bundle)
+        return None
+
+    default_bundle = certifi.where()
+    return str(default_bundle).strip() or None
+
+
 async def send_email_otp(to_email: str, otp: str):
     """
     Sends a 6-digit OTP code to the requested end-user for two-step authentication.
@@ -121,7 +137,13 @@ async def send_email_otp(to_email: str, otp: str):
         "use_tls": settings.SMTP_USE_TLS,
         "timeout": settings.SMTP_TIMEOUT_SECONDS,
         "sender": from_email,
+        "validate_certs": bool(settings.SMTP_TLS_VALIDATE_CERTS),
     }
+    if settings.SMTP_TLS_VALIDATE_CERTS:
+        cert_bundle = _resolve_smtp_cert_bundle()
+        if cert_bundle:
+            send_kwargs["cert_bundle"] = cert_bundle
+
     if settings.SMTP_USER:
         send_kwargs["username"] = settings.SMTP_USER
     if settings.SMTP_PASSWORD:

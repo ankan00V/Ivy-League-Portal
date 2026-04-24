@@ -89,6 +89,8 @@ class Settings(BaseSettings):
     SMTP_PORT: int = 587
     SMTP_STARTTLS: bool = True
     SMTP_USE_TLS: bool = False
+    SMTP_TLS_VALIDATE_CERTS: bool = True
+    SMTP_TLS_CA_FILE: Optional[str] = None
     SMTP_TIMEOUT_SECONDS: float = 20.0
     SMTP_REQUIRE_AUTH: bool = True
     SMTP_USER: Optional[str] = None

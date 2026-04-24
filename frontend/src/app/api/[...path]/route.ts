@@ -35,11 +35,45 @@ function buildBackendUrl(target: string, request: NextRequest, path: string[]): 
 }
 
 function buildRequestHeaders(request: NextRequest): Headers {
-  const headers = new Headers(request.headers);
-  headers.delete("host");
-  headers.delete("connection");
-  headers.delete("keep-alive");
-  headers.delete("content-length");
+  // Forward only request headers that are meaningful for backend auth/session handling.
+  // This avoids forwarding hop-by-hop/CDN-specific headers that can break undici fetch
+  // in tunneled environments (for example Slim + Cloudflare).
+  const headers = new Headers();
+  const passthroughKeys = [
+    "accept",
+    "accept-language",
+    "authorization",
+    "content-type",
+    "cookie",
+    "origin",
+    "referer",
+    "user-agent",
+    "x-request-id",
+    "x-correlation-id",
+  ];
+
+  for (const key of passthroughKeys) {
+    const value = request.headers.get(key);
+    if (value) {
+      headers.set(key, value);
+    }
+  }
+
+  const forwardedFor = request.headers.get("x-forwarded-for") ?? request.headers.get("cf-connecting-ip");
+  if (forwardedFor) {
+    headers.set("x-forwarded-for", forwardedFor);
+  }
+
+  const forwardedProto = request.headers.get("x-forwarded-proto") ?? request.nextUrl.protocol.replace(":", "");
+  if (forwardedProto) {
+    headers.set("x-forwarded-proto", forwardedProto);
+  }
+
+  const forwardedHost = request.headers.get("x-forwarded-host") ?? request.nextUrl.host;
+  if (forwardedHost) {
+    headers.set("x-forwarded-host", forwardedHost);
+  }
+
   return headers;
 }
 
@@ -108,7 +142,7 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
         headers: responseHeaders,
       });
     } catch (error) {
-      const reason = error instanceof Error ? error.message : "unknown upstream error";
+      const reason = formatFetchError(error);
       failureDetails.push({ upstream: upstreamUrl, reason });
     }
   }
@@ -120,6 +154,21 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
     },
     { status: 503 },
   );
+}
+
+function formatFetchError(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return "unknown upstream error";
+  }
+
+  const cause = (error as Error & { cause?: unknown }).cause;
+  if (cause instanceof Error) {
+    return `${error.message}: ${cause.message}`;
+  }
+  if (typeof cause === "string" && cause.trim()) {
+    return `${error.message}: ${cause}`;
+  }
+  return error.message;
 }
 
 export { proxy as GET, proxy as POST, proxy as PUT, proxy as PATCH, proxy as DELETE, proxy as OPTIONS, proxy as HEAD };
