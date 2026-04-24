@@ -806,6 +806,69 @@ button {
   margin-bottom: 0.5rem;
 }
 
+.onboarding-visual-image {
+  object-fit: cover;
+  display: block;
+}
+
+.onboarding-progress-step.active {
+  background: var(--brand-primary);
+}
+
+.onboarding-progress-step.pending {
+  background: var(--border-subtle);
+}
+
+.onboarding-account-type-chip {
+  display: inline-flex;
+  padding: 0.45rem 0.8rem;
+  border-radius: 999px;
+  border: 2px solid var(--border-subtle);
+  background: var(--bg-surface);
+}
+
+.onboarding-upload-card {
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 0.9rem;
+  background: var(--bg-surface);
+  display: grid;
+  gap: 0.55rem;
+}
+
+.onboarding-upload-status {
+  margin-bottom: 0.1rem;
+  font-weight: 700;
+}
+
+.onboarding-upload-status.muted {
+  color: var(--text-secondary);
+}
+
+.onboarding-upload-status.warning {
+  color: #b91c1c;
+}
+
+.onboarding-upload-date {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.onboarding-inline-actions {
+  display: flex;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.onboarding-upload-trigger.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.vv-hidden-input {
+  display: none;
+}
+
 .profile-page-root {
   min-height: 100vh;
   display: flex;
@@ -1249,6 +1312,11 @@ button {
     grid-template-columns: 1fr;
   }
 
+  .vv-field-grid-two,
+  .vv-field-grid-leading-compact {
+    grid-template-columns: 1fr;
+  }
+
   .profile-header-actions {
     width: 100%;
     justify-content: flex-start;
@@ -1260,6 +1328,86 @@ button {
 }
 
 /* Shared UI primitives */
+.vv-form-section {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.vv-field-label {
+  display: block;
+  margin-bottom: 0.35rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.vv-field-label-spaced {
+  margin-bottom: 0.5rem;
+}
+
+.vv-field-grid {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.vv-field-grid-two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.vv-field-grid-leading-compact {
+  grid-template-columns: 160px minmax(0, 1fr);
+}
+
+.vv-pill-group {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.vv-pill-button {
+  border: 2px dashed var(--border-subtle);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border-radius: 999px;
+  padding: 0.55rem 0.9rem;
+  font-weight: 700;
+  min-width: fit-content;
+}
+
+.vv-pill-button.active {
+  border-style: solid;
+  border-color: var(--brand-primary);
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.vv-toggle-row {
+  display: flex;
+  gap: 0.5rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.vv-toggle-row-center {
+  align-items: center;
+}
+
+.vv-toggle-row-start {
+  align-items: flex-start;
+}
+
+.vv-toggle-row-start .vv-toggle-input {
+  margin-top: 0.2rem;
+}
+
+.vv-form-helper {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.vv-form-helper.warning {
+  color: #b91c1c;
+}
+
 .vv-page-header {
   display: flex;
   justify-content: space-between;
