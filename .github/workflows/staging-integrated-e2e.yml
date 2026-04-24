@@ -10,6 +10,8 @@ jobs:
     name: Run Staging Integrated Playwright Suite
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    env:
+      STAGING_PLAYWRIGHT_BASE_URL: ${{ secrets.STAGING_PLAYWRIGHT_BASE_URL }}
     defaults:
       run:
         working-directory: frontend
@@ -31,16 +33,16 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Enforce staging URL secret on scheduled runs
-        if: ${{ github.event_name == 'schedule' && secrets.STAGING_PLAYWRIGHT_BASE_URL == '' }}
+        if: ${{ github.event_name == 'schedule' && env.STAGING_PLAYWRIGHT_BASE_URL == '' }}
         run: |
           echo "STAGING_PLAYWRIGHT_BASE_URL is required for scheduled staging coverage."
           exit 1
 
       - name: Run integrated staging tests
-        if: ${{ secrets.STAGING_PLAYWRIGHT_BASE_URL != '' }}
+        if: ${{ env.STAGING_PLAYWRIGHT_BASE_URL != '' }}
         env:
-          PLAYWRIGHT_STAGING_URL: ${{ secrets.STAGING_PLAYWRIGHT_BASE_URL }}
-          PLAYWRIGHT_BASE_URL: ${{ secrets.STAGING_PLAYWRIGHT_BASE_URL }}
+          PLAYWRIGHT_STAGING_URL: ${{ env.STAGING_PLAYWRIGHT_BASE_URL }}
+          PLAYWRIGHT_BASE_URL: ${{ env.STAGING_PLAYWRIGHT_BASE_URL }}
           PLAYWRIGHT_INTEGRATED_AUTH: "1"
           PLAYWRIGHT_LIVE_BACKEND: "1"
           PLAYWRIGHT_STAGING_ADMIN_BEARER: ${{ secrets.STAGING_PLAYWRIGHT_ADMIN_BEARER }}
@@ -50,5 +52,5 @@ jobs:
         run: npm run e2e:staging -- --reporter=list
 
       - name: Skip notice when staging URL is missing
-        if: ${{ secrets.STAGING_PLAYWRIGHT_BASE_URL == '' }}
+        if: ${{ env.STAGING_PLAYWRIGHT_BASE_URL == '' }}
         run: echo "STAGING_PLAYWRIGHT_BASE_URL is not configured; skipping integrated staging suite."

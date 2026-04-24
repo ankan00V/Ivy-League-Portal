@@ -432,44 +432,37 @@ export default function OnboardingPage() {
           <div className="onboarding-form-body">
             {step === 1 && (
               <>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
-                  <div>
-                    <label style={{ fontWeight: 700, display: "block", marginBottom: "0.35rem" }}>First Name</label>
+                <FieldGrid variant="two">
+                  <FormSection label="First Name">
                     <input className="input-base" value={profile.first_name} onChange={(e) => updateProfile("first_name", e.target.value)} />
-                  </div>
-                  <div>
-                    <label style={{ fontWeight: 700, display: "block", marginBottom: "0.35rem" }}>Last Name</label>
+                  </FormSection>
+                  <FormSection label="Last Name">
                     <input className="input-base" value={profile.last_name} onChange={(e) => updateProfile("last_name", e.target.value)} />
-                  </div>
-                </div>
+                  </FormSection>
+                </FieldGrid>
 
-                <div style={{ display: "grid", gridTemplateColumns: "160px 1fr", gap: "0.75rem" }}>
-                  <div>
-                    <label style={{ fontWeight: 700, display: "block", marginBottom: "0.35rem" }}>Country Code</label>
+                <FieldGrid variant="leading-compact">
+                  <FormSection label="Country Code">
                     <input className="input-base" value={profile.country_code} onChange={(e) => updateProfile("country_code", e.target.value)} />
-                  </div>
-                  <div>
-                    <label style={{ fontWeight: 700, display: "block", marginBottom: "0.35rem" }}>Mobile</label>
+                  </FormSection>
+                  <FormSection label="Mobile">
                     <input className="input-base" value={profile.mobile} onChange={(e) => updateProfile("mobile", e.target.value)} placeholder="1234567890" />
-                  </div>
-                </div>
+                  </FormSection>
+                </FieldGrid>
 
-                <div>
-                  <label style={{ fontWeight: 700, display: "block", marginBottom: "0.5rem" }}>Account Type</label>
-                  <div style={{ display: "inline-flex", padding: "0.45rem 0.8rem", borderRadius: "999px", border: "2px solid var(--border-subtle)", background: "var(--bg-surface)" }}>
+                <FormSection
+                  label="Account Type"
+                  labelSpaced
+                  helper={profile.account_type === "employer" ? "Employer access is restricted to corporate email domains." : undefined}
+                >
+                  <div className="onboarding-account-type-chip">
                     <strong>{profile.account_type === "employer" ? "Employer" : "Candidate"}</strong>
                   </div>
-                  {profile.account_type === "employer" && (
-                    <p style={{ marginTop: "0.45rem", color: "var(--text-secondary)", fontWeight: 600 }}>
-                      Employer access is restricted to corporate email domains.
-                    </p>
-                  )}
-                </div>
+                </FormSection>
 
                 {profile.account_type === "candidate" && (
-                  <div>
-                    <label style={{ fontWeight: 700, display: "block", marginBottom: "0.5rem" }}>User Type</label>
-                    <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>
+                  <FormSection label="User Type" labelSpaced>
+                    <PillGroup>
                       {[
                         { key: "school_student", label: "School Student" },
                         { key: "college_student", label: "College Student" },
@@ -479,34 +472,22 @@ export default function OnboardingPage() {
                         <button
                           key={item.key}
                           type="button"
-                          style={pillButtonStyle(profile.user_type === item.key)}
+                          className={pillButtonClass(profile.user_type === item.key)}
                           onClick={() => updateProfile("user_type", item.key as UserType)}
                         >
                           {item.label}
                         </button>
                       ))}
-                    </div>
-                  </div>
+                    </PillGroup>
+                  </FormSection>
                 )}
 
-                <label style={{ display: "flex", alignItems: "flex-start", gap: "0.5rem", fontWeight: 600 }}>
-                  <input
-                    type="checkbox"
-                    checked={profile.consent_data_processing}
-                    onChange={(event) => updateProfile("consent_data_processing", event.target.checked)}
-                    style={{ marginTop: "0.2rem" }}
-                  />
+                <ToggleRow checked={profile.consent_data_processing} onChange={(checked) => updateProfile("consent_data_processing", checked)} align="start">
                   I agree to data processing and privacy policy.
-                </label>
-                <label style={{ display: "flex", alignItems: "flex-start", gap: "0.5rem", fontWeight: 600 }}>
-                  <input
-                    type="checkbox"
-                    checked={profile.consent_updates}
-                    onChange={(event) => updateProfile("consent_updates", event.target.checked)}
-                    style={{ marginTop: "0.2rem" }}
-                  />
+                </ToggleRow>
+                <ToggleRow checked={profile.consent_updates} onChange={(checked) => updateProfile("consent_updates", checked)} align="start">
                   Keep me updated with relevant opportunities.
-                </label>
+                </ToggleRow>
               </>
             )}
 
@@ -514,37 +495,33 @@ export default function OnboardingPage() {
               <>
                 {profile.account_type === "candidate" && (profile.user_type === "college_student" || profile.user_type === "fresher") && (
                   <>
-                    <div>
-                      <label style={{ fontWeight: 700, display: "block", marginBottom: "0.5rem" }}>Domain</label>
-                      <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>
+                    <FormSection label="Domain" labelSpaced>
+                      <PillGroup>
                         {DOMAIN_OPTIONS.map((item) => (
-                          <button key={item} type="button" style={pillButtonStyle(profile.domain === item)} onClick={() => updateProfile("domain", item)}>
+                          <button key={item} type="button" className={pillButtonClass(profile.domain === item)} onClick={() => updateProfile("domain", item)}>
                             {item}
                           </button>
                         ))}
-                      </div>
-                    </div>
-                    <div>
-                      <label style={{ fontWeight: 700, display: "block", marginBottom: "0.35rem" }}>Course</label>
+                      </PillGroup>
+                    </FormSection>
+                    <FormSection label="Course">
                       <input className="input-base" value={profile.course} onChange={(e) => updateProfile("course", e.target.value)} placeholder="B.Tech CSE / MBA / BBA ..." />
-                    </div>
-                    <div>
-                      <label style={{ fontWeight: 700, display: "block", marginBottom: "0.5rem" }}>Passout Year</label>
-                      <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>
+                    </FormSection>
+                    <FormSection label="Passout Year" labelSpaced>
+                      <PillGroup>
                         {DEFAULT_YEARS.map((year) => (
                           <button
                             key={year}
                             type="button"
-                            style={pillButtonStyle(profile.passout_year === year)}
+                            className={pillButtonClass(profile.passout_year === year)}
                             onClick={() => updateProfile("passout_year", year)}
                           >
                             {year}
                           </button>
                         ))}
-                      </div>
-                    </div>
-                    <div>
-                      <label style={{ fontWeight: 700, display: "block", marginBottom: "0.35rem" }}>College Name</label>
+                      </PillGroup>
+                    </FormSection>
+                    <FormSection label="College Name">
                       <select
                         className="input-base"
                         value={selectedUniversity}
@@ -568,20 +545,19 @@ export default function OnboardingPage() {
                         ))}
                         <option value={OTHER_UNIVERSITY_VALUE}>{OTHER_INSTITUTION_LABEL}</option>
                       </select>
-                    </div>
+                    </FormSection>
                     {selectedUniversity === OTHER_UNIVERSITY_VALUE && (
-                      <div>
-                        <label style={{ fontWeight: 700, display: "block", marginBottom: "0.35rem" }}>Enter University Name</label>
+                      <FormSection label="Enter University Name">
                         <input
                           className="input-base"
                           value={profile.college_name}
                           onChange={(e) => updateProfile("college_name", e.target.value)}
                           placeholder="Type your university name manually"
                         />
-                      </div>
+                      </FormSection>
                     )}
                     {selectedUniversity !== OTHER_UNIVERSITY_VALUE && profile.college_name.trim().length > 0 && !UNIVERSITY_OPTION_VALUES.has(profile.college_name) && (
-                      <div style={{ color: "var(--text-secondary)", fontSize: "0.85rem", fontWeight: 600 }}>
+                      <div className="vv-form-helper">
                         Existing university not in the current list. Choose &quot;{OTHER_INSTITUTION_LABEL}&quot; to edit manually.
                       </div>
                     )}
@@ -589,66 +565,63 @@ export default function OnboardingPage() {
                 )}
 
                 {profile.account_type === "candidate" && profile.user_type === "school_student" && (
-                  <div>
-                    <label style={{ fontWeight: 700, display: "block", marginBottom: "0.5rem" }}>Class / Grade</label>
-                    <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>
+                  <FormSection label="Class / Grade" labelSpaced>
+                    <PillGroup>
                       {SCHOOL_GRADES.map((grade) => (
-                        <button key={grade} type="button" style={pillButtonStyle(profile.class_grade === grade)} onClick={() => updateProfile("class_grade", grade)}>
+                        <button key={grade} type="button" className={pillButtonClass(profile.class_grade === grade)} onClick={() => updateProfile("class_grade", grade)}>
                           {grade}
                         </button>
                       ))}
-                    </div>
-                  </div>
+                    </PillGroup>
+                  </FormSection>
                 )}
  
                 {profile.account_type === "candidate" && profile.user_type === "professional" && (
                   <>
-                    <div>
-                      <label style={{ fontWeight: 700, display: "block", marginBottom: "0.35rem" }}>Current Job Role</label>
+                    <FormSection label="Current Job Role">
                       <input className="input-base" value={profile.current_job_role} onChange={(e) => updateProfile("current_job_role", e.target.value)} placeholder="Software Engineer / Analyst ..." />
-                    </div>
-                    <div>
-                      <label style={{ fontWeight: 700, display: "block", marginBottom: "0.35rem" }}>Total Work Experience</label>
-                      <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>
+                    </FormSection>
+                    <FormSection label="Total Work Experience">
+                      <PillGroup>
                         {EXPERIENCE_OPTIONS.map((option) => (
-                          <button key={option} type="button" style={pillButtonStyle(profile.total_work_experience === option)} onClick={() => updateProfile("total_work_experience", option)}>
+                          <button key={option} type="button" className={pillButtonClass(profile.total_work_experience === option)} onClick={() => updateProfile("total_work_experience", option)}>
                             {option}
                           </button>
                         ))}
-                      </div>
-                    </div>
+                      </PillGroup>
+                    </FormSection>
                   </>
                 )}
 
                 {profile.account_type === "candidate" && resumeRequiredForUserType && (
-                  <div style={{ border: "2px solid var(--border-subtle)", borderRadius: "var(--radius-sm)", padding: "0.9rem", background: "var(--bg-surface)" }}>
-                    <label style={{ fontWeight: 700, display: "block", marginBottom: "0.35rem" }}>Resume / CV (Required)</label>
-                    <p style={{ color: "var(--text-secondary)", fontWeight: 600, marginBottom: "0.6rem" }}>
-                      Upload your resume so recommendations and shortlisting can be personalized from your profile + CV.
-                    </p>
+                  <FormSection
+                    label="Resume / CV (Required)"
+                    className="onboarding-upload-card"
+                    helper="Upload your resume so recommendations and shortlisting can be personalized from your profile + CV."
+                  >
                     {profile.resume_filename ? (
-                      <div style={{ marginBottom: "0.55rem", fontWeight: 700 }}>
+                      <div className="onboarding-upload-status">
                         Uploaded: {profile.resume_filename}
                         {profile.resume_uploaded_at ? (
-                          <span style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
+                          <span className="onboarding-upload-date">
                             {" "}
                             ({new Date(profile.resume_uploaded_at).toLocaleDateString()})
                           </span>
                         ) : null}
                       </div>
                     ) : (
-                      <div style={{ marginBottom: "0.55rem", fontWeight: 700, color: "#b91c1c" }}>
+                      <div className="onboarding-upload-status warning">
                         Resume not uploaded yet.
                       </div>
                     )}
-                    <div style={{ display: "flex", gap: "0.55rem", flexWrap: "wrap" }}>
-                      <label className="btn-secondary" style={{ cursor: resumeUploading ? "not-allowed" : "pointer", opacity: resumeUploading ? 0.7 : 1 }}>
+                    <div className="onboarding-inline-actions">
+                      <label className={`btn-secondary onboarding-upload-trigger ${resumeUploading ? "is-disabled" : ""}`}>
                         {resumeUploading ? "Uploading..." : profile.resume_filename ? "Replace Resume" : "Upload Resume"}
                         <input
                           type="file"
                           accept=".txt,.pdf,.doc,.docx"
                           disabled={resumeUploading}
-                          style={{ display: "none" }}
+                          className="vv-hidden-input"
                           onChange={(event) => {
                             const nextFile = event.target.files?.[0];
                             if (!nextFile) {
@@ -665,13 +638,12 @@ export default function OnboardingPage() {
                         </button>
                       )}
                     </div>
-                  </div>
+                  </FormSection>
                 )}
 
                 {profile.account_type === "employer" && (
                   <>
-                    <div>
-                      <label style={{ fontWeight: 700, display: "block", marginBottom: "0.35rem" }}>Current Organisation</label>
+                    <FormSection label="Current Organisation">
                       <input
                         className="input-base"
                         value={profile.company_name}
@@ -687,10 +659,9 @@ export default function OnboardingPage() {
                           <option key={item} value={item} />
                         ))}
                       </datalist>
-                    </div>
+                    </FormSection>
 
-                    <div>
-                      <label style={{ fontWeight: 700, display: "block", marginBottom: "0.35rem" }}>Designation</label>
+                    <FormSection label="Designation">
                       <select
                         className="input-base"
                         value={employerRoleSelection}
@@ -711,30 +682,31 @@ export default function OnboardingPage() {
                           </option>
                         ))}
                       </select>
-                    </div>
+                    </FormSection>
 
                     {employerRoleSelection === "Other" && (
-                      <input
-                        className="input-base"
-                        value={profile.current_job_role}
-                        onChange={(e) => updateProfile("current_job_role", e.target.value)}
-                        placeholder="If Other, enter custom designation"
-                      />
+                      <FormSection>
+                        <input
+                          className="input-base"
+                          value={profile.current_job_role}
+                          onChange={(e) => updateProfile("current_job_role", e.target.value)}
+                          placeholder="If Other, enter custom designation"
+                        />
+                      </FormSection>
                     )}
 
-                    <div>
-                      <label style={{ fontWeight: 700, display: "block", marginBottom: "0.5rem" }}>You&apos;re Hiring for</label>
-                      <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>
-                        <button type="button" style={pillButtonStyle(profile.hiring_for === "myself")} onClick={() => updateProfile("hiring_for", "myself")}>
+                    <FormSection label="You&apos;re Hiring for" labelSpaced>
+                      <PillGroup>
+                        <button type="button" className={pillButtonClass(profile.hiring_for === "myself")} onClick={() => updateProfile("hiring_for", "myself")}>
                           Myself
                         </button>
-                        <button type="button" style={pillButtonStyle(profile.hiring_for === "others")} onClick={() => updateProfile("hiring_for", "others")}>
+                        <button type="button" className={pillButtonClass(profile.hiring_for === "others")} onClick={() => updateProfile("hiring_for", "others")}>
                           Others
                         </button>
-                      </div>
-                    </div>
+                      </PillGroup>
+                    </FormSection>
 
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
+                    <FieldGrid variant="two">
                       <input
                         className="input-base"
                         value={profile.company_website}
@@ -747,7 +719,7 @@ export default function OnboardingPage() {
                         onChange={(e) => updateProfile("company_size", e.target.value)}
                         placeholder="Company size (optional)"
                       />
-                    </div>
+                    </FieldGrid>
                   </>
                 )}
               </>
@@ -755,32 +727,27 @@ export default function OnboardingPage() {
 
             {step === 3 && profile.account_type === "candidate" && (
               <>
-                <div>
-                  <label style={{ fontWeight: 700, display: "block", marginBottom: "0.5rem" }}>What brings you here?</label>
-                  <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>
+                <FormSection label="What brings you here?" labelSpaced>
+                  <PillGroup>
                     {GOAL_OPTIONS.map((goal) => (
-                      <button key={goal} type="button" style={pillButtonStyle(profile.goals.includes(goal))} onClick={() => toggleGoal(goal)}>
+                      <button key={goal} type="button" className={pillButtonClass(profile.goals.includes(goal))} onClick={() => toggleGoal(goal)}>
                         {goal}
                       </button>
                     ))}
-                  </div>
-                </div>
-                <div>
-                  <label style={{ fontWeight: 700, display: "block", marginBottom: "0.35rem" }}>Interested Career Roles</label>
+                  </PillGroup>
+                </FormSection>
+                <FormSection label="Interested Career Roles">
                   <input className="input-base" value={profile.preferred_roles} onChange={(e) => updateProfile("preferred_roles", e.target.value)} placeholder="Data Scientist, Backend Engineer, Analyst..." />
-                </div>
-                <div>
-                  <label style={{ fontWeight: 700, display: "block", marginBottom: "0.35rem" }}>Preferred Work Location</label>
+                </FormSection>
+                <FormSection label="Preferred Work Location">
                   <input className="input-base" value={profile.preferred_locations} onChange={(e) => updateProfile("preferred_locations", e.target.value)} placeholder="Bangalore, Pune, Remote..." />
-                </div>
-                <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontWeight: 600 }}>
-                  <input type="checkbox" checked={profile.pan_india} onChange={(e) => updateProfile("pan_india", e.target.checked)} />
+                </FormSection>
+                <ToggleRow checked={profile.pan_india} onChange={(checked) => updateProfile("pan_india", checked)}>
                   Open to Pan India opportunities
-                </label>
-                <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontWeight: 600 }}>
-                  <input type="checkbox" checked={profile.prefer_wfh} onChange={(e) => updateProfile("prefer_wfh", e.target.checked)} />
+                </ToggleRow>
+                <ToggleRow checked={profile.prefer_wfh} onChange={(checked) => updateProfile("prefer_wfh", checked)}>
                   I prefer Work from Home (WFH)
-                </label>
+                </ToggleRow>
               </>
             )}
           </div>
