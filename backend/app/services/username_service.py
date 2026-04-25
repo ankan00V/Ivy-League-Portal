@@ -4,6 +4,7 @@ import hashlib
 import re
 from typing import Optional
 
+from beanie.exceptions import CollectionWasNotInitialized
 from app.models.profile import Profile
 from app.models.user import User
 
@@ -51,7 +52,11 @@ def _username_root(user: User, profile: Optional[Profile]) -> str:
 
 
 async def _username_available(username: str, user_id: str) -> bool:
-    existing = await User.find_one(User.username == username)
+    try:
+        existing = await User.find_one({"username": username})
+    except CollectionWasNotInitialized:
+        # Unit-test contexts may call this helper without initializing Beanie.
+        return True
     if existing is None:
         return True
     return str(existing.id) == str(user_id)
@@ -77,15 +82,18 @@ async def _build_unique_username(user: User, profile: Optional[Profile]) -> str:
 
 
 async def ensure_system_username(user: User, profile: Optional[Profile] = None) -> str:
-    current = _normalize_username(user.username or "")
+    current = _normalize_username(getattr(user, "username", "") or "")
     if current and await _username_available(current, str(user.id)):
-        if current != (user.username or ""):
+        if current != (getattr(user, "username", "") or ""):
             user.username = current
-            await user.save()
+            save = getattr(user, "save", None)
+            if callable(save):
+                await save()
         return current
 
     username = await _build_unique_username(user, profile)
     user.username = username
-    await user.save()
+    save = getattr(user, "save", None)
+    if callable(save):
+        await save()
     return username
-

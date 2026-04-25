@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 from beanie import Document, PydanticObjectId
-from pydantic import Field
+from pydantic import Field, field_validator
 
 class Profile(Document):
     user_id: PydanticObjectId = Field(unique=True)
@@ -64,6 +64,26 @@ class Profile(Document):
     resume_storage_key: Optional[str] = None
     resume_uploaded_at: Optional[datetime] = None
     incoscore: float = 0.0
+
+    @field_validator("goals", "hobbies", mode="before")
+    @classmethod
+    def normalize_optional_string_list(cls, value):
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return value
+        if isinstance(value, str):
+            return [part.strip() for part in value.split(",") if part and part.strip()]
+        return []
+
+    @field_validator("social_links", mode="before")
+    @classmethod
+    def normalize_optional_social_links(cls, value):
+        if value is None:
+            return {}
+        if isinstance(value, dict):
+            return {str(key): str(item) for key, item in value.items() if str(key).strip() and str(item).strip()}
+        return {}
 
     class Settings:
         name = "profiles"

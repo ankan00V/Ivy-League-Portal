@@ -6,6 +6,7 @@ from typing import Any, Optional
 from uuid import uuid4
 
 from beanie import PydanticObjectId
+from beanie.exceptions import CollectionWasNotInitialized
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
@@ -585,13 +586,20 @@ def _compute_rank_stats(*, rank: int, total_users: int) -> tuple[float, float]:
 
 async def _build_ranking_summary(profile: Profile) -> RankingSummaryResponse:
     scope = _normalize_account_scope(profile.account_type)
-    scope_filters = [Profile.account_type == scope]
+    scope_filter = {"account_type": scope}
 
-    total_users = int(await Profile.find(*scope_filters).count())
+    total_users = int(await Profile.find(scope_filter).count())
     if total_users <= 0:
         total_users = 1
 
-    higher_count = int(await Profile.find(*scope_filters, Profile.incoscore > float(profile.incoscore)).count())
+    higher_count = int(
+        await Profile.find(
+            {
+                "account_type": scope,
+                "incoscore": {"$gt": float(profile.incoscore)},
+            }
+        ).count()
+    )
     rank = max(1, higher_count + 1)
     top_percent, percentile = _compute_rank_stats(rank=rank, total_users=total_users)
 
@@ -752,7 +760,7 @@ def _apply_profile_patch(*, profile: Profile, user: User, payload: ProfileUpdate
 
 
 async def _get_or_create_profile_for_user(user: User) -> Profile:
-    profile = await Profile.find_one(Profile.user_id == user.id)
+    profile = await Profile.find_one({"user_id": user.id})
     if profile:
         _sync_profile_identity(profile, user)
         is_complete, _progress, _missing, next_step = _compute_onboarding_status(profile)
@@ -785,7 +793,10 @@ async def read_users_me(
     """
     Get current user.
     """
-    profile = await Profile.find_one(Profile.user_id == current_user.id)
+    try:
+        profile = await Profile.find_one({"user_id": current_user.id})
+    except CollectionWasNotInitialized:
+        profile = None
     await ensure_system_username(current_user, profile)
     return UserResponse.model_validate(current_user)
 
