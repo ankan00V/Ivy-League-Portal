@@ -161,6 +161,22 @@ function deriveUniversitySelection(value: string): string {
   return UNIVERSITY_OPTION_VALUES.has(trimmed) ? trimmed : OTHER_UNIVERSITY_VALUE;
 }
 
+function getAccountTypeFromOnboardingProfile(profile: ProfilePayload): string {
+  return profile.account_type;
+}
+
+function getCollegeNameFromOnboardingProfile(profile: ProfilePayload): string {
+  return profile.college_name;
+}
+
+function getCurrentRoleFromOnboardingProfile(profile: ProfilePayload): string {
+  return profile.current_job_role;
+}
+
+function resolveOnboardingRouteForAccountType(accountType: string): string {
+  return accountType === "employer" ? "/employer/dashboard" : "/dashboard";
+}
+
 function buildOnboardingPayload(profile: ProfilePayload): OnboardingUpdatePayload {
   const payload: OnboardingUpdatePayload = {
     account_type: profile.account_type,
@@ -313,10 +329,10 @@ export default function OnboardingPage() {
     buildOnboardingPayload,
     deriveUniversitySelection,
     employerRoleOptions: EMPLOYER_ROLE_OPTIONS,
-    getAccountTypeFromProfile: (value) => value.account_type,
-    getCollegeNameFromProfile: (value) => value.college_name,
-    getCurrentRoleFromProfile: (value) => value.current_job_role,
-    resolveRouteForAccountType: (accountType) => (accountType === "employer" ? "/employer/dashboard" : "/dashboard"),
+    getAccountTypeFromProfile: getAccountTypeFromOnboardingProfile,
+    getCollegeNameFromProfile: getCollegeNameFromOnboardingProfile,
+    getCurrentRoleFromProfile: getCurrentRoleFromOnboardingProfile,
+    resolveRouteForAccountType: resolveOnboardingRouteForAccountType,
   });
 
   const totalSteps = profile.account_type === "employer" ? 2 : 3;
