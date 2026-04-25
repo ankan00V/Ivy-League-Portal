@@ -21,6 +21,7 @@ Students discover internships, research roles, scholarships, and hackathons acro
 - Ops secret-readiness workflow added to enforce staging/alert-channel ownership (`.github/workflows/ops-secrets-readiness.yml`).
 - Profile/onboarding state refresh loop fixed so fields remain editable and university dropdown selections persist correctly (`frontend/src/app/profile/page.tsx`, `frontend/src/app/onboarding/page.tsx`).
 - Added Playwright regression coverage for profile edit persistence + university selection stickiness (`frontend/e2e/profile-edit-persistence.spec.ts`) and included it in production-readiness frontend validation.
+- Production-readiness frontend workflow now installs Playwright Chromium before browser E2E validation to prevent missing-browser CI failures (`.github/workflows/production-readiness-gate.yml`).
 
 ## What Is Implemented (Current State)
 ### AI/ML and Data Components
