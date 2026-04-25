@@ -166,6 +166,7 @@ button {
   flex-shrink: 0;
   align-self: stretch;
   position: relative;
+  border-right: 2px solid var(--border-subtle);
 }
 
 .desktop-sidebar {
@@ -178,7 +179,6 @@ button {
   flex-direction: column;
   padding: 1.4rem 1.05rem 1rem 1.05rem;
   z-index: 40;
-  border-right: 2px solid var(--border-subtle);
 }
 
 .sidebar-top {
@@ -1639,6 +1639,7 @@ button {
 @media (max-width: 1024px) {
   .app-shell-nav-root {
     width: 0;
+    border-right: none;
   }
 
   .desktop-sidebar {

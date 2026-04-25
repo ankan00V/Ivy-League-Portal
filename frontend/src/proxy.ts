@@ -11,6 +11,7 @@ function createNonce(): string {
 }
 
 function cspValue(nonce: string): string {
+  const isProduction = process.env.NODE_ENV === "production";
   const directives = [
     "default-src 'self'",
     "base-uri 'self'",
@@ -24,9 +25,11 @@ function cspValue(nonce: string): string {
     "worker-src 'self' blob:",
     "manifest-src 'self'",
     "form-action 'self'",
-    "require-trusted-types-for 'script'",
-    "trusted-types default nextjs nextjs#bundler",
   ];
+  if (isProduction) {
+    directives.push("require-trusted-types-for 'script'");
+    directives.push("trusted-types default nextjs nextjs#bundler");
+  }
   return directives.join("; ");
 }
 

@@ -16,6 +16,7 @@ from app.models.profile import Profile
 from app.models.user import User
 from app.schemas.user import UserResponse
 from app.services.intelligence import calculate_incoscore
+from app.services.username_service import ensure_system_username
 
 router = APIRouter()
 
@@ -334,9 +335,10 @@ class ProfileStrengthResponse(BaseModel):
 
 
 class LeaderboardEntry(BaseModel):
+    rank: int
     user_id: str
     full_name: Optional[str] = None
-    email: str
+    handle: str
     incoscore: float
 
 
@@ -783,6 +785,8 @@ async def read_users_me(
     """
     Get current user.
     """
+    profile = await Profile.find_one(Profile.user_id == current_user.id)
+    await ensure_system_username(current_user, profile)
     return UserResponse.model_validate(current_user)
 
 
@@ -981,25 +985,34 @@ async def delete_resume(
 
 
 @router.get("/leaderboard", response_model=list[LeaderboardEntry])
-async def get_leaderboard(limit: int = 20) -> Any:
+async def get_leaderboard(limit: int = 10, search: Optional[str] = None) -> Any:
     """
     Global InCoScore leaderboard used for ranking and smart shortlisting views.
     """
     safe_limit = max(1, min(limit, 100))
-    profiles = await Profile.find_all().sort("-incoscore").limit(safe_limit).to_list()
+    profiles = await Profile.find_all().sort("-incoscore").to_list()
+    search_term = (search or "").strip().lower().lstrip("@")
 
     leaderboard: list[LeaderboardEntry] = []
-    for profile in profiles:
+    for rank, profile in enumerate(profiles, start=1):
         user = await User.get(profile.user_id)
         if not user:
             continue
+        handle = await ensure_system_username(user, profile)
+        if search_term:
+            full_name = (user.full_name or "").strip().lower()
+            if search_term not in full_name and search_term not in handle:
+                continue
         leaderboard.append(
             LeaderboardEntry(
+                rank=rank,
                 user_id=str(user.id),
                 full_name=user.full_name,
-                email=user.email,
+                handle=handle,
                 incoscore=profile.incoscore,
             )
         )
+        if len(leaderboard) >= safe_limit:
+            break
 
     return leaderboard
