@@ -7,6 +7,7 @@ class User(Document):
     email: str = Field(unique=True)
     hashed_password: str
     full_name: Optional[str] = None
+    username: Optional[str] = None
     account_type: str = "candidate"  # candidate | employer
     auth_provider: str = "otp"  # otp | google | linkedin | microsoft | password
     is_active: bool = True
@@ -15,4 +16,4 @@ class User(Document):
 
     class Settings:
         name = "users"
-        indexes = ["email", "full_name", "account_type", "auth_provider"]
+        indexes = ["email", "username", "full_name", "account_type", "auth_provider"]

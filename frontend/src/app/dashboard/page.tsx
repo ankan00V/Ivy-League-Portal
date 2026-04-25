@@ -10,7 +10,6 @@ import { useRouter } from "next/navigation";
 import { isMongoObjectId, logOpportunityInteraction } from "@/lib/opportunity-interactions";
 import { formatTopPercent, type RankingSummary } from "@/lib/ranking-summary";
 import { clampPercent, type ProfileStrengthSummary } from "@/lib/profile-strength";
-import StatusBadge from "@/components/ui/StatusBadge";
 import MetricCard from "@/components/ui/MetricCard";
 
 interface OpportunityCard {
@@ -141,14 +140,14 @@ export default function DashboardPage() {
     const allowSimulatedFallback = process.env.NODE_ENV !== "production";
     const [isAuthenticated, setIsAuthenticated] = useState(false);
     const [recommended, setRecommended] = useState<OpportunityCard[]>([]);
-    const [recommendationsSource, setRecommendationsSource] = useState<DataSourceState>("no_data");
+    const [, setRecommendationsSource] = useState<DataSourceState>("no_data");
     const [profile, setProfile] = useState<ProfileSummary | null>(null);
     const [rankingSummary, setRankingSummary] = useState<RankingSummary | null>(null);
     const [profileStrength, setProfileStrength] = useState<ProfileStrengthSummary | null>(null);
     const [showProfileStrengthModal, setShowProfileStrengthModal] = useState(false);
     const [appCount, setAppCount] = useState<number>(0);
     const [posts, setPosts] = useState<ActivityPost[]>([]);
-    const [postsSource, setPostsSource] = useState<DataSourceState>("no_data");
+    const [, setPostsSource] = useState<DataSourceState>("no_data");
     const lastImpressionBatchRef = useRef("");
 
     const fetchDashboardData = useCallback(async () => {
@@ -363,16 +362,6 @@ export default function DashboardPage() {
         ? `${profileStrength.completed_signals}/${profileStrength.total_signals} profile signals complete`
         : "Sign in to compute live profile strength";
     const profileStrengthRecommendation = profileStrength?.recommendation || "Complete profile fields for better matching.";
-    const sourceLabelMap: Record<DataSourceState, string> = {
-        live: "LIVE",
-        simulated: "SIMULATED",
-        no_data: "NO DATA",
-    };
-    const sourceToneMap: Record<DataSourceState, "live" | "simulated" | "no_data"> = {
-        live: "live",
-        simulated: "simulated",
-        no_data: "no_data",
-    };
     const profileStrengthMissingDetails = useMemo(() => {
         if (!profileStrength) return [];
         const apiDetails = profileStrength.missing_signal_details;
@@ -447,10 +436,6 @@ export default function DashboardPage() {
                                 ? "Your opportunity intelligence overview is ready. Discover your next big win today."
                                 : "Explore a live demo of VidyaVerse features. Sign in to unlock personalized actions."}
                         </p>
-                        <div style={{ marginTop: "0.7rem", display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
-                            <StatusBadge tone={sourceToneMap[recommendationsSource]} label={`Recommendations ${sourceLabelMap[recommendationsSource]}`} />
-                            <StatusBadge tone={sourceToneMap[postsSource]} label={`Network Feed ${sourceLabelMap[postsSource]}`} />
-                        </div>
                     </div>
                     <button
                         className="btn-secondary"
@@ -459,35 +444,6 @@ export default function DashboardPage() {
                         {isAuthenticated ? "View Profile" : "Sign In"}
                     </button>
                 </motion.header>
-                {!isAuthenticated || recommendationsSource !== "live" || postsSource !== "live" ? (
-                    <div
-                        className="card-panel"
-                        style={{
-                            marginBottom: "2rem",
-                            background: "var(--bg-surface)",
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
-                            gap: "1rem",
-                        }}
-                    >
-                        <div>
-                            <div style={{ fontWeight: 800, color: "var(--text-primary)", marginBottom: "0.25rem" }}>
-                                {isAuthenticated ? "Data trust state" : "Demo Mode Active"}
-                            </div>
-                            <div style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
-                                {isAuthenticated
-                                    ? "LIVE means backend-backed data, SIMULATED means development fallback, and NO DATA means backend had no results."
-                                    : "Sign in to access personalized rankings, one-click actions, and live profile strength."}
-                            </div>
-                        </div>
-                        {!isAuthenticated ? (
-                            <button className="btn-primary" onClick={() => router.push("/login")}>
-                                Sign In to Access
-                            </button>
-                        ) : null}
-                    </div>
-                ) : null}
 
                 {/* Infinite Marquee */}
                 <div style={{ 
@@ -595,14 +551,7 @@ export default function DashboardPage() {
                     >
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
                             <h2 style={{ fontSize: '1.5rem' }}>Live Recommendations</h2>
-                            <div style={{ display: "inline-flex", alignItems: "center", gap: "0.45rem" }}>
-                                <Activity size={14} className="animate-pulse" style={{ color: '#10b981' }} />
-                                <StatusBadge
-                                    tone={sourceToneMap[recommendationsSource]}
-                                    label={sourceLabelMap[recommendationsSource]}
-                                    title="Recommendation feed trust state"
-                                />
-                            </div>
+                            <Activity size={14} className="animate-pulse" style={{ color: '#10b981' }} />
                         </div>
 
                         {activeRecommendations.length === 0 ? (
@@ -672,7 +621,6 @@ export default function DashboardPage() {
                     >
                         <div style={{ display: "flex", justifyContent: "space-between", gap: "0.8rem", flexWrap: "wrap", marginBottom: "1.2rem" }}>
                             <h2 style={{ fontSize: '1.5rem', fontFamily: 'var(--font-serif)', fontWeight: 400 }}>Live Network Activity</h2>
-                            <StatusBadge tone={sourceToneMap[postsSource]} label={sourceLabelMap[postsSource]} />
                         </div>
                         {activePosts.length === 0 ? (
                             <div style={{ fontWeight: 700, color: "var(--text-secondary)" }}>No social timeline rows are available.</div>

@@ -11,6 +11,7 @@ class UserCreate(UserBase):
 
 class UserResponse(UserBase):
     id: str
+    username: Optional[str] = None
     account_type: str
     auth_provider: str
     is_active: bool

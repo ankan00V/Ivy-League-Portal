@@ -123,4 +123,4 @@ jobs:
         run: npm run build
 
       - name: Validate browser security headers
-        run: npm run e2e -- --project=chromium --grep "Browser security headers"
+        run: npm run e2e -- --project=chromium --grep "Browser security headers|Profile editing and university selection persist"

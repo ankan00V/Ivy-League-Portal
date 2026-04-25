@@ -25,6 +25,7 @@ from app.models.user import User
 from app.schemas.user import Token, UserCreate, UserResponse
 from app.services.auth_security_service import auth_security_service
 from app.services.email import send_email_otp
+from app.services.username_service import ensure_system_username
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -265,6 +266,7 @@ async def register_user(
         auth_provider="password",
     )
     await user.insert()
+    await ensure_system_username(user)
     return user
 
 
@@ -653,6 +655,7 @@ async def oauth_google_callback(
                 is_active=True,
             )
             await user.insert()
+            await ensure_system_username(user)
         else:
             existing_account_type = _normalize_account_type(getattr(user, "account_type", "candidate"), default="candidate")
             if account_type != existing_account_type:
@@ -669,6 +672,7 @@ async def oauth_google_callback(
             if not user.auth_provider:
                 user.auth_provider = "google"
             await user.save()
+            await ensure_system_username(user)
 
         if not user.is_active:
             raise ValueError("Inactive user account")
@@ -946,9 +950,13 @@ async def verify_otp(
             auth_provider="otp",
         )
         await user.insert()
+        await ensure_system_username(user)
 
     if not user:
         raise HTTPException(status_code=404, detail="No account found for this email")
+
+    if not (user.username or "").strip():
+        await ensure_system_username(user)
 
     if not user.is_active:
         await auth_security_service.audit_event(
