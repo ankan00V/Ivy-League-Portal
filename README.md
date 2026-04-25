@@ -19,6 +19,7 @@ Students discover internships, research roles, scholarships, and hackathons acro
 - Browser security headers + nonce-based strict `script-src` CSP (no `unsafe-inline`/`unsafe-eval`) with enforced Trusted Types added (frontend + backend responses).
 - Staging integrated E2E expanded with role/failure-path coverage (`frontend/e2e/staging-role-and-failure.spec.ts`).
 - Ops secret-readiness workflow added to enforce staging/alert-channel ownership (`.github/workflows/ops-secrets-readiness.yml`).
+- Profile/onboarding state refresh loop fixed so fields remain editable and university dropdown selections persist correctly (`frontend/src/app/profile/page.tsx`, `frontend/src/app/onboarding/page.tsx`).
 
 ## What Is Implemented (Current State)
 ### AI/ML and Data Components

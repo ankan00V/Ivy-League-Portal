@@ -413,6 +413,42 @@ function deriveUniversitySelection(value: string): string {
   return UNIVERSITY_OPTION_VALUES.has(trimmed) ? trimmed : OTHER_UNIVERSITY_VALUE;
 }
 
+function getCollegeNameFromProfile(profile: ProfilePayload): string {
+  return profile.college_name;
+}
+
+function getCurrentAddressFromProfile(profile: ProfilePayload): {
+  line1: string;
+  landmark: string;
+  region: string;
+  pincode: string;
+} {
+  return {
+    line1: profile.current_address_line1,
+    landmark: profile.current_address_landmark,
+    region: profile.current_address_region,
+    pincode: profile.current_address_pincode,
+  };
+}
+
+function getPermanentAddressFromProfile(profile: ProfilePayload): {
+  line1: string;
+  landmark: string;
+  region: string;
+  pincode: string;
+} {
+  return {
+    line1: profile.permanent_address_line1,
+    landmark: profile.permanent_address_landmark,
+    region: profile.permanent_address_region,
+    pincode: profile.permanent_address_pincode,
+  };
+}
+
+function getResumeFilenameFromProfile(profile: ProfilePayload): string {
+  return profile.resume_filename;
+}
+
 const CURRENT_TO_PERMANENT_ADDRESS_FIELD: Partial<Record<keyof ProfilePayload, keyof ProfilePayload>> = {
   current_address_line1: "permanent_address_line1",
   current_address_landmark: "permanent_address_landmark",
@@ -498,20 +534,10 @@ export default function ProfilePage() {
     buildProfileUpdatePayload,
     deriveUniversitySelection,
     hasText,
-    getCollegeName: (value) => value.college_name,
-    getCurrentAddress: (value) => ({
-      line1: value.current_address_line1,
-      landmark: value.current_address_landmark,
-      region: value.current_address_region,
-      pincode: value.current_address_pincode,
-    }),
-    getPermanentAddress: (value) => ({
-      line1: value.permanent_address_line1,
-      landmark: value.permanent_address_landmark,
-      region: value.permanent_address_region,
-      pincode: value.permanent_address_pincode,
-    }),
-    getResumeFilename: (value) => value.resume_filename,
+    getCollegeName: getCollegeNameFromProfile,
+    getCurrentAddress: getCurrentAddressFromProfile,
+    getPermanentAddress: getPermanentAddressFromProfile,
+    getResumeFilename: getResumeFilenameFromProfile,
     setSelectedUniversity,
     setCopyCurrentAddress,
   });
