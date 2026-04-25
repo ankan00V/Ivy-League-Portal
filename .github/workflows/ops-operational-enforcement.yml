@@ -1,0 +1,90 @@
+name: Ops Operational Enforcement
+
+on:
+  schedule:
+    - cron: "50 3 * * 1"
+  workflow_dispatch:
+
+jobs:
+  ops-enforcement:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      MONGODB_URL: ${{ secrets.MONGODB_URL }}
+      MONGODB_DB_NAME: ${{ secrets.MONGODB_DB_NAME }}
+      MLOPS_ALERT_SLACK_WEBHOOK_URL: ${{ secrets.MLOPS_ALERT_SLACK_WEBHOOK_URL }}
+      MLOPS_ALERT_PAGERDUTY_ROUTING_KEY: ${{ secrets.MLOPS_ALERT_PAGERDUTY_ROUTING_KEY }}
+      MLOPS_INCIDENT_DEFAULT_OWNER: ${{ vars.MLOPS_INCIDENT_DEFAULT_OWNER }}
+      MLOPS_ONCALL_PRIMARY: ${{ vars.MLOPS_ONCALL_PRIMARY }}
+      MLOPS_ONCALL_SECONDARY: ${{ vars.MLOPS_ONCALL_SECONDARY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Enforce required operational wiring
+        run: |
+          missing=0
+          check_required() {
+            key="$1"
+            value="$2"
+            if [ -z "$value" ]; then
+              echo "[missing] ${key}"
+              missing=1
+            else
+              echo "[ok] ${key}"
+            fi
+          }
+
+          check_required "MONGODB_URL" "${MONGODB_URL}"
+          check_required "MONGODB_DB_NAME" "${MONGODB_DB_NAME}"
+          check_required "MLOPS_ALERT_SLACK_WEBHOOK_URL" "${MLOPS_ALERT_SLACK_WEBHOOK_URL}"
+          check_required "MLOPS_ALERT_PAGERDUTY_ROUTING_KEY" "${MLOPS_ALERT_PAGERDUTY_ROUTING_KEY}"
+          check_required "MLOPS_INCIDENT_DEFAULT_OWNER" "${MLOPS_INCIDENT_DEFAULT_OWNER}"
+          check_required "MLOPS_ONCALL_PRIMARY" "${MLOPS_ONCALL_PRIMARY}"
+          check_required "MLOPS_ONCALL_SECONDARY" "${MLOPS_ONCALL_SECONDARY}"
+
+          if [ "${missing}" -ne 0 ]; then
+            echo "Operational enforcement prerequisites are incomplete."
+            exit 1
+          fi
+
+      - name: Publish on-call ownership artifact
+        run: |
+          mkdir -p docs/portfolio
+          {
+            echo "# On-Call Ownership"
+            echo
+            echo "- Default incident owner: **${MLOPS_INCIDENT_DEFAULT_OWNER}**"
+            echo "- Primary on-call: **${MLOPS_ONCALL_PRIMARY}**"
+            echo "- Secondary on-call: **${MLOPS_ONCALL_SECONDARY}**"
+          } > docs/portfolio/oncall_ownership.md
+
+      - name: Run synthetic Slack and PagerDuty delivery check
+        run: python backend/scripts/synthetic_alert_delivery_check.py
+
+      - name: Audit weekly incident review SLA
+        run: python backend/scripts/audit_incident_review_sla.py --days 14 --fail-on-breach
+
+      - name: Upload operational enforcement artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ops-operational-enforcement
+          path: |
+            docs/portfolio/oncall_ownership.md
+            docs/portfolio/incident_review_sla_audit.md
+            backend/benchmarks/incident_review_sla_audit.json
+            backend/benchmarks/synthetic_alert_delivery.json
+          if-no-files-found: ignore

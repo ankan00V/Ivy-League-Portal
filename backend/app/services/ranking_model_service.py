@@ -70,6 +70,7 @@ class RankingModelService:
     async def activate(self, *, model_id: str) -> RankingModelVersion:
         # Deactivate any currently-active models (normally 0/1).
         active_models = await RankingModelVersion.find_many(RankingModelVersion.is_active == True).to_list()  # noqa: E712
+        previous_active = active_models[0] if active_models else None
         for model in active_models:
             model.is_active = False
             await model.save()
@@ -79,6 +80,12 @@ class RankingModelService:
             raise ValueError("model_not_found")
 
         model.is_active = True
+        lifecycle = dict(model.lifecycle or {})
+        if previous_active is not None and str(previous_active.id) != str(model.id):
+            lifecycle["previous_active_model_id"] = str(previous_active.id)
+            lifecycle["previous_active_model_name"] = str(previous_active.name or "")
+        lifecycle["activated_at"] = datetime.utcnow().isoformat()
+        model.lifecycle = lifecycle
         await model.save()
 
         # Invalidate cache.
@@ -87,6 +94,20 @@ class RankingModelService:
         _cache_until = None
 
         return model
+
+    async def rollback(self, *, model_id: str | None = None) -> RankingModelVersion:
+        if model_id:
+            return await self.activate(model_id=model_id)
+
+        active = await RankingModelVersion.find_one(RankingModelVersion.is_active == True)  # noqa: E712
+        if not active:
+            raise ValueError("active_model_not_found")
+
+        previous_model_id = str((active.lifecycle or {}).get("previous_active_model_id") or "").strip()
+        if not previous_model_id:
+            raise ValueError("rollback_target_not_found")
+
+        return await self.activate(model_id=previous_model_id)
 
     async def deactivate_all(self) -> int:
         active_models = await RankingModelVersion.find_many(RankingModelVersion.is_active == True).to_list()  # noqa: E712

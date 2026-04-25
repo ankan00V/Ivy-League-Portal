@@ -8,7 +8,7 @@ from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from app.core.config import settings
+from app.core.config import auth_cookie_only_mode_enabled, resolved_csp_value, settings
 
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -70,11 +70,27 @@ from app.api.deps import get_current_admin_user, require_scopes
 
 logger = logging.getLogger(__name__)
 
+
+def _has_wildcard(values: list[str]) -> bool:
+    return any(str(value).strip() == "*" for value in list(values or []))
+
+
+def _csp_has_unsafe_tokens(csp_value: str) -> bool:
+    normalized = str(csp_value or "").lower()
+    return "'unsafe-inline'" in normalized or "'unsafe-eval'" in normalized
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     if settings.ENVIRONMENT.strip().lower() == "production":
         if settings.SECRET_KEY.startswith("your_super_secret_key_here"):
             raise RuntimeError("SECRET_KEY must be set via environment in production.")
+        if not settings.AUTH_SESSION_COOKIE_ENABLED:
+            raise RuntimeError("AUTH_SESSION_COOKIE_ENABLED must remain enabled in production.")
+        if not auth_cookie_only_mode_enabled():
+            raise RuntimeError("Production requires cookie-only auth mode.")
+        if not settings.AUTH_SESSION_COOKIE_SECURE:
+            raise RuntimeError("AUTH_SESSION_COOKIE_SECURE must be true in production.")
         if bool(settings.MONGODB_TLS_ALLOW_INVALID_CERTS):
             raise RuntimeError("MONGODB_TLS_ALLOW_INVALID_CERTS must be false in production.")
         if settings.MLOPS_ALERTS_ENABLED and settings.MLOPS_ENFORCE_LIVE_ALERT_CHANNELS_IN_PRODUCTION:
@@ -96,6 +112,14 @@ async def lifespan(app: FastAPI):
         ):
             raise RuntimeError(
                 "MLOPS incident auto-create requires MLOPS_INCIDENT_DEFAULT_OWNER in production."
+            )
+        if _has_wildcard(settings.BACKEND_CORS_ORIGINS):
+            raise RuntimeError("BACKEND_CORS_ORIGINS cannot include '*' in production.")
+        if _has_wildcard(settings.ALLOWED_HOSTS):
+            raise RuntimeError("ALLOWED_HOSTS cannot include '*' in production.")
+        if settings.SECURITY_CSP_ENFORCE_STRICT_IN_PRODUCTION and _csp_has_unsafe_tokens(resolved_csp_value()):
+            raise RuntimeError(
+                "SECURITY_CSP_VALUE includes unsafe-inline/unsafe-eval while strict CSP is enforced."
             )
 
     # Initialize MongoDB connection using explicit cert verification parameters

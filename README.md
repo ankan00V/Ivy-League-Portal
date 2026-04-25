@@ -3,7 +3,7 @@
 ## Problem
 Students discover internships, research roles, scholarships, and hackathons across fragmented portals. Most systems rely on keyword filtering, weak personalization, and manual shortlisting, which leads to low relevance and poor application conversion.
 
-## Latest Build Update (April 24, 2026)
+## Latest Build Update (April 25, 2026)
 - Infrastructure baseline aligned to MongoDB + Redis (local and production compose files no longer imply Postgres).
 - Canonical Slim config added (`.slim.yaml`) and root `Makefile` workflows added (`make up`, `make dev`, `make doctor`).
 - Session-cookie auth hardening shipped (HttpOnly cookie issuance on login/signup/OAuth, cookie-aware auth dependency, explicit logout endpoint).
@@ -22,6 +22,11 @@ Students discover internships, research roles, scholarships, and hackathons acro
 - Profile/onboarding state refresh loop fixed so fields remain editable and university dropdown selections persist correctly (`frontend/src/app/profile/page.tsx`, `frontend/src/app/onboarding/page.tsx`).
 - Added Playwright regression coverage for profile edit persistence + university selection stickiness (`frontend/e2e/profile-edit-persistence.spec.ts`) and included it in production-readiness frontend validation.
 - Production-readiness frontend workflow now installs Playwright Chromium before browser E2E validation to prevent missing-browser CI failures (`.github/workflows/production-readiness-gate.yml`).
+- Backend production startup now enforces strict host/CORS/CSP + cookie-only auth requirements (no wildcard `ALLOWED_HOSTS`/`BACKEND_CORS_ORIGINS`, no unsafe CSP tokens when strict mode is enabled).
+- CI toolchain upgraded to Node 24 + latest checkout/setup actions across workflows.
+- Release-blocking ML gate workflow added for parity + champion/challenger readiness (`.github/workflows/release-blocking-ml-gates.yml`).
+- Operational enforcement workflow added for synthetic Slack/PagerDuty delivery checks + incident review SLA audits (`.github/workflows/ops-operational-enforcement.yml`).
+- Automated dataset snapshot refresh, learned-ranker rollout reporting, and weekly business-impact scorecard workflows added.
 
 ## What Is Implemented (Current State)
 ### AI/ML and Data Components
@@ -88,14 +93,15 @@ Students discover internships, research roles, scholarships, and hackathons acro
   - new endpoint: `POST /api/v1/auth/logout`
   - auth dependency now accepts bearer token **or** session cookie.
 - Frontend auth no longer persists bearer tokens in `localStorage`; browser state is a non-sensitive session marker + expiry while auth trust is cookie/session based.
+- Production mode enforces cookie-only auth path (`AUTH_COOKIE_ONLY_MODE`) with secure session-cookie settings.
 - CSRF middleware now blocks unsafe cookie-session requests when origin/referer is missing or untrusted.
 - Security headers now include CSP + Trusted Types directives and standard browser hardening headers.
 
 ## What Is Still Missing (High Impact Next)
 - Sustained real-user traffic volume for statistically stable experiment reads across all three arms (`baseline`, `semantic`, `ml`).
-- Live Slack/PagerDuty secret wiring and escalation policies in staging+production (code integrations are now implemented; environment credentials and routing policy ownership remain).
-- Continuous post-incident learning loop operations (auto incident creation/timeline APIs and weekly scorecard automation are implemented; recurring review cadence and ownership SLAs must be enforced).
-- Full multi-role staging E2E maturity with seeded employer/admin credentials across environments (current suite supports optional secret-gated checks and candidate/failure paths).
+- Live Slack/PagerDuty secret ownership and escalation policy assignments in staging+production environments (code and workflows are implemented; real credentials + owner roster must be maintained in GitHub environments).
+- Continuous post-incident learning cadence execution (incident APIs/scorecards/audits are automated; team review rituals and closure discipline must stay operational).
+- Full multi-role staging E2E maturity with seeded employer/admin credentials across environments (current suite blocks on configured secrets but still needs broader scenario matrix expansion).
 
 ## Architecture Diagram
 ```mermaid
@@ -132,6 +138,8 @@ Portfolio publish artifacts live in:
 - `docs/portfolio/screenshot_pack.md`
 - `docs/portfolio/screenshots/`
 
+<!-- DATASET_SNAPSHOT:START -->
+
 ## Dataset Size (Verified Snapshot)
 Snapshot date: **April 16, 2026**
 
@@ -152,6 +160,8 @@ Source distribution for opportunities:
 - `unstop`: 30
 - `ivy_rss`: 14
 - `hack2skill`: 5
+
+<!-- DATASET_SNAPSHOT:END -->
 
 ## Latency (Local API Benchmark)
 Benchmark date: **April 16, 2026**
@@ -426,23 +436,50 @@ PLAYWRIGHT_INTEGRATED_AUTH=1 \
 npm run e2e:staging
 ```
 
-Optional deeper staging role-path coverage secrets:
-- `PLAYWRIGHT_STAGING_ADMIN_BEARER`
+Required seeded staging role-path coverage secrets:
+- `PLAYWRIGHT_STAGING_ADMIN_EMAIL`
+- `PLAYWRIGHT_STAGING_ADMIN_PASSWORD`
 - `PLAYWRIGHT_STAGING_EMPLOYER_EMAIL`
 - `PLAYWRIGHT_STAGING_EMPLOYER_PASSWORD`
 
 Ops secret bootstrap helper (GitHub secrets + vars):
 ```bash
 STAGING_PLAYWRIGHT_BASE_URL=https://staging.example.com \
+STAGING_PLAYWRIGHT_ADMIN_EMAIL=staging-admin@example.com \
+STAGING_PLAYWRIGHT_ADMIN_PASSWORD=... \
+STAGING_PLAYWRIGHT_EMPLOYER_EMAIL=staging-employer@company.com \
+STAGING_PLAYWRIGHT_EMPLOYER_PASSWORD=... \
 MLOPS_ALERT_SLACK_WEBHOOK_URL=https://hooks.slack.com/services/... \
 MLOPS_ALERT_PAGERDUTY_ROUTING_KEY=... \
 MLOPS_INCIDENT_DEFAULT_OWNER=oncall-ml@your-company.com \
+MLOPS_ONCALL_PRIMARY=primary-oncall@your-company.com \
+MLOPS_ONCALL_SECONDARY=secondary-oncall@your-company.com \
 ./scripts/configure_ops_secrets.sh owner/repo
 ```
 
 Real-traffic rollout readiness report:
 ```bash
 python backend/scripts/check_real_traffic_rollout_readiness.py --days 14
+```
+
+Daily learned-ranker rollout report with rollback hook:
+```bash
+python backend/scripts/publish_ranker_rollout_report.py --days 1 --rollback-on-fail
+```
+
+Release-blocking champion/challenger gate:
+```bash
+python backend/scripts/check_champion_challenger_gate.py --days 14 --fail-on-not-ready
+```
+
+Daily dataset snapshot + README refresh:
+```bash
+python backend/scripts/publish_dataset_snapshot.py
+```
+
+Weekly business-impact scorecard publish:
+```bash
+python backend/scripts/publish_weekly_business_impact_scorecard.py --days 7
 ```
 
 Unified PR quality gate (backend tests + frontend lint/build + Playwright smoke):

@@ -9,7 +9,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 from starlette.responses import Response
 
-from app.core.config import settings
+from app.core.config import resolved_csp_value, settings
 from app.core.metrics import REQUEST_LATENCY_SECONDS, REQUESTS_TOTAL, RESPONSES_TOTAL, init_metrics, metrics_available
 from app.core.rate_limit import check_rate_limit
 
@@ -205,13 +205,17 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers.setdefault("Cross-Origin-Resource-Policy", "same-site")
         response.headers.setdefault("X-Permitted-Cross-Domain-Policies", "none")
 
-        if settings.SECURITY_CSP_ENABLED:
+        if settings.SECURITY_CSP_ENABLED and request.url.path not in {
+            "/docs",
+            "/redoc",
+            f"{settings.API_V1_STR}/openapi.json",
+        }:
             csp_key = (
                 "Content-Security-Policy-Report-Only"
                 if settings.SECURITY_CSP_REPORT_ONLY
                 else "Content-Security-Policy"
             )
-            response.headers.setdefault(csp_key, str(settings.SECURITY_CSP_VALUE or "").strip())
+            response.headers.setdefault(csp_key, resolved_csp_value())
 
         if settings.ENVIRONMENT.strip().lower() == "production" or settings.AUTH_SESSION_COOKIE_SECURE:
             response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")

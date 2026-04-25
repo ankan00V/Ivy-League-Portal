@@ -1,17 +1,18 @@
-name: MLOps Incident Scorecard
+name: Learned Ranker Rollout Report
 
 on:
   schedule:
-    - cron: "40 4 * * 1"
+    - cron: "35 4 * * *"
   workflow_dispatch:
 
 jobs:
-  publish-scorecard:
+  rollout-report:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       MONGODB_URL: ${{ secrets.MONGODB_URL }}
       MONGODB_DB_NAME: ${{ secrets.MONGODB_DB_NAME }}
+      LEARNED_RANKER_ROLLBACK_ON_GUARDRAIL_FAILURE: "true"
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -31,20 +32,20 @@ jobs:
       - name: Validate required secrets
         run: |
           if [ -z "${MONGODB_URL}" ] || [ -z "${MONGODB_DB_NAME}" ]; then
-            echo "Missing MONGODB_URL or MONGODB_DB_NAME secrets. Skipping scorecard run."
+            echo "Missing MONGODB_URL or MONGODB_DB_NAME secrets. Skipping rollout report."
             exit 0
           fi
 
-      - name: Publish weekly scorecard artifacts
-        run: |
-          python backend/scripts/publish_weekly_mlops_scorecard.py --days 7
+      - name: Publish daily champion challenger rollout report
+        run: python backend/scripts/publish_ranker_rollout_report.py --days 1 --rollback-on-fail
 
-      - name: Upload scorecard artifacts
+      - name: Upload rollout artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: mlops-weekly-scorecard
+          name: learned-ranker-rollout-report
           path: |
-            docs/portfolio/weekly_mlops_scorecard.md
-            backend/benchmarks/weekly_mlops_scorecard.json
+            docs/portfolio/learned_ranker_rollout_report.md
+            backend/benchmarks/learned_ranker_rollout_report.json
           if-no-files-found: ignore
+

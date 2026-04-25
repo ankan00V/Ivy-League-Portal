@@ -1,7 +1,8 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type APIRequestContext } from "@playwright/test";
 
 const integratedEnabled = process.env.PLAYWRIGHT_INTEGRATED_AUTH === "1";
-const adminBearer = process.env.PLAYWRIGHT_STAGING_ADMIN_BEARER || "";
+const adminEmail = process.env.PLAYWRIGHT_STAGING_ADMIN_EMAIL || "";
+const adminPassword = process.env.PLAYWRIGHT_STAGING_ADMIN_PASSWORD || "";
 const employerEmail = process.env.PLAYWRIGHT_STAGING_EMPLOYER_EMAIL || "";
 const employerPassword = process.env.PLAYWRIGHT_STAGING_EMPLOYER_PASSWORD || "";
 
@@ -9,6 +10,21 @@ function randomEmail(): string {
   const stamp = Date.now();
   const rand = Math.floor(Math.random() * 100000);
   return `e2e_candidate_${stamp}_${rand}@example.test`;
+}
+
+async function loginWithPassword(
+  request: APIRequestContext,
+  email: string,
+  password: string,
+): Promise<void> {
+  const body = new URLSearchParams();
+  body.set("username", email);
+  body.set("password", password);
+  const loginResponse = await request.post("/api/v1/auth/login", {
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    data: body.toString(),
+  });
+  expect(loginResponse.ok()).toBeTruthy();
 }
 
 test.describe("Staging role and failure paths", () => {
@@ -32,34 +48,22 @@ test.describe("Staging role and failure paths", () => {
     });
     expect(registerResponse.ok()).toBeTruthy();
 
-    const body = new URLSearchParams();
-    body.set("username", email);
-    body.set("password", password);
-    const loginResponse = await request.post("/api/v1/auth/login", {
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      data: body.toString(),
-    });
-    expect(loginResponse.ok()).toBeTruthy();
+    await loginWithPassword(request, email, password);
 
     const employerSummaryResponse = await request.get("/api/v1/employer/dashboard/summary");
     expect([401, 403]).toContain(employerSummaryResponse.status());
   });
 
-  test("admin incident endpoints are reachable when admin bearer is configured", async ({ request }) => {
-    test.skip(!adminBearer, "Set PLAYWRIGHT_STAGING_ADMIN_BEARER for admin incident path checks.");
+  test("admin incident endpoints are reachable with seeded admin credentials", async ({ request }) => {
+    await loginWithPassword(request, adminEmail, adminPassword);
 
-    const incidentsResponse = await request.get("/api/v1/mlops/incidents?limit=1", {
-      headers: { Authorization: `Bearer ${adminBearer}` },
-    });
+    const incidentsResponse = await request.get("/api/v1/mlops/incidents?limit=1");
     expect(incidentsResponse.ok()).toBeTruthy();
 
     const payload = (await incidentsResponse.json()) as Array<{ id: string }>;
     if (Array.isArray(payload) && payload.length > 0 && payload[0]?.id) {
       const appendTimelineRes = await request.post(`/api/v1/mlops/incidents/${payload[0].id}/timeline`, {
-        headers: {
-          Authorization: `Bearer ${adminBearer}`,
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         data: {
           event: "staging_check",
           message: "Automated staging incident API coverage check.",
@@ -70,20 +74,8 @@ test.describe("Staging role and failure paths", () => {
     }
   });
 
-  test("employer dashboard summary is reachable when employer credentials are configured", async ({ request }) => {
-    test.skip(
-      !employerEmail || !employerPassword,
-      "Set PLAYWRIGHT_STAGING_EMPLOYER_EMAIL and PLAYWRIGHT_STAGING_EMPLOYER_PASSWORD for employer path checks.",
-    );
-
-    const body = new URLSearchParams();
-    body.set("username", employerEmail);
-    body.set("password", employerPassword);
-    const loginResponse = await request.post("/api/v1/auth/login", {
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      data: body.toString(),
-    });
-    expect(loginResponse.ok()).toBeTruthy();
+  test("employer dashboard summary is reachable with seeded employer credentials", async ({ request }) => {
+    await loginWithPassword(request, employerEmail, employerPassword);
 
     const summaryResponse = await request.get("/api/v1/employer/dashboard/summary");
     expect(summaryResponse.ok()).toBeTruthy();

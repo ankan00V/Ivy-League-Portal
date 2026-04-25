@@ -253,6 +253,39 @@ async def activate_model(model_id: str, _: User = Depends(get_current_admin_user
     )
 
 
+@router.post("/models/active/rollback", response_model=ModelVersionResponse)
+async def rollback_active_model(_: User = Depends(get_current_admin_user)) -> Any:
+    try:
+        model = await ranking_model_service.rollback()
+    except ValueError as exc:
+        detail = str(exc)
+        if detail == "active_model_not_found":
+            raise HTTPException(status_code=404, detail="Active model not found") from exc
+        if detail == "rollback_target_not_found":
+            raise HTTPException(status_code=409, detail="No rollback target is recorded for the active model") from exc
+        if detail == "model_not_found":
+            raise HTTPException(status_code=404, detail="Rollback target model not found") from exc
+        raise
+
+    return ModelVersionResponse(
+        id=str(model.id),
+        name=model.name,
+        is_active=bool(model.is_active),
+        weights={str(k): float(v) for k, v in (model.weights or {}).items()},
+        metrics={str(k): float(v) for k, v in (model.metrics or {}).items()},
+        training_rows=int(model.training_rows or 0),
+        trained_window_start=model.trained_window_start,
+        trained_window_end=model.trained_window_end,
+        label_window_hours=int(model.label_window_hours or 0),
+        created_at=model.created_at,
+        lifecycle=dict(model.lifecycle or {}),
+        split_strategy=model.split_strategy,
+        training_metadata=dict(model.training_metadata or {}),
+        model_card=dict(model.model_card or {}),
+        notes=model.notes,
+    )
+
+
 @router.get("/nlp/models", response_model=list[NLPModelVersionResponse])
 async def list_nlp_models(_: User = Depends(get_current_admin_user)) -> Any:
     models = await NLPModelVersion.find_many().sort("-created_at").limit(50).to_list()

@@ -63,6 +63,17 @@ class TestAuthCookieSession(unittest.IsolatedAsyncioTestCase):
             await get_current_user(request=request, token=None)
         self.assertEqual(ctx.exception.status_code, 401)
 
+    async def test_cookie_only_mode_rejects_valid_bearer_without_session_cookie(self) -> None:
+        user_id = "64b64b64b64b64b64b64b64f"
+        token = create_access_token(user_id, scopes=["user", "admin"])
+        request = Request({"type": "http", "method": "GET", "path": "/", "headers": []})
+
+        with patch("app.api.deps.auth_cookie_only_mode_enabled", return_value=True):
+            with self.assertRaises(HTTPException) as ctx:
+                await get_current_user(request=request, token=token)
+
+        self.assertEqual(ctx.exception.status_code, 401)
+
 
 if __name__ == "__main__":
     unittest.main()

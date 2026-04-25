@@ -17,12 +17,12 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -44,10 +44,10 @@ jobs:
     needs: security-and-policy
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: "pip"
@@ -72,10 +72,10 @@ jobs:
     needs: security-and-policy
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: "pip"
@@ -102,12 +102,12 @@ jobs:
         working-directory: frontend
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
 
@@ -127,3 +127,71 @@ jobs:
 
       - name: Validate browser security headers
         run: npm run e2e -- --project=chromium --grep "Browser security headers|Profile editing and university selection persist"
+
+  staging-multi-role-release-block:
+    name: Staging Multi-Role E2E (Release Blocking)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: ${{ github.event_name != 'pull_request' }}
+    needs: frontend-production-readiness
+    env:
+      STAGING_PLAYWRIGHT_BASE_URL: ${{ secrets.STAGING_PLAYWRIGHT_BASE_URL }}
+      STAGING_PLAYWRIGHT_ADMIN_EMAIL: ${{ secrets.STAGING_PLAYWRIGHT_ADMIN_EMAIL }}
+      STAGING_PLAYWRIGHT_ADMIN_PASSWORD: ${{ secrets.STAGING_PLAYWRIGHT_ADMIN_PASSWORD }}
+      STAGING_PLAYWRIGHT_EMPLOYER_EMAIL: ${{ secrets.STAGING_PLAYWRIGHT_EMPLOYER_EMAIL }}
+      STAGING_PLAYWRIGHT_EMPLOYER_PASSWORD: ${{ secrets.STAGING_PLAYWRIGHT_EMPLOYER_PASSWORD }}
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Validate required staging secrets
+        run: |
+          missing=0
+          require_secret() {
+            key="$1"
+            value="$2"
+            if [ -z "$value" ]; then
+              echo "[missing] ${key}"
+              missing=1
+            else
+              echo "[ok] ${key}"
+            fi
+          }
+          require_secret "STAGING_PLAYWRIGHT_BASE_URL" "${STAGING_PLAYWRIGHT_BASE_URL}"
+          require_secret "STAGING_PLAYWRIGHT_ADMIN_EMAIL" "${STAGING_PLAYWRIGHT_ADMIN_EMAIL}"
+          require_secret "STAGING_PLAYWRIGHT_ADMIN_PASSWORD" "${STAGING_PLAYWRIGHT_ADMIN_PASSWORD}"
+          require_secret "STAGING_PLAYWRIGHT_EMPLOYER_EMAIL" "${STAGING_PLAYWRIGHT_EMPLOYER_EMAIL}"
+          require_secret "STAGING_PLAYWRIGHT_EMPLOYER_PASSWORD" "${STAGING_PLAYWRIGHT_EMPLOYER_PASSWORD}"
+          if [ "${missing}" -ne 0 ]; then
+            echo "Blocking release: mandatory staging multi-role E2E secrets are incomplete."
+            exit 1
+          fi
+
+      - name: Run staging integrated suites
+        env:
+          PLAYWRIGHT_STAGING_URL: ${{ env.STAGING_PLAYWRIGHT_BASE_URL }}
+          PLAYWRIGHT_BASE_URL: ${{ env.STAGING_PLAYWRIGHT_BASE_URL }}
+          PLAYWRIGHT_INTEGRATED_AUTH: "1"
+          PLAYWRIGHT_LIVE_BACKEND: "1"
+          PLAYWRIGHT_STAGING_ADMIN_EMAIL: ${{ env.STAGING_PLAYWRIGHT_ADMIN_EMAIL }}
+          PLAYWRIGHT_STAGING_ADMIN_PASSWORD: ${{ env.STAGING_PLAYWRIGHT_ADMIN_PASSWORD }}
+          PLAYWRIGHT_STAGING_EMPLOYER_EMAIL: ${{ env.STAGING_PLAYWRIGHT_EMPLOYER_EMAIL }}
+          PLAYWRIGHT_STAGING_EMPLOYER_PASSWORD: ${{ env.STAGING_PLAYWRIGHT_EMPLOYER_PASSWORD }}
+          CI: "true"
+        run: npm run e2e:staging -- --reporter=list

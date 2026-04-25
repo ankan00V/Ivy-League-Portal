@@ -3,7 +3,7 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
 from beanie import PydanticObjectId
 
-from app.core.config import settings
+from app.core.config import auth_cookie_only_mode_enabled, settings
 from app.core.email_policy import is_corporate_email
 from app.models.user import User
 from app.schemas.user import TokenData
@@ -43,8 +43,10 @@ async def get_current_user(
     cookie_token = _token_from_request_cookie(request)
     candidate_tokens: list[str] = []
 
-    # Ignore malformed bearer tokens and fall back to authenticated session cookie.
-    if _looks_like_jwt(header_token):
+    cookie_only_mode = auth_cookie_only_mode_enabled()
+
+    # Ignore malformed bearer tokens. In cookie-only mode, headers are never trusted.
+    if not cookie_only_mode and _looks_like_jwt(header_token):
         candidate_tokens.append(str(header_token))
     if _looks_like_jwt(cookie_token):
         candidate_tokens.append(str(cookie_token))

@@ -1,12 +1,12 @@
-name: MLOps Incident Scorecard
+name: Weekly Business Impact Scorecard
 
 on:
   schedule:
-    - cron: "40 4 * * 1"
+    - cron: "50 4 * * 1"
   workflow_dispatch:
 
 jobs:
-  publish-scorecard:
+  publish-business-impact:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -28,23 +28,23 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
 
-      - name: Validate required secrets
+      - name: Validate required DB secrets
         run: |
           if [ -z "${MONGODB_URL}" ] || [ -z "${MONGODB_DB_NAME}" ]; then
-            echo "Missing MONGODB_URL or MONGODB_DB_NAME secrets. Skipping scorecard run."
-            exit 0
+            echo "Missing MONGODB_URL or MONGODB_DB_NAME secrets."
+            exit 1
           fi
 
-      - name: Publish weekly scorecard artifacts
+      - name: Publish weekly business impact scorecard
         run: |
-          python backend/scripts/publish_weekly_mlops_scorecard.py --days 7
+          python backend/scripts/publish_weekly_business_impact_scorecard.py --days 7
 
-      - name: Upload scorecard artifacts
+      - name: Upload business impact artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: mlops-weekly-scorecard
+          name: weekly-business-impact-scorecard
           path: |
-            docs/portfolio/weekly_mlops_scorecard.md
-            backend/benchmarks/weekly_mlops_scorecard.json
+            backend/benchmarks/weekly_business_impact_scorecard.json
+            docs/portfolio/weekly_business_impact_scorecard.md
           if-no-files-found: ignore

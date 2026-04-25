@@ -7,11 +7,13 @@ from typing import Any, Optional
 
 from beanie.odm.operators.find.comparison import In
 
+from app.core.config import settings
 from app.models.opportunity import Opportunity
 from app.models.opportunity_interaction import OpportunityInteraction
 from app.models.profile import Profile
 from app.services.experiment_service import experiment_service
 from app.services.intelligence import score_opportunity_match
+from app.services.mlops.learned_ranker_rollout_service import learned_ranker_rollout_service
 from app.services.personalization.feature_builder import build_ranker_features, skills_overlap_score
 from app.services.personalization.learned_ranker import learned_ranker
 from app.services.ranking_model_service import ranking_model_service
@@ -303,9 +305,41 @@ class RecommendationService:
         else:
             meta = {"mode": effective_mode}
 
+        rollout_decision = learned_ranker_rollout_service.resolve(
+            requested_mode=effective_mode,
+            user_id=str(user_id),
+        )
+        serving_mode = rollout_decision.primary_mode
+        shadow_enabled = learned_ranker_rollout_service.should_shadow(
+            decision=rollout_decision,
+            user_id=str(user_id),
+        )
+        shadow_candidate_limit = (
+            max(0, int(settings.LEARNED_RANKER_SHADOW_MAX_CANDIDATES))
+            if shadow_enabled
+            else 0
+        )
+
+        meta["requested_mode"] = effective_mode
+        meta["mode"] = serving_mode
         meta["model_version_id"] = active_model.model_version_id
         meta["weights"] = dict(weights)
-        if effective_mode == "ml":
+        meta["rollout"] = {
+            "key": rollout_decision.rollout_key,
+            "variant": rollout_decision.rollout_variant,
+            "bucket": rollout_decision.rollout_bucket,
+            "percent": rollout_decision.rollout_percent,
+            "in_cohort": rollout_decision.in_cohort,
+            "baseline_mode": rollout_decision.baseline_mode,
+        }
+        meta["shadow"] = {
+            "enabled": shadow_enabled,
+            "mode": "ml" if shadow_enabled else None,
+            "model_version_id": active_model.model_version_id if shadow_enabled else None,
+            "candidate_limit": shadow_candidate_limit,
+            "candidate_count": 0,
+        }
+        if serving_mode == "ml" or shadow_enabled:
             importance = learned_ranker.feature_importance(top_k=8)
             meta["feature_importance_top"] = [
                 {"feature": item.feature, "importance": item.importance}
@@ -331,6 +365,8 @@ class RecommendationService:
 
         candidates: list[dict[str, Any]] = []
         ml_request_failed = False
+        shadow_request_failed = False
+        shadow_candidate_count = 0
         top_features = [item["feature"] for item in list(meta.get("feature_importance_top") or [])[:3]]
         feature_reason = f"Top model features: {', '.join(top_features)}." if top_features else None
         for opportunity in opportunities:
@@ -366,7 +402,7 @@ class RecommendationService:
             reasons = list(baseline_reasons)
             ml_raw_score: float | None = None
 
-            if effective_mode == "ml":
+            if serving_mode == "ml":
                 ranker_result = learned_ranker.score(features)
                 if ranker_result is None:
                     ml_request_failed = True
@@ -377,7 +413,7 @@ class RecommendationService:
                         reasons.append(f"Semantic similarity: {semantic_score:.1f}")
                     if overlap_score > 0:
                         reasons.append(f"Skills overlap: {overlap_score:.2f}")
-            elif effective_mode == "semantic":
+            if serving_mode == "semantic":
                 if semantic_score > 0:
                     reasons.append(f"Semantic match score: {semantic_score:.1f}")
                 if behavior_score > 0:
@@ -394,6 +430,7 @@ class RecommendationService:
                     "behavior_type_pref": round(float(behavior_type_pref), 6),
                     "heuristic_blend_score": heuristic_blend_score,
                     "ml_raw_score": ml_raw_score,
+                    "shadow_ml_raw_score": None,
                     "geo_match_score": float(features.values.get("geo_match_score") or 0.0),
                     "source_trust": float(features.values.get("source_trust") or 0.0),
                     "sequence_ctr_30d": float(features.values.get("sequence_ctr_30d") or 0.0),
@@ -405,7 +442,28 @@ class RecommendationService:
                 }
             )
 
-        if effective_mode == "ml" and ml_request_failed:
+        if shadow_enabled and shadow_candidate_limit > 0:
+            shadow_candidates = sorted(
+                candidates,
+                key=lambda item: (
+                    float(item.get("heuristic_blend_score") or 0.0),
+                    *_activity_sort_key(item["opportunity"]),
+                ),
+                reverse=True,
+            )[:shadow_candidate_limit]
+            for candidate in shadow_candidates:
+                ranker_result = learned_ranker.score(candidate["ranker_features"])
+                if ranker_result is None:
+                    shadow_request_failed = True
+                    continue
+                candidate["shadow_ml_raw_score"] = float(ranker_result.score)
+                shadow_candidate_count += 1
+
+        meta["shadow"]["candidate_count"] = shadow_candidate_count
+        if shadow_enabled and shadow_request_failed:
+            meta["shadow"]["fallback_reason"] = "ml_model_failure"
+
+        if serving_mode == "ml" and ml_request_failed:
             meta["mode"] = "semantic"
             meta["fallback_reason"] = "ml_model_failure"
 
@@ -414,10 +472,10 @@ class RecommendationService:
             opportunity = candidate["opportunity"]
             reasons = list(candidate.get("match_reasons") or [])
 
-            if effective_mode == "baseline":
+            if serving_mode == "baseline":
                 final_score = float(candidate["baseline_score"])
                 final_mode = "baseline"
-            elif effective_mode == "ml" and not ml_request_failed:
+            elif serving_mode == "ml" and not ml_request_failed:
                 final_score = float(candidate.get("ml_raw_score") or 0.0)
                 final_mode = "ml"
                 if feature_reason:
@@ -425,8 +483,13 @@ class RecommendationService:
             else:
                 final_score = float(candidate["heuristic_blend_score"])
                 final_mode = "semantic"
-                if effective_mode == "ml" and ml_request_failed:
+                if serving_mode == "ml" and ml_request_failed:
                     reasons.append("ML ranker failed for this request; used heuristic blend fallback.")
+                elif rollout_decision.requested_mode == "ml" and rollout_decision.primary_mode != "ml":
+                    if shadow_enabled and candidate.get("shadow_ml_raw_score") is not None:
+                        reasons.append("Staged rollout control cohort served heuristic ranking; learned ranker scored in shadow.")
+                    else:
+                        reasons.append("Staged rollout control cohort served heuristic ranking.")
 
             if final_mode != "ml" and final_score < min_score:
                 continue
@@ -455,7 +518,7 @@ class RecommendationService:
                 }
             )
 
-        if effective_mode == "ml" and not ml_request_failed and ranked:
+        if serving_mode == "ml" and not ml_request_failed and ranked:
             raw_scores = [float(item.get("ml_raw_score")) for item in ranked if item.get("ml_raw_score") is not None]
             if raw_scores:
                 lo = min(raw_scores)
@@ -472,9 +535,9 @@ class RecommendationService:
 
         adaptive_filter = await self._learn_user_filter_threshold(
             user_id=user_id,
-            ranking_mode=str(meta.get("mode") or effective_mode or "semantic"),
+            ranking_mode=str(meta.get("mode") or serving_mode or "semantic"),
         )
-        if adaptive_filter and effective_mode in {"semantic", "ml"}:
+        if adaptive_filter and str(meta.get("mode") or serving_mode) in {"semantic", "ml"}:
             adaptive_min_score = max(float(min_score), float(adaptive_filter["threshold"]))
             filtered = [item for item in ranked if float(item.get("match_score") or 0.0) >= adaptive_min_score]
             if filtered:

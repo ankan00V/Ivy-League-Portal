@@ -12,17 +12,21 @@ jobs:
     timeout-minutes: 25
     env:
       STAGING_PLAYWRIGHT_BASE_URL: ${{ secrets.STAGING_PLAYWRIGHT_BASE_URL }}
+      STAGING_PLAYWRIGHT_ADMIN_EMAIL: ${{ secrets.STAGING_PLAYWRIGHT_ADMIN_EMAIL }}
+      STAGING_PLAYWRIGHT_ADMIN_PASSWORD: ${{ secrets.STAGING_PLAYWRIGHT_ADMIN_PASSWORD }}
+      STAGING_PLAYWRIGHT_EMPLOYER_EMAIL: ${{ secrets.STAGING_PLAYWRIGHT_EMPLOYER_EMAIL }}
+      STAGING_PLAYWRIGHT_EMPLOYER_PASSWORD: ${{ secrets.STAGING_PLAYWRIGHT_EMPLOYER_PASSWORD }}
     defaults:
       run:
         working-directory: frontend
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
 
@@ -32,25 +36,40 @@ jobs:
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
-      - name: Enforce staging URL secret on scheduled runs
-        if: ${{ github.event_name == 'schedule' && env.STAGING_PLAYWRIGHT_BASE_URL == '' }}
+      - name: Enforce required staging identity secrets
         run: |
-          echo "STAGING_PLAYWRIGHT_BASE_URL is required for scheduled staging coverage."
-          exit 1
+          missing=0
+          check_required() {
+            key="$1"
+            value="$2"
+            if [ -z "$value" ]; then
+              echo "[missing] ${key}"
+              missing=1
+            else
+              echo "[ok] ${key}"
+            fi
+          }
+
+          check_required "STAGING_PLAYWRIGHT_BASE_URL" "${STAGING_PLAYWRIGHT_BASE_URL}"
+          check_required "STAGING_PLAYWRIGHT_ADMIN_EMAIL" "${STAGING_PLAYWRIGHT_ADMIN_EMAIL}"
+          check_required "STAGING_PLAYWRIGHT_ADMIN_PASSWORD" "${STAGING_PLAYWRIGHT_ADMIN_PASSWORD}"
+          check_required "STAGING_PLAYWRIGHT_EMPLOYER_EMAIL" "${STAGING_PLAYWRIGHT_EMPLOYER_EMAIL}"
+          check_required "STAGING_PLAYWRIGHT_EMPLOYER_PASSWORD" "${STAGING_PLAYWRIGHT_EMPLOYER_PASSWORD}"
+
+          if [ "${missing}" -ne 0 ]; then
+            echo "Required staging test identities are not configured."
+            exit 1
+          fi
 
       - name: Run integrated staging tests
-        if: ${{ env.STAGING_PLAYWRIGHT_BASE_URL != '' }}
         env:
           PLAYWRIGHT_STAGING_URL: ${{ env.STAGING_PLAYWRIGHT_BASE_URL }}
           PLAYWRIGHT_BASE_URL: ${{ env.STAGING_PLAYWRIGHT_BASE_URL }}
           PLAYWRIGHT_INTEGRATED_AUTH: "1"
           PLAYWRIGHT_LIVE_BACKEND: "1"
-          PLAYWRIGHT_STAGING_ADMIN_BEARER: ${{ secrets.STAGING_PLAYWRIGHT_ADMIN_BEARER }}
-          PLAYWRIGHT_STAGING_EMPLOYER_EMAIL: ${{ secrets.STAGING_PLAYWRIGHT_EMPLOYER_EMAIL }}
-          PLAYWRIGHT_STAGING_EMPLOYER_PASSWORD: ${{ secrets.STAGING_PLAYWRIGHT_EMPLOYER_PASSWORD }}
+          PLAYWRIGHT_STAGING_ADMIN_EMAIL: ${{ env.STAGING_PLAYWRIGHT_ADMIN_EMAIL }}
+          PLAYWRIGHT_STAGING_ADMIN_PASSWORD: ${{ env.STAGING_PLAYWRIGHT_ADMIN_PASSWORD }}
+          PLAYWRIGHT_STAGING_EMPLOYER_EMAIL: ${{ env.STAGING_PLAYWRIGHT_EMPLOYER_EMAIL }}
+          PLAYWRIGHT_STAGING_EMPLOYER_PASSWORD: ${{ env.STAGING_PLAYWRIGHT_EMPLOYER_PASSWORD }}
           CI: "true"
         run: npm run e2e:staging -- --reporter=list
-
-      - name: Skip notice when staging URL is missing
-        if: ${{ env.STAGING_PLAYWRIGHT_BASE_URL == '' }}
-        run: echo "STAGING_PLAYWRIGHT_BASE_URL is not configured; skipping integrated staging suite."

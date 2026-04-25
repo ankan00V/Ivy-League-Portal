@@ -82,7 +82,8 @@ export function setAccessToken(token: string): void {
   if (typeof window === "undefined") {
     return;
   }
-  volatileAccessToken = token || null;
+  const normalizedToken = token && token !== COOKIE_SESSION_SENTINEL ? token : null;
+  volatileAccessToken = normalizedToken;
   markAuthSessionPresentInternal();
   dispatchAuthState("login");
 }

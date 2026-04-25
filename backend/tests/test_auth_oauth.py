@@ -57,6 +57,20 @@ class TestAuthOAuth(unittest.IsolatedAsyncioTestCase):
                 )
             )
 
+    def test_public_access_token_uses_cookie_sentinel_in_cookie_only_mode(self) -> None:
+        with patch("app.api.api_v1.endpoints.auth.auth_cookie_only_mode_enabled", return_value=True):
+            self.assertEqual(
+                auth_endpoint._public_access_token("real-jwt-token"),
+                auth_endpoint.COOKIE_SESSION_SENTINEL,
+            )
+
+    def test_public_access_token_keeps_token_when_cookie_only_mode_is_disabled(self) -> None:
+        with patch("app.api.api_v1.endpoints.auth.auth_cookie_only_mode_enabled", return_value=False):
+            self.assertEqual(
+                auth_endpoint._public_access_token("real-jwt-token"),
+                "real-jwt-token",
+            )
+
     async def test_oauth_google_start_persists_frontend_origin_in_state(self) -> None:
         with (
             patch.object(auth_endpoint.settings, "GOOGLE_OAUTH_CLIENT_ID", "client-id"),

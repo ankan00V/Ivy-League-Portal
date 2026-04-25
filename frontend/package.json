@@ -23,7 +23,7 @@
   "devDependencies": {
     "@axe-core/playwright": "^4.11.2",
     "@playwright/test": "^1.54.2",
-    "@types/node": "^20",
+    "@types/node": "^24",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",

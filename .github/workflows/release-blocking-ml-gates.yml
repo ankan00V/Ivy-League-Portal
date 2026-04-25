@@ -1,14 +1,14 @@
-name: Real Traffic Rollout Readiness
+name: Release Blocking ML Gates
 
 on:
-  schedule:
-    - cron: "20 4 * * 1-5"
+  push:
+    branches: ["main", "master"]
   workflow_dispatch:
 
 jobs:
-  readiness:
+  parity-and-champion-gates:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       MONGODB_URL: ${{ secrets.MONGODB_URL }}
       MONGODB_DB_NAME: ${{ secrets.MONGODB_DB_NAME }}
@@ -28,23 +28,29 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
 
-      - name: Validate required secrets
+      - name: Validate required DB secrets
         run: |
           if [ -z "${MONGODB_URL}" ] || [ -z "${MONGODB_DB_NAME}" ]; then
-            echo "Missing MONGODB_URL or MONGODB_DB_NAME secrets. Skipping readiness run."
-            exit 0
+            echo "Missing MONGODB_URL or MONGODB_DB_NAME secrets."
+            exit 1
           fi
 
-      - name: Generate readiness report
+      - name: Run real-traffic parity blocking gate
         run: |
           python backend/scripts/check_real_traffic_rollout_readiness.py --days 14 --fail-on-not-ready
 
-      - name: Upload readiness artifacts
+      - name: Run champion/challenger blocking gate
+        run: |
+          python backend/scripts/check_champion_challenger_gate.py --days 14 --fail-on-not-ready
+
+      - name: Upload release ML gate artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: real-traffic-rollout-readiness
+          name: release-blocking-ml-gates
           path: |
-            docs/portfolio/real_traffic_rollout_readiness.md
             backend/benchmarks/real_traffic_rollout_readiness.json
+            docs/portfolio/real_traffic_rollout_readiness.md
+            backend/benchmarks/champion_challenger_gate.json
+            docs/portfolio/champion_challenger_gate.md
           if-no-files-found: ignore

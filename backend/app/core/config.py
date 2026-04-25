@@ -3,6 +3,23 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional
 
 ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
+STRICT_DEFAULT_CSP = (
+    "default-src 'self'; "
+    "base-uri 'self'; "
+    "object-src 'none'; "
+    "frame-ancestors 'none'; "
+    "script-src 'self'; "
+    "style-src 'self' https:; "
+    "img-src 'self' data: blob: https:; "
+    "font-src 'self' data: https:; "
+    "connect-src 'self' https:; "
+    "worker-src 'self' blob:; "
+    "manifest-src 'self'; "
+    "form-action 'self'; "
+    "frame-src 'none'; "
+    "require-trusted-types-for 'script'; "
+    "trusted-types default"
+)
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "VidyaVerse API"
@@ -19,28 +36,15 @@ class Settings(BaseSettings):
     AUTH_SESSION_COOKIE_PATH: str = "/"
     AUTH_SESSION_COOKIE_DOMAIN: Optional[str] = None
     AUTH_SESSION_COOKIE_MAX_AGE_SECONDS: int = 60 * 60 * 24  # 24h
+    AUTH_COOKIE_ONLY_MODE: bool = False
     CSRF_PROTECTION_ENABLED: bool = True
     CSRF_ENFORCE_ON_AUTH_COOKIE: bool = True
     CSRF_TRUSTED_ORIGINS: list[str] = []
     SECURITY_HEADERS_ENABLED: bool = True
     SECURITY_CSP_ENABLED: bool = True
     SECURITY_CSP_REPORT_ONLY: bool = False
-    SECURITY_CSP_VALUE: str = (
-        "default-src 'self'; "
-        "base-uri 'self'; "
-        "object-src 'none'; "
-        "frame-ancestors 'none'; "
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; "
-        "style-src 'self' 'unsafe-inline' https:; "
-        "img-src 'self' data: blob: https:; "
-        "font-src 'self' data: https:; "
-        "connect-src 'self' https: http: ws: wss:; "
-        "worker-src 'self' blob:; "
-        "manifest-src 'self'; "
-        "form-action 'self'; "
-        "require-trusted-types-for 'script'; "
-        "trusted-types default"
-    )
+    SECURITY_CSP_ENFORCE_STRICT_IN_PRODUCTION: bool = True
+    SECURITY_CSP_VALUE: Optional[str] = None
     
     # Database layer (MongoDB)
     MONGODB_URL: str = "mongodb://localhost:27017"
@@ -109,8 +113,17 @@ class Settings(BaseSettings):
     
     # Production configs
     ENVIRONMENT: str = "local"
-    BACKEND_CORS_ORIGINS: list[str] = ["*"]  # E.g., ["http://localhost:3000", "https://vidyaverse.com"]
-    ALLOWED_HOSTS: list[str] = ["*"]
+    BACKEND_CORS_ORIGINS: list[str] = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "https://web.test",
+    ]
+    ALLOWED_HOSTS: list[str] = [
+        "localhost",
+        "127.0.0.1",
+        "api.test",
+        "web.test",
+    ]
     
     # SMTP & Email Auth
     SMTP_SERVER: Optional[str] = None
@@ -207,6 +220,14 @@ class Settings(BaseSettings):
     LEARNED_RANKER_ENABLED: bool = False
     LEARNED_RANKER_MODEL_PATH: str = ""
     LEARNED_RANKER_FEATURES: list[str] = []
+    LEARNED_RANKER_SHADOW_ENABLED: bool = True
+    LEARNED_RANKER_SHADOW_SAMPLE_RATE: float = 1.0
+    LEARNED_RANKER_SHADOW_MAX_CANDIDATES: int = 100
+    LEARNED_RANKER_STAGED_ROLLOUT_ENABLED: bool = False
+    LEARNED_RANKER_STAGED_ROLLOUT_PERCENT: int = 0
+    LEARNED_RANKER_STAGED_BASELINE_MODE: str = "semantic"
+    LEARNED_RANKER_ROLLOUT_EXPERIMENT_KEY: str = "learned_ranker_rollout"
+    LEARNED_RANKER_ROLLBACK_ON_GUARDRAIL_FAILURE: bool = True
 
     # Data + MLOps (ranking weights)
     MLOPS_AUTORUN_ENABLED: bool = True
@@ -269,6 +290,25 @@ class Settings(BaseSettings):
     )
 
 settings = Settings()
+
+
+def normalized_environment() -> str:
+    return str(settings.ENVIRONMENT or "local").strip().lower() or "local"
+
+
+def is_production_env() -> bool:
+    return normalized_environment() == "production"
+
+
+def auth_cookie_only_mode_enabled() -> bool:
+    return bool(settings.AUTH_COOKIE_ONLY_MODE) or is_production_env()
+
+
+def resolved_csp_value() -> str:
+    explicit = str(settings.SECURITY_CSP_VALUE or "").strip()
+    if explicit:
+        return explicit
+    return STRICT_DEFAULT_CSP
 
 
 def smtp_server_value() -> Optional[str]:

@@ -94,7 +94,8 @@ PLAYWRIGHT_INTEGRATED_AUTH=1 \
 npm run e2e:staging
 ```
 
-Optional deeper staging checks can be enabled with:
-- `PLAYWRIGHT_STAGING_ADMIN_BEARER`
+Required seeded staging role checks use:
+- `PLAYWRIGHT_STAGING_ADMIN_EMAIL`
+- `PLAYWRIGHT_STAGING_ADMIN_PASSWORD`
 - `PLAYWRIGHT_STAGING_EMPLOYER_EMAIL`
 - `PLAYWRIGHT_STAGING_EMPLOYER_PASSWORD`

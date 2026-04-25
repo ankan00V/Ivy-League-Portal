@@ -15,7 +15,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr, field_validator
 
 from app.api.deps import get_current_admin_user
-from app.core.config import settings
+from app.core.config import auth_cookie_only_mode_enabled, settings
 from app.core.email_policy import is_corporate_email
 from app.core.redis_client import delete_otp, get_otp_cooldown_remaining, set_otp, validate_otp
 from app.core.security import create_access_token, get_password_hash, verify_password
@@ -34,6 +34,7 @@ OTP_EXPIRY_SECONDS = 300
 LOCAL_ENV_NAMES = {"local", "dev", "development", "test"}
 VALID_ACCOUNT_TYPES = {"candidate", "employer"}
 LOCAL_OAUTH_HOSTS = {"localhost", "127.0.0.1"}
+COOKIE_SESSION_SENTINEL = "__cookie_session__"
 
 
 def _scopes_for_user(user: User) -> list[str]:
@@ -231,6 +232,16 @@ def _set_session_cookie(response: Optional[Response], token: str) -> None:
     )
 
 
+def _public_access_token(token: str) -> str:
+    if auth_cookie_only_mode_enabled():
+        return COOKIE_SESSION_SENTINEL
+    return token
+
+
+def _token_response_payload(token: str) -> dict[str, str]:
+    return {"access_token": _public_access_token(token), "token_type": "bearer"}
+
+
 def _clear_session_cookie(response: Optional[Response]) -> None:
     if response is None:
         return
@@ -356,7 +367,7 @@ async def login_access_token(
         scopes=_scopes_for_user(user),
     )
     _set_session_cookie(response, token)
-    return {"access_token": token, "token_type": "bearer"}
+    return _token_response_payload(token)
 
 
 class OTPSendRequest(BaseModel):
@@ -700,8 +711,10 @@ async def oauth_google_callback(
             "provider": "google",
             "next": next_path,
         }
-        # Keep URL token fallback only when cookie sessions are disabled.
-        if not settings.AUTH_SESSION_COOKIE_ENABLED:
+        if auth_cookie_only_mode_enabled():
+            success_query["access_token"] = COOKIE_SESSION_SENTINEL
+        # Keep URL token fallback only when cookie sessions are disabled and bearer compatibility remains enabled.
+        elif not settings.AUTH_SESSION_COOKIE_ENABLED:
             success_query["access_token"] = api_token
         target = _append_query(success_url, success_query)
         redirect = RedirectResponse(target, status_code=302)
@@ -992,7 +1005,7 @@ async def verify_otp(
         scopes=_scopes_for_user(user),
     )
     _set_session_cookie(response, token)
-    return {"access_token": token, "token_type": "bearer"}
+    return _token_response_payload(token)
 
 
 @router.post("/logout", response_model=dict)
