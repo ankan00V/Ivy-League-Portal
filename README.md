@@ -141,25 +141,38 @@ Portfolio publish artifacts live in:
 <!-- DATASET_SNAPSHOT:START -->
 
 ## Dataset Size (Verified Snapshot)
-Snapshot date: **April 16, 2026**
+Snapshot date: **April 26, 2026**
 
-- Opportunities: **202**
-- Applications: **16**
-- Opportunity interactions: **15,961**
-- Experiments: **2**
-- Experiment assignments: **300**
-- Ranking model versions: **3**
-- Drift reports: **1**
+- Opportunities: **331**
+- Applications: **19**
+- Opportunity interactions: **20,987**
+- Experiments: **3**
+- Experiment assignments: **302**
+- Ranking model versions: **43**
+- Drift reports: **44**
 - Profiles: **320**
 - Users: **323**
 
 Source distribution for opportunities:
-- `freshersworld`: 60
+- `freshersworld`: 61
 - `internshala`: 58
-- `indeed_india`: 32
-- `unstop`: 30
-- `ivy_rss`: 14
+- `indeed_india`: 53
+- `unstop`: 32
+- `linkedin`: 19
+- `ivy_rss`: 15
+- `hackerearth`: 12
+- `ycombinator_jobs`: 12
+- `aicte_internship`: 10
+- `wayup`: 10
+- `makeintern`: 9
+- `devfolio`: 8
+- `devpost`: 8
+- `foundit`: 8
+- `promilo`: 7
 - `hack2skill`: 5
+- `codeforces`: 2
+- `handshake`: 1
+- `techgig`: 1
 
 <!-- DATASET_SNAPSHOT:END -->
 

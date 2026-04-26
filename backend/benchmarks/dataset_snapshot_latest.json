@@ -1,0 +1,36 @@
+{
+  "counts": {
+    "applications": 19,
+    "drift_reports": 44,
+    "experiment_assignments": 302,
+    "experiments": 3,
+    "opportunities": 331,
+    "opportunity_interactions": 20987,
+    "profiles": 320,
+    "ranking_model_versions": 43,
+    "users": 323
+  },
+  "generated_at": "2026-04-26T06:15:01.960898",
+  "snapshot_date": "April 26, 2026",
+  "source_distribution": {
+    "aicte_internship": 10,
+    "codeforces": 2,
+    "devfolio": 8,
+    "devpost": 8,
+    "foundit": 8,
+    "freshersworld": 61,
+    "hack2skill": 5,
+    "hackerearth": 12,
+    "handshake": 1,
+    "indeed_india": 53,
+    "internshala": 58,
+    "ivy_rss": 15,
+    "linkedin": 19,
+    "makeintern": 9,
+    "promilo": 7,
+    "techgig": 1,
+    "unstop": 32,
+    "wayup": 10,
+    "ycombinator_jobs": 12
+  }
+}
