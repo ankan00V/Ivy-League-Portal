@@ -10,10 +10,11 @@ import {
   getAuthStateEventName,
   hasAuthSession,
 } from "@/lib/auth-session";
+import { ADMIN_LOGIN_PATH } from "@/lib/admin-routes";
 
 // `/dashboard` stays publicly viewable as a product-preview surface.
 // Interactive user-specific actions inside it remain sign-in gated.
-const PUBLIC_PATHS = new Set(["/", "/dashboard", "/login", "/register", "/auth/callback"]);
+const PUBLIC_PATHS = new Set(["/", "/dashboard", "/login", "/register", "/auth/callback", ADMIN_LOGIN_PATH]);
 
 function isPublicPath(pathname: string): boolean {
   return PUBLIC_PATHS.has(pathname);

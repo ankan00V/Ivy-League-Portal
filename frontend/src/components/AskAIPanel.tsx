@@ -572,9 +572,9 @@ export default function AskAIPanel({ surface, suggestedQueries }: AskAIPanelProp
         </div>
 
         <div style={{ display: "flex", flexWrap: "wrap", gap: "0.6rem" }}>
-          {quickQuerySuggestions.map((suggestion) => (
+          {quickQuerySuggestions.map((suggestion, index) => (
             <button
-              key={suggestion}
+              key={`${suggestion}-${index}`}
               type="button"
               className="btn-secondary"
               onClick={() => void runAskAI(suggestion)}

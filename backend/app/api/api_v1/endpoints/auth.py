@@ -23,8 +23,10 @@ from app.models.auth_abuse_state import AuthAbuseState
 from app.models.auth_audit_event import AuthAuditEvent
 from app.models.user import User
 from app.schemas.user import Token, UserCreate, UserResponse
+from app.services.admin_identity_service import is_reserved_admin_email
 from app.services.auth_security_service import auth_security_service
 from app.services.email import send_email_otp
+from app.services.totp_service import decrypt_secret, verify_totp
 from app.services.username_service import ensure_system_username
 
 router = APIRouter()
@@ -39,7 +41,7 @@ COOKIE_SESSION_SENTINEL = "__cookie_session__"
 
 def _scopes_for_user(user: User) -> list[str]:
     scopes = ["user"]
-    if bool(getattr(user, "is_admin", False)):
+    if bool(getattr(user, "is_admin", False)) and is_reserved_admin_email(getattr(user, "email", "")):
         scopes.extend(["admin", "metrics:read", "jobs:read", "jobs:write", "scraper:trigger"])
     return scopes
 
@@ -208,6 +210,26 @@ def _request_context(request: Optional[Request]) -> tuple[Optional[str], Optiona
     return ip_address, user_agent
 
 
+def _reject_reserved_admin_identity_for_public_auth(email: str) -> None:
+    if is_reserved_admin_email(email):
+        raise HTTPException(
+            status_code=403,
+            detail="This identity uses the dedicated admin authentication flow.",
+        )
+
+
+def _validate_admin_totp_or_raise(user: User, code: str) -> None:
+    encrypted_secret = str(getattr(user, "totp_secret_encrypted", "") or "").strip()
+    if not encrypted_secret:
+        raise HTTPException(status_code=503, detail="Admin TOTP is not configured")
+    try:
+        secret = decrypt_secret(encrypted_secret)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Admin TOTP is unavailable") from exc
+    if not verify_totp(secret_base32=secret, code=code):
+        raise HTTPException(status_code=400, detail="Invalid TOTP code")
+
+
 def _set_session_cookie(response: Optional[Response], token: str) -> None:
     if response is None:
         return
@@ -262,7 +284,9 @@ async def register_user(
     """
     Create new user via password flow.
     """
-    user = await User.find_one(User.email == user_in.email)
+    normalized_email = str(user_in.email or "").strip().lower()
+    _reject_reserved_admin_identity_for_public_auth(normalized_email)
+    user = await User.find_one(User.email == normalized_email)
     if user:
         raise HTTPException(
             status_code=400,
@@ -270,7 +294,7 @@ async def register_user(
         )
 
     user = User(
-        email=user_in.email,
+        email=normalized_email,
         full_name=user_in.full_name,
         hashed_password=get_password_hash(user_in.password),
         account_type="candidate",
@@ -292,6 +316,21 @@ async def login_access_token(
     """
     normalized_email = str(form_data.username or "").strip().lower()
     ip_address, user_agent = _request_context(request)
+    if is_reserved_admin_email(normalized_email):
+        await auth_security_service.audit_event(
+            event_type="login.password",
+            email=normalized_email,
+            purpose="signin",
+            success=False,
+            reason="reserved_admin_identity",
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="Use the dedicated admin authentication flow.",
+        )
+
     lock = await auth_security_service.check_lock(email=normalized_email, action="password_login", purpose="signin")
     if lock.locked:
         await auth_security_service.audit_event(
@@ -350,6 +389,146 @@ async def login_access_token(
     await auth_security_service.record_success(email=normalized_email, action="password_login", purpose="signin")
     await auth_security_service.audit_event(
         event_type="login.password",
+        email=normalized_email,
+        account_type=str(getattr(user, "account_type", "candidate") or "candidate"),
+        purpose="signin",
+        success=True,
+        reason="ok",
+        ip_address=ip_address,
+        user_agent=user_agent,
+        user_id=user.id,
+    )
+
+    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    token = create_access_token(
+        str(user.id),
+        expires_delta=access_token_expires,
+        scopes=_scopes_for_user(user),
+    )
+    _set_session_cookie(response, token)
+    return _token_response_payload(token)
+
+
+class AdminLoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+    totp_code: str
+
+    @field_validator("totp_code", mode="before")
+    @classmethod
+    def normalize_totp_code(cls, value: str) -> str:
+        code = str(value or "").strip()
+        if not code.isdigit() or len(code) != max(6, int(settings.ADMIN_TOTP_DIGITS)):
+            raise ValueError(f"TOTP code must be a {max(6, int(settings.ADMIN_TOTP_DIGITS))}-digit number")
+        return code
+
+
+@router.post("/admin/login", response_model=Token, include_in_schema=False)
+async def login_admin_access_token(
+    payload: AdminLoginRequest,
+    request: Request = None,  # type: ignore[assignment]
+    response: Response = None,  # type: ignore[assignment]
+) -> Any:
+    normalized_email = str(payload.email or "").strip().lower()
+    ip_address, user_agent = _request_context(request)
+    if not is_reserved_admin_email(normalized_email):
+        await auth_security_service.audit_event(
+            event_type="login.admin",
+            email=normalized_email,
+            purpose="signin",
+            success=False,
+            reason="reserved_admin_email_mismatch",
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    lock = await auth_security_service.check_lock(email=normalized_email, action="admin_login", purpose="signin")
+    if lock.locked:
+        await auth_security_service.audit_event(
+            event_type="login.admin",
+            email=normalized_email,
+            purpose="signin",
+            success=False,
+            reason="account_locked",
+            ip_address=ip_address,
+            user_agent=user_agent,
+            lock_applied=True,
+            lock_until=lock.lock_until,
+        )
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many failed login attempts. Try again in {lock.remaining_lock_seconds} seconds.",
+            headers={"Retry-After": str(max(1, lock.remaining_lock_seconds))},
+        )
+
+    user = await User.find_one(User.email == normalized_email)
+    password_ok = bool(user and verify_password(payload.password, str(getattr(user, "hashed_password", ""))))
+    if not user or not password_ok or not bool(getattr(user, "is_admin", False)):
+        failure = await auth_security_service.record_failure(
+            email=normalized_email,
+            action="admin_login",
+            purpose="signin",
+        )
+        await auth_security_service.audit_event(
+            event_type="login.admin",
+            email=normalized_email,
+            purpose="signin",
+            success=False,
+            reason="invalid_credentials",
+            ip_address=ip_address,
+            user_agent=user_agent,
+            lock_applied=failure.locked,
+            lock_until=failure.lock_until,
+            user_id=user.id if user else None,
+        )
+        raise HTTPException(status_code=400, detail="Invalid admin credentials")
+
+    if not user.is_active:
+        await auth_security_service.audit_event(
+            event_type="login.admin",
+            email=normalized_email,
+            account_type=str(getattr(user, "account_type", "candidate") or "candidate"),
+            purpose="signin",
+            success=False,
+            reason="inactive_user",
+            ip_address=ip_address,
+            user_agent=user_agent,
+            user_id=user.id,
+        )
+        raise HTTPException(status_code=400, detail="Inactive user")
+
+    try:
+        _validate_admin_totp_or_raise(user, payload.totp_code)
+    except HTTPException as exc:
+        reason = "invalid_totp" if exc.status_code == 400 else "totp_unavailable"
+        lock_applied = False
+        lock_until = None
+        if exc.status_code == 400:
+            failure = await auth_security_service.record_failure(
+                email=normalized_email,
+                action="admin_login",
+                purpose="signin",
+            )
+            lock_applied = failure.locked
+            lock_until = failure.lock_until
+        await auth_security_service.audit_event(
+            event_type="login.admin",
+            email=normalized_email,
+            purpose="signin",
+            success=False,
+            reason=reason,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            lock_applied=lock_applied,
+            lock_until=lock_until,
+            user_id=user.id,
+        )
+        raise exc
+
+    await auth_security_service.record_success(email=normalized_email, action="admin_login", purpose="signin")
+    await auth_security_service.audit_event(
+        event_type="login.admin",
         email=normalized_email,
         account_type=str(getattr(user, "account_type", "candidate") or "candidate"),
         purpose="signin",
@@ -451,6 +630,7 @@ class AuthAbuseLockResponse(BaseModel):
 
 
 async def _validate_user_for_purpose(email: str, purpose: Literal["signup", "signin"]) -> User | None:
+    _reject_reserved_admin_identity_for_public_auth(email)
     user = await User.find_one(User.email == email)
     if purpose == "signin" and not user:
         raise HTTPException(
@@ -645,6 +825,7 @@ async def oauth_google_callback(
         email = str(id_info.get("email") or "").strip().lower()
         if not email:
             raise ValueError("Google profile missing email")
+        _reject_reserved_admin_identity_for_public_auth(email)
 
         email_verified = bool(id_info.get("email_verified"))
         if not email_verified:

@@ -52,6 +52,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.services.experiment_service import experiment_service
 from app.services.rag_template_registry_service import rag_template_registry_service
 from app.services.ranking_model_service import ranking_model_service
+from app.services.admin_identity_service import ensure_single_admin_identity
  
 from app.services.job_runner import job_runner, register_default_jobs
 from app.services.system_metrics import refresh_freshness_metrics
@@ -222,6 +223,12 @@ async def lifespan(app: FastAPI):
         ),
         timeout=max(10.0, ping_timeout_seconds * 2.0),
     )
+    try:
+        await ensure_single_admin_identity()
+    except Exception as exc:
+        print(f"[Lifecycle] Admin identity bootstrap failed: {exc}")
+        raise
+
     try:
         init_metrics()
     except Exception:

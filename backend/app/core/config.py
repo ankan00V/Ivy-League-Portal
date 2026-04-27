@@ -37,6 +37,14 @@ class Settings(BaseSettings):
     AUTH_SESSION_COOKIE_DOMAIN: Optional[str] = None
     AUTH_SESSION_COOKIE_MAX_AGE_SECONDS: int = 60 * 60 * 24  # 24h
     AUTH_COOKIE_ONLY_MODE: bool = False
+    ADMIN_BOOTSTRAP_ENABLED: bool = True
+    ADMIN_BOOTSTRAP_EMAIL: str = "ghoshankan005@gmail.com"
+    ADMIN_BOOTSTRAP_PASSWORD: Optional[str] = None
+    ADMIN_TOTP_SECRET: Optional[str] = None
+    ADMIN_TOTP_ISSUER: str = "Vidyaverse"
+    ADMIN_TOTP_DIGITS: int = 6
+    ADMIN_TOTP_PERIOD_SECONDS: int = 30
+    ADMIN_TOTP_WINDOW_STEPS: int = 1
     CSRF_PROTECTION_ENABLED: bool = True
     CSRF_ENFORCE_ON_AUTH_COOKIE: bool = True
     CSRF_TRUSTED_ORIGINS: list[str] = []

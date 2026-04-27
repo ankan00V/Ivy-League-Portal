@@ -3,7 +3,7 @@
 ## Problem
 Students discover internships, research roles, scholarships, and hackathons across fragmented portals. Most systems rely on keyword filtering, weak personalization, and manual shortlisting, which leads to low relevance and poor application conversion.
 
-## Latest Build Update (April 25, 2026)
+## Latest Build Update (April 27, 2026)
 - Infrastructure baseline aligned to MongoDB + Redis (local and production compose files no longer imply Postgres).
 - Canonical Slim config added (`.slim.yaml`) and root `Makefile` workflows added (`make up`, `make dev`, `make doctor`).
 - Session-cookie auth hardening shipped (HttpOnly cookie issuance on login/signup/OAuth, cookie-aware auth dependency, explicit logout endpoint).
@@ -28,6 +28,13 @@ Students discover internships, research roles, scholarships, and hackathons acro
 - Operational enforcement workflow added for synthetic Slack/PagerDuty delivery checks + incident review SLA audits (`.github/workflows/ops-operational-enforcement.yml`).
 - Automated dataset snapshot refresh, learned-ranker rollout reporting, and weekly business-impact scorecard workflows added.
 - Guest dashboard-preview routing is enabled: unauthenticated users can open `/dashboard` to view interface preview, while signed-in users see their live personalized dashboard.
+- Hidden admin control plane shipped with dedicated admin auth flow and dedicated admin operations dashboard (not linked in standard user UI).
+- Strict single-admin identity enforcement added at backend startup (`ADMIN_BOOTSTRAP_EMAIL`) with automatic reserved-email migration and non-reserved admin demotion.
+- Admin login now requires password + TOTP (`/api/v1/auth/admin/login`), and reserved admin identity is blocked from public OTP/password/OAuth login flows.
+- Privileged admin CRUD and moderation APIs added under admin scope for opportunities, social moderation, user status governance, job enqueue controls, and audit stream access.
+- Admin bootstrap migration utility added (`backend/scripts/migrate_admin_identity.py`) for explicit one-time enforcement in staging/production pipelines.
+- Added security tests for TOTP verification + reserved-admin auth controls (`backend/tests/test_admin_auth_controls.py`).
+- Fixed Ask AI console key-collision warnings by enforcing stable unique keys for suggestion list rendering (`frontend/src/components/AskAIPanel.tsx`).
 
 ## What Is Implemented (Current State)
 ### AI/ML and Data Components
@@ -97,6 +104,9 @@ Students discover internships, research roles, scholarships, and hackathons acro
 - Production mode enforces cookie-only auth path (`AUTH_COOKIE_ONLY_MODE`) with secure session-cookie settings.
 - CSRF middleware now blocks unsafe cookie-session requests when origin/referer is missing or untrusted.
 - Security headers now include CSP + Trusted Types directives and standard browser hardening headers.
+- Reserved admin identity is now secret-driven and admin-only (`ADMIN_BOOTSTRAP_EMAIL`, `ADMIN_BOOTSTRAP_PASSWORD`, `ADMIN_TOTP_SECRET`), with no credential hardcoding in source.
+- Dedicated admin auth endpoint now enforces TOTP and logs privileged auth attempts using existing auth audit instrumentation (`event_type=login.admin`).
+- Admin control actions are auditable via structured admin event stream (`event_type` prefixed with `admin.*`).
 
 ## What Is Still Missing (High Impact Next)
 - Sustained real-user traffic volume for statistically stable experiment reads across all three arms (`baseline`, `semantic`, `ml`).
@@ -379,6 +389,16 @@ Auth session cookie controls:
 - `AUTH_SESSION_COOKIE_SAMESITE`
 - `AUTH_SESSION_COOKIE_MAX_AGE_SECONDS`
 
+Hidden admin bootstrap + MFA controls:
+- `ADMIN_BOOTSTRAP_ENABLED`
+- `ADMIN_BOOTSTRAP_EMAIL`
+- `ADMIN_BOOTSTRAP_PASSWORD`
+- `ADMIN_TOTP_SECRET`
+- `ADMIN_TOTP_ISSUER`
+- `ADMIN_TOTP_DIGITS`
+- `ADMIN_TOTP_PERIOD_SECONDS`
+- `ADMIN_TOTP_WINDOW_STEPS`
+
 CSRF + browser security controls:
 - `CSRF_PROTECTION_ENABLED`
 - `CSRF_ENFORCE_ON_AUTH_COOKIE`
@@ -420,6 +440,12 @@ RAG contract tests:
 ```bash
 cd backend
 venv/bin/python -m unittest discover -s tests -p 'test_*.py'
+```
+
+Admin identity migration/bootstrap run (idempotent):
+```bash
+cd backend
+venv/bin/python scripts/migrate_admin_identity.py
 ```
 
 ### Frontend

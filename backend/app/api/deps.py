@@ -7,6 +7,7 @@ from app.core.config import auth_cookie_only_mode_enabled, settings
 from app.core.email_policy import is_corporate_email
 from app.models.user import User
 from app.schemas.user import TokenData
+from app.services.admin_identity_service import is_reserved_admin_email
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/login", auto_error=False)
 
@@ -101,6 +102,8 @@ async def get_current_admin_user(
 ) -> User:
     scopes = set(getattr(current_user, "_token_scopes", []) or [])
     if "admin" not in scopes and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Not enough privileges")
+    if not is_reserved_admin_email(getattr(current_user, "email", "")):
         raise HTTPException(status_code=403, detail="Not enough privileges")
     return current_user
 

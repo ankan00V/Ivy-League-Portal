@@ -1,4 +1,5 @@
 import { apiUrl } from "@/lib/api";
+import { ADMIN_DASHBOARD_PATH } from "@/lib/admin-routes";
 
 // Kept for backward cleanup compatibility only. Tokens are no longer persisted.
 export const ACCESS_TOKEN_KEY = "access_token";
@@ -16,6 +17,10 @@ type OnboardingStatus = {
   account_type?: "candidate" | "employer";
   onboarding_completed?: boolean;
   onboarding_prompt_seen?: boolean;
+};
+
+type CurrentUser = {
+  is_admin?: boolean;
 };
 
 function dispatchAuthState(reason: AuthStateReason): void {
@@ -118,15 +123,25 @@ export async function resolvePostAuthRoute(token?: string | null): Promise<strin
   const normalizedToken = token && token !== COOKIE_SESSION_SENTINEL ? token : null;
   const headers = normalizedToken ? { Authorization: `Bearer ${normalizedToken}` } : undefined;
   try {
-    const res = await fetch(apiUrl("/api/v1/users/me/profile"), {
-      credentials: "include",
-      headers,
-    });
-    if (!res.ok) {
+    const [userRes, profileRes] = await Promise.all([
+      fetch(apiUrl("/api/v1/users/me"), {
+        credentials: "include",
+        headers,
+      }),
+      fetch(apiUrl("/api/v1/users/me/profile"), {
+        credentials: "include",
+        headers,
+      }),
+    ]);
+    if (!userRes.ok || !profileRes.ok) {
       return "/dashboard";
     }
     markAuthSessionPresentInternal();
-    const status = (await res.json()) as OnboardingStatus;
+    const currentUser = (await userRes.json()) as CurrentUser;
+    if (Boolean(currentUser.is_admin)) {
+      return ADMIN_DASHBOARD_PATH;
+    }
+    const status = (await profileRes.json()) as OnboardingStatus;
     const accountType = String(status.account_type || "candidate").toLowerCase();
     const onboardingCompleted = Boolean(status.onboarding_completed);
     const onboardingPromptSeen = Boolean(status.onboarding_prompt_seen);

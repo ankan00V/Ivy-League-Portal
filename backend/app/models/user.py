@@ -12,6 +12,8 @@ class User(Document):
     auth_provider: str = "otp"  # otp | google | linkedin | microsoft | password
     is_active: bool = True
     is_admin: bool = False
+    totp_enabled: bool = False
+    totp_secret_encrypted: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     class Settings:
