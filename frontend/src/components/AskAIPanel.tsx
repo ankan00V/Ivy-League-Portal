@@ -153,6 +153,11 @@ export default function AskAIPanel({ surface, suggestedQueries }: AskAIPanelProp
 
   const lastImpressionBatchRef = useRef<string>("");
 
+  const quickQuerySuggestions = useMemo(
+    () => uniqueStrings([...savedQueries.slice(0, 6), ...suggestedQueries]).slice(0, 8),
+    [savedQueries, suggestedQueries],
+  );
+
   const appendTimeline = useCallback((label: string, detail: string, tone: TimelineTone = "info") => {
     setTimelineEvents((current) => [
       {
@@ -567,7 +572,7 @@ export default function AskAIPanel({ surface, suggestedQueries }: AskAIPanelProp
         </div>
 
         <div style={{ display: "flex", flexWrap: "wrap", gap: "0.6rem" }}>
-          {[...savedQueries.slice(0, 6), ...suggestedQueries].slice(0, 8).map((suggestion) => (
+          {quickQuerySuggestions.map((suggestion) => (
             <button
               key={suggestion}
               type="button"
