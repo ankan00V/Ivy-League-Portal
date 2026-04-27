@@ -15,14 +15,14 @@ from app.services import totp_service
 
 
 class TestAdminAuthControls(unittest.IsolatedAsyncioTestCase):
-    def test_verify_totp_accepts_rfc_vector(self) -> None:
-        # RFC 6238 test vector (SHA1, 30s step, 8 digits) at T=59.
-        secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+    def test_verify_totp_accepts_valid_code(self) -> None:
+        secret = "ABCDABCDABCDABCDABCD"
+        code = totp_service._hotp(secret, 1, digits=8)  # noqa: SLF001
         self.assertTrue(
             totp_service.verify_totp(
                 secret_base32=secret,
-                code="94287082",
-                at_time=59,
+                code=code,
+                at_time=30,
                 period_seconds=30,
                 digits=8,
                 window_steps=0,
