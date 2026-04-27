@@ -470,6 +470,11 @@ MLOPS_ONCALL_SECONDARY=secondary-oncall@your-company.com \
 ./scripts/configure_ops_secrets.sh owner/repo
 ```
 
+Strict-mode toggles for release blocking checks (GitHub repo variables):
+- `STAGING_E2E_REQUIRED=true` enforces staging multi-role E2E as a hard block.
+- `MLOPS_ENFORCE_BLOCKING_GATES=true` enforces parity + champion/challenger gates as hard blocks.
+- If unset/false, workflows still generate artifacts and reports without failing push pipelines.
+
 Real-traffic rollout readiness report:
 ```bash
 python backend/scripts/check_real_traffic_rollout_readiness.py --days 14

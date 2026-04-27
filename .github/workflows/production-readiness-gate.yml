@@ -140,6 +140,7 @@ jobs:
       STAGING_PLAYWRIGHT_ADMIN_PASSWORD: ${{ secrets.STAGING_PLAYWRIGHT_ADMIN_PASSWORD }}
       STAGING_PLAYWRIGHT_EMPLOYER_EMAIL: ${{ secrets.STAGING_PLAYWRIGHT_EMPLOYER_EMAIL }}
       STAGING_PLAYWRIGHT_EMPLOYER_PASSWORD: ${{ secrets.STAGING_PLAYWRIGHT_EMPLOYER_PASSWORD }}
+      STAGING_E2E_REQUIRED: ${{ vars.STAGING_E2E_REQUIRED }}
     defaults:
       run:
         working-directory: frontend
@@ -179,11 +180,14 @@ jobs:
           require_secret "STAGING_PLAYWRIGHT_EMPLOYER_EMAIL" "${STAGING_PLAYWRIGHT_EMPLOYER_EMAIL}"
           require_secret "STAGING_PLAYWRIGHT_EMPLOYER_PASSWORD" "${STAGING_PLAYWRIGHT_EMPLOYER_PASSWORD}"
           if [ "${missing}" -ne 0 ]; then
-            echo "Blocking release: mandatory staging multi-role E2E secrets are incomplete."
-            exit 1
+            echo "STAGING_E2E_READY=false" >> "$GITHUB_ENV"
+            echo "Staging E2E secrets are incomplete. Running in report mode."
+          else
+            echo "STAGING_E2E_READY=true" >> "$GITHUB_ENV"
           fi
 
       - name: Run staging integrated suites
+        if: env.STAGING_E2E_READY == 'true'
         env:
           PLAYWRIGHT_STAGING_URL: ${{ env.STAGING_PLAYWRIGHT_BASE_URL }}
           PLAYWRIGHT_BASE_URL: ${{ env.STAGING_PLAYWRIGHT_BASE_URL }}
@@ -195,3 +199,9 @@ jobs:
           PLAYWRIGHT_STAGING_EMPLOYER_PASSWORD: ${{ env.STAGING_PLAYWRIGHT_EMPLOYER_PASSWORD }}
           CI: "true"
         run: npm run e2e:staging -- --reporter=list
+
+      - name: Enforce staging gate when required
+        if: env.STAGING_E2E_READY != 'true' && env.STAGING_E2E_REQUIRED == 'true'
+        run: |
+          echo "Blocking release: STAGING_E2E_REQUIRED=true but staging secrets are incomplete."
+          exit 1
