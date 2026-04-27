@@ -480,6 +480,10 @@ Real-traffic rollout readiness report:
 python backend/scripts/check_real_traffic_rollout_readiness.py --days 14
 ```
 
+Scheduled workflow notes:
+- `STAGING_E2E_REQUIRED=true` enforces staging multi-role E2E as a hard block.
+- `REAL_TRAFFIC_READINESS_REQUIRED=true` enforces real-traffic rollout readiness as a hard block.
+
 Daily learned-ranker rollout report with rollback hook:
 ```bash
 python backend/scripts/publish_ranker_rollout_report.py --days 1 --rollback-on-fail

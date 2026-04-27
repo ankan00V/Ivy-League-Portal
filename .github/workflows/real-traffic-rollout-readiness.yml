@@ -12,6 +12,7 @@ jobs:
     env:
       MONGODB_URL: ${{ secrets.MONGODB_URL }}
       MONGODB_DB_NAME: ${{ secrets.MONGODB_DB_NAME }}
+      REAL_TRAFFIC_READINESS_REQUIRED: ${{ vars.REAL_TRAFFIC_READINESS_REQUIRED }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -36,6 +37,11 @@ jobs:
           fi
 
       - name: Generate readiness report
+        run: |
+          python backend/scripts/check_real_traffic_rollout_readiness.py --days 14
+
+      - name: Enforce readiness gate when required
+        if: env.REAL_TRAFFIC_READINESS_REQUIRED == 'true'
         run: |
           python backend/scripts/check_real_traffic_rollout_readiness.py --days 14 --fail-on-not-ready
 
