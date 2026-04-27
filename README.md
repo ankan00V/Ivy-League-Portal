@@ -141,15 +141,15 @@ Portfolio publish artifacts live in:
 <!-- DATASET_SNAPSHOT:START -->
 
 ## Dataset Size (Verified Snapshot)
-Snapshot date: **April 26, 2026**
+Snapshot date: **April 27, 2026**
 
 - Opportunities: **331**
 - Applications: **19**
 - Opportunity interactions: **20,987**
 - Experiments: **3**
 - Experiment assignments: **302**
-- Ranking model versions: **43**
-- Drift reports: **44**
+- Ranking model versions: **47**
+- Drift reports: **48**
 - Profiles: **320**
 - Users: **323**
 
