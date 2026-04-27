@@ -11,7 +11,9 @@ import {
   hasAuthSession,
 } from "@/lib/auth-session";
 
-const PUBLIC_PATHS = new Set(["/", "/login", "/register", "/auth/callback"]);
+// `/dashboard` stays publicly viewable as a product-preview surface.
+// Interactive user-specific actions inside it remain sign-in gated.
+const PUBLIC_PATHS = new Set(["/", "/dashboard", "/login", "/register", "/auth/callback"]);
 
 function isPublicPath(pathname: string): boolean {
   return PUBLIC_PATHS.has(pathname);

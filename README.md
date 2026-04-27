@@ -27,6 +27,7 @@ Students discover internships, research roles, scholarships, and hackathons acro
 - Release-blocking ML gate workflow added for parity + champion/challenger readiness (`.github/workflows/release-blocking-ml-gates.yml`).
 - Operational enforcement workflow added for synthetic Slack/PagerDuty delivery checks + incident review SLA audits (`.github/workflows/ops-operational-enforcement.yml`).
 - Automated dataset snapshot refresh, learned-ranker rollout reporting, and weekly business-impact scorecard workflows added.
+- Guest dashboard-preview routing is enabled: unauthenticated users can open `/dashboard` to view interface preview, while signed-in users see their live personalized dashboard.
 
 ## What Is Implemented (Current State)
 ### AI/ML and Data Components

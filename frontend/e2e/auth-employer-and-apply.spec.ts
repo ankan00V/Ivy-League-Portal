@@ -33,6 +33,20 @@ test("login OTP request enforces 60s cooldown in UI", async ({ page }) => {
   await expect(page.getByRole("button", { name: /Resend OTP in (59|60)s/i })).toBeVisible();
 });
 
+test("unauthenticated users can view dashboard preview without forced login redirect", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.removeItem("auth_session_present");
+    localStorage.removeItem("access_token");
+    localStorage.removeItem("access_token_expires_at");
+  });
+
+  await page.goto("/dashboard");
+
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(page.getByRole("heading", { name: /Dashboard Preview/i })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Sign In", exact: true })).toBeVisible();
+});
+
 test("completed onboarding redirects users away from onboarding page", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("auth_session_present", "1");
