@@ -34,11 +34,14 @@ jobs:
       - name: Validate required secrets
         run: |
           if [ -z "${MONGODB_URL}" ] || [ -z "${MONGODB_DB_NAME}" ]; then
+            echo "MODEL_LIFECYCLE_READY=false" >> "$GITHUB_ENV"
             echo "Missing MONGODB_URL or MONGODB_DB_NAME secrets. Skipping lifecycle run."
-            exit 0
+          else
+            echo "MODEL_LIFECYCLE_READY=true" >> "$GITHUB_ENV"
           fi
 
       - name: Run lifecycle pipeline
+        if: env.MODEL_LIFECYCLE_READY == 'true'
         run: |
           python backend/scripts/run_model_lifecycle_pipeline.py \
             --lookback-days 90 \

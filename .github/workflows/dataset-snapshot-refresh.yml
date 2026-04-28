@@ -36,14 +36,18 @@ jobs:
       - name: Validate required secrets
         run: |
           if [ -z "${MONGODB_URL}" ] || [ -z "${MONGODB_DB_NAME}" ]; then
+            echo "DATASET_SNAPSHOT_READY=false" >> "$GITHUB_ENV"
             echo "Missing MONGODB_URL or MONGODB_DB_NAME secrets. Skipping dataset snapshot refresh."
-            exit 0
+          else
+            echo "DATASET_SNAPSHOT_READY=true" >> "$GITHUB_ENV"
           fi
 
       - name: Refresh dataset snapshot and README block
+        if: env.DATASET_SNAPSHOT_READY == 'true'
         run: python backend/scripts/publish_dataset_snapshot.py
 
       - name: Commit refreshed dataset snapshot
+        if: env.DATASET_SNAPSHOT_READY == 'true'
         run: |
           if git diff --quiet -- README.md backend/benchmarks/dataset_snapshot_latest.json; then
             echo "No dataset snapshot changes to commit."
@@ -62,4 +66,3 @@ jobs:
           name: dataset-snapshot
           path: backend/benchmarks/dataset_snapshot_latest.json
           if-no-files-found: ignore
-
