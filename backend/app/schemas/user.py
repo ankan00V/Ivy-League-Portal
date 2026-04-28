@@ -1,6 +1,6 @@
 from typing import Any, Optional
 
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, field_validator
 
 class UserBase(BaseModel):
     email: EmailStr
@@ -10,6 +10,8 @@ class UserCreate(UserBase):
     password: str
 
 class UserResponse(UserBase):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     username: Optional[str] = None
     account_type: str
@@ -21,9 +23,6 @@ class UserResponse(UserBase):
     @classmethod
     def stringify_id(cls, value: Any) -> str:
         return str(value)
-
-    class Config:
-        from_attributes = True
 
 class Token(BaseModel):
     access_token: str

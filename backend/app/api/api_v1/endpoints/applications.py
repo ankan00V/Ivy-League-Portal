@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from beanie import PydanticObjectId
 
 from app.api.deps import get_current_active_user
@@ -15,6 +15,8 @@ from app.services.interaction_service import interaction_service
 router = APIRouter()
 
 class ApplicationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: PydanticObjectId
     user_id: PydanticObjectId
     opportunity_id: PydanticObjectId
@@ -27,9 +29,6 @@ class ApplicationResponse(BaseModel):
     submitted_at: Optional[datetime] = None
     created_at: datetime
     
-    class Config:
-        from_attributes = True
-
 
 def _serialize_application_response(*, application: Application, opportunity: Opportunity) -> ApplicationResponse:
     return ApplicationResponse(

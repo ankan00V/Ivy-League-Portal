@@ -18,6 +18,7 @@ from app.core.metrics import (
     SCRAPER_SOURCE_TOTAL,
 )
 from app.models.background_job import BackgroundJob
+from app.core.time import utc_now
 
 
 JobHandler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
@@ -52,7 +53,7 @@ class JobRunner:
         run_after: Optional[datetime] = None,
         dedupe_key: Optional[str] = None,
     ) -> BackgroundJob:
-        now = datetime.utcnow()
+        now = utc_now()
         run_after_value = run_after or now
         if dedupe_key:
             existing = await BackgroundJob.find_one(
@@ -80,7 +81,7 @@ class JobRunner:
 
     async def _claim_next(self) -> Optional[BackgroundJob]:
         lock_timeout = timedelta(seconds=max(30, int(settings.JOBS_LOCK_TIMEOUT_SECONDS)))
-        now = datetime.utcnow()
+        now = utc_now()
         cutoff = now - lock_timeout
 
         collection = _get_collection(BackgroundJob)
@@ -115,7 +116,7 @@ class JobRunner:
         return timedelta(seconds=max(0.25, seconds + jitter))
 
     async def _mark_success(self, job: BackgroundJob, result: dict[str, Any]) -> None:
-        now = datetime.utcnow()
+        now = utc_now()
         await BackgroundJob.find_one(BackgroundJob.id == job.id).update(
             {
                 "$set": {
@@ -132,7 +133,7 @@ class JobRunner:
             JOBS_SUCCEEDED_TOTAL.labels(job_type=job.job_type).inc()
 
     async def _mark_failure(self, job: BackgroundJob, error: str) -> None:
-        now = datetime.utcnow()
+        now = utc_now()
         attempts = int(job.attempts) + 1
         max_attempts = max(1, int(job.max_attempts))
 

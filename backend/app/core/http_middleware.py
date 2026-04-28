@@ -210,12 +210,21 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "/redoc",
             f"{settings.API_V1_STR}/openapi.json",
         }:
+            csp_value = resolved_csp_value()
+            report_uri = str(settings.SECURITY_CSP_REPORT_URI or "").strip()
+            if report_uri and "report-uri" not in csp_value:
+                csp_value = f"{csp_value.rstrip('; ')}; report-uri {report_uri}; report-to csp-endpoint"
             csp_key = (
                 "Content-Security-Policy-Report-Only"
                 if settings.SECURITY_CSP_REPORT_ONLY
                 else "Content-Security-Policy"
             )
-            response.headers.setdefault(csp_key, resolved_csp_value())
+            response.headers.setdefault(csp_key, csp_value)
+            if report_uri:
+                response.headers.setdefault(
+                    "Report-To",
+                    '{"group":"csp-endpoint","max_age":10886400,"endpoints":[{"url":"' + report_uri + '"}]}',
+                )
 
         if settings.ENVIRONMENT.strip().lower() == "production" or settings.AUTH_SESSION_COOKIE_SECURE:
             response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")

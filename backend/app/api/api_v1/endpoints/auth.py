@@ -29,6 +29,7 @@ from app.services.auth_security_service import auth_security_service
 from app.services.email import send_email_otp
 from app.services.totp_service import decrypt_secret, provisioning_uri, verify_totp
 from app.services.username_service import ensure_system_username
+from app.core.time import utc_now
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -1790,7 +1791,7 @@ async def list_auth_abuse_locks(
 
     rows = await AuthAbuseState.find_many(*query_filters).sort("-updated_at").limit(limit).to_list()
     if only_locked:
-        now = datetime.utcnow()
+        now = utc_now()
         rows = [row for row in rows if row.lock_until is not None and row.lock_until > now]
 
     return [

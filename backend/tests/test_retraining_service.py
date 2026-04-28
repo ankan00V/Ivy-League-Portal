@@ -1,5 +1,5 @@
 import unittest
-from datetime import datetime, timedelta
+from datetime import timedelta
 import sys
 from pathlib import Path
 
@@ -8,12 +8,13 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.services.mlops.retraining_service import RetrainingService, TrainingExample
+from app.core.time import utc_now
 
 
 class TestRetrainingService(unittest.TestCase):
     def test_split_examples_prefers_time_split_when_valid(self) -> None:
         service = RetrainingService()
-        now = datetime.utcnow()
+        now = utc_now()
         examples = []
         for index in range(12):
             examples.append(

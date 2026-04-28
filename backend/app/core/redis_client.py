@@ -9,6 +9,7 @@ import pymongo.errors
 
 from app.core.config import settings
 from app.models.otp_code import OTPCode
+from app.core.time import utc_now
 
 
 def _normalize_email(email: str) -> str:
@@ -32,7 +33,7 @@ async def set_otp(
 ) -> None:
     normalized_email = _normalize_email(email)
     normalized_purpose = _normalize_purpose(purpose)
-    now = datetime.utcnow()
+    now = utc_now()
     expires_at = now + timedelta(seconds=max(30, expire_seconds))
     otp_hash = _hash_otp(normalized_email, otp, normalized_purpose)
 
@@ -85,7 +86,7 @@ async def get_otp_cooldown_remaining(
     if not record:
         return 0
 
-    now = datetime.utcnow()
+    now = utc_now()
     if record.expires_at <= now:
         await record.delete()
         return 0
@@ -106,7 +107,7 @@ async def get_otp(email: str, purpose: str = "signin") -> str | None:
     if not record:
         return None
 
-    if record.expires_at <= datetime.utcnow():
+    if record.expires_at <= utc_now():
         await record.delete()
         return None
 

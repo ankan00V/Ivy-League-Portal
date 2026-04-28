@@ -31,8 +31,8 @@ interface Opportunity {
     model_version_id?: string;
 }
 
-const FEED_REFRESH_MS = 60 * 1000;
-const FEED_RETRY_MS = 10 * 1000;
+const FEED_REFRESH_MS = 10 * 1000;
+const FEED_RETRY_MS = 5 * 1000;
 const COMPETITIVE_KEYWORDS = [
     "hackathon",
     "competition",
@@ -95,7 +95,7 @@ export default function InternshipsJobsPage() {
             const token = getAccessToken();
             if (token) {
                 const personalizedRes = await fetch(
-                    apiUrl("/api/v1/opportunities/recommended/me?limit=100&ranking_mode=ab"),
+                    apiUrl("/api/v1/opportunities/recommended/me?limit=100&ranking_mode=ab&portal=career"),
                     {
                         headers: { Authorization: `Bearer ${token}` },
                     }
@@ -122,7 +122,7 @@ export default function InternshipsJobsPage() {
                 }
             }
 
-            const res = await fetch(apiUrl("/api/v1/opportunities/"), { credentials: "include" });
+            const res = await fetch(apiUrl("/api/v1/opportunities/?portal=career"), { credentials: "include" });
             if (res.ok) {
                 const rawData: Opportunity[] = await res.json();
                 const data: Opportunity[] = rawData.map((item, idx) => ({
@@ -202,6 +202,23 @@ export default function InternshipsJobsPage() {
         }, refreshMs);
         return () => window.clearInterval(interval);
     }, [opportunities.length]);
+
+    useEffect(() => {
+        const onVisibilityChange = () => {
+            if (document.visibilityState === "visible") {
+                void fetchOpportunities();
+            }
+        };
+        const onFocus = () => {
+            void fetchOpportunities();
+        };
+        document.addEventListener("visibilitychange", onVisibilityChange);
+        window.addEventListener("focus", onFocus);
+        return () => {
+            document.removeEventListener("visibilitychange", onVisibilityChange);
+            window.removeEventListener("focus", onFocus);
+        };
+    }, []);
 
     const filtered = useMemo(() => {
         const source = activeTab === "All"

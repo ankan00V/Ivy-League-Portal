@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { Space_Grotesk, Instrument_Serif } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/context/ThemeContext";
 import VidyaChat from "@/components/VidyaChat";
 import SessionManager from "@/components/SessionManager";
 import ThemeToggleButton from "@/components/ThemeToggleButton";
+import NonceStyleRuntime from "@/components/NonceStyleRuntime";
 
 const spaceGrotesk = Space_Grotesk({
   subsets: ["latin"],
@@ -24,15 +26,17 @@ export const metadata: Metadata = {
   description: "Real-Time Academic Intelligence Network powered by AI to connect students with elite opportunities.",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const nonce = (await headers()).get("x-nonce") || "";
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={`${spaceGrotesk.variable} ${instrumentSerif.variable} antialiased`}>
         <ThemeProvider>
+          <NonceStyleRuntime nonce={nonce} />
           <SessionManager />
           {children}
           <ThemeToggleButton />

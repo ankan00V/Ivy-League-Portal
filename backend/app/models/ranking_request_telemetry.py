@@ -7,34 +7,35 @@ from beanie import Document, PydanticObjectId
 from pydantic import Field
 
 from app.models.traffic import TrafficType
+from app.core.time import utc_now
 
-RequestKind = Literal["recommended", "shortlist", "ask_ai"]
+RequestKind = Literal["recommended", "shortlist", "ask_ai", "assistant_chat"]
 
 
 class RankingRequestTelemetry(Document):
-    user_id: Optional[PydanticObjectId] = Field(default=None, index=True)
-    request_kind: RequestKind = Field(index=True)
-    requested_ranking_mode: Optional[str] = Field(default=None, index=True)
-    ranking_mode: Optional[str] = Field(default=None, index=True)
-    experiment_key: Optional[str] = Field(default=None, index=True)
-    experiment_variant: Optional[str] = Field(default=None, index=True)
-    rollout_variant: Optional[str] = Field(default=None, index=True)
+    user_id: Optional[PydanticObjectId] = Field(default=None, json_schema_extra={"index": True})
+    request_kind: RequestKind = Field(json_schema_extra={"index": True})
+    requested_ranking_mode: Optional[str] = Field(default=None, json_schema_extra={"index": True})
+    ranking_mode: Optional[str] = Field(default=None, json_schema_extra={"index": True})
+    experiment_key: Optional[str] = Field(default=None, json_schema_extra={"index": True})
+    experiment_variant: Optional[str] = Field(default=None, json_schema_extra={"index": True})
+    rollout_variant: Optional[str] = Field(default=None, json_schema_extra={"index": True})
     rollout_bucket: Optional[int] = Field(default=None, ge=0, le=9999)
     rollout_percent: Optional[int] = Field(default=None, ge=0, le=100)
-    shadow_mode: Optional[str] = Field(default=None, index=True)
-    shadow_model_version_id: Optional[str] = Field(default=None, index=True)
+    shadow_mode: Optional[str] = Field(default=None, json_schema_extra={"index": True})
+    shadow_model_version_id: Optional[str] = Field(default=None, json_schema_extra={"index": True})
     shadow_candidate_count: int = Field(default=0, ge=0)
-    rag_template_label: Optional[str] = Field(default=None, index=True)
-    rag_template_version_id: Optional[str] = Field(default=None, index=True)
-    model_version_id: Optional[str] = Field(default=None, index=True)
-    surface: Optional[str] = Field(default=None, index=True)
-    success: bool = Field(default=True, index=True)
+    rag_template_label: Optional[str] = Field(default=None, json_schema_extra={"index": True})
+    rag_template_version_id: Optional[str] = Field(default=None, json_schema_extra={"index": True})
+    model_version_id: Optional[str] = Field(default=None, json_schema_extra={"index": True})
+    surface: Optional[str] = Field(default=None, json_schema_extra={"index": True})
+    success: bool = Field(default=True, json_schema_extra={"index": True})
     latency_ms: float = Field(default=0.0, ge=0.0)
     results_count: int = Field(default=0, ge=0)
     freshness_seconds: Optional[float] = Field(default=None, ge=0.0)
     error_code: Optional[str] = None
-    traffic_type: TrafficType = Field(default="real", index=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    traffic_type: TrafficType = Field(default="real", json_schema_extra={"index": True})
+    created_at: datetime = Field(default_factory=utc_now)
 
     class Settings:
         name = "ranking_request_telemetry"

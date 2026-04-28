@@ -17,6 +17,7 @@ from app.models.ranking_request_telemetry import RankingRequestTelemetry
 from app.services.experiment_service import experiment_service
 from app.services.ranking_metrics import normalize_relevant_ids, precision_at_k, recall_at_k
 from app.services.vector_service import opportunity_vector_service
+from app.core.time import utc_now
 
 RAG_TEMPLATE_EXPERIMENT_KEY = "ask_ai_rag_template"
 
@@ -85,8 +86,8 @@ class RAGTemplateRegistryService:
                     "min_online_requests": float(settings.RAG_ONLINE_MIN_REQUESTS),
                 },
                 metadata={"seeded_by": "ensure_defaults"},
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
+                created_at=utc_now(),
+                updated_at=utc_now(),
             )
             await template.insert()
 
@@ -104,14 +105,14 @@ class RAGTemplateRegistryService:
                 description="Online A/B for RAG prompt+retrieval templates.",
                 status="active",
                 variants=variants,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
+                created_at=utc_now(),
+                updated_at=utc_now(),
             )
             await experiment.insert()
             return
         if sorted(v.name for v in experiment.variants) != sorted(labels):
             experiment.variants = variants
-            experiment.updated_at = datetime.utcnow()
+            experiment.updated_at = utc_now()
             await experiment.save()
 
     async def list_templates(self, *, template_key: str | None = None) -> list[RAGTemplateVersion]:
@@ -156,8 +157,8 @@ class RAGTemplateRegistryService:
                 "min_online_requests": float((acceptance_thresholds or {}).get("min_online_requests", settings.RAG_ONLINE_MIN_REQUESTS)),
             },
             metadata={},
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=utc_now(),
+            updated_at=utc_now(),
         )
         await template.insert()
         return template
@@ -176,12 +177,12 @@ class RAGTemplateRegistryService:
                 continue
             item.is_active = False
             item.status = "draft" if item.status == "active" else item.status
-            item.updated_at = datetime.utcnow()
+            item.updated_at = utc_now()
             await item.save()
 
         template.is_active = True
         template.status = "active"
-        template.updated_at = datetime.utcnow()
+        template.updated_at = utc_now()
         await template.save()
 
         online_labels = [
@@ -306,7 +307,7 @@ class RAGTemplateRegistryService:
             },
             accepted=bool(accepted),
             notes=None if accepted else "Offline recall below threshold",
-            created_at=datetime.utcnow(),
+            created_at=utc_now(),
         )
         await run.insert()
         return run
@@ -317,7 +318,7 @@ class RAGTemplateRegistryService:
             raise ValueError("template_not_found")
 
         safe_days = max(1, min(int(days), 90))
-        since = datetime.utcnow() - timedelta(days=safe_days)
+        since = utc_now() - timedelta(days=safe_days)
         telemetry = await RankingRequestTelemetry.find_many(
             RankingRequestTelemetry.request_kind == "ask_ai",
             RankingRequestTelemetry.created_at >= since,
@@ -376,7 +377,7 @@ class RAGTemplateRegistryService:
             },
             accepted=bool(accepted),
             notes=None if accepted else "Online threshold gate failed",
-            created_at=datetime.utcnow(),
+            created_at=utc_now(),
         )
         await run.insert()
         return run

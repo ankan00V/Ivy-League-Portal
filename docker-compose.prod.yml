@@ -16,6 +16,26 @@ services:
     volumes:
       - redis_data:/data
 
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    restart: always
+    environment:
+      CLICKHOUSE_DB: ${ANALYTICS_WAREHOUSE_CLICKHOUSE_DATABASE:-vidyaverse}
+      CLICKHOUSE_USER: ${ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME:-vidyaverse}
+      CLICKHOUSE_PASSWORD: ${ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD}
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+
+  minio:
+    image: minio/minio:RELEASE.2025-02-03T21-03-04Z
+    restart: always
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MLOPS_MODEL_ARTIFACT_S3_ACCESS_KEY_ID}
+      MINIO_ROOT_PASSWORD: ${MLOPS_MODEL_ARTIFACT_S3_SECRET_ACCESS_KEY}
+    volumes:
+      - minio_data:/data
+
   backend:
     build:
       context: ./backend
@@ -29,6 +49,18 @@ services:
       - MONGODB_URL=${MONGODB_URL:-mongodb://mongo:27017}
       - MONGODB_DB_NAME=${MONGODB_DB_NAME:-vidyaverse}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - ANALYTICS_WAREHOUSE_EXPORT_ENABLED=${ANALYTICS_WAREHOUSE_EXPORT_ENABLED:-true}
+      - ANALYTICS_WAREHOUSE_EXPORT_FORMAT=${ANALYTICS_WAREHOUSE_EXPORT_FORMAT:-duckdb_parquet}
+      - ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED=${ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED:-true}
+      - ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST=${ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST:-clickhouse}
+      - ANALYTICS_WAREHOUSE_CLICKHOUSE_PORT=${ANALYTICS_WAREHOUSE_CLICKHOUSE_PORT:-8123}
+      - ANALYTICS_WAREHOUSE_CLICKHOUSE_DATABASE=${ANALYTICS_WAREHOUSE_CLICKHOUSE_DATABASE:-vidyaverse}
+      - ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME=${ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME:-vidyaverse}
+      - ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD=${ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD}
+      - MLOPS_MODEL_ARTIFACT_S3_ENDPOINT_URL=${MLOPS_MODEL_ARTIFACT_S3_ENDPOINT_URL:-http://minio:9000}
+      - MLOPS_MODEL_ARTIFACT_S3_REGION=${MLOPS_MODEL_ARTIFACT_S3_REGION:-us-east-1}
+      - MLOPS_MODEL_ARTIFACT_S3_ACCESS_KEY_ID=${MLOPS_MODEL_ARTIFACT_S3_ACCESS_KEY_ID}
+      - MLOPS_MODEL_ARTIFACT_S3_SECRET_ACCESS_KEY=${MLOPS_MODEL_ARTIFACT_S3_SECRET_ACCESS_KEY}
       - BACKEND_CORS_ORIGINS=${BACKEND_CORS_ORIGINS:-["https://web.test"]}
       - ALLOWED_HOSTS=${ALLOWED_HOSTS:-["api.test"]}
       - LLM_API_BASE_URL=${LLM_API_BASE_URL:-}
@@ -45,6 +77,8 @@ services:
     depends_on:
       - mongo
       - redis
+      - clickhouse
+      - minio
     restart: always
     logging:
       driver: "json-file"
@@ -70,3 +104,5 @@ services:
 volumes:
   mongo_data:
   redis_data:
+  clickhouse_data:
+  minio_data:

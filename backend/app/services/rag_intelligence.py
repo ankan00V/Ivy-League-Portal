@@ -10,6 +10,7 @@ from app.models.knowledge_chunk import KnowledgeChunk
 from app.models.opportunity import Opportunity
 from app.models.profile import Profile
 from app.services.intelligence import score_opportunity_match
+from app.core.time import utc_now
 
 TOKEN_PATTERN = re.compile(r"[A-Za-z0-9+#]+")
 EMBED_DIM = 192
@@ -86,7 +87,7 @@ def build_opportunity_chunks(opportunity: Opportunity) -> list[dict]:
                 "chunk_index": index,
                 "embedding": embed_text(chunk),
                 "embedding_model": "hashing-v1",
-                "updated_at": datetime.utcnow(),
+                "updated_at": utc_now(),
             }
         )
     return result

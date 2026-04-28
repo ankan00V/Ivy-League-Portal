@@ -9,6 +9,7 @@ import numpy as np
 
 from app.models.nlp_model_version import NLPModelVersion
 from app.services.embedding_service import embedding_service
+from app.core.time import utc_now
 
 ENTITY_KEYS = ("deadlines", "locations", "companies", "eligibility", "duration")
 
@@ -146,7 +147,7 @@ class NLPModelService:
 
     async def get_active(self, *, cache_ttl_seconds: int = 60) -> ActiveNLPModel:
         global _cache, _cache_until
-        now = datetime.utcnow()
+        now = utc_now()
         if _cache is not None and _cache_until is not None and now <= _cache_until:
             return _cache
 
@@ -160,7 +161,7 @@ class NLPModelService:
         rows = await NLPModelVersion.find_many(NLPModelVersion.is_active == True).to_list()  # noqa: E712
         for row in rows:
             row.is_active = False
-            row.updated_at = datetime.utcnow()
+            row.updated_at = utc_now()
             await row.save()
 
         global _cache, _cache_until
@@ -174,7 +175,7 @@ class NLPModelService:
         if not model:
             raise ValueError("model_not_found")
         model.is_active = True
-        model.updated_at = datetime.utcnow()
+        model.updated_at = utc_now()
         await model.save()
 
         global _cache, _cache_until
@@ -623,7 +624,7 @@ class NLPModelService:
                 "classifier": "softmax_linear_head",
             },
             notes=notes,
-            updated_at=datetime.utcnow(),
+            updated_at=utc_now(),
         )
         await model.insert()
 

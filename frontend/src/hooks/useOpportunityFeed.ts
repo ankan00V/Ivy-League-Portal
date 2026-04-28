@@ -30,8 +30,8 @@ type OpportunityGroupKey = "competitive" | "career" | "other";
 type OpportunityGroups = Record<OpportunityGroupKey, Opportunity[]>;
 type OpportunityInteraction = "impression" | "click" | "save" | "apply";
 
-const FEED_REFRESH_MS = 60 * 1000;
-const FEED_RETRY_MS = 10 * 1000;
+const FEED_REFRESH_MS = 10 * 1000;
+const FEED_RETRY_MS = 5 * 1000;
 const COMPETITIVE_KEYWORDS = [
   "hackathon",
   "competition",
@@ -99,8 +99,8 @@ export function useOpportunityFeed() {
     try {
       const token = getAccessToken();
       if (token) {
-        const personalizedRes = await fetch(
-          apiUrl("/api/v1/opportunities/recommended/me?limit=100&ranking_mode=ab"),
+                const personalizedRes = await fetch(
+          apiUrl("/api/v1/opportunities/recommended/me?limit=100&ranking_mode=ab&portal=competitive"),
           {
             headers: { Authorization: `Bearer ${token}` },
           },
@@ -121,7 +121,7 @@ export function useOpportunityFeed() {
         }
       }
 
-      const res = await fetch(apiUrl("/api/v1/opportunities/"), { credentials: "include" });
+      const res = await fetch(apiUrl("/api/v1/opportunities/?portal=competitive"), { credentials: "include" });
       if (res.ok) {
         const rawData = (await res.json()) as Opportunity[];
         const data = rawData.map((item, idx) => enrichOpportunity(item, idx));
@@ -196,6 +196,23 @@ export function useOpportunityFeed() {
     }, refreshMs);
     return () => window.clearInterval(interval);
   }, [opportunities.length]);
+
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void fetchOpportunities();
+      }
+    };
+    const onFocus = () => {
+      void fetchOpportunities();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, []);
 
   const selectOpportunitiesForTab = useCallback(
     (tab: string): Opportunity[] => (tab === "All" ? opportunities : opportunities.filter((item) => item.domain === tab)),

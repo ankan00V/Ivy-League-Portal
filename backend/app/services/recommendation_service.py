@@ -18,6 +18,7 @@ from app.services.personalization.feature_builder import build_ranker_features, 
 from app.services.personalization.learned_ranker import learned_ranker
 from app.services.ranking_model_service import ranking_model_service
 from app.services.vector_service import opportunity_vector_service
+from app.core.time import utc_now
 
 
 def _activity_sort_key(opportunity: Opportunity) -> tuple[datetime, datetime]:
@@ -71,7 +72,7 @@ class RecommendationService:
         - impression(match_score) is a candidate sample
         - positive label if click/save/apply occurred for same opportunity within label window
         """
-        since = datetime.utcnow() - timedelta(days=max(7, min(int(lookback_days), 365)))
+        since = utc_now() - timedelta(days=max(7, min(int(lookback_days), 365)))
         label_window = timedelta(hours=max(1, min(int(label_window_hours), 168)))
         target_modes = {str(ranking_mode or "").strip().lower(), "ab"}
 
@@ -150,7 +151,7 @@ class RecommendationService:
         }
 
     async def _build_behavior_map(self, user_id) -> dict[str, dict[str, float]]:
-        since = datetime.utcnow() - timedelta(days=120)
+        since = utc_now() - timedelta(days=120)
         interactions = await OpportunityInteraction.find_many(
             OpportunityInteraction.user_id == user_id,
             OpportunityInteraction.created_at >= since,
@@ -170,7 +171,7 @@ class RecommendationService:
                 },
             }
 
-        now = datetime.utcnow()
+        now = utc_now()
         window_7d = now - timedelta(days=7)
         window_30d = now - timedelta(days=30)
         recent_interactions_7d = 0

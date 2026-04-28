@@ -5,6 +5,7 @@ from datetime import datetime
 from app.core.config import settings
 from app.core.metrics import OPPORTUNITY_FRESHNESS_SECONDS, OPPORTUNITY_STALE
 from app.models.opportunity import Opportunity
+from app.core.time import utc_now
 
 
 async def refresh_freshness_metrics() -> dict[str, float | bool]:
@@ -13,7 +14,7 @@ async def refresh_freshness_metrics() -> dict[str, float | bool]:
 
     Freshness is computed as seconds since the latest opportunity last_seen_at/updated_at/created_at.
     """
-    now = datetime.utcnow()
+    now = utc_now()
     latest = await Opportunity.find_many().sort("-last_seen_at").limit(1).to_list()
     if not latest:
         if OPPORTUNITY_FRESHNESS_SECONDS is not None:

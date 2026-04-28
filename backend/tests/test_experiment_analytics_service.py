@@ -11,6 +11,7 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from app.models.experiment import ExperimentVariant
 from app.services.experiment_analytics_service import ExperimentAnalyticsService, VariantCounts
+from app.core.time import utc_now
 
 
 class TestExperimentAnalyticsService(unittest.IsolatedAsyncioTestCase):
@@ -22,8 +23,8 @@ class TestExperimentAnalyticsService(unittest.IsolatedAsyncioTestCase):
                 ExperimentVariant(name="baseline", weight=1.0, is_control=True),
                 ExperimentVariant(name="ml", weight=1.0, is_control=False),
             ],
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=utc_now(),
+            updated_at=utc_now(),
         )
         service = ExperimentAnalyticsService()
 
@@ -60,8 +61,8 @@ class TestExperimentAnalyticsService(unittest.IsolatedAsyncioTestCase):
                 ExperimentVariant(name="baseline", weight=1.0, is_control=True),
                 ExperimentVariant(name="semantic", weight=1.0, is_control=False),
             ],
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=utc_now(),
+            updated_at=utc_now(),
         )
         service = ExperimentAnalyticsService()
 
@@ -88,8 +89,8 @@ class TestExperimentAnalyticsService(unittest.IsolatedAsyncioTestCase):
                 ExperimentVariant(name="baseline", weight=1.0, is_control=True),
                 ExperimentVariant(name="ml", weight=1.0, is_control=False),
             ],
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=utc_now(),
+            updated_at=utc_now(),
         )
         service = ExperimentAnalyticsService()
 
@@ -117,8 +118,8 @@ class TestExperimentAnalyticsService(unittest.IsolatedAsyncioTestCase):
                 ExperimentVariant(name="baseline", weight=1.0, is_control=True),
                 ExperimentVariant(name="ml", weight=1.0, is_control=False),
             ],
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=utc_now(),
+            updated_at=utc_now(),
         )
         service = ExperimentAnalyticsService()
 

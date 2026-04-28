@@ -20,6 +20,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from app.core.config import settings
+from app.core.time import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -402,7 +403,7 @@ def _extract_deadline_from_text(text: str) -> datetime | None:
 
 
 def is_opportunity_active(opportunity: Any, now: datetime | None = None) -> bool:
-    current_time = _to_naive_utc(now) or datetime.utcnow()
+    current_time = _to_naive_utc(now) or utc_now()
     deadline = _to_naive_utc(getattr(opportunity, "deadline", None))
     if deadline and deadline < current_time:
         return False
@@ -1524,7 +1525,7 @@ async def _delete_opportunities(records: Iterable[Any]) -> int:
 
 
 async def _cleanup_inactive_opportunities(Opportunity) -> dict[str, int]:
-    now = datetime.utcnow()
+    now = utc_now()
     cleanup_report = {
         "expired_deleted": 0,
         "stale_deleted": 0,
@@ -1612,7 +1613,7 @@ async def _insert_and_broadcast(
         url = normalized_payload["url"]
 
         try:
-            now_naive = datetime.utcnow()
+            now_naive = utc_now()
             existing = existing_by_url.get(url)
             if existing:
                 changed = False

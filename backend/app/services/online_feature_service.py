@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
 from typing import Iterable
 
 from app.core.config import settings
 from app.core.metrics import ONLINE_FEATURE_PUBLISH_TOTAL
 from app.core.redis import get_redis
+from app.core.time import utc_now
 from app.models.feature_store_row import FeatureStoreRow
 
 
@@ -37,7 +37,7 @@ class OnlineFeatureService:
             "features": dict(row.features or {}),
             "labels": dict(row.labels or {}),
             "source_event_id": row.source_event_id,
-            "updated_at": (row.updated_at or datetime.utcnow()).isoformat(),
+            "updated_at": (row.updated_at or utc_now()).isoformat(),
         }
         return json.dumps(payload, separators=(",", ":"), default=str).encode("utf-8")
 

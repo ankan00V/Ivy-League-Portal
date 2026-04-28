@@ -48,6 +48,11 @@ from app.models.analytics_cohort_aggregate import AnalyticsCohortAggregate
 from app.models.feature_store_row import FeatureStoreRow
 from app.models.mlops_incident import MlopsIncident
 from app.models.assistant_conversation_turn import AssistantConversationTurn
+from app.models.assistant_memory_state import AssistantMemoryState
+from app.models.assistant_audit_event import AssistantAuditEvent
+from app.models.model_artifact_version import ModelArtifactVersion
+from app.models.warehouse_export_run import WarehouseExportRun
+from app.models.security_event import SecurityEvent
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.services.experiment_service import experiment_service
@@ -223,6 +228,11 @@ async def lifespan(app: FastAPI):
             FeatureStoreRow,
             MlopsIncident,
             AssistantConversationTurn,
+            AssistantMemoryState,
+            AssistantAuditEvent,
+            ModelArtifactVersion,
+            WarehouseExportRun,
+            SecurityEvent,
         ]
         ),
         timeout=max(10.0, ping_timeout_seconds * 2.0),
@@ -459,11 +469,13 @@ def health_check():
             "enabled": bool(settings.LEARNED_RANKER_ENABLED),
             "artifact_uri": model_artifact_service.resolve_learned_ranker_uri(),
             "artifact_ready": model_artifact_service.learned_ranker_artifact_exists(),
+            "artifact_checksum_sha256": bool((settings.LEARNED_RANKER_ARTIFACT_CHECKSUM_SHA256 or "").strip()),
         },
         "warehouse": {
             "enabled": bool(settings.ANALYTICS_WAREHOUSE_ENABLED),
             "export_enabled": bool(settings.ANALYTICS_WAREHOUSE_EXPORT_ENABLED),
             "export_root": settings.ANALYTICS_WAREHOUSE_EXPORT_ROOT,
+            "models_dir": settings.ANALYTICS_WAREHOUSE_SQL_MODELS_DIR,
         },
     }
 

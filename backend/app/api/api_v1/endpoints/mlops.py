@@ -9,11 +9,15 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import get_current_admin_user
 from app.core.config import settings
+from app.core.time import utc_now
 from app.models.model_drift_report import ModelDriftReport
+from app.models.model_artifact_version import ModelArtifactVersion
 from app.models.mlops_incident import MlopsIncident
 from app.models.nlp_model_version import NLPModelVersion
 from app.models.ranking_model_version import RankingModelVersion
 from app.models.user import User
+from app.services.data_science_observability_service import data_science_observability_service
+from app.services.model_artifact_service import model_artifact_service
 from app.services.mlops.drift_service import drift_service
 from app.services.mlops.incident_service import mlops_incident_service
 from app.services.mlops.retraining_service import retraining_service
@@ -55,9 +59,37 @@ class ModelVersionResponse(BaseModel):
     model_card: dict[str, Any] = Field(default_factory=dict)
     artifact_uri: Optional[str] = None
     artifact_provider: Optional[str] = None
+    artifact_checksum_sha256: Optional[str] = None
     feature_schema: dict[str, Any] = Field(default_factory=dict)
     serving_ready: bool = False
+    artifact_manifest: dict[str, Any] = Field(default_factory=dict)
     notes: Optional[str] = None
+
+
+class ArtifactRegisterRequest(BaseModel):
+    artifact_uri: str = Field(min_length=1)
+    model_version_id: Optional[str] = None
+    checksum_sha256: Optional[str] = None
+    feature_schema: dict[str, Any] = Field(default_factory=dict)
+    training_metadata: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ArtifactVersionResponse(BaseModel):
+    id: str
+    model_family: str
+    model_version_id: Optional[str] = None
+    artifact_uri: str
+    storage_provider: str
+    checksum_sha256: Optional[str] = None
+    local_cache_path: Optional[str] = None
+    status: str
+    verified: bool
+    feature_schema: dict[str, Any] = Field(default_factory=dict)
+    training_metadata: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
 
 
 class NLPExampleIn(BaseModel):
@@ -204,6 +236,25 @@ def _serialize_nlp_model(model: NLPModelVersion) -> NLPModelVersionResponse:
     )
 
 
+def _serialize_artifact(model: ModelArtifactVersion) -> ArtifactVersionResponse:
+    return ArtifactVersionResponse(
+        id=str(model.id),
+        model_family=model.model_family,
+        model_version_id=model.model_version_id,
+        artifact_uri=model.artifact_uri,
+        storage_provider=model.storage_provider,
+        checksum_sha256=model.checksum_sha256,
+        local_cache_path=model.local_cache_path,
+        status=model.status,
+        verified=bool(model.verified),
+        feature_schema=dict(model.feature_schema or {}),
+        training_metadata=dict(model.training_metadata or {}),
+        metadata=dict(model.metadata or {}),
+        created_at=model.created_at,
+        updated_at=model.updated_at,
+    )
+
+
 @router.get("/models", response_model=list[ModelVersionResponse])
 async def list_models(_: User = Depends(get_current_admin_user)) -> Any:
     models = await RankingModelVersion.find_many().sort("-created_at").limit(50).to_list()
@@ -225,8 +276,10 @@ async def list_models(_: User = Depends(get_current_admin_user)) -> Any:
             model_card=dict(model.model_card or {}),
             artifact_uri=model.artifact_uri,
             artifact_provider=model.artifact_provider,
+            artifact_checksum_sha256=model.artifact_checksum_sha256,
             feature_schema=dict(model.feature_schema or {}),
             serving_ready=bool(model.serving_ready),
+            artifact_manifest=dict(model.artifact_manifest or {}),
             notes=model.notes,
         )
         for model in models
@@ -259,8 +312,10 @@ async def activate_model(model_id: str, _: User = Depends(get_current_admin_user
         model_card=dict(model.model_card or {}),
         artifact_uri=model.artifact_uri,
         artifact_provider=model.artifact_provider,
+        artifact_checksum_sha256=model.artifact_checksum_sha256,
         feature_schema=dict(model.feature_schema or {}),
         serving_ready=bool(model.serving_ready),
+        artifact_manifest=dict(model.artifact_manifest or {}),
         notes=model.notes,
     )
 
@@ -296,10 +351,36 @@ async def rollback_active_model(_: User = Depends(get_current_admin_user)) -> An
         model_card=dict(model.model_card or {}),
         artifact_uri=model.artifact_uri,
         artifact_provider=model.artifact_provider,
+        artifact_checksum_sha256=model.artifact_checksum_sha256,
         feature_schema=dict(model.feature_schema or {}),
         serving_ready=bool(model.serving_ready),
+        artifact_manifest=dict(model.artifact_manifest or {}),
         notes=model.notes,
     )
+
+
+@router.get("/artifacts", response_model=list[ArtifactVersionResponse])
+async def list_artifacts(_: User = Depends(get_current_admin_user)) -> Any:
+    rows = await ModelArtifactVersion.find_many().sort("-created_at").limit(100).to_list()
+    return [_serialize_artifact(row) for row in rows]
+
+
+@router.post("/artifacts/register", response_model=ArtifactVersionResponse)
+async def register_artifact(request: ArtifactRegisterRequest, _: User = Depends(get_current_admin_user)) -> Any:
+    model = None
+    if request.model_version_id:
+        model = await RankingModelVersion.get(request.model_version_id)
+        if model is None:
+            raise HTTPException(status_code=404, detail="Model version not found")
+    row = await model_artifact_service.register_artifact(
+        artifact_uri=request.artifact_uri.strip(),
+        model_version=model,
+        checksum_sha256=str(request.checksum_sha256 or "").strip(),
+        feature_schema=dict(request.feature_schema or {}),
+        training_metadata=dict(request.training_metadata or {}),
+        metadata=dict(request.metadata or {}),
+    )
+    return _serialize_artifact(row)
 
 
 @router.get("/nlp/models", response_model=list[NLPModelVersionResponse])
@@ -509,6 +590,22 @@ async def get_latest_drift(_: User = Depends(get_current_admin_user)) -> Any:
     }
 
 
+@router.get("/parity/scorecard", response_model=dict)
+async def parity_scorecard(
+    lookback_days: int = settings.MLOPS_GUARDRAIL_LOOKBACK_DAYS,
+    _: User = Depends(get_current_admin_user),
+) -> Any:
+    return await data_science_observability_service.parity_scorecard(lookback_days=lookback_days)
+
+
+@router.get("/drift/summary", response_model=list[dict])
+async def drift_summary(
+    limit: int = 5,
+    _: User = Depends(get_current_admin_user),
+) -> Any:
+    return await data_science_observability_service.drift_summary(limit=limit)
+
+
 @router.get("/lifecycle", response_model=dict)
 async def lifecycle_status(_: User = Depends(get_current_admin_user)) -> Any:
     latest_models = await RankingModelVersion.find_many().sort("-created_at").limit(5).to_list()
@@ -526,6 +623,9 @@ async def lifecycle_status(_: User = Depends(get_current_admin_user)) -> Any:
             "weights": {str(k): float(v) for k, v in (active.weights or {}).items()},
             "metrics": {str(k): float(v) for k, v in (active.metrics or {}).items()},
             "lifecycle": dict(active.lifecycle or {}),
+            "artifact_uri": active.artifact_uri,
+            "artifact_checksum_sha256": active.artifact_checksum_sha256,
+            "serving_ready": bool(active.serving_ready),
             "notes": active.notes,
         }
 
@@ -631,7 +731,7 @@ async def update_incident(
     if request.status is not None:
         incident.status = request.status.strip().lower()
         if incident.status == "resolved":
-            incident.resolved_at = datetime.utcnow()
+            incident.resolved_at = utc_now()
     if request.owner is not None:
         incident.owner = request.owner.strip() or None
     if request.summary is not None:
@@ -645,7 +745,7 @@ async def update_incident(
     if request.action_items is not None:
         incident.action_items = list(request.action_items)
 
-    incident.updated_at = datetime.utcnow()
+    incident.updated_at = utc_now()
     await incident.save()
     incident = await mlops_incident_service.refresh_sla(incident)
     return _serialize_incident(incident)

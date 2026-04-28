@@ -79,6 +79,47 @@
         }
       ],
       "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Assistant Failure Rate (real traffic)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "targets": [
+        {
+          "expr": "sum(rate(ranking_requests_total{request_kind=\"assistant_chat\",success=\"false\",traffic_type=\"real\"}[10m])) / clamp_min(sum(rate(ranking_requests_total{request_kind=\"assistant_chat\",traffic_type=\"real\"}[10m])), 1e-9)",
+          "legendFormat": "assistant_failure_rate",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Warehouse Export Errors",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "targets": [
+        {
+          "expr": "increase(warehouse_exports_total{status=\"error\"}[30m])",
+          "legendFormat": "{{format}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Embedding Provider Health",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 32 },
+      "targets": [
+        {
+          "expr": "min by (provider, mode) (embedding_provider_health)",
+          "legendFormat": "{{provider}}/{{mode}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "min": 0, "max": 1 }, "overrides": [] }
     }
   ],
   "templating": { "list": [] },

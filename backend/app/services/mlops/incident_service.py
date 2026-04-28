@@ -6,10 +6,11 @@ from typing import Any
 from app.core.config import settings
 from app.models.mlops_incident import MlopsIncident
 from app.models.model_drift_report import ModelDriftReport
+from app.core.time import utc_now
 
 
 def _now() -> datetime:
-    return datetime.utcnow()
+    return utc_now()
 
 
 class MlopsIncidentService:

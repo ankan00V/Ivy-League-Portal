@@ -4,7 +4,9 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Optional
 
+from app.core.time import utc_now
 from app.models.ranking_model_version import RankingModelVersion
+from app.services.model_artifact_service import model_artifact_service
 
 
 DEFAULT_RANKING_WEIGHTS: dict[str, float] = {
@@ -48,7 +50,7 @@ class RankingModelService:
     async def get_active(self, *, cache_ttl_seconds: int = 60) -> ActiveRankingModel:
         global _cache, _cache_until
 
-        now = datetime.utcnow()
+        now = utc_now()
         if _cache is not None and _cache_until is not None and now <= _cache_until:
             return _cache
 
@@ -78,13 +80,15 @@ class RankingModelService:
         model = await RankingModelVersion.get(model_id)
         if not model:
             raise ValueError("model_not_found")
+        if str(model.artifact_uri or "").strip():
+            model_artifact_service.ensure_model_version_artifact_ready(model)
 
         model.is_active = True
         lifecycle = dict(model.lifecycle or {})
         if previous_active is not None and str(previous_active.id) != str(model.id):
             lifecycle["previous_active_model_id"] = str(previous_active.id)
             lifecycle["previous_active_model_name"] = str(previous_active.name or "")
-        lifecycle["activated_at"] = datetime.utcnow().isoformat()
+        lifecycle["activated_at"] = utc_now().isoformat()
         model.lifecycle = lifecycle
         await model.save()
 
@@ -144,7 +148,7 @@ class RankingModelService:
                 weights=_normalize_weights(active.weights or {}),
             )
             _cache = result
-            _cache_until = datetime.utcnow() + timedelta(seconds=60)
+            _cache_until = utc_now() + timedelta(seconds=60)
             return result
 
         latest = await RankingModelVersion.find_many().sort("-created_at").limit(1).to_list()
@@ -173,7 +177,7 @@ class RankingModelService:
             weights=_normalize_weights(bootstrap.weights or {}),
         )
         _cache = result
-        _cache_until = datetime.utcnow() + timedelta(seconds=60)
+        _cache_until = utc_now() + timedelta(seconds=60)
         return result
 
 

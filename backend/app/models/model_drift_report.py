@@ -5,6 +5,7 @@ from typing import Any, Optional
 
 from beanie import Document
 from pydantic import Field
+from app.core.time import utc_now
 
 
 class ModelDriftReport(Document):
@@ -13,8 +14,8 @@ class ModelDriftReport(Document):
     window_end: datetime
     metrics: dict[str, Any] = Field(default_factory=dict)
     alert: bool = False
-    alert_notified_at: Optional[datetime] = Field(default=None, index=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    alert_notified_at: Optional[datetime] = Field(default=None, json_schema_extra={"index": True})
+    created_at: datetime = Field(default_factory=utc_now)
 
     class Settings:
         name = "model_drift_reports"

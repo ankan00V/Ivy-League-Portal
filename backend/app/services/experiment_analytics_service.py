@@ -8,6 +8,7 @@ from typing import Any, Iterable, Optional
 from app.core.config import settings
 from app.models.experiment import Experiment
 from app.models.opportunity_interaction import OpportunityInteraction
+from app.core.time import utc_now
 
 
 def _get_collection(document_cls: type) -> Any:
@@ -311,7 +312,7 @@ class ExperimentAnalyticsService:
         if not conversion_set:
             conversion_set = {"click"}
 
-        since = datetime.utcnow() - timedelta(days=safe_days)
+        since = utc_now() - timedelta(days=safe_days)
         counts = await self._counts_by_variant(
             experiment_key=experiment.key,
             since=since,
@@ -489,7 +490,7 @@ class ExperimentAnalyticsService:
         auto_paused = False
         if should_pause and hasattr(experiment, "save"):
             experiment.status = "paused"  # type: ignore[assignment]
-            experiment.updated_at = datetime.utcnow()
+            experiment.updated_at = utc_now()
             await experiment.save()
             auto_paused = True
 

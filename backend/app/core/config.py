@@ -211,6 +211,15 @@ class Settings(BaseSettings):
     ANALYTICS_WAREHOUSE_EXPORT_ROOT: str = "backend/storage/warehouse"
     ANALYTICS_WAREHOUSE_DUCKDB_PATH: str = "backend/storage/warehouse/warehouse.duckdb"
     ANALYTICS_WAREHOUSE_EXPORT_FORMAT: str = "duckdb_parquet"  # duckdb_parquet | parquet | disabled
+    ANALYTICS_WAREHOUSE_SQL_MODELS_DIR: str = "backend/warehouse/models"
+    ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED: bool = False
+    ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST: Optional[str] = None
+    ANALYTICS_WAREHOUSE_CLICKHOUSE_PORT: int = 8123
+    ANALYTICS_WAREHOUSE_CLICKHOUSE_DATABASE: str = "vidyaverse"
+    ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME: Optional[str] = None
+    ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD: Optional[str] = None
+    ANALYTICS_WAREHOUSE_CLICKHOUSE_SECURE: bool = False
+    ANALYTICS_WAREHOUSE_CLICKHOUSE_TABLE_PREFIX: str = "mart_"
     ONLINE_FEATURES_PUBLISH_ENABLED: bool = True
     ONLINE_FEATURES_KEY_PREFIX: str = "vidyaverse:features"
     ONLINE_FEATURES_TTL_SECONDS: int = 60 * 60 * 24 * 14
@@ -235,6 +244,7 @@ class Settings(BaseSettings):
     LEARNED_RANKER_ENABLED: bool = False
     LEARNED_RANKER_MODEL_PATH: str = ""
     LEARNED_RANKER_ARTIFACT_URI: str = ""
+    LEARNED_RANKER_ARTIFACT_CHECKSUM_SHA256: str = ""
     LEARNED_RANKER_FEATURES: list[str] = []
     LEARNED_RANKER_SHADOW_ENABLED: bool = True
     LEARNED_RANKER_SHADOW_SAMPLE_RATE: float = 1.0
@@ -268,12 +278,26 @@ class Settings(BaseSettings):
     MLOPS_DRIFT_CHECK_INTERVAL_HOURS: int = 6
     MLOPS_DRIFT_LOOKBACK_DAYS: int = 7
     MLOPS_MODEL_ARTIFACT_ROOT: str = "backend/models"
+    MLOPS_MODEL_ARTIFACT_CACHE_DIR: str = "backend/storage/model_artifacts"
+    MLOPS_MODEL_ARTIFACT_S3_ENDPOINT_URL: Optional[str] = None
+    MLOPS_MODEL_ARTIFACT_S3_REGION: Optional[str] = None
+    MLOPS_MODEL_ARTIFACT_S3_ACCESS_KEY_ID: Optional[str] = None
+    MLOPS_MODEL_ARTIFACT_S3_SECRET_ACCESS_KEY: Optional[str] = None
 
     # Assistant orchestration
     ASSISTANT_CHAT_MEMORY_ENABLED: bool = True
     ASSISTANT_CHAT_MEMORY_MAX_TURNS: int = 12
     ASSISTANT_CHAT_RAG_AUTO_ROUTE_ENABLED: bool = True
     ASSISTANT_CHAT_SURFACE_DEFAULT: str = "global_chat"
+    ASSISTANT_CHAT_SUMMARY_ENABLED: bool = True
+    ASSISTANT_CHAT_SUMMARY_TRIGGER_TURNS: int = 16
+    ASSISTANT_CHAT_SUMMARY_RETAIN_TURNS: int = 8
+    ASSISTANT_CHAT_PROMPT_VERSION: str = "assistant.v2"
+    ASSISTANT_CHAT_TOOLS_ENABLED: bool = True
+
+    # Security event reporting
+    SECURITY_CSP_REPORT_URI: str = "/api/v1/security/csp-report"
+    SECURITY_CSP_REPORT_ONLY_FRONTEND: bool = False
 
     # Embedding health posture
     EMBEDDING_HEALTH_ENFORCE_IN_PRODUCTION: bool = True

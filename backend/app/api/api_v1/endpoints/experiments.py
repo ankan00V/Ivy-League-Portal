@@ -11,6 +11,7 @@ from app.models.experiment import Experiment, ExperimentVariant
 from app.models.user import User
 from app.services.experiment_analytics_service import experiment_analytics_service
 from app.services.experiment_service import experiment_service
+from app.core.time import utc_now
 
 router = APIRouter()
 DEFAULT_REAL_EXPERIMENT_KEY = "ranking_mode"
@@ -68,7 +69,7 @@ async def create_experiment(payload: ExperimentCreateIn, _: User = Depends(get_c
         description=payload.description,
         status=payload.status,  # type: ignore[arg-type]
         variants=variants,
-        updated_at=datetime.utcnow(),
+        updated_at=utc_now(),
     )
     await experiment.insert()
     return {"status": "ok", "key": experiment.key}
@@ -99,7 +100,7 @@ async def update_experiment(
 
         experiment.salt = uuid4().hex
 
-    experiment.updated_at = datetime.utcnow()
+    experiment.updated_at = utc_now()
     await experiment.save()
     return {"status": "ok"}
 

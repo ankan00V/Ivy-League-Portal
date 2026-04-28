@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import timedelta
 from statistics import quantiles
 from typing import Any, Optional
 
 from app.core.config import settings
+from app.core.time import utc_now
 from app.models.analytics_cohort_aggregate import AnalyticsCohortAggregate
 from app.models.analytics_daily_aggregate import AnalyticsDailyAggregate
 from app.models.analytics_funnel_aggregate import AnalyticsFunnelAggregate
@@ -61,7 +62,7 @@ class AnalyticsWarehouseService:
             return {"status": "disabled"}
 
         safe_days = max(1, min(int(lookback_days or settings.ANALYTICS_LOOKBACK_DAYS_DEFAULT), 365))
-        since = datetime.utcnow() - timedelta(days=safe_days)
+        since = utc_now() - timedelta(days=safe_days)
         normalized_traffic = (traffic_type or "real").strip().lower() or "real"
 
         interactions = await OpportunityInteraction.find_many(
@@ -177,7 +178,7 @@ class AnalyticsWarehouseService:
             payload["latencies"].append(float(max(0.0, event.latency_ms)))
 
         docs: list[AnalyticsDailyAggregate] = []
-        now = datetime.utcnow()
+        now = utc_now()
         for key, payload in grouped_interactions.items():
             day, mode, exp_key, exp_variant = key
             impressions = int(payload["impression"])
@@ -263,7 +264,7 @@ class AnalyticsWarehouseService:
                 grouped[key][action] += 1
 
         docs: list[AnalyticsFunnelAggregate] = []
-        now = datetime.utcnow()
+        now = utc_now()
         for key, counts in grouped.items():
             day, mode, exp_key, exp_variant = key
             impressions = int(counts["impression"])
@@ -333,7 +334,7 @@ class AnalyticsWarehouseService:
                     apply_by_cohort_day[key].add(user_id)
 
         docs: list[AnalyticsCohortAggregate] = []
-        now = datetime.utcnow()
+        now = utc_now()
         for cohort_date, users in cohort_users.items():
             cohort_size = len(users)
             for delta in range(0, 61):
@@ -377,7 +378,7 @@ class AnalyticsWarehouseService:
             rows.sort(key=lambda row: row.created_at)
 
         docs: list[FeatureStoreRow] = []
-        now = datetime.utcnow()
+        now = utc_now()
         for (user_id, opportunity_id), rows in by_user_opp.items():
             for idx, event in enumerate(rows):
                 if (event.interaction_type or "").strip().lower() != "impression":

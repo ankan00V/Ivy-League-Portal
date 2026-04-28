@@ -46,8 +46,19 @@ class LearnedRanker:
             return
 
         configured_uri = model_artifact_service.resolve_learned_ranker_uri()
-        resolved_local_path = model_artifact_service.resolve_local_path(configured_uri)
-        model_path = resolved_local_path or Path(getattr(settings, "LEARNED_RANKER_MODEL_PATH", "") or "")
+        model_path = None
+        if configured_uri:
+            try:
+                synced = model_artifact_service.sync_artifact(
+                    uri=configured_uri,
+                    expected_sha256=model_artifact_service.expected_checksum(),
+                )
+                model_path = Path(synced.local_path)
+            except Exception:
+                model_path = None
+        if model_path is None:
+            fallback = str(getattr(settings, "LEARNED_RANKER_MODEL_PATH", "") or "").strip()
+            model_path = Path(fallback) if fallback else None
         if not model_path:
             return
         if not model_path.exists():

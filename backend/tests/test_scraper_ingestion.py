@@ -8,6 +8,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.services.scraper import _dedupe_by_url, _extract_deadline_from_text, is_opportunity_active
+from app.core.time import utc_now
 
 
 class DummyOpportunity:
@@ -35,7 +36,7 @@ class TestScraperIngestionHelpers(unittest.TestCase):
         self.assertEqual(deadline.day, 14)
 
     def test_is_opportunity_active_rejects_expired_deadline(self) -> None:
-        now = datetime.utcnow()
+        now = utc_now()
         active = is_opportunity_active(DummyOpportunity(deadline=now + timedelta(days=3)), now=now)
         expired = is_opportunity_active(DummyOpportunity(deadline=now - timedelta(days=1)), now=now)
         self.assertTrue(active)

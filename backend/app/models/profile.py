@@ -4,7 +4,7 @@ from beanie import Document, PydanticObjectId
 from pydantic import Field, field_validator
 
 class Profile(Document):
-    user_id: PydanticObjectId = Field(unique=True)
+    user_id: PydanticObjectId = Field(json_schema_extra={"unique": True})
     account_type: str = "candidate"
     first_name: Optional[str] = None
     last_name: Optional[str] = None

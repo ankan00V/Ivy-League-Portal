@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from typing import Any, Optional
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from beanie import PydanticObjectId
 
 from app.api.deps import get_current_active_user
@@ -15,6 +15,8 @@ class PostCreate(BaseModel):
     content: str
 
 class PostResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: PydanticObjectId
     user_id: PydanticObjectId
     domain: str
@@ -22,21 +24,17 @@ class PostResponse(BaseModel):
     likes_count: int
     created_at: datetime
     
-    class Config:
-        from_attributes = True
-
 class CommentCreate(BaseModel):
     content: str
 
 class CommentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: PydanticObjectId
     post_id: PydanticObjectId
     user_id: PydanticObjectId
     content: str
     created_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 @router.get("/posts", response_model=list[PostResponse])

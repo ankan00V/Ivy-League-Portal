@@ -66,3 +66,40 @@ groups:
           summary: "Potential SRM in ranking experiment"
           description: "Impression allocation for baseline differs materially from expected 1/3 split."
           runbook: "docs/runbooks/incident-response.md#sample-ratio-mismatch-srm"
+
+      - alert: VidyaVerseAssistantFailureRateHigh
+        expr: |
+          sum(rate(ranking_requests_total{request_kind="assistant_chat",success="false",traffic_type="real"}[10m]))
+          /
+          clamp_min(sum(rate(ranking_requests_total{request_kind="assistant_chat",traffic_type="real"}[10m])), 1e-9)
+          > 0.05
+        for: 15m
+        labels:
+          severity: warn
+          service: vidyaverse-assistant
+        annotations:
+          summary: "Assistant failure rate is above 5%"
+          description: "assistant_chat requests are failing above the target rate for 15 minutes."
+          runbook: "docs/runbooks/incident-response.md#assistant-failures"
+
+      - alert: VidyaVerseWarehouseExportFailures
+        expr: increase(warehouse_exports_total{status="error"}[30m]) > 0
+        for: 10m
+        labels:
+          severity: page
+          service: vidyaverse-warehouse
+        annotations:
+          summary: "Warehouse export is failing"
+          description: "At least one analytics warehouse export failed in the last 30 minutes."
+          runbook: "docs/runbooks/incident-response.md#warehouse-export-failures"
+
+      - alert: VidyaVerseEmbeddingProviderDegraded
+        expr: min(embedding_provider_health) < 1
+        for: 10m
+        labels:
+          severity: page
+          service: vidyaverse-embedding
+        annotations:
+          summary: "Embedding provider is degraded"
+          description: "Embedding service has fallen back to degraded mode."
+          runbook: "docs/runbooks/incident-response.md#embedding-provider-degraded"

@@ -2,25 +2,120 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from datetime import datetime
 from typing import Any
 
 from app.core.config import settings
 from app.core.metrics import WAREHOUSE_EXPORTS_TOTAL
+from app.core.time import utc_now
 from app.models.analytics_cohort_aggregate import AnalyticsCohortAggregate
 from app.models.analytics_daily_aggregate import AnalyticsDailyAggregate
 from app.models.analytics_funnel_aggregate import AnalyticsFunnelAggregate
 from app.models.feature_store_row import FeatureStoreRow
 from app.models.opportunity_interaction import OpportunityInteraction
 from app.models.ranking_request_telemetry import RankingRequestTelemetry
+from app.models.warehouse_export_run import WarehouseExportRun
 
 
 class WarehouseExportService:
+    RAW_TABLE_SCHEMAS: dict[str, dict[str, str]] = {
+        "opportunity_interactions": {
+            "user_id": "VARCHAR",
+            "opportunity_id": "VARCHAR",
+            "interaction_type": "VARCHAR",
+            "ranking_mode": "VARCHAR",
+            "experiment_key": "VARCHAR",
+            "experiment_variant": "VARCHAR",
+            "model_version_id": "VARCHAR",
+            "rank_position": "INTEGER",
+            "match_score": "DOUBLE",
+            "traffic_type": "VARCHAR",
+            "created_at": "TIMESTAMP",
+        },
+        "ranking_request_telemetry": {
+            "user_id": "VARCHAR",
+            "request_kind": "VARCHAR",
+            "ranking_mode": "VARCHAR",
+            "experiment_key": "VARCHAR",
+            "experiment_variant": "VARCHAR",
+            "surface": "VARCHAR",
+            "success": "BOOLEAN",
+            "latency_ms": "DOUBLE",
+            "results_count": "INTEGER",
+            "traffic_type": "VARCHAR",
+            "created_at": "TIMESTAMP",
+        },
+        "feature_store_rows": {
+            "row_key": "VARCHAR",
+            "date": "VARCHAR",
+            "user_id": "VARCHAR",
+            "opportunity_id": "VARCHAR",
+            "ranking_mode": "VARCHAR",
+            "experiment_key": "VARCHAR",
+            "experiment_variant": "VARCHAR",
+            "traffic_type": "VARCHAR",
+            "rank_position": "INTEGER",
+            "match_score": "DOUBLE",
+            "features": "JSON",
+            "labels": "JSON",
+            "source_event_id": "VARCHAR",
+            "created_at": "TIMESTAMP",
+            "updated_at": "TIMESTAMP",
+        },
+        "analytics_daily": {
+            "date": "VARCHAR",
+            "metric_type": "VARCHAR",
+            "traffic_type": "VARCHAR",
+            "ranking_mode": "VARCHAR",
+            "experiment_key": "VARCHAR",
+            "experiment_variant": "VARCHAR",
+            "request_kind": "VARCHAR",
+            "metrics": "JSON",
+            "created_at": "TIMESTAMP",
+            "updated_at": "TIMESTAMP",
+        },
+        "analytics_funnels": {
+            "date": "VARCHAR",
+            "traffic_type": "VARCHAR",
+            "ranking_mode": "VARCHAR",
+            "experiment_key": "VARCHAR",
+            "experiment_variant": "VARCHAR",
+            "stage_counts": "JSON",
+            "rates": "JSON",
+            "metadata": "JSON",
+            "created_at": "TIMESTAMP",
+            "updated_at": "TIMESTAMP",
+        },
+        "analytics_cohorts": {
+            "cohort_date": "VARCHAR",
+            "days_since_cohort": "INTEGER",
+            "traffic_type": "VARCHAR",
+            "users_in_cohort": "INTEGER",
+            "active_users": "INTEGER",
+            "applying_users": "INTEGER",
+            "retention_rate": "DOUBLE",
+            "apply_rate": "DOUBLE",
+            "created_at": "TIMESTAMP",
+            "updated_at": "TIMESTAMP",
+        },
+    }
+
     def _enabled(self) -> bool:
         export_format = str(settings.ANALYTICS_WAREHOUSE_EXPORT_FORMAT or "").strip().lower()
         return bool(settings.ANALYTICS_WAREHOUSE_EXPORT_ENABLED) and export_format not in {"", "disabled"}
 
     def _safe_root(self) -> Path:
         return Path(settings.ANALYTICS_WAREHOUSE_EXPORT_ROOT).resolve()
+
+    def _models_dir(self) -> Path:
+        return Path(settings.ANALYTICS_WAREHOUSE_SQL_MODELS_DIR).resolve()
+
+    def _render_sql(self, template: str, *, table_name: str, traffic_type: str, lookback_days: int) -> str:
+        return (
+            template.replace("{{ table_name }}", table_name)
+            .replace("{{ traffic_type }}", traffic_type)
+            .replace("{{ lookback_days }}", str(int(lookback_days)))
+        )
 
     async def export(self, *, lookback_days: int, traffic_type: str) -> dict[str, Any]:
         if not self._enabled():
@@ -65,17 +160,43 @@ class WarehouseExportService:
 
             duckdb_path = None
             exported_tables: list[str] = []
-            if export_format in {"duckdb", "duckdb_parquet"}:
-                duckdb_path, exported_tables = self._materialize_duckdb(
+            mart_files: dict[str, str] = {}
+            if export_format in {"duckdb", "duckdb_parquet", "parquet"}:
+                duckdb_path, exported_tables, mart_files = self._materialize_duckdb(
                     raw_files=raw_files,
                     marts_root=marts_root,
                     traffic_type=traffic_type,
                     lookback_days=lookback_days,
-                    export_parquet=export_format == "duckdb_parquet",
+                    export_parquet=export_format in {"duckdb_parquet", "parquet"},
+                )
+
+            clickhouse_tables: list[str] = []
+            if settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED and duckdb_path:
+                clickhouse_tables = self._materialize_clickhouse(
+                    duckdb_path=duckdb_path,
+                    table_names=[name for name in exported_tables if name.startswith("mart_")],
                 )
 
             if WAREHOUSE_EXPORTS_TOTAL is not None:
                 WAREHOUSE_EXPORTS_TOTAL.labels(format=export_format, status="ok").inc()
+
+            run = WarehouseExportRun(
+                traffic_type=traffic_type,
+                export_format=export_format,
+                lookback_days=int(lookback_days),
+                status="ok",
+                raw_files=raw_files,
+                mart_files=mart_files,
+                exported_tables=exported_tables,
+                metadata={
+                    "duckdb_path": duckdb_path,
+                    "export_root": str(root),
+                    "clickhouse_enabled": bool(settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED),
+                    "clickhouse_tables": clickhouse_tables,
+                },
+                created_at=utc_now(),
+            )
+            await run.insert()
             return {
                 "status": "ok",
                 "format": export_format,
@@ -84,11 +205,22 @@ class WarehouseExportService:
                 "root": str(root),
                 "duckdb_path": duckdb_path,
                 "raw_files": raw_files,
+                "mart_files": mart_files,
                 "exported_tables": exported_tables,
+                "clickhouse_tables": clickhouse_tables,
             }
         except Exception as exc:
             if WAREHOUSE_EXPORTS_TOTAL is not None:
                 WAREHOUSE_EXPORTS_TOTAL.labels(format=export_format, status="error").inc()
+            run = WarehouseExportRun(
+                traffic_type=traffic_type,
+                export_format=export_format,
+                lookback_days=int(lookback_days),
+                status="error",
+                error=str(exc),
+                created_at=utc_now(),
+            )
+            await run.insert()
             return {
                 "status": "error",
                 "format": export_format,
@@ -111,95 +243,143 @@ class WarehouseExportService:
         traffic_type: str,
         lookback_days: int,
         export_parquet: bool,
-    ) -> tuple[str, list[str]]:
+    ) -> tuple[str, list[str], dict[str, str]]:
         import duckdb  # type: ignore
 
         duckdb_path = Path(settings.ANALYTICS_WAREHOUSE_DUCKDB_PATH).resolve()
         duckdb_path.parent.mkdir(parents=True, exist_ok=True)
 
         exported_tables: list[str] = []
+        mart_files: dict[str, str] = {}
         with duckdb.connect(str(duckdb_path)) as conn:
             for table_name, file_path in raw_files.items():
-                conn.execute(
-                    f"""
-                    CREATE OR REPLACE TABLE {table_name} AS
-                    SELECT * FROM read_json_auto(?, ignore_errors=true);
-                    """,
-                    [file_path],
-                )
+                schema = self.RAW_TABLE_SCHEMAS.get(table_name, {})
+                if Path(file_path).stat().st_size <= 0 and schema:
+                    columns = ", ".join(f"{column} {column_type}" for column, column_type in schema.items())
+                    conn.execute(f"CREATE OR REPLACE TABLE {table_name} ({columns})")
+                else:
+                    conn.execute(
+                        f"""
+                        CREATE OR REPLACE TABLE {table_name} AS
+                        SELECT * FROM read_json_auto(?, ignore_errors=true);
+                        """,
+                        [file_path],
+                    )
                 exported_tables.append(table_name)
 
-            conn.execute(
-                """
-                CREATE OR REPLACE TABLE mart_daily_metrics AS
-                SELECT *
-                FROM analytics_daily
-                ORDER BY date DESC;
-                """
-            )
-            conn.execute(
-                """
-                CREATE OR REPLACE TABLE mart_funnel_metrics AS
-                SELECT *
-                FROM analytics_funnels
-                ORDER BY date DESC;
-                """
-            )
-            conn.execute(
-                """
-                CREATE OR REPLACE TABLE mart_cohort_metrics AS
-                SELECT *
-                FROM analytics_cohorts
-                ORDER BY cohort_date DESC, days_since_cohort ASC;
-                """
-            )
-            conn.execute(
-                """
-                CREATE OR REPLACE TABLE mart_training_dataset AS
-                SELECT
-                    row_key,
-                    date,
-                    user_id,
-                    opportunity_id,
-                    ranking_mode,
-                    experiment_key,
-                    experiment_variant,
-                    traffic_type,
-                    rank_position,
-                    match_score,
-                    features,
-                    labels,
-                    source_event_id
-                FROM feature_store_rows
-                ORDER BY date DESC;
-                """
-            )
-            conn.execute(
-                """
-                CREATE OR REPLACE TABLE mart_metadata AS
-                SELECT
-                    ? AS traffic_type,
-                    ? AS lookback_days,
-                    now() AS materialized_at;
-                """,
-                [traffic_type, int(lookback_days)],
-            )
-            exported_tables.extend(
-                [
-                    "mart_daily_metrics",
-                    "mart_funnel_metrics",
-                    "mart_cohort_metrics",
-                    "mart_training_dataset",
-                    "mart_metadata",
-                ]
-            )
-
-            if export_parquet:
-                for table_name in exported_tables:
+            for model_path in sorted(self._models_dir().glob("*.sql")):
+                table_name = model_path.stem
+                sql = self._render_sql(
+                    model_path.read_text(encoding="utf-8"),
+                    table_name=table_name,
+                    traffic_type=traffic_type,
+                    lookback_days=lookback_days,
+                )
+                conn.execute(f"CREATE OR REPLACE TABLE {table_name} AS {sql}")
+                exported_tables.append(table_name)
+                if export_parquet:
                     out_path = marts_root / f"{table_name}.parquet"
                     conn.execute(f"COPY {table_name} TO ? (FORMAT PARQUET)", [str(out_path)])
+                    mart_files[table_name] = str(out_path)
 
-        return str(duckdb_path), exported_tables
+        return str(duckdb_path), exported_tables, mart_files
+
+    def _clickhouse_table_name(self, table_name: str) -> str:
+        safe_name = "".join(ch for ch in str(table_name or "").strip().lower() if ch.isalnum() or ch == "_")
+        if not safe_name:
+            raise ValueError("invalid_clickhouse_table")
+        prefix = "".join(
+            ch for ch in str(settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_TABLE_PREFIX or "").strip().lower()
+            if ch.isalnum() or ch == "_"
+        )
+        if safe_name.startswith("mart_") and prefix == "mart_":
+            return safe_name
+        return f"{prefix}{safe_name}" if prefix and not safe_name.startswith(prefix) else safe_name
+
+    def _clickhouse_type(self, value: Any) -> str:
+        if isinstance(value, bool):
+            return "UInt8"
+        if isinstance(value, int) and not isinstance(value, bool):
+            return "Int64"
+        if isinstance(value, float):
+            return "Float64"
+        if isinstance(value, datetime):
+            return "DateTime64(6, 'UTC')"
+        return "String"
+
+    def _clickhouse_value(self, value: Any) -> Any:
+        if value is None:
+            return ""
+        if isinstance(value, (dict, list, tuple)):
+            return json.dumps(value, default=str, sort_keys=True)
+        return value
+
+    def _materialize_clickhouse(self, *, duckdb_path: str, table_names: list[str]) -> list[str]:
+        import duckdb  # type: ignore
+        import clickhouse_connect  # type: ignore
+
+        host = (settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST or "").strip()
+        if not host:
+            raise RuntimeError("ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST is required when ClickHouse export is enabled.")
+
+        client = clickhouse_connect.get_client(
+            host=host,
+            port=int(settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_PORT),
+            username=settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME or "default",
+            password=settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD or "",
+            database=settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_DATABASE,
+            secure=bool(settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_SECURE),
+        )
+
+        materialized: list[str] = []
+        with duckdb.connect(str(duckdb_path), read_only=True) as conn:
+            for source_table in table_names:
+                target_table = self._clickhouse_table_name(source_table)
+                rows = conn.execute(f"SELECT * FROM {source_table}").fetchall()
+                columns = [item[0] for item in conn.description or []]
+                if not columns:
+                    continue
+
+                sample = rows[0] if rows else tuple("" for _ in columns)
+                column_defs = [
+                    f"`{column}` {self._clickhouse_type(sample[index])}"
+                    for index, column in enumerate(columns)
+                ]
+                client.command(
+                    f"CREATE TABLE IF NOT EXISTS `{target_table}` ({', '.join(column_defs)}) "
+                    "ENGINE = MergeTree ORDER BY tuple()"
+                )
+                client.command(f"TRUNCATE TABLE `{target_table}`")
+                if rows:
+                    client.insert(
+                        target_table,
+                        [[self._clickhouse_value(value) for value in row] for row in rows],
+                        column_names=columns,
+                    )
+                materialized.append(target_table)
+        return materialized
+
+    def list_available_marts(self) -> list[str]:
+        return sorted(path.stem for path in self._models_dir().glob("*.sql"))
+
+    def read_mart(self, mart_name: str, *, limit: int = 100) -> list[dict[str, Any]]:
+        import duckdb  # type: ignore
+
+        safe_name = "".join(ch for ch in str(mart_name or "").strip().lower() if ch.isalnum() or ch == "_")
+        if safe_name not in set(self.list_available_marts()):
+            raise ValueError("unknown_mart")
+        safe_limit = max(1, min(int(limit), 500))
+        duckdb_path = Path(settings.ANALYTICS_WAREHOUSE_DUCKDB_PATH).resolve()
+        if not duckdb_path.exists():
+            return []
+        with duckdb.connect(str(duckdb_path), read_only=True) as conn:
+            rows = conn.execute(f"SELECT * FROM {safe_name} LIMIT {safe_limit}").fetchall()
+            columns = [item[0] for item in conn.description]
+        return [dict(zip(columns, row)) for row in rows]
+
+    async def latest_runs(self, *, limit: int = 20) -> list[WarehouseExportRun]:
+        safe_limit = max(1, min(int(limit), 100))
+        return await WarehouseExportRun.find_many().sort("-created_at").limit(safe_limit).to_list()
 
 
 warehouse_export_service = WarehouseExportService()

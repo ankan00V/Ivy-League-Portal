@@ -8,6 +8,7 @@ import requests
 
 from app.core.config import settings
 from app.models.model_drift_report import ModelDriftReport
+from app.core.time import utc_now
 
 
 class MlopsAlertingService:
@@ -73,7 +74,7 @@ class MlopsAlertingService:
         if cooldown_minutes <= 0:
             return False, None
 
-        cutoff = datetime.utcnow() - timedelta(minutes=cooldown_minutes)
+        cutoff = utc_now() - timedelta(minutes=cooldown_minutes)
         recent = (
             await ModelDriftReport.find_many(
                 ModelDriftReport.alert == True,  # noqa: E712
@@ -118,7 +119,7 @@ class MlopsAlertingService:
         metrics = report.metrics or {}
         payload: dict[str, Any] = {
             "event": "mlops.drift.alert",
-            "reported_at": datetime.utcnow().isoformat(),
+            "reported_at": utc_now().isoformat(),
             "report_id": str(report.id),
             "model_version_id": report.model_version_id,
             "window_start": report.window_start.isoformat(),
@@ -189,7 +190,7 @@ class MlopsAlertingService:
         if channel_errors and not (webhook_sent or slack_sent or pagerduty_sent):
             raise RuntimeError(f"alert_delivery_failed:{channel_errors}")
 
-        now = datetime.utcnow()
+        now = utc_now()
         report.alert_notified_at = now
         await report.save()
 

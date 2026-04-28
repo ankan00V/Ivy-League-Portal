@@ -1,0 +1,4 @@
+{"input":"Summarize my profile status and what is missing before I apply.","expected_mode":"tool","expected_tool":"profile_lookup"}
+{"input":"Find top opportunities for data science internships in Bangalore.","expected_mode":"rag"}
+{"input":"Why was this opportunity recommended to me?","expected_mode":"tool","expected_tool":"ranking_explanation"}
+{"input":"Give me an application checklist for scholarship opportunities.","expected_mode":"tool","expected_tool":"application_guidance"}

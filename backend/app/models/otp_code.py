@@ -1,4 +1,5 @@
 from datetime import datetime
+from app.core.time import utc_now
 
 from beanie import Document
 from pydantic import Field
@@ -10,7 +11,7 @@ class OTPCode(Document):
     purpose: str = "signin"
     otp_hash: str
     expires_at: datetime
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
 
     class Settings:
         name = "otp_codes"

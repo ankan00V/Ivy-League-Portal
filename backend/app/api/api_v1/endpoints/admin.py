@@ -15,8 +15,15 @@ from app.models.opportunity import Opportunity
 from app.models.post import Comment as SocialComment
 from app.models.post import Post
 from app.models.user import User
+from app.core.time import utc_now
 from app.services.auth_security_service import auth_security_service
 from app.services.job_runner import job_runner
+from app.services.opportunity_visibility import (
+    canonical_opportunity_type,
+    is_opportunity_expired,
+    is_student_visible_opportunity,
+    resolve_opportunity_portal,
+)
 
 router = APIRouter(include_in_schema=False)
 
@@ -58,6 +65,9 @@ class AdminOverviewResponse(BaseModel):
     users_total: int
     active_users: int
     opportunities_total: int
+    active_opportunities_total: int
+    expired_opportunities_total: int
+    inactive_opportunities_total: int
     social_posts_total: int
     social_comments_total: int
     jobs_dead_count: int
@@ -68,13 +78,16 @@ class AdminOpportunityCreate(BaseModel):
     title: str
     description: str
     url: str
-    opportunity_type: str = "Opportunity"
+    opportunity_type: str = "Job"
     university: str = "Unknown"
     domain: Optional[str] = None
     source: Optional[str] = None
     location: Optional[str] = None
     eligibility: Optional[str] = None
-    deadline: Optional[datetime] = None
+    ppo_available: Optional[str] = None
+    duration_start: datetime
+    duration_end: datetime
+    deadline: datetime
     lifecycle_status: str = "published"
 
 
@@ -88,6 +101,9 @@ class AdminOpportunityUpdate(BaseModel):
     source: Optional[str] = None
     location: Optional[str] = None
     eligibility: Optional[str] = None
+    ppo_available: Optional[str] = None
+    duration_start: Optional[datetime] = None
+    duration_end: Optional[datetime] = None
     deadline: Optional[datetime] = None
     lifecycle_status: Optional[str] = None
 
@@ -98,13 +114,19 @@ class AdminOpportunityResponse(BaseModel):
     description: str
     url: str
     opportunity_type: Optional[str] = None
+    portal_category: str
     university: Optional[str] = None
     domain: Optional[str] = None
     source: Optional[str] = None
     location: Optional[str] = None
     eligibility: Optional[str] = None
+    ppo_available: Optional[str] = None
     lifecycle_status: str
+    duration_start: Optional[datetime] = None
+    duration_end: Optional[datetime] = None
     deadline: Optional[datetime] = None
+    is_expired: bool
+    visible_on_student_portal: bool
     created_at: datetime
     updated_at: datetime
     last_seen_at: datetime
@@ -151,23 +173,65 @@ class AdminJobEnqueueRequest(BaseModel):
 
 
 def _opportunity_payload(row: Opportunity) -> AdminOpportunityResponse:
+    portal_category = resolve_opportunity_portal(
+        opportunity_type=row.opportunity_type,
+        title=row.title,
+        description=row.description,
+        portal_category=row.portal_category,
+    )
     return AdminOpportunityResponse(
         id=str(row.id),
         title=row.title,
         description=row.description,
         url=row.url,
         opportunity_type=row.opportunity_type,
+        portal_category=portal_category,
         university=row.university,
         domain=row.domain,
         source=row.source,
         location=row.location,
         eligibility=row.eligibility,
+        ppo_available=row.ppo_available,
         lifecycle_status=row.lifecycle_status or "published",
+        duration_start=row.duration_start,
+        duration_end=row.duration_end,
         deadline=row.deadline,
+        is_expired=is_opportunity_expired(row),
+        visible_on_student_portal=is_student_visible_opportunity(row),
         created_at=row.created_at,
         updated_at=row.updated_at,
         last_seen_at=row.last_seen_at,
     )
+
+
+def _validate_lifecycle_status(value: str) -> str:
+    lifecycle_status = str(value or "published").strip().lower()
+    if lifecycle_status not in {"draft", "published", "paused", "closed"}:
+        raise HTTPException(status_code=400, detail="Invalid lifecycle_status")
+    return lifecycle_status
+
+
+def _normalize_ppo_available(value: Optional[str]) -> Optional[str]:
+    candidate = str(value or "").strip().lower()
+    if not candidate:
+        return None
+    if candidate not in {"yes", "no", "undefined"}:
+        raise HTTPException(status_code=400, detail="ppo_available must be yes, no, or undefined")
+    return candidate
+
+
+def _apply_lifecycle_status(row: Opportunity, lifecycle_status: str) -> None:
+    now = utc_now()
+    row.lifecycle_status = lifecycle_status
+    row.lifecycle_updated_at = now
+    if lifecycle_status == "published":
+        row.published_at = row.published_at or now
+        row.paused_at = None
+        row.closed_at = None
+    elif lifecycle_status == "paused":
+        row.paused_at = now
+    elif lifecycle_status == "closed":
+        row.closed_at = now
 
 
 @router.get("/overview", response_model=AdminOverviewResponse)
@@ -176,7 +240,13 @@ async def admin_overview(
 ) -> Any:
     users_total = await User.find_many().count()
     active_users = await User.find_many(User.is_active == True).count()  # noqa: E712
-    opportunities_total = await Opportunity.find_many().count()
+    opportunities = await Opportunity.find_many().to_list()
+    opportunities_total = len(opportunities)
+    active_opportunities_total = sum(1 for row in opportunities if is_student_visible_opportunity(row))
+    expired_opportunities_total = sum(1 for row in opportunities if is_opportunity_expired(row))
+    inactive_opportunities_total = sum(
+        1 for row in opportunities if (str(row.lifecycle_status or "published").strip().lower() != "published")
+    )
     social_posts_total = await Post.find_many().count()
     social_comments_total = await SocialComment.find_many().count()
     jobs_dead_count = await BackgroundJob.find_many(BackgroundJob.status == "dead").count()
@@ -184,10 +254,13 @@ async def admin_overview(
         users_total=users_total,
         active_users=active_users,
         opportunities_total=opportunities_total,
+        active_opportunities_total=active_opportunities_total,
+        expired_opportunities_total=expired_opportunities_total,
+        inactive_opportunities_total=inactive_opportunities_total,
         social_posts_total=social_posts_total,
         social_comments_total=social_comments_total,
         jobs_dead_count=jobs_dead_count,
-        generated_at=datetime.utcnow(),
+        generated_at=utc_now(),
     )
 
 
@@ -207,26 +280,39 @@ async def admin_create_opportunity(
     request: Request,
     current_user: User = Depends(get_current_admin_user),
 ) -> Any:
-    lifecycle_status = str(payload.lifecycle_status or "published").strip().lower()
-    if lifecycle_status not in {"draft", "published", "paused", "closed"}:
-        raise HTTPException(status_code=400, detail="Invalid lifecycle_status")
+    lifecycle_status = _validate_lifecycle_status(payload.lifecycle_status)
+    if payload.duration_end < payload.duration_start:
+        raise HTTPException(status_code=400, detail="duration_end must be after duration_start")
+
+    normalized_opportunity_type = canonical_opportunity_type(payload.opportunity_type) or "Job"
+    normalized_ppo_available = _normalize_ppo_available(payload.ppo_available)
+    if normalized_opportunity_type != "Internship":
+        normalized_ppo_available = None
 
     opportunity = Opportunity(
         title=payload.title,
         description=payload.description,
         url=payload.url,
-        opportunity_type=payload.opportunity_type,
+        opportunity_type=normalized_opportunity_type,
+        portal_category=resolve_opportunity_portal(
+            opportunity_type=payload.opportunity_type,
+            title=payload.title,
+            description=payload.description,
+        ),
         university=payload.university,
         domain=payload.domain,
         source=payload.source,
         location=payload.location,
         eligibility=payload.eligibility,
+        ppo_available=normalized_ppo_available,
+        duration_start=payload.duration_start,
+        duration_end=payload.duration_end,
         deadline=payload.deadline,
-        lifecycle_status=lifecycle_status,
         posted_by_user_id=current_user.id,
-        updated_at=datetime.utcnow(),
-        last_seen_at=datetime.utcnow(),
+        updated_at=utc_now(),
+        last_seen_at=utc_now(),
     )
+    _apply_lifecycle_status(opportunity, lifecycle_status)
     await opportunity.insert()
     await _audit_admin_action(
         action="opportunity.create",
@@ -251,15 +337,32 @@ async def admin_update_opportunity(
 
     updates = payload.model_dump(exclude_none=True)
     if "lifecycle_status" in updates:
-        lifecycle_status = str(updates["lifecycle_status"] or "").strip().lower()
-        if lifecycle_status not in {"draft", "published", "paused", "closed"}:
-            raise HTTPException(status_code=400, detail="Invalid lifecycle_status")
-        updates["lifecycle_status"] = lifecycle_status
+        updates["lifecycle_status"] = _validate_lifecycle_status(str(updates["lifecycle_status"] or ""))
+    if "opportunity_type" in updates:
+        updates["opportunity_type"] = canonical_opportunity_type(str(updates["opportunity_type"] or "")) or row.opportunity_type
+    if "ppo_available" in updates:
+        updates["ppo_available"] = _normalize_ppo_available(updates.get("ppo_available"))
+    next_duration_start = updates.get("duration_start", row.duration_start)
+    next_duration_end = updates.get("duration_end", row.duration_end)
+    if next_duration_start and next_duration_end and next_duration_end < next_duration_start:
+        raise HTTPException(status_code=400, detail="duration_end must be after duration_start")
 
     for field, value in updates.items():
+        if field == "lifecycle_status":
+            continue
         setattr(row, field, value)
-    row.updated_at = datetime.utcnow()
-    row.last_seen_at = datetime.utcnow()
+    if (row.opportunity_type or "").strip().lower() != "internship":
+        row.ppo_available = None
+    row.portal_category = resolve_opportunity_portal(
+        opportunity_type=row.opportunity_type,
+        title=row.title,
+        description=row.description,
+        portal_category=row.portal_category,
+    )
+    if "lifecycle_status" in updates:
+        _apply_lifecycle_status(row, str(updates["lifecycle_status"]))
+    row.updated_at = utc_now()
+    row.last_seen_at = utc_now()
     await row.save()
     await _audit_admin_action(
         action="opportunity.update",

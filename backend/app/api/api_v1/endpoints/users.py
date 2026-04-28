@@ -9,7 +9,7 @@ from beanie import PydanticObjectId
 from beanie.exceptions import CollectionWasNotInitialized
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.api.deps import get_current_active_user
 from app.core.email_policy import is_corporate_email
@@ -232,6 +232,8 @@ class ProfileUpdate(BaseModel):
 
 
 class ProfileResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     user_id: PydanticObjectId
     account_type: str = "candidate"
     first_name: Optional[str] = None
@@ -291,9 +293,6 @@ class ProfileResponse(BaseModel):
     resume_content_type: Optional[str] = None
     resume_uploaded_at: Optional[datetime] = None
     incoscore: float
-
-    class Config:
-        from_attributes = True
 
 
 class OnboardingStatusResponse(BaseModel):

@@ -8,7 +8,7 @@ from typing import Any, Literal, Optional
 from beanie import PydanticObjectId
 from beanie.exceptions import CollectionWasNotInitialized
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.deps import get_current_active_user, get_current_admin_user
 from app.core.config import settings
@@ -24,9 +24,14 @@ from app.schemas.rag import RAGAskResponse
 from app.services.ai_engine import ai_system
 from app.services.evaluation_service import evaluation_service
 from app.services.interaction_service import interaction_service
+from app.services.opportunity_visibility import (
+    is_student_visible_opportunity,
+    resolve_opportunity_portal,
+)
 from app.services.rag_service import rag_service
 from app.services.recommendation_service import recommendation_service
 from app.services.ranking_request_telemetry_service import ranking_request_telemetry_service
+from app.core.time import utc_now
 
 router = APIRouter()
 
@@ -37,19 +42,21 @@ class OpportunityCreate(BaseModel):
     url: str
     opportunity_type: str
     university: str
+    portal_category: Optional[str] = None
+    duration_start: Optional[datetime] = None
+    duration_end: Optional[datetime] = None
     deadline: Optional[datetime] = None
 
 
 class OpportunityResponse(OpportunityCreate):
+    model_config = ConfigDict(from_attributes=True)
+
     id: PydanticObjectId
     domain: Optional[str] = None
     source: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
     last_seen_at: Optional[datetime] = None
-
-    class Config:
-        from_attributes = True
 
 
 class RecommendedOpportunityResponse(OpportunityResponse):
@@ -153,6 +160,14 @@ def _to_recommended_response(payload: dict[str, Any]) -> RecommendedOpportunityR
         url=opportunity.url,
         opportunity_type=opportunity.opportunity_type or "Opportunity",
         university=opportunity.university or "Unknown",
+        portal_category=resolve_opportunity_portal(
+            opportunity_type=opportunity.opportunity_type,
+            title=opportunity.title,
+            description=opportunity.description,
+            portal_category=getattr(opportunity, "portal_category", None),
+        ),
+        duration_start=getattr(opportunity, "duration_start", None),
+        duration_end=getattr(opportunity, "duration_end", None),
         deadline=opportunity.deadline,
         domain=opportunity.domain,
         source=opportunity.source,
@@ -178,14 +193,9 @@ def _activity_sort_key(opportunity: Opportunity) -> tuple[datetime, datetime]:
 
 
 def _filter_active_opportunities(opportunities: list[Opportunity]) -> list[Opportunity]:
-    from app.services.scraper import is_opportunity_active
-
     active = []
     for opportunity in opportunities:
-        lifecycle = (opportunity.lifecycle_status or "published").strip().lower()
-        if lifecycle not in {"published"}:
-            continue
-        if not is_opportunity_active(opportunity):
+        if not is_student_visible_opportunity(opportunity):
             continue
         active.append(opportunity)
     active.sort(key=_activity_sort_key, reverse=True)
@@ -193,7 +203,7 @@ def _filter_active_opportunities(opportunities: list[Opportunity]) -> list[Oppor
 
 
 def _freshness_seconds(opportunities: list[Opportunity]) -> float | None:
-    now = datetime.utcnow()
+    now = utc_now()
     freshness_values: list[float] = []
     for opportunity in opportunities:
         last = opportunity.last_seen_at or opportunity.updated_at or opportunity.created_at
@@ -241,7 +251,7 @@ async def _upsert_saved_query(user_id: PydanticObjectId, query: str, surface: st
         }
     )
     if existing:
-        existing.last_used_at = datetime.utcnow()
+        existing.last_used_at = utc_now()
         await existing.save()
         return
 
@@ -255,6 +265,7 @@ async def _upsert_saved_query(user_id: PydanticObjectId, query: str, surface: st
 async def _load_active_opportunities(
     *,
     domain: Optional[str] = None,
+    portal: Optional[str] = None,
     skip: int = 0,
     limit: int = 100,
 ) -> list[Opportunity]:
@@ -264,6 +275,19 @@ async def _load_active_opportunities(
     query = Opportunity.find_many(Opportunity.domain == domain) if domain else Opportunity.find_many()
     candidates = await query.sort("-created_at").limit(fetch_window).to_list()
     active = _filter_active_opportunities(candidates)
+    normalized_portal = str(portal or "").strip().lower()
+    if normalized_portal in {"career", "competitive", "other"}:
+        active = [
+            item
+            for item in active
+            if resolve_opportunity_portal(
+                opportunity_type=item.opportunity_type,
+                title=item.title,
+                description=item.description,
+                portal_category=getattr(item, "portal_category", None),
+            )
+            == normalized_portal
+        ]
     return active[safe_skip : safe_skip + safe_limit]
 
 
@@ -295,7 +319,7 @@ async def _ensure_live_feed_if_stale() -> None:
         return
 
     stale_after = timedelta(minutes=max(1, settings.SCRAPER_MAX_STALENESS_MINUTES))
-    if latest_seen < datetime.utcnow() - stale_after:
+    if latest_seen < utc_now() - stale_after:
         if settings.JOBS_ENABLED:
             await job_runner.enqueue(job_type="scraper.run", dedupe_key="scraper.run")
         else:
@@ -318,12 +342,13 @@ async def read_opportunities(
     skip: int = 0,
     limit: int = 100,
     domain: Optional[str] = None,
+    portal: Optional[Literal["career", "competitive", "other"]] = None,
 ) -> Any:
     """
     Retrieve opportunities. Can filter by domain.
     """
     await _ensure_live_feed_if_stale()
-    return await _load_active_opportunities(domain=domain, skip=skip, limit=limit)
+    return await _load_active_opportunities(domain=domain, portal=portal, skip=skip, limit=limit)
 
 
 @router.get("/recommended/me", response_model=list[RecommendedOpportunityResponse])
@@ -331,6 +356,7 @@ async def get_personalized_recommendations(
     limit: int = 10,
     ranking_mode: Literal["baseline", "semantic", "ml", "ab"] = "ml",
     query: Optional[str] = None,
+    portal: Optional[Literal["career", "competitive", "other"]] = None,
     current_user: User = Depends(get_current_active_user),
 ) -> Any:
     """
@@ -343,6 +369,18 @@ async def get_personalized_recommendations(
     try:
         profile = await _get_or_create_profile(current_user.id)
         opportunities = _filter_active_opportunities(await Opportunity.find_many().to_list())
+        if portal:
+            opportunities = [
+                item
+                for item in opportunities
+                if resolve_opportunity_portal(
+                    opportunity_type=item.opportunity_type,
+                    title=item.title,
+                    description=item.description,
+                    portal_category=getattr(item, "portal_category", None),
+                )
+                == portal
+            ]
 
         ranked, meta = await recommendation_service.rank(
             user_id=current_user.id,
@@ -438,6 +476,7 @@ async def get_smart_shortlist(
     min_score: float = 35.0,
     ranking_mode: Literal["baseline", "semantic", "ml", "ab"] = "ml",
     query: Optional[str] = None,
+    portal: Optional[Literal["career", "competitive", "other"]] = None,
     current_user: User = Depends(get_current_active_user),
 ) -> Any:
     """
@@ -453,6 +492,18 @@ async def get_smart_shortlist(
         applied_ids = {str(application.opportunity_id) for application in my_apps}
 
         opportunities = _filter_active_opportunities(await Opportunity.find_many().to_list())
+        if portal:
+            opportunities = [
+                item
+                for item in opportunities
+                if resolve_opportunity_portal(
+                    opportunity_type=item.opportunity_type,
+                    title=item.title,
+                    description=item.description,
+                    portal_category=getattr(item, "portal_category", None),
+                )
+                == portal
+            ]
         opportunities = [item for item in opportunities if str(item.id) not in applied_ids]
 
         ranked, meta = await recommendation_service.rank(

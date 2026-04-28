@@ -10,6 +10,7 @@ import numpy as np
 from beanie.odm.operators.find.comparison import In
 
 from app.core.config import settings
+from app.core.time import utc_now
 from app.models.model_drift_report import ModelDriftReport
 from app.models.opportunity_interaction import OpportunityInteraction
 from app.models.ranking_model_version import RankingModelVersion
@@ -432,7 +433,7 @@ class RetrainingService:
         weights: dict[str, float],
     ) -> dict[str, Any]:
         return {
-            "generated_at": datetime.utcnow().isoformat(),
+            "generated_at": utc_now().isoformat(),
             "model_type": "heuristic_weighted_ranker",
             "weights": dict(weights),
             "data_window": {
@@ -488,7 +489,7 @@ class RetrainingService:
         max_weight_shift_for_activation: float = float(settings.MLOPS_AUTO_ACTIVATE_MAX_WEIGHT_SHIFT),
         notes: Optional[str] = None,
     ) -> TrainingResult:
-        window_end = datetime.utcnow()
+        window_end = utc_now()
         window_start = window_end - timedelta(days=max(1, int(lookback_days)))
 
         examples, baselines = await self.build_training_examples(
@@ -562,18 +563,24 @@ class RetrainingService:
             rows=training_rows,
         )
 
+        configured_artifact_uri = model_artifact_service.resolve_learned_ranker_uri()
+        artifact_provider = model_artifact_service.artifact_provider(configured_artifact_uri) if configured_artifact_uri else None
+        artifact_checksum = model_artifact_service.expected_checksum()
+        serving_ready = bool(model_artifact_service.learned_ranker_artifact_exists()) or bool(not settings.LEARNED_RANKER_ENABLED)
         version = RankingModelVersion(
             name="ranking-weights-v2",
             is_active=False,
             weights=learned,
             metrics=metrics,
-            artifact_uri=(model_artifact_service.resolve_learned_ranker_uri() or None),
-            artifact_provider="file" if model_artifact_service.resolve_learned_ranker_uri().startswith("file://") else None,
+            artifact_uri=(configured_artifact_uri or None),
+            artifact_provider=artifact_provider,
+            artifact_checksum_sha256=(artifact_checksum or None),
             feature_schema={
                 "features": ["semantic_score", "baseline_score", "behavior_score"],
                 "label_window_hours": int(label_window_hours),
             },
-            serving_ready=bool(model_artifact_service.learned_ranker_artifact_exists()) or bool(not settings.LEARNED_RANKER_ENABLED),
+            serving_ready=serving_ready,
+            artifact_manifest={"registered_by": "retraining_service", "registered_at": utc_now().isoformat()},
             baselines=baselines,
             trained_window_start=window_start,
             trained_window_end=window_end,
@@ -584,6 +591,19 @@ class RetrainingService:
             notes=notes,
         )
         await version.insert()
+        if configured_artifact_uri and serving_ready:
+            try:
+                await model_artifact_service.register_artifact(
+                    artifact_uri=configured_artifact_uri,
+                    model_version=version,
+                    checksum_sha256=artifact_checksum,
+                    feature_schema=version.feature_schema,
+                    training_metadata=training_metadata,
+                    metadata={"source": "retraining_service"},
+                )
+            except Exception:
+                version.serving_ready = False
+                await version.save()
 
         decision = evaluate_activation_policy(
             auto_activate=bool(auto_activate),
@@ -616,12 +636,13 @@ class RetrainingService:
         metrics["auto_activated"] = 1.0 if should_activate else 0.0
         drift_snapshot = await self._latest_drift_snapshot()
         lifecycle = {
-            "evaluated_at": datetime.utcnow().isoformat(),
+            "evaluated_at": utc_now().isoformat(),
             "activation_policy": decision.policy,
             "activation_reason": activation_reason,
             "activated": bool(should_activate),
             "diagnostics": decision.diagnostics,
             "artifact_uri": version.artifact_uri,
+            "artifact_checksum_sha256": version.artifact_checksum_sha256,
             "serving_ready": version.serving_ready,
         }
         model_card = self._build_model_card(

@@ -1,8 +1,26 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { type CSSProperties, type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  Activity,
+  Archive,
+  Bot,
+  BriefcaseBusiness,
+  EyeOff,
+  FileClock,
+  LogOut,
+  Pencil,
+  RefreshCw,
+  Shield,
+  Trash2,
+  Trophy,
+  Users2,
+} from "lucide-react";
 
+import PageHeader from "@/components/ui/PageHeader";
+import PillGroup from "@/components/ui/PillGroup";
+import MetricCard from "@/components/ui/MetricCard";
 import { apiUrl } from "@/lib/api";
 import { ADMIN_LOGIN_PATH } from "@/lib/admin-routes";
 import { clearAccessToken, getAccessToken } from "@/lib/auth-session";
@@ -12,11 +30,17 @@ type AdminOverview = {
   users_total: number;
   active_users: number;
   opportunities_total: number;
+  active_opportunities_total: number;
+  expired_opportunities_total: number;
+  inactive_opportunities_total: number;
   social_posts_total: number;
   social_comments_total: number;
   jobs_dead_count: number;
   generated_at: string;
 };
+
+type OpportunityPortal = "career" | "competitive" | "other";
+type OpportunityLifecycle = "draft" | "published" | "paused" | "closed";
 
 type Opportunity = {
   id: string;
@@ -24,12 +48,21 @@ type Opportunity = {
   description: string;
   url: string;
   opportunity_type?: string | null;
+  portal_category: OpportunityPortal;
   university?: string | null;
   domain?: string | null;
   source?: string | null;
-  lifecycle_status: string;
-  updated_at: string;
+  location?: string | null;
+  eligibility?: string | null;
+  ppo_available?: string | null;
+  lifecycle_status: OpportunityLifecycle;
+  duration_start?: string | null;
+  duration_end?: string | null;
   deadline?: string | null;
+  is_expired: boolean;
+  visible_on_student_portal: boolean;
+  updated_at: string;
+  created_at: string;
 };
 
 type AdminJob = {
@@ -79,23 +112,61 @@ type AuditEvent = {
   created_at: string;
 };
 
+type AdminSection =
+  | "overview"
+  | "create"
+  | "active"
+  | "expired"
+  | "inactive"
+  | "automation"
+  | "community"
+  | "users"
+  | "audit";
+
 type OpportunityDraft = {
   title: string;
   description: string;
   url: string;
   opportunity_type: string;
   university: string;
-  lifecycle_status: string;
+  domain: string;
+  ppo_available: string;
+  duration_start: string;
+  duration_end: string;
+  deadline: string;
+  lifecycle_status: OpportunityLifecycle;
 };
 
 const emptyOpportunityDraft: OpportunityDraft = {
   title: "",
   description: "",
   url: "",
-  opportunity_type: "Opportunity",
+  opportunity_type: "job",
   university: "Unknown",
+  domain: "",
+  ppo_available: "undefined",
+  duration_start: "",
+  duration_end: "",
+  deadline: "",
   lifecycle_status: "published",
 };
+
+const sectionMeta: Array<{
+  key: AdminSection;
+  label: string;
+  icon: typeof BriefcaseBusiness;
+  description: string;
+}> = [
+  { key: "overview", label: "Overview", icon: Activity, description: "Live posture and routing counts" },
+  { key: "create", label: "Create", icon: BriefcaseBusiness, description: "Publish and edit opportunities" },
+  { key: "active", label: "Live", icon: Shield, description: "Visible on student portals now" },
+  { key: "expired", label: "Expired", icon: FileClock, description: "Past deadline, editable for resurfacing" },
+  { key: "inactive", label: "Inactive", icon: EyeOff, description: "Draft, paused, or manually closed" },
+  { key: "automation", label: "Jobs", icon: Bot, description: "Queue and background operations" },
+  { key: "community", label: "Community", icon: Trophy, description: "Posts and comments moderation" },
+  { key: "users", label: "Users", icon: Users2, description: "Access and account controls" },
+  { key: "audit", label: "Audit", icon: Archive, description: "Authentication and admin trail" },
+];
 
 function authHeaders(token: string | null): Record<string, string> {
   if (!token || token === "__cookie_session__") {
@@ -104,11 +175,285 @@ function authHeaders(token: string | null): Record<string, string> {
   return { Authorization: `Bearer ${token}` };
 }
 
+function pad(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
+function toDateInput(value?: string | null): string {
+  if (!value) {
+    return "";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "";
+  }
+  return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}`;
+}
+
+function toDateTimeInput(value?: string | null): string {
+  if (!value) {
+    return "";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "";
+  }
+  return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}T${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
+}
+
+function toIsoDate(value: string): string | null {
+  if (!value) {
+    return null;
+  }
+  const parsed = new Date(`${value}T00:00:00`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+function toIsoDateTime(value: string): string | null {
+  if (!value) {
+    return null;
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+function formatDateTime(value?: string | null): string {
+  if (!value) {
+    return "Not set";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "Not set";
+  }
+  return parsed.toLocaleString();
+}
+
+function formatMonthRange(start?: string | null, end?: string | null): string {
+  if (!start || !end) {
+    return "Not set";
+  }
+  const startValue = new Date(start);
+  const endValue = new Date(end);
+  if (Number.isNaN(startValue.getTime()) || Number.isNaN(endValue.getTime())) {
+    return "Not set";
+  }
+  const formatter = new Intl.DateTimeFormat(undefined, { month: "short", year: "numeric" });
+  return `${formatter.format(startValue)} - ${formatter.format(endValue)}`;
+}
+
+function formatMonthSummary(value: string): string {
+  const parsed = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) {
+    return "Select a date";
+  }
+  return new Intl.DateTimeFormat(undefined, { month: "short", year: "numeric" }).format(parsed);
+}
+
+function portalLabel(portal: OpportunityPortal): string {
+  if (portal === "career") {
+    return "Go Portal";
+  }
+  if (portal === "competitive") {
+    return "Opportunities Page";
+  }
+  return "Other";
+}
+
+function panelStyle(background = "var(--bg-surface)"): CSSProperties {
+  return {
+    border: "2px solid var(--border-subtle)",
+    borderRadius: "var(--radius-md)",
+    background,
+    boxShadow: "var(--shadow-sm)",
+  };
+}
+
+function actionButtonStyle(
+  tone: "edit" | "publish" | "mute" | "delete" | "neutral",
+): CSSProperties {
+  const tones: Record<string, CSSProperties> = {
+    edit: {
+      background: "var(--brand-primary)",
+      color: "#000000",
+    },
+    publish: {
+      background: "var(--brand-accent)",
+      color: "#000000",
+    },
+    mute: {
+      background: "color-mix(in srgb, var(--accent-cyan) 26%, var(--bg-surface))",
+      color: "var(--text-primary)",
+    },
+    delete: {
+      background: "color-mix(in srgb, #ef4444 22%, var(--bg-surface))",
+      color: "var(--text-primary)",
+    },
+    neutral: {
+      background: "var(--bg-surface)",
+      color: "var(--text-primary)",
+    },
+  };
+
+  return {
+    border: "2px solid var(--border-subtle)",
+    borderRadius: "var(--radius-sm)",
+    padding: "0.58rem 0.82rem",
+    fontWeight: 800,
+    fontSize: "0.86rem",
+    boxShadow: "var(--shadow-sm)",
+    ...tones[tone],
+  };
+}
+
+function SectionShell({
+  title,
+  subtitle,
+  actions,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  actions?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section style={{ ...panelStyle(), padding: "1.15rem" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap", marginBottom: "0.95rem" }}>
+        <div style={{ minWidth: 0 }}>
+          <h2 style={{ marginBottom: "0.2rem", fontSize: "1.4rem" }}>{title}</h2>
+          {subtitle ? <p style={{ color: "var(--text-secondary)" }}>{subtitle}</p> : null}
+        </div>
+        {actions ? <div style={{ display: "flex", gap: "0.55rem", flexWrap: "wrap" }}>{actions}</div> : null}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function OpportunityTable({
+  title,
+  subtitle,
+  rows,
+  loading,
+  onEdit,
+  onLifecycleChange,
+  onDelete,
+}: {
+  title: string;
+  subtitle: string;
+  rows: Opportunity[];
+  loading: boolean;
+  onEdit: (row: Opportunity) => void;
+  onLifecycleChange: (id: string, lifecycle: OpportunityLifecycle) => void;
+  onDelete: (id: string) => void;
+}) {
+  return (
+    <div style={{ display: "grid", gap: "0.65rem" }}>
+      <div>
+        <h3 style={{ fontSize: "1.1rem", marginBottom: "0.15rem" }}>{title}</h3>
+        <p style={{ color: "var(--text-secondary)", fontSize: "0.94rem" }}>{subtitle}</p>
+      </div>
+      <div style={{ overflowX: "auto", ...panelStyle("var(--bg-base)") }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "940px" }}>
+          <thead>
+            <tr style={{ borderBottom: "2px solid var(--border-subtle)" }}>
+              <th align="left" style={{ padding: "0.8rem 0.9rem", fontSize: "0.78rem", textTransform: "uppercase" }}>Title</th>
+              <th align="left" style={{ padding: "0.8rem 0.9rem", fontSize: "0.78rem", textTransform: "uppercase" }}>Type</th>
+              <th align="left" style={{ padding: "0.8rem 0.9rem", fontSize: "0.78rem", textTransform: "uppercase" }}>Duration</th>
+              <th align="left" style={{ padding: "0.8rem 0.9rem", fontSize: "0.78rem", textTransform: "uppercase" }}>Deadline</th>
+              <th align="left" style={{ padding: "0.8rem 0.9rem", fontSize: "0.78rem", textTransform: "uppercase" }}>Portal</th>
+              <th align="left" style={{ padding: "0.8rem 0.9rem", fontSize: "0.78rem", textTransform: "uppercase" }}>Status</th>
+              <th align="left" style={{ padding: "0.8rem 0.9rem", fontSize: "0.78rem", textTransform: "uppercase" }}>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr>
+                <td colSpan={7} style={{ padding: "1rem 0.9rem", color: "var(--text-secondary)" }}>
+                  No rows here.
+                </td>
+              </tr>
+            ) : null}
+            {rows.map((row) => (
+              <tr key={row.id} style={{ borderTop: "1px solid color-mix(in srgb, var(--border-subtle) 30%, transparent)" }}>
+                <td style={{ padding: "0.9rem" }}>
+                  <div style={{ display: "grid", gap: "0.2rem" }}>
+                    <strong style={{ color: "var(--text-primary)" }}>{row.title}</strong>
+                    <span style={{ color: "var(--text-secondary)", fontSize: "0.88rem" }}>
+                      {row.university || "Unknown"}{row.domain ? ` · ${row.domain}` : ""}
+                    </span>
+                    {String(row.opportunity_type || "").toLowerCase() === "internship" ? (
+                      <span style={{ color: "var(--text-secondary)", fontSize: "0.82rem" }}>
+                        PPO: {row.ppo_available || "undefined"}
+                      </span>
+                    ) : null}
+                  </div>
+                </td>
+                <td style={{ padding: "0.9rem", fontWeight: 700 }}>{row.opportunity_type || "Opportunity"}</td>
+                <td style={{ padding: "0.9rem" }}>{formatMonthRange(row.duration_start, row.duration_end)}</td>
+                <td style={{ padding: "0.9rem" }}>{formatDateTime(row.deadline)}</td>
+                <td style={{ padding: "0.9rem" }}>
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      padding: "0.22rem 0.55rem",
+                      borderRadius: "999px",
+                      border: "2px solid var(--border-subtle)",
+                      background: row.portal_category === "career" ? "var(--brand-primary)" : "var(--brand-accent)",
+                      color: "#000000",
+                      fontWeight: 900,
+                      fontSize: "0.75rem",
+                    }}
+                  >
+                    {portalLabel(row.portal_category)}
+                  </span>
+                </td>
+                <td style={{ padding: "0.9rem" }}>
+                  <div style={{ display: "grid", gap: "0.2rem" }}>
+                    <span style={{ fontWeight: 800, color: "var(--text-primary)" }}>{row.lifecycle_status}</span>
+                    <span style={{ color: row.visible_on_student_portal ? "#15803d" : "var(--text-secondary)", fontSize: "0.84rem" }}>
+                      {row.visible_on_student_portal ? "Visible to students" : row.is_expired ? "Expired" : "Hidden from students"}
+                    </span>
+                  </div>
+                </td>
+                <td style={{ padding: "0.9rem" }}>
+                  <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
+                    <button type="button" style={actionButtonStyle("edit")} onClick={() => onEdit(row)} disabled={loading}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}>
+                        <Pencil size={14} /> Edit
+                      </span>
+                    </button>
+                    {row.lifecycle_status !== "published" ? (
+                      <button type="button" style={actionButtonStyle("publish")} onClick={() => onLifecycleChange(row.id, "published")} disabled={loading}>
+                        Publish
+                      </button>
+                    ) : (
+                      <button type="button" style={actionButtonStyle("mute")} onClick={() => onLifecycleChange(row.id, "paused")} disabled={loading}>
+                        Unpublish
+                      </button>
+                    )}
+                    <button type="button" style={actionButtonStyle("delete")} onClick={() => onDelete(row.id)} disabled={loading}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}>
+                        <Trash2 size={14} /> Delete
+                      </span>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export default function AdminOpsPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [activeSection, setActiveSection] = useState<AdminSection>("overview");
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [jobs, setJobs] = useState<AdminJob[]>([]);
@@ -122,9 +467,32 @@ export default function AdminOpsPage() {
   const [jobPayload, setJobPayload] = useState("{}");
 
   const sortedOpportunities = useMemo(
-    () => [...opportunities].sort((a, b) => (a.updated_at > b.updated_at ? -1 : 1)),
+    () => [...opportunities].sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()),
     [opportunities],
   );
+
+  const activeOpportunities = useMemo(
+    () => sortedOpportunities.filter((row) => row.visible_on_student_portal),
+    [sortedOpportunities],
+  );
+  const expiredOpportunities = useMemo(
+    () => sortedOpportunities.filter((row) => row.is_expired),
+    [sortedOpportunities],
+  );
+  const inactiveOpportunities = useMemo(
+    () => sortedOpportunities.filter((row) => !row.is_expired && row.lifecycle_status !== "published"),
+    [sortedOpportunities],
+  );
+
+  const splitByPortal = useCallback((rows: Opportunity[]) => {
+    return {
+      career: rows.filter((row) => row.portal_category === "career"),
+      competitive: rows.filter((row) => row.portal_category !== "career"),
+    };
+  }, []);
+
+  const activeGrouped = useMemo(() => splitByPortal(activeOpportunities), [activeOpportunities, splitByPortal]);
+  const expiredGrouped = useMemo(() => splitByPortal(expiredOpportunities), [expiredOpportunities, splitByPortal]);
 
   const loadAdminData = useCallback(async () => {
     const token = getAccessToken();
@@ -136,10 +504,7 @@ export default function AdminOpsPage() {
     setError(null);
     try {
       const headers = authHeaders(token);
-      const meRes = await fetch(apiUrl("/api/v1/users/me"), {
-        credentials: "include",
-        headers,
-      });
+      const meRes = await fetch(apiUrl("/api/v1/users/me"), { credentials: "include", headers });
       const mePayload = await meRes.json().catch(() => ({}));
       if (!meRes.ok || !Boolean(mePayload.is_admin)) {
         clearAccessToken("logout");
@@ -149,7 +514,7 @@ export default function AdminOpsPage() {
 
       const [overviewRes, oppsRes, jobsRes, postsRes, commentsRes, usersRes, auditsRes] = await Promise.all([
         fetch(apiUrl("/api/v1/admin/overview"), { credentials: "include", headers }),
-        fetch(apiUrl("/api/v1/admin/opportunities?limit=200"), { credentials: "include", headers }),
+        fetch(apiUrl("/api/v1/admin/opportunities?limit=240"), { credentials: "include", headers }),
         fetch(apiUrl("/api/v1/admin/jobs/recent?limit=60"), { credentials: "include", headers }),
         fetch(apiUrl("/api/v1/admin/social/posts?limit=80"), { credentials: "include", headers }),
         fetch(apiUrl("/api/v1/admin/social/comments?limit=80"), { credentials: "include", headers }),
@@ -157,8 +522,7 @@ export default function AdminOpsPage() {
         fetch(apiUrl("/api/v1/admin/audit-events?limit=120"), { credentials: "include", headers }),
       ]);
 
-      const responses = [overviewRes, oppsRes, jobsRes, postsRes, commentsRes, usersRes, auditsRes];
-      for (const response of responses) {
+      for (const response of [overviewRes, oppsRes, jobsRes, postsRes, commentsRes, usersRes, auditsRes]) {
         if (!response.ok) {
           const payload = await response.json().catch(() => ({}));
           throw new Error(getApiErrorMessage(payload, "Unable to load admin dashboard data"));
@@ -190,6 +554,36 @@ export default function AdminOpsPage() {
     }
   }, [router]);
 
+  useEffect(() => {
+    void loadAdminData();
+  }, [loadAdminData]);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      void loadAdminData();
+    }, 15000);
+    const onFocus = () => {
+      void loadAdminData();
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void loadAdminData();
+      }
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [loadAdminData]);
+
+  const resetOpportunityDraft = () => {
+    setOppDraft(emptyOpportunityDraft);
+    setEditingOpportunityId(null);
+  };
+
   const saveOpportunity = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const token = getAccessToken();
@@ -197,31 +591,50 @@ export default function AdminOpsPage() {
       router.replace(ADMIN_LOGIN_PATH);
       return;
     }
+
+    const durationStart = toIsoDate(oppDraft.duration_start);
+    const durationEnd = toIsoDate(oppDraft.duration_end);
+    const deadline = toIsoDateTime(oppDraft.deadline);
+    if (!durationStart || !durationEnd || !deadline) {
+      setError("Duration start, duration end, and application deadline are required.");
+      return;
+    }
+
     setLoading(true);
     setError(null);
     setInfo(null);
     try {
-      const headers = {
-        "Content-Type": "application/json",
-        ...authHeaders(token),
-      };
-      const method = editingOpportunityId ? "PATCH" : "POST";
-      const target = editingOpportunityId
-        ? apiUrl(`/api/v1/admin/opportunities/${editingOpportunityId}`)
-        : apiUrl("/api/v1/admin/opportunities");
-      const response = await fetch(target, {
-        method,
-        credentials: "include",
-        headers,
-        body: JSON.stringify(oppDraft),
-      });
+      const response = await fetch(
+        editingOpportunityId ? apiUrl(`/api/v1/admin/opportunities/${editingOpportunityId}`) : apiUrl("/api/v1/admin/opportunities"),
+        {
+          method: editingOpportunityId ? "PATCH" : "POST",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+            ...authHeaders(token),
+          },
+          body: JSON.stringify({
+            title: oppDraft.title.trim(),
+            description: oppDraft.description.trim(),
+            url: oppDraft.url.trim(),
+            opportunity_type: oppDraft.opportunity_type,
+            university: oppDraft.university.trim() || "Unknown",
+            domain: oppDraft.domain.trim() || null,
+            ppo_available: oppDraft.opportunity_type === "internship" ? oppDraft.ppo_available : null,
+            duration_start: durationStart,
+            duration_end: durationEnd,
+            deadline,
+            lifecycle_status: oppDraft.lifecycle_status,
+          }),
+        },
+      );
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error(getApiErrorMessage(payload, "Unable to save opportunity"));
       }
       setInfo(editingOpportunityId ? "Opportunity updated." : "Opportunity created.");
-      setOppDraft(emptyOpportunityDraft);
-      setEditingOpportunityId(null);
+      resetOpportunityDraft();
+      setActiveSection("active");
       await loadAdminData();
     } catch (err) {
       setError(getUnknownErrorMessage(err, "Unable to save opportunity"));
@@ -236,10 +649,48 @@ export default function AdminOpsPage() {
       title: row.title,
       description: row.description,
       url: row.url,
-      opportunity_type: row.opportunity_type || "Opportunity",
+      opportunity_type: (row.opportunity_type || "Job").toLowerCase(),
       university: row.university || "Unknown",
-      lifecycle_status: row.lifecycle_status || "published",
+      domain: row.domain || "",
+      ppo_available: row.ppo_available || "undefined",
+      duration_start: toDateInput(row.duration_start),
+      duration_end: toDateInput(row.duration_end),
+      deadline: toDateTimeInput(row.deadline),
+      lifecycle_status: row.lifecycle_status,
     });
+    setActiveSection("create");
+    setInfo(`Editing "${row.title}". Update the deadline to resurface expired opportunities.`);
+  };
+
+  const changeLifecycleStatus = async (id: string, lifecycleStatus: OpportunityLifecycle) => {
+    const token = getAccessToken();
+    if (!token) {
+      router.replace(ADMIN_LOGIN_PATH);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(apiUrl(`/api/v1/admin/opportunities/${id}`), {
+        method: "PATCH",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          ...authHeaders(token),
+        },
+        body: JSON.stringify({ lifecycle_status: lifecycleStatus }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(getApiErrorMessage(payload, "Unable to update opportunity status"));
+      }
+      setInfo(`Opportunity marked ${lifecycleStatus}.`);
+      await loadAdminData();
+    } catch (err) {
+      setError(getUnknownErrorMessage(err, "Unable to update opportunity status"));
+    } finally {
+      setLoading(false);
+    }
   };
 
   const deleteOpportunity = async (id: string) => {
@@ -260,7 +711,7 @@ export default function AdminOpsPage() {
       if (!response.ok) {
         throw new Error(getApiErrorMessage(payload, "Unable to delete opportunity"));
       }
-      setInfo("Opportunity deleted.");
+      setInfo("Opportunity permanently deleted.");
       await loadAdminData();
     } catch (err) {
       setError(getUnknownErrorMessage(err, "Unable to delete opportunity"));
@@ -315,8 +766,7 @@ export default function AdminOpsPage() {
     setLoading(true);
     setError(null);
     try {
-      const endpoint =
-        type === "post" ? `/api/v1/admin/social/posts/${id}` : `/api/v1/admin/social/comments/${id}`;
+      const endpoint = type === "post" ? `/api/v1/admin/social/posts/${id}` : `/api/v1/admin/social/comments/${id}`;
       const response = await fetch(apiUrl(endpoint), {
         method: "DELETE",
         credentials: "include",
@@ -357,6 +807,7 @@ export default function AdminOpsPage() {
       if (!response.ok) {
         throw new Error(getApiErrorMessage(payload, "Unable to update user status"));
       }
+      setInfo(`User ${isActive ? "activated" : "deactivated"}.`);
       await loadAdminData();
     } catch (err) {
       setError(getUnknownErrorMessage(err, "Unable to update user status"));
@@ -365,317 +816,441 @@ export default function AdminOpsPage() {
     }
   };
 
-  useEffect(() => {
-    void loadAdminData();
-  }, [loadAdminData]);
+  const currentSectionMeta = sectionMeta.find((item) => item.key === activeSection);
 
   return (
     <main
       style={{
         minHeight: "100vh",
-        padding: "1.25rem",
+        padding: "1.4rem",
         background:
-          "radial-gradient(circle at 18% 12%, rgba(34,197,94,0.08), transparent 30%), radial-gradient(circle at 85% 20%, rgba(59,130,246,0.08), transparent 28%), var(--bg-base)",
+          "radial-gradient(circle at 12% 16%, color-mix(in srgb, var(--brand-primary) 18%, transparent), transparent 32%), radial-gradient(circle at 88% 10%, color-mix(in srgb, var(--brand-accent) 16%, transparent), transparent 24%), var(--bg-base)",
       }}
     >
-      <section className="card-panel" style={{ padding: "1rem", marginBottom: "0.9rem" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap" }}>
-          <div>
-            <h1 style={{ marginBottom: "0.2rem" }}>Operations Console</h1>
-            <p style={{ color: "var(--text-secondary)" }}>
-              Privileged controls for opportunities, moderation, background jobs, and governance.
-            </p>
-          </div>
-          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-            <button type="button" className="btn-secondary" onClick={() => void loadAdminData()} disabled={loading}>
-              {loading ? "Refreshing..." : "Refresh"}
+      <PageHeader
+        title="Operations Console"
+        subtitle="A cleaner admin workspace for publishing, routing, expiry control, moderation, and platform jobs."
+        kicker="Admin"
+        status={
+          <>
+            <span style={{ ...panelStyle("var(--bg-surface)"), padding: "0.35rem 0.65rem", fontWeight: 800 }}>
+              {overview ? `Updated ${new Date(overview.generated_at).toLocaleTimeString()}` : "Loading snapshot"}
+            </span>
+            {currentSectionMeta ? (
+              <span style={{ ...panelStyle("var(--bg-surface-hover)"), padding: "0.35rem 0.65rem", fontWeight: 800 }}>
+                {currentSectionMeta.label}: {currentSectionMeta.description}
+              </span>
+            ) : null}
+          </>
+        }
+        actions={
+          <>
+            <button type="button" style={actionButtonStyle("neutral")} onClick={() => void loadAdminData()} disabled={loading}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: "0.45rem" }}>
+                <RefreshCw size={15} /> {loading ? "Refreshing..." : "Refresh"}
+              </span>
             </button>
             <button
               type="button"
-              className="btn-secondary"
+              style={actionButtonStyle("mute")}
               onClick={() => {
                 clearAccessToken("logout");
                 router.replace("/dashboard");
               }}
             >
-              Logout
+              <span style={{ display: "inline-flex", alignItems: "center", gap: "0.45rem" }}>
+                <LogOut size={15} /> Logout
+              </span>
             </button>
-          </div>
-        </div>
-        {error ? <p style={{ marginTop: "0.6rem", color: "#ef4444", fontWeight: 600 }}>{error}</p> : null}
-        {!error && info ? <p style={{ marginTop: "0.6rem", color: "#16a34a", fontWeight: 600 }}>{info}</p> : null}
-      </section>
+          </>
+        }
+      />
 
-      <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "0.75rem" }}>
-        <article className="card-panel" style={{ padding: "0.9rem" }}>
-          <h3>Users</h3>
-          <p>{overview?.users_total ?? "-"}</p>
-          <small style={{ color: "var(--text-secondary)" }}>Active: {overview?.active_users ?? "-"}</small>
-        </article>
-        <article className="card-panel" style={{ padding: "0.9rem" }}>
-          <h3>Opportunities</h3>
-          <p>{overview?.opportunities_total ?? "-"}</p>
-        </article>
-        <article className="card-panel" style={{ padding: "0.9rem" }}>
-          <h3>Posts / Comments</h3>
-          <p>
-            {overview?.social_posts_total ?? "-"} / {overview?.social_comments_total ?? "-"}
-          </p>
-        </article>
-        <article className="card-panel" style={{ padding: "0.9rem" }}>
-          <h3>Dead Jobs</h3>
-          <p>{overview?.jobs_dead_count ?? "-"}</p>
-        </article>
-      </section>
+      {error ? <p style={{ marginTop: "0.65rem", color: "#dc2626", fontWeight: 700 }}>{error}</p> : null}
+      {!error && info ? <p style={{ marginTop: "0.65rem", color: "#15803d", fontWeight: 700 }}>{info}</p> : null}
 
-      <section className="card-panel" style={{ padding: "1rem", marginTop: "0.9rem" }}>
-        <h2 style={{ marginBottom: "0.6rem" }}>{editingOpportunityId ? "Edit Opportunity" : "Create Opportunity"}</h2>
-        <form onSubmit={saveOpportunity} style={{ display: "grid", gap: "0.6rem" }}>
-          <input
-            placeholder="Title"
-            value={oppDraft.title}
-            onChange={(event) => setOppDraft((prev) => ({ ...prev, title: event.target.value }))}
-            required
-          />
-          <input
-            placeholder="URL"
-            value={oppDraft.url}
-            onChange={(event) => setOppDraft((prev) => ({ ...prev, url: event.target.value }))}
-            required
-          />
-          <textarea
-            placeholder="Description"
-            value={oppDraft.description}
-            onChange={(event) => setOppDraft((prev) => ({ ...prev, description: event.target.value }))}
-            rows={3}
-            required
-          />
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.5rem" }}>
-            <input
-              placeholder="Type"
-              value={oppDraft.opportunity_type}
-              onChange={(event) => setOppDraft((prev) => ({ ...prev, opportunity_type: event.target.value }))}
-            />
-            <input
-              placeholder="University/Org"
-              value={oppDraft.university}
-              onChange={(event) => setOppDraft((prev) => ({ ...prev, university: event.target.value }))}
-            />
-            <select
-              value={oppDraft.lifecycle_status}
-              onChange={(event) => setOppDraft((prev) => ({ ...prev, lifecycle_status: event.target.value }))}
+      <section style={{ marginTop: "1rem", marginBottom: "1rem" }}>
+        <PillGroup>
+          {sectionMeta.map(({ key, label, icon: Icon }) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setActiveSection(key)}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "0.45rem",
+                padding: "0.72rem 0.95rem",
+                borderRadius: "999px",
+                border: "2px solid var(--border-subtle)",
+                background: activeSection === key ? "var(--brand-primary)" : "var(--bg-surface)",
+                color: activeSection === key ? "#000000" : "var(--text-primary)",
+                boxShadow: "var(--shadow-sm)",
+                fontWeight: 800,
+              }}
             >
-              <option value="draft">draft</option>
-              <option value="published">published</option>
-              <option value="paused">paused</option>
-              <option value="closed">closed</option>
-            </select>
-          </div>
-          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-            <button type="submit" className="btn-primary" disabled={loading}>
-              {editingOpportunityId ? "Update Opportunity" : "Create Opportunity"}
+              <Icon size={15} />
+              {label}
             </button>
-            {editingOpportunityId ? (
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={() => {
-                  setEditingOpportunityId(null);
-                  setOppDraft(emptyOpportunityDraft);
-                }}
-              >
+          ))}
+        </PillGroup>
+      </section>
+
+      {activeSection === "overview" ? (
+        <section style={{ display: "grid", gap: "1rem" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "0.8rem" }}>
+            <MetricCard label="Students / Employers" value={overview?.users_total ?? "-"} hint={`Active: ${overview?.active_users ?? "-"}`} />
+            <MetricCard label="Live Opportunities" value={overview?.active_opportunities_total ?? "-"} hint="Visible on student portals" tone="primary" />
+            <MetricCard label="Expired Opportunities" value={overview?.expired_opportunities_total ?? "-"} hint="Past deadline, edit to resurface" />
+            <MetricCard label="Inactive Opportunities" value={overview?.inactive_opportunities_total ?? "-"} hint="Draft, paused, or closed" />
+            <MetricCard label="Dead Background Jobs" value={overview?.jobs_dead_count ?? "-"} hint="Needs admin intervention" tone="accent" />
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "0.8rem" }}>
+            <button type="button" style={{ ...panelStyle(), padding: "1rem", textAlign: "left" }} onClick={() => setActiveSection("create")}>
+              <h3 style={{ fontSize: "1.12rem" }}>Publish a new opportunity</h3>
+              <p style={{ color: "var(--text-secondary)" }}>
+                Admin-created Hiring Challenges, Internships, and Jobs route into Go Portal. Competitive items route into Opportunities Page.
+              </p>
+            </button>
+            <button type="button" style={{ ...panelStyle(), padding: "1rem", textAlign: "left" }} onClick={() => setActiveSection("expired")}>
+              <h3 style={{ fontSize: "1.12rem" }}>Resurface expired listings</h3>
+              <p style={{ color: "var(--text-secondary)" }}>
+                Expired items are already hidden from students. Extend the deadline and republish them from the expired tab.
+              </p>
+            </button>
+            <button type="button" style={{ ...panelStyle(), padding: "1rem", textAlign: "left" }} onClick={() => setActiveSection("automation")}>
+              <h3 style={{ fontSize: "1.12rem" }}>Queue operational jobs</h3>
+              <p style={{ color: "var(--text-secondary)" }}>
+                Scraper refresh, analytics work, and incident follow-up stay isolated from publishing controls.
+              </p>
+            </button>
+          </div>
+        </section>
+      ) : null}
+
+      {activeSection === "create" ? (
+        <SectionShell
+          title={editingOpportunityId ? "Edit Opportunity" : "Create Opportunity"}
+          subtitle="Title, URL, JD, type, duration range, and application close time are required for admin-managed listings."
+          actions={
+            editingOpportunityId ? (
+              <button type="button" style={actionButtonStyle("neutral")} onClick={resetOpportunityDraft}>
                 Cancel Edit
               </button>
+            ) : undefined
+          }
+        >
+          <form onSubmit={saveOpportunity} style={{ display: "grid", gap: "0.9rem" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "0.8rem" }}>
+              <label style={{ display: "grid", gap: "0.35rem" }}>
+                <span style={{ fontWeight: 700 }}>Title</span>
+                <input value={oppDraft.title} onChange={(event) => setOppDraft((prev) => ({ ...prev, title: event.target.value }))} required />
+              </label>
+              <label style={{ display: "grid", gap: "0.35rem" }}>
+                <span style={{ fontWeight: 700 }}>Application URL</span>
+                <input value={oppDraft.url} onChange={(event) => setOppDraft((prev) => ({ ...prev, url: event.target.value }))} required />
+              </label>
+            </div>
+
+            <label style={{ display: "grid", gap: "0.35rem" }}>
+              <span style={{ fontWeight: 700 }}>JD / Details</span>
+              <textarea
+                rows={5}
+                value={oppDraft.description}
+                onChange={(event) => setOppDraft((prev) => ({ ...prev, description: event.target.value }))}
+                required
+              />
+            </label>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "0.8rem" }}>
+              <label style={{ display: "grid", gap: "0.35rem" }}>
+                <span style={{ fontWeight: 700 }}>Opportunity Type</span>
+                <select
+                  value={oppDraft.opportunity_type}
+                  onChange={(event) =>
+                    setOppDraft((prev) => ({
+                      ...prev,
+                      opportunity_type: event.target.value,
+                      ppo_available: event.target.value === "internship" ? prev.ppo_available : "undefined",
+                    }))
+                  }
+                >
+                  <optgroup label="Career">
+                    <option value="hiring challenge">Hiring Challenge</option>
+                    <option value="internship">Internship</option>
+                    <option value="job">Job</option>
+                  </optgroup>
+                  <optgroup label="Competitive">
+                    <option value="competition">Competition</option>
+                    <option value="hackathon">Hackathon</option>
+                  </optgroup>
+                </select>
+              </label>
+              <label style={{ display: "grid", gap: "0.35rem" }}>
+                <span style={{ fontWeight: 700 }}>Organization / University</span>
+                <input value={oppDraft.university} onChange={(event) => setOppDraft((prev) => ({ ...prev, university: event.target.value }))} />
+              </label>
+              <label style={{ display: "grid", gap: "0.35rem" }}>
+                <span style={{ fontWeight: 700 }}>Domain</span>
+                <input value={oppDraft.domain} onChange={(event) => setOppDraft((prev) => ({ ...prev, domain: event.target.value }))} />
+              </label>
+            </div>
+
+            {oppDraft.opportunity_type === "internship" ? (
+              <label style={{ display: "grid", gap: "0.35rem", maxWidth: "320px" }}>
+                <span style={{ fontWeight: 700 }}>PPO Available</span>
+                <select
+                  value={oppDraft.ppo_available}
+                  onChange={(event) => setOppDraft((prev) => ({ ...prev, ppo_available: event.target.value }))}
+                >
+                  <option value="yes">Yes</option>
+                  <option value="no">No</option>
+                  <option value="undefined">Undefined</option>
+                </select>
+              </label>
             ) : null}
-          </div>
-        </form>
-      </section>
 
-      <section className="card-panel" style={{ padding: "1rem", marginTop: "0.9rem" }}>
-        <h2 style={{ marginBottom: "0.6rem" }}>Opportunities</h2>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>
-                <th align="left">Title</th>
-                <th align="left">Status</th>
-                <th align="left">Updated</th>
-                <th align="left">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedOpportunities.map((row) => (
-                <tr key={row.id} style={{ borderTop: "1px solid var(--border-subtle)" }}>
-                  <td style={{ padding: "0.45rem 0.15rem" }}>{row.title}</td>
-                  <td>{row.lifecycle_status}</td>
-                  <td>{new Date(row.updated_at).toLocaleString()}</td>
-                  <td style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap", padding: "0.35rem 0.1rem" }}>
-                    <button type="button" className="btn-secondary" onClick={() => startEdit(row)} disabled={loading}>
-                      Edit
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-secondary"
-                      onClick={() => void deleteOpportunity(row.id)}
-                      disabled={loading}
-                    >
-                      Delete
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section className="card-panel" style={{ padding: "1rem", marginTop: "0.9rem" }}>
-        <h2 style={{ marginBottom: "0.6rem" }}>Jobs and Queue Control</h2>
-        <form onSubmit={enqueueJob} style={{ display: "grid", gap: "0.5rem", marginBottom: "0.8rem" }}>
-          <input value={jobType} onChange={(event) => setJobType(event.target.value)} placeholder="job_type" required />
-          <textarea
-            rows={3}
-            value={jobPayload}
-            onChange={(event) => setJobPayload(event.target.value)}
-            placeholder='{"lookback_days": 30}'
-          />
-          <button type="submit" className="btn-primary" disabled={loading}>
-            Enqueue Job
-          </button>
-        </form>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>
-                <th align="left">Type</th>
-                <th align="left">Status</th>
-                <th align="left">Attempts</th>
-                <th align="left">Updated</th>
-              </tr>
-            </thead>
-            <tbody>
-              {jobs.map((job) => (
-                <tr key={job.id} style={{ borderTop: "1px solid var(--border-subtle)" }}>
-                  <td style={{ padding: "0.4rem 0.1rem" }}>{job.job_type}</td>
-                  <td>{job.status}</td>
-                  <td>
-                    {job.attempts}/{job.max_attempts}
-                  </td>
-                  <td>{job.updated_at ? new Date(job.updated_at).toLocaleString() : "-"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section className="card-panel" style={{ padding: "1rem", marginTop: "0.9rem" }}>
-        <h2 style={{ marginBottom: "0.6rem" }}>Content Moderation</h2>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.9rem" }}>
-          <div>
-            <h3>Posts</h3>
-            {posts.map((post) => (
-              <article key={post.id} style={{ borderTop: "1px solid var(--border-subtle)", paddingTop: "0.55rem", marginTop: "0.55rem" }}>
-                <p style={{ marginBottom: "0.3rem" }}>{post.content}</p>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "0.8rem" }}>
+              <label style={{ display: "grid", gap: "0.35rem" }}>
+                <span style={{ fontWeight: 700 }}>Duration Start</span>
+                <input type="date" value={oppDraft.duration_start} onChange={(event) => setOppDraft((prev) => ({ ...prev, duration_start: event.target.value }))} required />
                 <small style={{ color: "var(--text-secondary)" }}>
-                  domain={post.domain} user={post.user_id}
+                  {oppDraft.duration_start ? `Month / Year: ${formatMonthSummary(oppDraft.duration_start)}` : "Select a calendar date. The month/year is derived automatically."}
                 </small>
-                <div style={{ marginTop: "0.35rem" }}>
-                  <button
-                    type="button"
-                    className="btn-secondary"
-                    onClick={() => void deleteSocialRow("post", post.id)}
-                    disabled={loading}
-                  >
+              </label>
+              <label style={{ display: "grid", gap: "0.35rem" }}>
+                <span style={{ fontWeight: 700 }}>Duration End</span>
+                <input type="date" value={oppDraft.duration_end} onChange={(event) => setOppDraft((prev) => ({ ...prev, duration_end: event.target.value }))} required />
+                <small style={{ color: "var(--text-secondary)" }}>
+                  {oppDraft.duration_end ? `Month / Year: ${formatMonthSummary(oppDraft.duration_end)}` : "Select a calendar date. The month/year is derived automatically."}
+                </small>
+              </label>
+              <label style={{ display: "grid", gap: "0.35rem" }}>
+                <span style={{ fontWeight: 700 }}>Last Date & Time to Apply</span>
+                <input type="datetime-local" value={oppDraft.deadline} onChange={(event) => setOppDraft((prev) => ({ ...prev, deadline: event.target.value }))} required />
+              </label>
+            </div>
+
+            <div style={{ ...panelStyle("var(--bg-base)"), padding: "0.85rem", display: "grid", gap: "0.35rem" }}>
+              <strong style={{ color: "var(--text-primary)" }}>Automatic routing</strong>
+              <p style={{ color: "var(--text-secondary)" }}>
+                Hiring Challenges, Internships, and Jobs appear in Go Portal. Competitions and Hackathons appear on the Opportunities page.
+                Once the deadline passes, the listing disappears from student surfaces automatically and moves to the Expired tab here.
+              </p>
+            </div>
+
+            <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>
+              <button type="submit" style={actionButtonStyle("publish")} disabled={loading}>
+                {editingOpportunityId ? "Save Opportunity" : "Create Opportunity"}
+              </button>
+              <button type="button" style={actionButtonStyle("neutral")} onClick={() => setActiveSection("active")}>
+                View Live Listings
+              </button>
+            </div>
+          </form>
+        </SectionShell>
+      ) : null}
+
+      {activeSection === "active" ? (
+        <section style={{ display: "grid", gap: "1rem" }}>
+          <SectionShell title="Live Listings" subtitle="These are currently visible to students. Use separate tables for the two candidate-facing portals.">
+            <div style={{ display: "grid", gap: "1rem" }}>
+              <OpportunityTable
+                title="Go Portal"
+                subtitle="Hiring Challenges, Internships, and Jobs."
+                rows={activeGrouped.career}
+                loading={loading}
+                onEdit={startEdit}
+                onLifecycleChange={(id, lifecycle) => void changeLifecycleStatus(id, lifecycle)}
+                onDelete={(id) => void deleteOpportunity(id)}
+              />
+              <OpportunityTable
+                title="Opportunities Page"
+                subtitle="Competitions, Hackathons, and other competitive opportunities."
+                rows={activeGrouped.competitive}
+                loading={loading}
+                onEdit={startEdit}
+                onLifecycleChange={(id, lifecycle) => void changeLifecycleStatus(id, lifecycle)}
+                onDelete={(id) => void deleteOpportunity(id)}
+              />
+            </div>
+          </SectionShell>
+        </section>
+      ) : null}
+
+      {activeSection === "expired" ? (
+        <SectionShell title="Expired Listings" subtitle="These are already hidden from student portals because the deadline has passed. Edit the deadline and republish to resurface them.">
+          <div style={{ display: "grid", gap: "1rem" }}>
+            <OpportunityTable
+              title="Expired Go Portal listings"
+              subtitle="Career opportunities that need a new deadline before going back live."
+              rows={expiredGrouped.career}
+              loading={loading}
+              onEdit={startEdit}
+              onLifecycleChange={(id, lifecycle) => void changeLifecycleStatus(id, lifecycle)}
+              onDelete={(id) => void deleteOpportunity(id)}
+            />
+            <OpportunityTable
+              title="Expired Opportunities Page listings"
+              subtitle="Competitive items that can be rescheduled or removed."
+              rows={expiredGrouped.competitive}
+              loading={loading}
+              onEdit={startEdit}
+              onLifecycleChange={(id, lifecycle) => void changeLifecycleStatus(id, lifecycle)}
+              onDelete={(id) => void deleteOpportunity(id)}
+            />
+          </div>
+        </SectionShell>
+      ) : null}
+
+      {activeSection === "inactive" ? (
+        <SectionShell title="Inactive Listings" subtitle="Draft, paused, or manually closed rows stay here until you publish them again.">
+          <OpportunityTable
+            title="Inactive opportunities"
+            subtitle="Use Publish to send them back to the correct student portal."
+            rows={inactiveOpportunities}
+            loading={loading}
+            onEdit={startEdit}
+            onLifecycleChange={(id, lifecycle) => void changeLifecycleStatus(id, lifecycle)}
+            onDelete={(id) => void deleteOpportunity(id)}
+          />
+        </SectionShell>
+      ) : null}
+
+      {activeSection === "automation" ? (
+        <SectionShell title="Background Jobs" subtitle="Operational jobs stay in their own tab so publishing and maintenance are separated.">
+          <form onSubmit={enqueueJob} style={{ display: "grid", gap: "0.7rem", marginBottom: "1rem" }}>
+            <label style={{ display: "grid", gap: "0.35rem" }}>
+              <span style={{ fontWeight: 700 }}>Job Type</span>
+              <input value={jobType} onChange={(event) => setJobType(event.target.value)} required />
+            </label>
+            <label style={{ display: "grid", gap: "0.35rem" }}>
+              <span style={{ fontWeight: 700 }}>Payload JSON</span>
+              <textarea rows={4} value={jobPayload} onChange={(event) => setJobPayload(event.target.value)} />
+            </label>
+            <button type="submit" style={actionButtonStyle("publish")} disabled={loading}>
+              Queue Job
+            </button>
+          </form>
+
+          <div style={{ overflowX: "auto", ...panelStyle("var(--bg-base)") }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ borderBottom: "2px solid var(--border-subtle)" }}>
+                  <th align="left" style={{ padding: "0.8rem 0.9rem" }}>Type</th>
+                  <th align="left" style={{ padding: "0.8rem 0.9rem" }}>Status</th>
+                  <th align="left" style={{ padding: "0.8rem 0.9rem" }}>Attempts</th>
+                  <th align="left" style={{ padding: "0.8rem 0.9rem" }}>Updated</th>
+                  <th align="left" style={{ padding: "0.8rem 0.9rem" }}>Error</th>
+                </tr>
+              </thead>
+              <tbody>
+                {jobs.map((job) => (
+                  <tr key={job.id} style={{ borderTop: "1px solid color-mix(in srgb, var(--border-subtle) 30%, transparent)" }}>
+                    <td style={{ padding: "0.85rem 0.9rem", fontWeight: 700 }}>{job.job_type}</td>
+                    <td style={{ padding: "0.85rem 0.9rem" }}>{job.status}</td>
+                    <td style={{ padding: "0.85rem 0.9rem" }}>{job.attempts}/{job.max_attempts}</td>
+                    <td style={{ padding: "0.85rem 0.9rem" }}>{job.updated_at ? new Date(job.updated_at).toLocaleString() : "-"}</td>
+                    <td style={{ padding: "0.85rem 0.9rem", color: "var(--text-secondary)" }}>{job.last_error || "-"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </SectionShell>
+      ) : null}
+
+      {activeSection === "community" ? (
+        <SectionShell title="Community Moderation" subtitle="Posts and comments are separate from opportunity operations and use destructive controls only where needed.">
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "1rem" }}>
+            <div style={{ display: "grid", gap: "0.8rem" }}>
+              <h3 style={{ fontSize: "1.1rem" }}>Posts</h3>
+              {posts.map((post) => (
+                <article key={post.id} style={{ ...panelStyle(), padding: "0.9rem", display: "grid", gap: "0.45rem" }}>
+                  <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>{post.content}</p>
+                  <small style={{ color: "var(--text-secondary)" }}>domain={post.domain} · user={post.user_id}</small>
+                  <button type="button" style={actionButtonStyle("delete")} onClick={() => void deleteSocialRow("post", post.id)} disabled={loading}>
                     Delete Post
                   </button>
-                </div>
-              </article>
-            ))}
-          </div>
-          <div>
-            <h3>Comments</h3>
-            {comments.map((comment) => (
-              <article
-                key={comment.id}
-                style={{ borderTop: "1px solid var(--border-subtle)", paddingTop: "0.55rem", marginTop: "0.55rem" }}
-              >
-                <p style={{ marginBottom: "0.3rem" }}>{comment.content}</p>
-                <small style={{ color: "var(--text-secondary)" }}>
-                  post={comment.post_id} user={comment.user_id}
-                </small>
-                <div style={{ marginTop: "0.35rem" }}>
-                  <button
-                    type="button"
-                    className="btn-secondary"
-                    onClick={() => void deleteSocialRow("comment", comment.id)}
-                    disabled={loading}
-                  >
+                </article>
+              ))}
+            </div>
+            <div style={{ display: "grid", gap: "0.8rem" }}>
+              <h3 style={{ fontSize: "1.1rem" }}>Comments</h3>
+              {comments.map((comment) => (
+                <article key={comment.id} style={{ ...panelStyle(), padding: "0.9rem", display: "grid", gap: "0.45rem" }}>
+                  <p style={{ color: "var(--text-primary)", fontWeight: 600 }}>{comment.content}</p>
+                  <small style={{ color: "var(--text-secondary)" }}>post={comment.post_id} · user={comment.user_id}</small>
+                  <button type="button" style={actionButtonStyle("delete")} onClick={() => void deleteSocialRow("comment", comment.id)} disabled={loading}>
                     Delete Comment
                   </button>
-                </div>
-              </article>
-            ))}
+                </article>
+              ))}
+            </div>
           </div>
-        </div>
-      </section>
+        </SectionShell>
+      ) : null}
 
-      <section className="card-panel" style={{ padding: "1rem", marginTop: "0.9rem" }}>
-        <h2 style={{ marginBottom: "0.6rem" }}>User Governance</h2>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>
-                <th align="left">Email</th>
-                <th align="left">Type</th>
-                <th align="left">Provider</th>
-                <th align="left">State</th>
-                <th align="left">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((user) => (
-                <tr key={user.id} style={{ borderTop: "1px solid var(--border-subtle)" }}>
-                  <td style={{ padding: "0.4rem 0.1rem" }}>{user.email}</td>
-                  <td>{user.account_type}</td>
-                  <td>{user.auth_provider}</td>
-                  <td>{user.is_active ? "active" : "inactive"}</td>
-                  <td style={{ padding: "0.4rem 0.1rem" }}>
-                    {user.is_admin ? (
-                      <small style={{ color: "var(--text-secondary)" }}>locked</small>
-                    ) : (
+      {activeSection === "users" ? (
+        <SectionShell title="Users" subtitle="Account control stays separate from content publishing.">
+          <div style={{ overflowX: "auto", ...panelStyle("var(--bg-base)") }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ borderBottom: "2px solid var(--border-subtle)" }}>
+                  <th align="left" style={{ padding: "0.8rem 0.9rem" }}>Name</th>
+                  <th align="left" style={{ padding: "0.8rem 0.9rem" }}>Email</th>
+                  <th align="left" style={{ padding: "0.8rem 0.9rem" }}>Account</th>
+                  <th align="left" style={{ padding: "0.8rem 0.9rem" }}>Provider</th>
+                  <th align="left" style={{ padding: "0.8rem 0.9rem" }}>Status</th>
+                  <th align="left" style={{ padding: "0.8rem 0.9rem" }}>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map((user) => (
+                  <tr key={user.id} style={{ borderTop: "1px solid color-mix(in srgb, var(--border-subtle) 30%, transparent)" }}>
+                    <td style={{ padding: "0.85rem 0.9rem" }}>{user.full_name || "Unknown"}</td>
+                    <td style={{ padding: "0.85rem 0.9rem" }}>{user.email}</td>
+                    <td style={{ padding: "0.85rem 0.9rem" }}>{user.account_type}</td>
+                    <td style={{ padding: "0.85rem 0.9rem" }}>{user.auth_provider}</td>
+                    <td style={{ padding: "0.85rem 0.9rem" }}>{user.is_active ? "Active" : "Inactive"}</td>
+                    <td style={{ padding: "0.85rem 0.9rem" }}>
                       <button
                         type="button"
-                        className="btn-secondary"
+                        style={actionButtonStyle(user.is_active ? "mute" : "publish")}
                         onClick={() => void updateUserStatus(user.id, !user.is_active)}
-                        disabled={loading}
+                        disabled={loading || user.is_admin}
                       >
                         {user.is_active ? "Deactivate" : "Activate"}
                       </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </SectionShell>
+      ) : null}
 
-      <section className="card-panel" style={{ padding: "1rem", marginTop: "0.9rem" }}>
-        <h2 style={{ marginBottom: "0.6rem" }}>Audit Stream</h2>
-        <div style={{ maxHeight: "320px", overflowY: "auto", display: "grid", gap: "0.45rem" }}>
-          {auditEvents.map((eventRow) => (
-            <article key={eventRow.id} style={{ borderTop: "1px solid var(--border-subtle)", paddingTop: "0.5rem" }}>
-              <p style={{ marginBottom: "0.15rem" }}>
-                <strong>{eventRow.event_type}</strong> {eventRow.success ? "ok" : "failed"}
-              </p>
-              <small style={{ color: "var(--text-secondary)" }}>
-                {eventRow.email || "n/a"} · {new Date(eventRow.created_at).toLocaleString()}
-              </small>
-            </article>
-          ))}
-        </div>
-      </section>
+      {activeSection === "audit" ? (
+        <SectionShell title="Audit Trail" subtitle="Recent admin and auth events stay searchable in a dedicated tab instead of cluttering the console.">
+          <div style={{ display: "grid", gap: "0.75rem" }}>
+            {auditEvents.map((event) => (
+              <article key={event.id} style={{ ...panelStyle(), padding: "0.9rem", display: "grid", gap: "0.35rem" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap" }}>
+                  <strong style={{ color: "var(--text-primary)" }}>{event.event_type}</strong>
+                  <span style={{ color: event.success ? "#15803d" : "#b91c1c", fontWeight: 800 }}>
+                    {event.success ? "success" : "failure"}
+                  </span>
+                </div>
+                <div style={{ color: "var(--text-secondary)" }}>{event.email || "system"}</div>
+                {event.reason ? <div style={{ color: "var(--text-secondary)", fontSize: "0.92rem" }}>{event.reason}</div> : null}
+                <small style={{ color: "var(--text-secondary)" }}>{new Date(event.created_at).toLocaleString()}</small>
+              </article>
+            ))}
+          </div>
+        </SectionShell>
+      ) : null}
     </main>
   );
 }

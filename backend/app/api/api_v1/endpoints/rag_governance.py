@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from app.api.deps import get_current_admin_user
 from app.models.user import User
 from app.services.rag_template_registry_service import rag_template_registry_service
+from app.core.time import utc_now
 
 router = APIRouter()
 
@@ -60,7 +61,7 @@ async def activate_rag_template(
         row = await rag_template_registry_service.activate_template(template_id=template_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
-    return {"status": "ok", "template_id": str(row.id), "label": row.label, "activated_at": datetime.utcnow()}
+    return {"status": "ok", "template_id": str(row.id), "label": row.label, "activated_at": utc_now()}
 
 
 @router.post("/templates/{template_id}/offline-evaluate", response_model=dict)

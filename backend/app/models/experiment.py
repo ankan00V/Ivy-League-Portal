@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from app.core.time import utc_now
 from typing import Literal, Optional
 from uuid import uuid4
 
@@ -25,8 +26,8 @@ class Experiment(Document):
     variants: list[ExperimentVariant] = Field(default_factory=list)
     # Salt can be rotated to re-randomize future assignments; existing users remain sticky via assignments collection.
     salt: str = Field(default_factory=lambda: uuid4().hex)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
 
     class Settings:
         name = "experiments"
@@ -38,11 +39,11 @@ class Experiment(Document):
 
 
 class ExperimentAssignment(Document):
-    user_id: PydanticObjectId = Field(index=True)
-    experiment_key: str = Field(index=True)
+    user_id: PydanticObjectId = Field(json_schema_extra={"index": True})
+    experiment_key: str = Field(json_schema_extra={"index": True})
     variant: str
     bucket: int = Field(ge=0, le=9999)
-    assigned_at: datetime = Field(default_factory=datetime.utcnow)
+    assigned_at: datetime = Field(default_factory=utc_now)
 
     class Settings:
         name = "experiment_assignments"

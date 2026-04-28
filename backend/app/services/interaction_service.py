@@ -9,6 +9,7 @@ from beanie import PydanticObjectId
 from app.core.metrics import INTERACTION_EVENTS_TOTAL
 from app.models.opportunity_interaction import OpportunityInteraction
 from app.models.traffic import TrafficType
+from app.core.time import utc_now
 
 
 class InteractionService:
@@ -114,7 +115,7 @@ class InteractionService:
         return inserted
 
     async def ctr_by_mode(self, days: int = 30, traffic_type: str = "all") -> list[dict[str, Any]]:
-        since = datetime.utcnow() - timedelta(days=max(1, min(days, 365)))
+        since = utc_now() - timedelta(days=max(1, min(days, 365)))
         interactions = await OpportunityInteraction.find_many(
             OpportunityInteraction.created_at >= since,
         ).to_list()

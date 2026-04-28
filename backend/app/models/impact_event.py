@@ -1,4 +1,5 @@
 from datetime import datetime
+from app.core.time import utc_now
 from typing import Literal, Optional
 
 from beanie import Document
@@ -16,11 +17,11 @@ ImpactEventType = Literal[
 
 
 class ImpactEvent(Document):
-    user_id: str = Field(index=True)
-    opportunity_id: Optional[str] = Field(default=None, index=True)
-    event_type: ImpactEventType = Field(index=True)
+    user_id: str = Field(json_schema_extra={"index": True})
+    opportunity_id: Optional[str] = Field(default=None, json_schema_extra={"index": True})
+    event_type: ImpactEventType = Field(json_schema_extra={"index": True})
     metadata: dict[str, str] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
 
     class Settings:
         name = "impact_events"

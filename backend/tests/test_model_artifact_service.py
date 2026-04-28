@@ -1,6 +1,7 @@
 import sys
 import tempfile
 import unittest
+from hashlib import sha256
 from pathlib import Path
 from unittest.mock import patch
 
@@ -22,6 +23,15 @@ class TestModelArtifactService(unittest.TestCase):
     def test_missing_artifact_returns_false(self) -> None:
         with patch("app.services.model_artifact_service.settings.LEARNED_RANKER_ARTIFACT_URI", "file:///tmp/does-not-exist.lgb.txt"):
             self.assertFalse(model_artifact_service.learned_ranker_artifact_exists())
+
+    def test_sync_artifact_verifies_checksum(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_path = Path(tmpdir) / "ranker.txt"
+            model_path.write_text("model", encoding="utf-8")
+            checksum = sha256(b"model").hexdigest()
+            result = model_artifact_service.sync_artifact(uri=model_path.as_uri(), expected_sha256=checksum)
+            self.assertTrue(result.verified)
+            self.assertEqual(result.checksum_sha256, checksum)
 
 
 if __name__ == "__main__":

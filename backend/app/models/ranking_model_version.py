@@ -5,6 +5,7 @@ from typing import Any, Optional
 
 from beanie import Document
 from pydantic import Field
+from app.core.time import utc_now
 
 
 class RankingModelVersion(Document):
@@ -30,8 +31,10 @@ class RankingModelVersion(Document):
     split_strategy: str = "time"
     artifact_uri: Optional[str] = None
     artifact_provider: Optional[str] = None
+    artifact_checksum_sha256: Optional[str] = None
     feature_schema: dict[str, Any] = Field(default_factory=dict)
     serving_ready: bool = False
+    artifact_manifest: dict[str, Any] = Field(default_factory=dict)
 
     baselines: dict[str, Any] = Field(default_factory=dict)
     lifecycle: dict[str, Any] = Field(default_factory=dict)
@@ -39,7 +42,7 @@ class RankingModelVersion(Document):
     model_card: dict[str, Any] = Field(default_factory=dict)
     notes: Optional[str] = None
 
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
 
     class Settings:
         name = "ranking_model_versions"

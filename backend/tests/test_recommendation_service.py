@@ -10,6 +10,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.services.recommendation_service import RecommendationService
+from app.core.time import utc_now
 
 
 class TestRecommendationService(unittest.IsolatedAsyncioTestCase):
@@ -34,9 +35,9 @@ class TestRecommendationService(unittest.IsolatedAsyncioTestCase):
                 opportunity_type="Residency",
                 university="Lab",
                 deadline=None,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
-                last_seen_at=datetime.utcnow(),
+                created_at=utc_now(),
+                updated_at=utc_now(),
+                last_seen_at=utc_now(),
             ),
             SimpleNamespace(
                 id="opp-backend",
@@ -47,9 +48,9 @@ class TestRecommendationService(unittest.IsolatedAsyncioTestCase):
                 opportunity_type="Internship",
                 university="Company",
                 deadline=None,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
-                last_seen_at=datetime.utcnow(),
+                created_at=utc_now(),
+                updated_at=utc_now(),
+                last_seen_at=utc_now(),
             ),
         ]
 
@@ -99,9 +100,9 @@ class TestRecommendationService(unittest.IsolatedAsyncioTestCase):
                 university="Lab",
                 source="example_source",
                 deadline=None,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
-                last_seen_at=datetime.utcnow(),
+                created_at=utc_now(),
+                updated_at=utc_now(),
+                last_seen_at=utc_now(),
             ),
             SimpleNamespace(
                 id="opp-2",
@@ -113,9 +114,9 @@ class TestRecommendationService(unittest.IsolatedAsyncioTestCase):
                 university="Org",
                 source="example_source",
                 deadline=None,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
-                last_seen_at=datetime.utcnow(),
+                created_at=utc_now(),
+                updated_at=utc_now(),
+                last_seen_at=utc_now(),
             ),
         ]
 
@@ -184,9 +185,9 @@ class TestRecommendationService(unittest.IsolatedAsyncioTestCase):
                 university="Lab",
                 source="example_source",
                 deadline=None,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
-                last_seen_at=datetime.utcnow(),
+                created_at=utc_now(),
+                updated_at=utc_now(),
+                last_seen_at=utc_now(),
             ),
             SimpleNamespace(
                 id="opp-low",
@@ -198,9 +199,9 @@ class TestRecommendationService(unittest.IsolatedAsyncioTestCase):
                 university="Org",
                 source="example_source",
                 deadline=None,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
-                last_seen_at=datetime.utcnow(),
+                created_at=utc_now(),
+                updated_at=utc_now(),
+                last_seen_at=utc_now(),
             ),
         ]
 
@@ -285,9 +286,9 @@ class TestRecommendationService(unittest.IsolatedAsyncioTestCase):
                 university="Lab",
                 source="example_source",
                 deadline=None,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
-                last_seen_at=datetime.utcnow(),
+                created_at=utc_now(),
+                updated_at=utc_now(),
+                last_seen_at=utc_now(),
             ),
             SimpleNamespace(
                 id="opp-2",
@@ -299,9 +300,9 @@ class TestRecommendationService(unittest.IsolatedAsyncioTestCase):
                 university="Org",
                 source="example_source",
                 deadline=None,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
-                last_seen_at=datetime.utcnow(),
+                created_at=utc_now(),
+                updated_at=utc_now(),
+                last_seen_at=utc_now(),
             ),
         ]
         rollout_decision = SimpleNamespace(

@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.models.model_drift_report import ModelDriftReport
 from app.models.opportunity_interaction import OpportunityInteraction
 from app.models.ranking_model_version import RankingModelVersion
+from app.core.time import utc_now
 
 
 def _bucket_query(query: Optional[str], buckets: int) -> int:
@@ -43,7 +44,7 @@ class DriftService:
         psi_alert_threshold: float = settings.MLOPS_DRIFT_PSI_ALERT_THRESHOLD,
         z_alert_threshold: float = settings.MLOPS_DRIFT_Z_ALERT_THRESHOLD,
     ) -> ModelDriftReport:
-        now = datetime.utcnow()
+        now = utc_now()
         window_start = now - timedelta(days=max(1, int(lookback_days)))
         window_end = now
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from app.core.time import utc_now
 from typing import Any, Literal, Optional
 
 from beanie import Document, PydanticObjectId
@@ -11,17 +12,17 @@ RAGFeedbackType = Literal["up", "down"]
 
 
 class RAGFeedbackEvent(Document):
-    user_id: PydanticObjectId = Field(index=True)
-    request_id: str = Field(index=True, min_length=1)
+    user_id: PydanticObjectId = Field(json_schema_extra={"index": True})
+    request_id: str = Field(json_schema_extra={"index": True}, min_length=1)
     query: str = Field(min_length=1)
-    feedback: RAGFeedbackType = Field(index=True)
-    rag_template_label: Optional[str] = Field(default=None, index=True)
-    rag_template_version_id: Optional[str] = Field(default=None, index=True)
+    feedback: RAGFeedbackType = Field(json_schema_extra={"index": True})
+    rag_template_label: Optional[str] = Field(default=None, json_schema_extra={"index": True})
+    rag_template_version_id: Optional[str] = Field(default=None, json_schema_extra={"index": True})
     response_summary: Optional[str] = None
     citations: list[dict[str, Any]] = Field(default_factory=list)
     surface: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
 
     class Settings:
         name = "rag_feedback_events"

@@ -11,6 +11,7 @@ from pymongo.errors import DuplicateKeyError
 from app.core.config import settings
 from app.models.auth_abuse_state import AuthAbuseState
 from app.models.auth_audit_event import AuthAuditEvent
+from app.core.time import utc_now
 
 
 @dataclass(frozen=True)
@@ -30,7 +31,7 @@ class AuthSecurityService:
         return f"{normalized_action}:{normalized_purpose}:{normalized_email}"
 
     async def check_lock(self, *, email: str, action: str, purpose: str = "signin") -> AuthLockStatus:
-        now = datetime.utcnow()
+        now = utc_now()
         key = self._state_key(email=email, action=action, purpose=purpose)
         try:
             state = await AuthAbuseState.find_one(AuthAbuseState.key == key)
@@ -59,7 +60,7 @@ class AuthSecurityService:
         )
 
     async def record_failure(self, *, email: str, action: str, purpose: str = "signin") -> AuthLockStatus:
-        now = datetime.utcnow()
+        now = utc_now()
         window_seconds = max(30, int(settings.AUTH_ABUSE_WINDOW_SECONDS))
         lock_seconds = max(60, int(settings.AUTH_ABUSE_LOCK_SECONDS))
         max_attempts = max(1, int(settings.AUTH_ABUSE_MAX_FAILED_ATTEMPTS))

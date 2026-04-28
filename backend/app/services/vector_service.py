@@ -15,6 +15,7 @@ from app.models.vector_index_entry import VectorIndexEntry
 from app.services.embedding_service import embedding_service
 from app.core.config import settings
 from app.core.metrics import CACHE_HITS_TOTAL, CACHE_MISSES_TOTAL
+from app.core.time import utc_now
 
 try:
     import faiss  # type: ignore
@@ -78,7 +79,7 @@ class OpportunityVectorService:
         to_embed_texts: list[str] = []
         to_embed_keys: list[str] = []
         embeddings_map: dict[str, list[float]] = {}
-        now = datetime.utcnow()
+        now = utc_now()
 
         for opportunity, text in zip(opportunities, texts):
             key = str(opportunity.id)
@@ -189,7 +190,7 @@ class OpportunityVectorService:
             deadline = meta.get("deadline")
             if deadline is None:
                 return False
-            days_left = (_normalize_deadline(deadline) - datetime.utcnow()).days
+            days_left = (_normalize_deadline(deadline) - utc_now()).days
             if days_left > max_deadline_days:
                 return False
 
@@ -197,7 +198,7 @@ class OpportunityVectorService:
 
     async def rebuild(self, force: bool = False) -> None:
         async with self._lock:
-            now = datetime.utcnow()
+            now = utc_now()
             if (
                 not force
                 and self._last_build_at is not None

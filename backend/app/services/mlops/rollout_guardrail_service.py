@@ -5,6 +5,7 @@ from typing import Any
 
 from app.models.ranking_request_telemetry import RankingRequestTelemetry
 from app.services.interaction_service import interaction_service
+from app.core.time import utc_now
 
 
 def _percentile(values: list[float], q: float) -> float:
@@ -33,7 +34,7 @@ class RolloutGuardrailService:
         return False
 
     async def _mode_request_metrics(self, *, mode: str, days: int) -> dict[str, float]:
-        since = datetime.utcnow() - timedelta(days=max(1, min(int(days), 365)))
+        since = utc_now() - timedelta(days=max(1, min(int(days), 365)))
         rows = await RankingRequestTelemetry.find_many(
             RankingRequestTelemetry.created_at >= since,
             RankingRequestTelemetry.ranking_mode == mode,

@@ -1,5 +1,6 @@
 import re
 from datetime import datetime
+from app.core.time import utc_now
 
 import spacy
 
@@ -227,7 +228,7 @@ class AIEngine:
         else:
             years = [int(value) for value in re.findall(r"\b(20\d{2})\b", lowered)]
             if years:
-                current_year = datetime.utcnow().year
+                current_year = utc_now().year
                 plausible = [year for year in years if current_year - 12 <= year <= current_year + 8]
                 if plausible:
                     passout_year = max(plausible)
@@ -277,7 +278,7 @@ class AIEngine:
                 break
 
         user_type_hint = None
-        current_year = datetime.utcnow().year
+        current_year = utc_now().year
         if exp_years is not None and exp_years >= 1:
             user_type_hint = "professional"
         elif passout_year is not None:

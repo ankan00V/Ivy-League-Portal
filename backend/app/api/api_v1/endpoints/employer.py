@@ -17,6 +17,8 @@ from app.models.opportunity import Opportunity
 from app.models.profile import Profile
 from app.models.recruiter_audit_log import RecruiterAuditLog
 from app.models.user import User
+from app.services.opportunity_visibility import canonical_opportunity_type, resolve_opportunity_portal
+from app.core.time import utc_now
 
 router = APIRouter()
 
@@ -196,7 +198,7 @@ async def _audit(
         opportunity_id=opportunity_id,
         application_id=application_id,
         metadata=dict(metadata or {}),
-        created_at=datetime.utcnow(),
+        created_at=utc_now(),
     )
     await event.insert()
 
@@ -274,7 +276,12 @@ async def create_employer_opportunity(
         title=payload.title.strip(),
         description=payload.description.strip(),
         url=cleaned_url,
-        opportunity_type=payload.opportunity_type.strip(),
+        opportunity_type=canonical_opportunity_type(payload.opportunity_type) or "Job",
+        portal_category=resolve_opportunity_portal(
+            opportunity_type=payload.opportunity_type,
+            title=payload.title,
+            description=payload.description,
+        ),
         domain=(payload.domain or "").strip() or None,
         university=company_name,
         source="employer_portal",
@@ -426,7 +433,7 @@ async def update_employer_opportunity(
         opportunity.url = cleaned_url
         updated_fields["application_url"] = cleaned_url
     if payload.opportunity_type is not None:
-        opportunity.opportunity_type = payload.opportunity_type.strip()
+        opportunity.opportunity_type = canonical_opportunity_type(payload.opportunity_type) or opportunity.opportunity_type
         updated_fields["opportunity_type"] = opportunity.opportunity_type
     if payload.domain is not None:
         opportunity.domain = payload.domain.strip() or None
@@ -442,7 +449,14 @@ async def update_employer_opportunity(
         opportunity.deadline = payload.deadline
         updated_fields["deadline"] = payload.deadline.isoformat() if payload.deadline else None
 
-    opportunity.updated_at = datetime.utcnow()
+    opportunity.portal_category = resolve_opportunity_portal(
+        opportunity_type=opportunity.opportunity_type,
+        title=opportunity.title,
+        description=opportunity.description,
+        portal_category=opportunity.portal_category,
+    )
+
+    opportunity.updated_at = utc_now()
     opportunity.last_seen_at = opportunity.updated_at
     await opportunity.save()
 
@@ -480,7 +494,7 @@ async def update_opportunity_lifecycle(
     if not _lifecycle_transition_allowed(current=current, target=target):
         raise HTTPException(status_code=400, detail=f"Invalid lifecycle transition: {current} -> {target}")
 
-    now = datetime.utcnow()
+    now = utc_now()
     opportunity.lifecycle_status = target
     opportunity.lifecycle_updated_at = now
     opportunity.updated_at = now
@@ -652,7 +666,7 @@ async def update_application_pipeline_state(
     old_state = _normalize_pipeline_state(application.pipeline_state, default="applied")
     application.pipeline_state = target_state
     application.pipeline_notes = (payload.notes or "").strip() or None
-    application.pipeline_updated_at = datetime.utcnow()
+    application.pipeline_updated_at = utc_now()
     application.pipeline_updated_by = current_user.id
     await application.save()
 

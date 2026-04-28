@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from app.core.time import utc_now
 from typing import Any, Optional
 
 from beanie import Document
@@ -9,7 +10,7 @@ from pydantic import Field
 
 class NLPModelVersion(Document):
     name: str = "nlp-model-v1"
-    is_active: bool = Field(default=False, index=True)
+    is_active: bool = Field(default=False, json_schema_extra={"index": True})
     intent_labels: list[str] = Field(default_factory=list)
     intent_centroids: dict[str, list[float]] = Field(default_factory=dict)
     intent_classifier_head: dict[str, Any] = Field(default_factory=dict)
@@ -22,8 +23,8 @@ class NLPModelVersion(Document):
     split_summary: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
     notes: Optional[str] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
 
     class Settings:
         name = "nlp_model_versions"

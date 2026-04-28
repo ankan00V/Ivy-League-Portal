@@ -1,4 +1,5 @@
 from datetime import datetime
+from app.core.time import utc_now
 from typing import Optional
 
 from beanie import Document, Indexed
@@ -10,13 +11,13 @@ class KnowledgeChunk(Document):
     source_id: Indexed(str)
     source_url: Optional[str] = None
     title: Optional[str] = None
-    domain: Optional[str] = Field(default=None, index=True)
+    domain: Optional[str] = Field(default=None, json_schema_extra={"index": True})
     chunk_text: str
     embedding: list[float]
     embedding_model: str = "hashing-v1"
     chunk_index: int = 0
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
 
     class Settings:
         name = "knowledge_chunks"
