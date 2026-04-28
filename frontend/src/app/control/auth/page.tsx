@@ -12,6 +12,7 @@ import {
   getAccessToken,
   getPendingAdminChallenge,
   hasAuthSession,
+  setPendingAdminChallenge,
   setAccessToken,
 } from "@/lib/auth-session";
 
@@ -25,7 +26,16 @@ export default function AdminAuthPage() {
   const [otp, setOtp] = useState("");
   const [totpCode, setTotpCode] = useState("");
   const [challengeToken, setChallengeToken] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [totpToken, setTotpToken] = useState("");
+  const [otpVerified, setOtpVerified] = useState(false);
+  const [totpSetupRequired, setTotpSetupRequired] = useState(false);
+  const [totpSetupSecret, setTotpSetupSecret] = useState("");
+  const [totpSetupIssuer, setTotpSetupIssuer] = useState("");
+  const [totpSetupAccountName, setTotpSetupAccountName] = useState("");
+  const [otpLoading, setOtpLoading] = useState(false);
+  const [totpLoading, setTotpLoading] = useState(false);
+  const [resendLoading, setResendLoading] = useState(false);
+  const [otpCooldownSeconds, setOtpCooldownSeconds] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
 
@@ -58,35 +68,164 @@ export default function AdminAuthPage() {
 
       setEmail(pending.email);
       setChallengeToken(pending.adminChallengeToken);
+      setTotpToken(String(pending.adminTotpToken || ""));
+      setOtpVerified(Boolean(pending.otpVerified));
+      setTotpSetupRequired(Boolean(pending.totpSetupRequired));
+      setTotpSetupSecret(String(pending.totpSetupSecret || ""));
+      setTotpSetupIssuer(String(pending.totpSetupIssuer || ""));
+      setTotpSetupAccountName(String(pending.totpSetupAccountName || ""));
+      setOtpCooldownSeconds(Math.max(0, Number(pending.otpCooldownSeconds || 0)));
       if (pending.debugOtp) {
         setOtp(pending.debugOtp);
-        setInfo(`Password verified. Use the emailed OTP and authenticator TOTP. Debug OTP: ${pending.debugOtp}`);
+        setInfo(
+          pending.otpVerified
+            ? "OTP verified. Enter the current authenticator TOTP to continue."
+            : pending.totpSetupRequired
+              ? `Password verified. Set up your authenticator, then verify the emailed OTP. Debug OTP: ${pending.debugOtp}`
+              : `Password verified. Verify the emailed OTP to continue. Debug OTP: ${pending.debugOtp}`,
+        );
         return;
       }
-      setInfo("Password verified. Enter the email OTP and your authenticator TOTP to continue.");
+      setInfo(
+        pending.otpVerified
+          ? "OTP verified. Enter the current authenticator TOTP to continue."
+          : pending.totpSetupRequired
+            ? "Password verified. Set up your authenticator first, then verify the email OTP."
+            : "Password verified. Enter the email OTP to continue.",
+      );
     };
     void run();
   }, [router]);
 
-  const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setLoading(true);
+  useEffect(() => {
+    if (otpCooldownSeconds <= 0) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setOtpCooldownSeconds((current) => (current > 0 ? current - 1 : 0));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [otpCooldownSeconds]);
+
+  const handleResendOtp = async () => {
+    if (!challengeToken || resendLoading || otpCooldownSeconds > 0 || otpVerified) {
+      return;
+    }
+    setResendLoading(true);
     setError(null);
     setInfo(null);
     try {
-      const response = await fetch(apiUrl("/api/v1/auth/admin/verify"), {
+      const response = await fetch(apiUrl("/api/v1/auth/admin/resend-otp"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           email: email.trim().toLowerCase(),
-          otp: otp.trim(),
-          totp_code: totpCode.trim(),
           admin_challenge_token: challengeToken,
         }),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(getApiErrorMessage(payload, "Admin verification failed"));
+        throw new Error(getApiErrorMessage(payload, "Unable to resend OTP"));
+      }
+      const nextCooldown = Math.max(0, Number(payload.cooldown_seconds || 0));
+      const debugOtp = typeof payload.debug_otp === "string" ? payload.debug_otp : null;
+      setOtpCooldownSeconds(nextCooldown);
+      if (debugOtp) {
+        setOtp(debugOtp);
+      }
+      setPendingAdminChallenge({
+        email: email.trim().toLowerCase(),
+        adminChallengeToken: challengeToken,
+        adminTotpToken: null,
+        otpVerified: false,
+        otpDelivery: payload.delivery,
+        otpCooldownSeconds: nextCooldown,
+        otpExpiresInSeconds: Number(payload.expires_in_seconds || 300),
+        debugOtp,
+        totpSetupRequired,
+        totpSetupSecret,
+        totpSetupIssuer,
+        totpSetupAccountName,
+      });
+      setInfo(debugOtp ? `${String(payload.message || "OTP resent")} Debug OTP: ${debugOtp}` : String(payload.message || "OTP resent"));
+    } catch (err) {
+      setError(getUnknownErrorMessage(err, "Unable to resend OTP"));
+    } finally {
+      setResendLoading(false);
+    }
+  };
+
+  const onVerifyOtp = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!challengeToken || otpVerified) {
+      return;
+    }
+    setOtpLoading(true);
+    setError(null);
+    setInfo(null);
+    try {
+      const response = await fetch(apiUrl("/api/v1/auth/admin/verify-otp"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: email.trim().toLowerCase(),
+          otp: otp.trim(),
+          admin_challenge_token: challengeToken,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(getApiErrorMessage(payload, "OTP verification failed"));
+      }
+      const nextTotpToken = String(payload.admin_totp_token || "");
+      if (!nextTotpToken) {
+        throw new Error("Admin TOTP session missing from response");
+      }
+      setTotpToken(nextTotpToken);
+      setOtpVerified(true);
+      setPendingAdminChallenge({
+        email: email.trim().toLowerCase(),
+        adminChallengeToken: challengeToken,
+        adminTotpToken: nextTotpToken,
+        otpVerified: true,
+        otpDelivery: undefined,
+        otpCooldownSeconds: 0,
+        otpExpiresInSeconds: undefined,
+        debugOtp: null,
+        totpSetupRequired,
+        totpSetupSecret,
+        totpSetupIssuer,
+        totpSetupAccountName,
+      });
+      setInfo(String(payload.message || "OTP verified. Enter your authenticator TOTP to continue."));
+    } catch (err) {
+      setError(getUnknownErrorMessage(err, "Unable to verify OTP"));
+    } finally {
+      setOtpLoading(false);
+    }
+  };
+
+  const onVerifyTotp = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!totpToken || !otpVerified) {
+      return;
+    }
+    setTotpLoading(true);
+    setError(null);
+    setInfo(null);
+    try {
+      const response = await fetch(apiUrl("/api/v1/auth/admin/verify-totp"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: email.trim().toLowerCase(),
+          totp_code: totpCode.trim(),
+          admin_totp_token: totpToken,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(getApiErrorMessage(payload, "TOTP verification failed"));
       }
       const token = String(payload.access_token || "");
       if (!token) {
@@ -97,9 +236,9 @@ export default function AdminAuthPage() {
       setInfo("Authentication successful. Redirecting...");
       router.replace(ADMIN_DASHBOARD_PATH);
     } catch (err) {
-      setError(getUnknownErrorMessage(err, "Unable to verify admin session"));
+      setError(getUnknownErrorMessage(err, "Unable to verify TOTP"));
     } finally {
-      setLoading(false);
+      setTotpLoading(false);
     }
   };
 
@@ -117,10 +256,12 @@ export default function AdminAuthPage() {
       <section className="card-panel" style={{ width: "min(520px, 100%)", padding: "1.5rem" }}>
         <h1 style={{ marginBottom: "0.5rem" }}>Admin Verification</h1>
         <p style={{ color: "var(--text-secondary)", marginBottom: "1rem" }}>
-          Finish admin sign-in with the email OTP and authenticator TOTP.
+          {totpSetupRequired
+            ? "Set up your authenticator first, then finish admin sign-in with the email OTP and TOTP."
+            : "Finish admin sign-in with the email OTP and authenticator TOTP."}
         </p>
 
-        <form onSubmit={onSubmit} style={{ display: "grid", gap: "0.85rem" }}>
+        <form onSubmit={otpVerified ? onVerifyTotp : onVerifyOtp} style={{ display: "grid", gap: "0.85rem" }}>
           <label style={{ display: "grid", gap: "0.35rem" }}>
             <span>Email</span>
             <input
@@ -138,6 +279,36 @@ export default function AdminAuthPage() {
               }}
             />
           </label>
+          {totpSetupRequired ? (
+            <div
+              style={{
+                display: "grid",
+                gap: "0.45rem",
+                padding: "0.85rem",
+                border: "1px solid rgba(37, 99, 235, 0.28)",
+                borderRadius: "0.6rem",
+                background: "rgba(37, 99, 235, 0.08)",
+              }}
+            >
+              <strong style={{ color: "var(--text-primary)" }}>Set up your authenticator</strong>
+              <p style={{ margin: 0, color: "var(--text-secondary)", lineHeight: 1.5 }}>
+                Add this account in Google Authenticator, Authy, 1Password, or another TOTP app. After saving it,
+                enter the current 6-digit code below.
+              </p>
+              <div style={{ display: "grid", gap: "0.2rem" }}>
+                <span style={{ color: "var(--text-secondary)", fontSize: "0.92rem" }}>Issuer</span>
+                <code style={{ wordBreak: "break-word" }}>{totpSetupIssuer || "Vidyaverse"}</code>
+              </div>
+              <div style={{ display: "grid", gap: "0.2rem" }}>
+                <span style={{ color: "var(--text-secondary)", fontSize: "0.92rem" }}>Account</span>
+                <code style={{ wordBreak: "break-word" }}>{totpSetupAccountName || email}</code>
+              </div>
+              <div style={{ display: "grid", gap: "0.2rem" }}>
+                <span style={{ color: "var(--text-secondary)", fontSize: "0.92rem" }}>Setup key</span>
+                <code style={{ wordBreak: "break-word" }}>{totpSetupSecret || "Unavailable"}</code>
+              </div>
+            </div>
+          ) : null}
           <label style={{ display: "grid", gap: "0.35rem" }}>
             <span>Email OTP</span>
             <input
@@ -148,16 +319,39 @@ export default function AdminAuthPage() {
               value={otp}
               onChange={(event) => setOtp(event.target.value.replace(/\D/g, ""))}
               required
+              disabled={otpVerified}
               style={{
                 border: "1px solid var(--border-subtle)",
                 borderRadius: "0.5rem",
                 padding: "0.7rem 0.85rem",
-                background: "var(--bg-panel)",
+                background: otpVerified ? "var(--bg-surface-hover)" : "var(--bg-panel)",
                 color: "var(--text-primary)",
                 letterSpacing: "0.2em",
               }}
             />
           </label>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.75rem" }}>
+            <span style={{ color: "var(--text-secondary)", fontSize: "0.95rem" }}>
+              {otpCooldownSeconds > 0 ? `You can resend OTP in ${otpCooldownSeconds}s.` : "Didn't get the email OTP?"}
+            </span>
+            <button
+              type="button"
+              onClick={handleResendOtp}
+              disabled={!challengeToken || resendLoading || otpCooldownSeconds > 0 || otpVerified}
+              style={{
+                border: "1px solid var(--border-subtle)",
+                borderRadius: "0.5rem",
+                padding: "0.55rem 0.9rem",
+                background: otpCooldownSeconds > 0 || otpVerified ? "var(--bg-surface-hover)" : "var(--bg-panel)",
+                color: "var(--text-primary)",
+                fontWeight: 600,
+                cursor: !challengeToken || resendLoading || otpCooldownSeconds > 0 || otpVerified ? "not-allowed" : "pointer",
+                opacity: !challengeToken || resendLoading || otpCooldownSeconds > 0 || otpVerified ? 0.65 : 1,
+              }}
+            >
+              {resendLoading ? "Sending..." : "Resend OTP"}
+            </button>
+          </div>
           <label style={{ display: "grid", gap: "0.35rem" }}>
             <span>TOTP</span>
             <input
@@ -168,18 +362,24 @@ export default function AdminAuthPage() {
               value={totpCode}
               onChange={(event) => setTotpCode(event.target.value.replace(/\D/g, ""))}
               required
+              disabled={!otpVerified}
               style={{
                 border: "1px solid var(--border-subtle)",
                 borderRadius: "0.5rem",
                 padding: "0.7rem 0.85rem",
-                background: "var(--bg-panel)",
+                background: otpVerified ? "var(--bg-panel)" : "var(--bg-surface-hover)",
                 color: "var(--text-primary)",
                 letterSpacing: "0.2em",
               }}
             />
           </label>
-          <button type="submit" className="btn-primary" disabled={loading || !challengeToken} style={{ marginTop: "0.35rem" }}>
-            {loading ? "Verifying..." : "Continue"}
+          <button
+            type="submit"
+            className="btn-primary"
+            disabled={otpVerified ? totpLoading || !totpToken : otpLoading || !challengeToken}
+            style={{ marginTop: "0.35rem" }}
+          >
+            {otpVerified ? (totpLoading ? "Verifying TOTP..." : "Verify TOTP") : (otpLoading ? "Verifying OTP..." : "Verify OTP")}
           </button>
         </form>
 

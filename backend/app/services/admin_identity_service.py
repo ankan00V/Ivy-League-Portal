@@ -19,7 +19,7 @@ from app.models.rag_feedback_event import RAGFeedbackEvent
 from app.models.ranking_request_telemetry import RankingRequestTelemetry
 from app.models.recruiter_audit_log import RecruiterAuditLog
 from app.models.user import User
-from app.services.totp_service import encrypt_secret, normalize_totp_secret
+from app.services.totp_service import decrypt_secret, encrypt_secret, normalize_totp_secret
 from app.services.username_service import ensure_system_username
 
 
@@ -128,18 +128,26 @@ async def ensure_single_admin_identity() -> None:
             auth_provider="password",
             is_active=True,
             is_admin=True,
-            totp_enabled=True,
+            totp_enabled=False,
             totp_secret_encrypted=encrypted_totp_secret,
         )
         await admin.insert()
         await ensure_system_username(admin)
     else:
+        current_totp_secret = None
+        encrypted_existing_secret = str(existing.totp_secret_encrypted or "").strip()
+        if encrypted_existing_secret:
+            try:
+                current_totp_secret = decrypt_secret(encrypted_existing_secret)
+            except ValueError:
+                current_totp_secret = None
+        preserve_totp_enrollment = bool(existing.totp_enabled) and current_totp_secret == normalized_totp_secret
         existing.is_admin = True
         existing.is_active = True
         existing.auth_provider = "password"
         existing.account_type = "candidate"
         existing.hashed_password = hashed_password
-        existing.totp_enabled = True
+        existing.totp_enabled = preserve_totp_enrollment
         existing.totp_secret_encrypted = encrypted_totp_secret
         if not (existing.full_name or "").strip():
             existing.full_name = "Platform Administrator"

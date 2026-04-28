@@ -35,6 +35,11 @@ type PasswordLoginResponse = {
   otp_expires_in_seconds?: number;
   otp_cooldown_seconds?: number;
   debug_otp?: string | null;
+  totp_setup_required?: boolean;
+  totp_setup_secret?: string | null;
+  totp_setup_uri?: string | null;
+  totp_setup_issuer?: string | null;
+  totp_setup_account_name?: string | null;
 };
 
 const LOGIN_VISUALS = {
@@ -249,12 +254,23 @@ export default function LoginPage() {
         setPendingAdminChallenge({
           email: normalizedEmail,
           adminChallengeToken: challengeToken,
+          adminTotpToken: null,
+          otpVerified: false,
           otpDelivery: payload.otp_delivery,
           otpCooldownSeconds: payload.otp_cooldown_seconds,
           otpExpiresInSeconds: payload.otp_expires_in_seconds,
           debugOtp: payload.debug_otp,
+          totpSetupRequired: Boolean(payload.totp_setup_required),
+          totpSetupSecret: payload.totp_setup_secret,
+          totpSetupUri: payload.totp_setup_uri,
+          totpSetupIssuer: payload.totp_setup_issuer,
+          totpSetupAccountName: payload.totp_setup_account_name,
         });
-        setInfo("Password verified. Continue with OTP and TOTP.");
+        setInfo(
+          payload.totp_setup_required
+            ? "Password verified. Set up your authenticator, then continue with OTP and TOTP."
+            : "Password verified. Continue with OTP and TOTP.",
+        );
         router.push(payload.admin_verification_path || "/control/auth");
         return;
       }

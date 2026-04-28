@@ -27,10 +27,17 @@ type CurrentUser = {
 type PendingAdminChallenge = {
   email: string;
   adminChallengeToken: string;
+  adminTotpToken?: string | null;
+  otpVerified?: boolean;
   otpDelivery?: "email" | "debug";
   otpCooldownSeconds?: number;
   otpExpiresInSeconds?: number;
   debugOtp?: string | null;
+  totpSetupRequired?: boolean;
+  totpSetupSecret?: string | null;
+  totpSetupUri?: string | null;
+  totpSetupIssuer?: string | null;
+  totpSetupAccountName?: string | null;
 };
 
 function dispatchAuthState(reason: AuthStateReason): void {

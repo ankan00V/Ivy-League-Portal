@@ -58,6 +58,8 @@ class TestAdminAuthControls(unittest.IsolatedAsyncioTestCase):
             is_admin=True,
             is_active=True,
             account_type="candidate",
+            totp_enabled=False,
+            totp_secret_encrypted="encrypted-secret",
         )
         form_data = SimpleNamespace(username="ghoshankan005@gmail.com", password="secret-password")
         unlocked = SimpleNamespace(locked=False)
@@ -71,6 +73,16 @@ class TestAdminAuthControls(unittest.IsolatedAsyncioTestCase):
             patch("app.api.api_v1.endpoints.auth.verify_password", return_value=True),
             patch("app.api.api_v1.endpoints.auth._issue_admin_email_otp", new=AsyncMock(return_value=("debug", 60, "123456"))),
             patch("app.api.api_v1.endpoints.auth._create_admin_challenge_token", return_value="challenge-token"),
+            patch("app.api.api_v1.endpoints.auth.decrypt_secret", return_value="JBSWY3DPEHPK3PXP"),
+            patch(
+                "app.api.api_v1.endpoints.auth.provisioning_uri",
+                return_value=SimpleNamespace(
+                    secret="JBSWY3DPEHPK3PXP",
+                    issuer="Vidyaverse",
+                    account_name="ghoshankan005@gmail.com",
+                    uri="otpauth://totp/Vidyaverse:ghoshankan005@gmail.com?secret=JBSWY3DPEHPK3PXP",
+                ),
+            ),
         ):
             payload = await auth_endpoint.login_access_token(form_data=form_data)
 
@@ -78,8 +90,10 @@ class TestAdminAuthControls(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload.admin_challenge_token, "challenge-token")
         self.assertEqual(payload.admin_verification_path, "/control/auth")
         self.assertEqual(payload.debug_otp, "123456")
+        self.assertTrue(payload.totp_setup_required)
+        self.assertEqual(payload.totp_setup_secret, "JBSWY3DPEHPK3PXP")
 
-    async def test_admin_verify_uses_otp_and_totp_before_issuing_token(self) -> None:
+    async def test_admin_verify_otp_returns_totp_session(self) -> None:
         admin_user = SimpleNamespace(
             id="admin-user-id",
             email="ghoshankan005@gmail.com",
@@ -89,10 +103,9 @@ class TestAdminAuthControls(unittest.IsolatedAsyncioTestCase):
         )
         unlocked = SimpleNamespace(locked=False)
         fake_user_model = SimpleNamespace(email=object(), find_one=AsyncMock(return_value=admin_user))
-        payload = auth_endpoint.AdminVerifyRequest(
+        payload = auth_endpoint.AdminOtpVerifyRequest(
             email="ghoshankan005@gmail.com",
             otp="123456",
-            totp_code="654321",
             admin_challenge_token="challenge-token",
         )
 
@@ -101,18 +114,76 @@ class TestAdminAuthControls(unittest.IsolatedAsyncioTestCase):
             patch("app.api.api_v1.endpoints.auth._decode_admin_challenge_token", return_value="admin-user-id"),
             patch.object(auth_endpoint.auth_security_service, "check_lock", new=AsyncMock(return_value=unlocked)),
             patch.object(auth_endpoint.auth_security_service, "audit_event", new=AsyncMock()),
-            patch.object(auth_endpoint.auth_security_service, "record_success", new=AsyncMock()),
             patch("app.api.api_v1.endpoints.auth.User", fake_user_model),
             patch("app.api.api_v1.endpoints.auth.validate_otp", new=AsyncMock(return_value=True)),
             patch("app.api.api_v1.endpoints.auth.delete_otp", new=AsyncMock()),
+            patch("app.api.api_v1.endpoints.auth._create_admin_totp_token", return_value="totp-token"),
+        ):
+            result = await auth_endpoint.verify_admin_otp(payload=payload)
+
+        self.assertEqual(result.admin_totp_token, "totp-token")
+        self.assertIn("OTP verified", result.message)
+
+    async def test_admin_verify_totp_issues_admin_token(self) -> None:
+        admin_user = SimpleNamespace(
+            id="admin-user-id",
+            email="ghoshankan005@gmail.com",
+            is_admin=True,
+            is_active=True,
+            account_type="candidate",
+            totp_enabled=False,
+            save=AsyncMock(),
+        )
+        unlocked = SimpleNamespace(locked=False)
+        fake_user_model = SimpleNamespace(email=object(), find_one=AsyncMock(return_value=admin_user))
+        payload = auth_endpoint.AdminTotpVerifyRequest(
+            email="ghoshankan005@gmail.com",
+            totp_code="654321",
+            admin_totp_token="totp-token",
+        )
+
+        with (
+            patch("app.api.api_v1.endpoints.auth.settings.ADMIN_BOOTSTRAP_EMAIL", "ghoshankan005@gmail.com"),
+            patch("app.api.api_v1.endpoints.auth._decode_admin_totp_token", return_value="admin-user-id"),
+            patch.object(auth_endpoint.auth_security_service, "check_lock", new=AsyncMock(return_value=unlocked)),
+            patch.object(auth_endpoint.auth_security_service, "audit_event", new=AsyncMock()),
+            patch.object(auth_endpoint.auth_security_service, "record_success", new=AsyncMock()),
+            patch("app.api.api_v1.endpoints.auth.User", fake_user_model),
             patch("app.api.api_v1.endpoints.auth._validate_admin_totp_or_raise"),
             patch("app.api.api_v1.endpoints.auth.create_access_token", return_value="final-jwt"),
             patch("app.api.api_v1.endpoints.auth.auth_cookie_only_mode_enabled", return_value=False),
         ):
-            result = await auth_endpoint.verify_admin_access_token(payload=payload)
+            result = await auth_endpoint.verify_admin_totp(payload=payload)
 
         self.assertEqual(result["access_token"], "final-jwt")
         self.assertEqual(result["token_type"], "bearer")
+        self.assertTrue(admin_user.totp_enabled)
+        admin_user.save.assert_awaited_once()
+
+    async def test_admin_resend_otp_uses_existing_challenge(self) -> None:
+        admin_user = SimpleNamespace(
+            id="admin-user-id",
+            email="ghoshankan005@gmail.com",
+            is_admin=True,
+        )
+        fake_user_model = SimpleNamespace(email=object(), find_one=AsyncMock(return_value=admin_user))
+        payload = auth_endpoint.AdminResendOtpRequest(
+            email="ghoshankan005@gmail.com",
+            admin_challenge_token="challenge-token",
+        )
+
+        with (
+            patch("app.api.api_v1.endpoints.auth.settings.ADMIN_BOOTSTRAP_EMAIL", "ghoshankan005@gmail.com"),
+            patch("app.api.api_v1.endpoints.auth._decode_admin_challenge_token", return_value="admin-user-id"),
+            patch("app.api.api_v1.endpoints.auth.User", fake_user_model),
+            patch.object(auth_endpoint.auth_security_service, "audit_event", new=AsyncMock()),
+            patch("app.api.api_v1.endpoints.auth._issue_admin_email_otp", new=AsyncMock(return_value=("debug", 60, "123456"))),
+        ):
+            result = await auth_endpoint.resend_admin_otp(payload=payload)
+
+        self.assertEqual(result.delivery, "debug")
+        self.assertEqual(result.cooldown_seconds, 60)
+        self.assertEqual(result.debug_otp, "123456")
 
 
 if __name__ == "__main__":
