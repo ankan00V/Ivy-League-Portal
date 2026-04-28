@@ -1,101 +1,93 @@
 # VidyaVerse
 
-AI-powered opportunity intelligence platform for internships, research, scholarships, and hackathons.
+> AI-powered opportunity intelligence platform that helps students discover, prioritize, and act on internships, research roles, scholarships, and hackathons.
 
-Last updated: **April 28, 2026**
+**Last updated:** April 28, 2026  
+**Status:** Active build, production-readiness gates enabled
 
-## What This App Is
-VidyaVerse is a full-stack data + AI/ML product that helps students discover high-fit opportunities faster, understand why each match is relevant, and track outcomes through experimentation and analytics.
+## 1) Executive Summary
+VidyaVerse is a full-stack AI/ML system, not just a listings app.
+It combines ingestion, semantic retrieval, learned ranking, explainable AI responses, experimentation, and operational guardrails in one product loop.
 
-It combines:
-- multi-source ingestion
-- semantic retrieval + RAG
-- learned ranking
-- experimentation pipelines
-- production-grade security and ops controls
+**Core thesis:** Better opportunity outcomes require a system that continuously learns from user behavior, not static keyword filters.
 
-## Core Motive
-Students currently search fragmented portals manually, leading to poor discoverability, weak relevance, and low application conversion. VidyaVerse turns that into a measurable intelligence workflow: collect -> rank -> explain -> act -> learn.
+## 2) Problem and Motivation
+Students search fragmented portals with inconsistent quality, duplicate postings, and weak relevance ordering. The result is high effort and low conversion.
 
-## Standout Factor
-Most opportunity portals stop at listing and filtering. VidyaVerse is built as an end-to-end intelligence system:
-- retrieval + ranking + explanation in one loop
-- online/offline parity gates before model promotion
-- experiment analytics tied to real user behavior
-- production hardening (cookie auth, CSP/CSRF, abuse locks, audit events)
-- hidden admin control plane with strict single-admin + TOTP
+VidyaVerse addresses this with:
+- retrieval quality (semantic + vector-based)
+- ranking quality (behavior-informed learned ranker)
+- explainability (RAG answer panel with grounded context)
+- measurement (online/offline experiment and parity gates)
 
-## What’s Shipped
-### Product + UX
-- Guest dashboard preview flow: unauthenticated users can open `/dashboard` as a demo surface.
-- Signed-in users on `/dashboard` get their personalized live experience.
-- Candidate + employer journey support.
-- Ask AI panel with grounded opportunity responses.
+## 3) What Makes This Stand Out
+Compared with standard portal architectures, this system adds:
+- **Closed learning loop:** impressions -> clicks/saves/applies -> retrain -> gated promotion
+- **Evidence-driven ranking:** `baseline | semantic | ml | ab` modes with measurable lift
+- **Production security posture:** cookie sessions, CSRF, CSP/Trusted Types, abuse locks, audit logs
+- **Operational maturity:** CI release gates, incident artifacts, scheduled scorecards, synthetic checks
+- **Privileged governance:** hidden admin control plane with strict single-admin + TOTP
 
-### Data + AI/ML
-- Multi-source scraper ingestion pipeline.
-- Semantic deduplication during ingestion.
-- Embeddings + vector retrieval (FAISS when available, NumPy fallback).
-- NLP intent + NER support for opportunity understanding.
-- Ranking modes: `baseline`, `semantic`, `ml`, `ab`.
-- Learned ranker with retraining, drift detection, and activation policy controls.
-- Offline benchmark and parity gate workflows.
-
-### Full-Stack Platform
-- FastAPI backend + Next.js frontend.
-- MongoDB-first persistence + Redis caching/rate limiting.
-- Background jobs with retries and dead-letter handling.
-- Integrated staging E2E scaffolds and release gates.
-
-### Security + Reliability
-- Cookie-first auth with HttpOnly sessions; localStorage token persistence removed.
-- CSRF enforcement + security headers + strict CSP/Trusted Types configuration.
-- Auth abuse lockouts + audit event logging.
-- Slack/PagerDuty alert wiring support + incident APIs.
-- Hidden admin auth flow with TOTP and admin-only control plane.
-
-### Hidden Admin Control Plane (Implemented)
-- Dedicated hidden admin auth endpoint (`/api/v1/auth/admin/login`).
-- Strict reserved admin identity bootstrap (env-driven, no hardcoded password).
-- TOTP required for admin login.
-- Admin CRUD for opportunities/content moderation/user status/job controls.
-- Admin action audit stream (`admin.*` events).
-
-## Architecture
+## 4) Architecture
 ```mermaid
 flowchart LR
-    A["Scrapers + Sources"] --> B["Ingestion + Dedup"]
-    B --> C[("MongoDB")]
+    A["External Sources"] --> B["Scraper Ingestion"]
+    B --> C["Dedup + Canonicalization"]
+    C --> D[("MongoDB")]
 
-    U["User Query"] --> D["Embedding + NLP"]
-    C --> E["Vector Retrieval"]
-    D --> E
-    E --> F["RAG + Explainability"]
+    U["User Query / Context"] --> E["Embeddings + NLP"]
+    D --> F["Vector Retrieval"]
+    E --> F
+    F --> G["RAG Insights"]
 
-    C --> G["Ranking Service"]
-    H["Profile + Interactions"] --> G
-    G --> I["Personalized Feed"]
+    D --> H["Ranking Service"]
+    I["Profile + Interaction History"] --> H
+    H --> J["Personalized Feed"]
 
-    I --> J["Interaction Tracking"]
-    J --> K["Experiments + Analytics"]
-    J --> L["MLOps Retrain + Drift"]
-    L --> G
+    J --> K["Interaction Logging"]
+    K --> L["Experiment Analytics"]
+    K --> M["MLOps Retrain + Drift"]
+    M --> H
 ```
 
-## Tech Stack
-| Layer | Stack |
+## 5) Technology Stack
+| Layer | Technologies |
 |---|---|
 | Frontend | Next.js 16, TypeScript, Playwright |
 | Backend | FastAPI, Pydantic, Beanie ODM |
 | Data | MongoDB, Redis |
 | AI/ML | sentence-transformers, FAISS/NumPy retrieval, learned ranker |
-| Ops | GitHub Actions, Prometheus metrics, Slack/PagerDuty hooks |
-| Security | Cookie sessions, CSRF, CSP, Trusted Types, rate limiting, audit logs |
+| Observability/Ops | GitHub Actions, Prometheus metrics, Slack/PagerDuty hooks |
+| Security | HttpOnly session cookies, CSRF middleware, CSP, Trusted Types, auth abuse controls |
 
-## Numbers (For Recruiters / Reviewers)
-All values below are from repository artifacts and latest verified snapshots.
+## 6) Implemented Scope
+### Product
+- Guest-accessible dashboard preview for unauthenticated users.
+- Personalized dashboard behavior for signed-in users.
+- Candidate + employer user journeys.
+- Ask AI opportunity assistant.
 
-### Product/Data Scale (Snapshot: April 27, 2026)
+### AI/ML
+- Multi-source ingestion with semantic deduplication.
+- Vector retrieval + NLP intent/NER support.
+- Ranking modes: `baseline`, `semantic`, `ml`, `ab`.
+- Learned ranker retraining, drift checks, and activation policy.
+- Offline benchmark and online parity/champion-challenger gates.
+
+### Platform
+- MongoDB-first backend architecture + Redis support.
+- Background jobs with retry and dead-letter behavior.
+- Staging integrated E2E framework and release-blocking checks.
+
+### Security and Governance
+- Cookie-first auth; localStorage token persistence removed.
+- CSRF protection for unsafe requests under cookie auth.
+- Security headers with strict CSP + Trusted Types controls.
+- Auth lockout/audit instrumentation.
+- Hidden admin control plane with TOTP and admin action auditing.
+
+## 7) Metrics and Impact
+### Data/Product Scale (snapshot: April 27, 2026)
 - Opportunities: **331**
 - Users: **323**
 - Profiles: **320**
@@ -105,42 +97,51 @@ All values below are from repository artifacts and latest verified snapshots.
 - Ranking model versions: **47**
 - Drift reports: **48**
 
-### Retrieval Quality (Offline Benchmark)
+### Offline retrieval quality
 - Precision@5: **0.0667 -> 0.2000** (**+200%**)
 - Recall@5: **0.3333 -> 1.0000** (**+200%**)
 - nDCG@5: **0.3333 -> 1.0000** (**+200%**)
 - MRR@5: **0.3333 -> 1.0000** (**+200%**)
 
-### Real Pilot Lift (14-day experiment window)
+### Real pilot lift (14-day window)
 - CTR lift (`ml` vs baseline): **+58.21%**
 - Apply-rate lift (`ml` vs baseline): **+153.11%**
 - Save-rate lift (`ml` vs baseline): **+138.67%**
 
-### Engineering Quality Signal
-- Backend test suite: **77 tests passing** (latest local run).
-- Frontend lint + production build: **passing**.
-- Release gates and security scans active in CI.
+### Engineering quality signal
+- Backend test suite: **77 passing tests** (latest local run)
+- Frontend lint: **passing**
+- Frontend production build: **passing**
+- Security and release gates: **active in CI**
 
-## What’s In Progress
-- Larger sustained real-traffic volume for stronger statistical confidence.
-- Full staging secret/ownership wiring across environments.
-- Deeper multi-role staging E2E beyond current required suites.
-- Strict production hardening toggle enforcement once ops readiness is stable.
+## 8) Reliability and Security Posture
+- Session architecture favors HttpOnly cookie trust boundaries.
+- CSRF origin/referer enforcement for unsafe methods.
+- Strict CSP/Trusted Types controls integrated in security headers.
+- Auth abuse lock policy with structured audit events.
+- Production startup guardrails enforce secure host/CORS/CSP/cookie expectations.
+- Privileged admin access segmented with dedicated auth path + TOTP + RBAC checks.
 
-## Vision
-Build VidyaVerse into a data-science + AI/ML + full-stack benchmark product where:
-- recommendations are explainable and measurable,
+## 9) What Is In Progress
+- Increase sustained real-user traffic volume for stronger statistical confidence.
+- Complete full staging secret and ownership wiring across environments.
+- Expand multi-role staging E2E matrix (success + failure + recovery paths).
+- Promote strict production enforcement toggles once ops readiness is consistently stable.
+
+## 10) Vision
+Build VidyaVerse into a benchmark-grade Data Science + AI/ML + Full-Stack system where:
+- ranking decisions are measurable and auditable,
 - model promotion is policy-gated,
-- product decisions are experiment-driven,
-- reliability and security are first-class, not afterthoughts.
+- product changes are experiment-driven,
+- security and reliability remain first-class engineering constraints.
 
-## Quick Start
-### 1) Infra
+## 11) Quick Start
+### Infrastructure
 ```bash
 make up
 ```
 
-### 2) Backend
+### Backend
 ```bash
 cd backend
 python3 -m venv venv
@@ -149,29 +150,42 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### 3) Frontend
+### Frontend
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 
-## Key Environment Controls
+## 12) Key Configuration Areas
 - Auth/Security: `AUTH_SESSION_COOKIE_*`, `AUTH_COOKIE_ONLY_MODE`, `CSRF_*`, `SECURITY_CSP_*`
 - Admin bootstrap: `ADMIN_BOOTSTRAP_ENABLED`, `ADMIN_BOOTSTRAP_EMAIL`, `ADMIN_BOOTSTRAP_PASSWORD`, `ADMIN_TOTP_SECRET`
 - MLOps alerts/incidents: `MLOPS_ALERT_SLACK_WEBHOOK_URL`, `MLOPS_ALERT_PAGERDUTY_ROUTING_KEY`, `MLOPS_INCIDENT_DEFAULT_OWNER`
 - Parity gates: `MLOPS_PARITY_*`
 
-Use:
+Reference templates:
 - `backend/.env.example`
 - `backend/.env.production.example`
 
-## High-Value Paths
-- Backend app: `backend/app`
-- Frontend app: `frontend/src`
-- Ops workflows: `.github/workflows`
-- Security/incident docs: `docs/runbooks`
-- Hidden admin security architecture doc: `docs/runbooks/hidden-admin-security-architecture.md`
+## 13) High-Value Code Paths
+- Backend core: `backend/app`
+- Frontend core: `frontend/src`
+- CI/CD workflows: `.github/workflows`
+- Runbooks: `docs/runbooks`
+- Hidden admin security architecture: `docs/runbooks/hidden-admin-security-architecture.md`
 
-## README Update Policy
-This README is treated as release-facing documentation and should be updated whenever there is a significant product, architecture, security, ML, or ops change.
+## 14) Recruiter / Reviewer Checklist
+If you are evaluating engineering depth, inspect:
+- CI gate design and release policy workflows
+- ranking mode architecture and telemetry loop
+- security middleware and auth audit model
+- hidden admin RBAC/TOTP implementation
+- benchmark artifacts and reproducibility scripts
+
+## 15) README Maintenance Policy
+This README is release-facing documentation. It should be updated whenever there is a major change to:
+- architecture
+- ML/ranking behavior
+- security model
+- deployment/reliability controls
+- measurable product outcomes
