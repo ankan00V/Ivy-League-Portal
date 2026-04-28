@@ -207,6 +207,13 @@ class Settings(BaseSettings):
     ANALYTICS_WAREHOUSE_ENABLED: bool = True
     ANALYTICS_LOOKBACK_DAYS_DEFAULT: int = 30
     FEATURE_STORE_LABEL_WINDOW_HOURS: int = 72
+    ANALYTICS_WAREHOUSE_EXPORT_ENABLED: bool = True
+    ANALYTICS_WAREHOUSE_EXPORT_ROOT: str = "backend/storage/warehouse"
+    ANALYTICS_WAREHOUSE_DUCKDB_PATH: str = "backend/storage/warehouse/warehouse.duckdb"
+    ANALYTICS_WAREHOUSE_EXPORT_FORMAT: str = "duckdb_parquet"  # duckdb_parquet | parquet | disabled
+    ONLINE_FEATURES_PUBLISH_ENABLED: bool = True
+    ONLINE_FEATURES_KEY_PREFIX: str = "vidyaverse:features"
+    ONLINE_FEATURES_TTL_SECONDS: int = 60 * 60 * 24 * 14
 
     # Resume storage & parsing
     RESUME_STORAGE_DIR: str = "backend/storage/resumes"
@@ -227,6 +234,7 @@ class Settings(BaseSettings):
     # Learned ranker (LightGBM/XGBoost) for real personalization
     LEARNED_RANKER_ENABLED: bool = False
     LEARNED_RANKER_MODEL_PATH: str = ""
+    LEARNED_RANKER_ARTIFACT_URI: str = ""
     LEARNED_RANKER_FEATURES: list[str] = []
     LEARNED_RANKER_SHADOW_ENABLED: bool = True
     LEARNED_RANKER_SHADOW_SAMPLE_RATE: float = 1.0
@@ -236,6 +244,7 @@ class Settings(BaseSettings):
     LEARNED_RANKER_STAGED_BASELINE_MODE: str = "semantic"
     LEARNED_RANKER_ROLLOUT_EXPERIMENT_KEY: str = "learned_ranker_rollout"
     LEARNED_RANKER_ROLLBACK_ON_GUARDRAIL_FAILURE: bool = True
+    LEARNED_RANKER_REQUIRE_ARTIFACT_IN_PRODUCTION: bool = True
 
     # Data + MLOps (ranking weights)
     MLOPS_AUTORUN_ENABLED: bool = True
@@ -258,6 +267,17 @@ class Settings(BaseSettings):
     MLOPS_BOOTSTRAP_ACTIVE_MODEL_ON_STARTUP: bool = True
     MLOPS_DRIFT_CHECK_INTERVAL_HOURS: int = 6
     MLOPS_DRIFT_LOOKBACK_DAYS: int = 7
+    MLOPS_MODEL_ARTIFACT_ROOT: str = "backend/models"
+
+    # Assistant orchestration
+    ASSISTANT_CHAT_MEMORY_ENABLED: bool = True
+    ASSISTANT_CHAT_MEMORY_MAX_TURNS: int = 12
+    ASSISTANT_CHAT_RAG_AUTO_ROUTE_ENABLED: bool = True
+    ASSISTANT_CHAT_SURFACE_DEFAULT: str = "global_chat"
+
+    # Embedding health posture
+    EMBEDDING_HEALTH_ENFORCE_IN_PRODUCTION: bool = True
+    EMBEDDING_HEALTH_FAIL_ON_HASH_FALLBACK: bool = True
     MLOPS_DRIFT_PSI_ALERT_THRESHOLD: float = 0.25
     MLOPS_DRIFT_Z_ALERT_THRESHOLD: float = 3.0
     MLOPS_ALERTS_ENABLED: bool = True

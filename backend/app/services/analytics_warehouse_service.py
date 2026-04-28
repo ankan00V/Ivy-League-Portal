@@ -13,6 +13,8 @@ from app.models.analytics_funnel_aggregate import AnalyticsFunnelAggregate
 from app.models.feature_store_row import FeatureStoreRow
 from app.models.opportunity_interaction import OpportunityInteraction
 from app.models.ranking_request_telemetry import RankingRequestTelemetry
+from app.services.online_feature_service import online_feature_service
+from app.services.warehouse_export_service import warehouse_export_service
 
 
 def _day_key(value: datetime) -> str:
@@ -91,6 +93,10 @@ class AnalyticsWarehouseService:
         funnel_rows = await self._build_funnel_aggregates(interactions=interactions, traffic_type=normalized_traffic)
         cohort_rows = await self._build_cohort_aggregates(interactions=interactions, traffic_type=normalized_traffic)
         feature_rows = await self._build_feature_store_rows(interactions=interactions, traffic_type=normalized_traffic)
+        export_status = await warehouse_export_service.export(
+            lookback_days=safe_days,
+            traffic_type=normalized_traffic,
+        )
 
         summary = WarehouseBuildSummary(
             daily_rows=daily_rows,
@@ -110,6 +116,7 @@ class AnalyticsWarehouseService:
             "feature_rows": summary.feature_rows,
             "interactions_processed": summary.interactions_processed,
             "telemetry_processed": summary.telemetry_processed,
+            "warehouse_export": export_status,
         }
 
     async def _build_daily_aggregates(
@@ -410,6 +417,7 @@ class AnalyticsWarehouseService:
 
         if docs:
             await FeatureStoreRow.insert_many(docs)
+            await online_feature_service.publish_rows(docs)
         return len(docs)
 
 

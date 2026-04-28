@@ -15,6 +15,7 @@ from app.models.opportunity_interaction import OpportunityInteraction
 from app.models.ranking_model_version import RankingModelVersion
 from app.services.mlops.activation_policy import evaluate_activation_policy
 from app.services.mlops.rollout_guardrail_service import rollout_guardrail_service
+from app.services.model_artifact_service import model_artifact_service
 from app.services.ranking_model_service import DEFAULT_RANKING_WEIGHTS, ranking_model_service
 
 
@@ -566,6 +567,13 @@ class RetrainingService:
             is_active=False,
             weights=learned,
             metrics=metrics,
+            artifact_uri=(model_artifact_service.resolve_learned_ranker_uri() or None),
+            artifact_provider="file" if model_artifact_service.resolve_learned_ranker_uri().startswith("file://") else None,
+            feature_schema={
+                "features": ["semantic_score", "baseline_score", "behavior_score"],
+                "label_window_hours": int(label_window_hours),
+            },
+            serving_ready=bool(model_artifact_service.learned_ranker_artifact_exists()) or bool(not settings.LEARNED_RANKER_ENABLED),
             baselines=baselines,
             trained_window_start=window_start,
             trained_window_end=window_end,
@@ -613,6 +621,8 @@ class RetrainingService:
             "activation_reason": activation_reason,
             "activated": bool(should_activate),
             "diagnostics": decision.diagnostics,
+            "artifact_uri": version.artifact_uri,
+            "serving_ready": version.serving_ready,
         }
         model_card = self._build_model_card(
             metrics=metrics,

@@ -1,34 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from typing import List, Optional
-from openai import AsyncOpenAI
+from typing import Any, List, Optional
 from app.api.deps import get_current_user
+from app.models.profile import Profile
 from app.models.user import User
-from app.core.config import settings
+from app.services.assistant_service import assistant_service
 
 router = APIRouter()
-
-LLM_API_BASE_URL = (
-    (settings.LLM_API_BASE_URL or "").strip()
-    or (settings.OPENROUTER_BASE_URL or "").strip()
-    or "https://openrouter.ai/api/v1"
-)
-LLM_API_KEY = (settings.LLM_API_KEY or settings.OPENROUTER_API_KEY or "").strip() or None
-LLM_MODEL = (
-    (settings.LLM_MODEL or "").strip()
-    or (settings.OPENROUTER_MODEL or "").strip()
-    or "meta-llama/llama-3-8b-instruct:free"
-)
-
-if not LLM_API_KEY:
-    print("WARNING: LLM_API_KEY/OPENROUTER_API_KEY environment variable is missing. AI Chat will not function.")
-
-# We MUST provide a fallback 'dummy' key so the AsyncOpenAI class itself doesn't crash on boot
-# If the user doesn't have an API key, we handle the error inside the route handler instead of crashing the whole server
-client = AsyncOpenAI(
-    base_url=LLM_API_BASE_URL,
-    api_key=LLM_API_KEY or "dummy_key_to_prevent_boot_crash",
-)
 
 class ChatMessage(BaseModel):
     role: str # "user" or "assistant"
@@ -36,18 +14,17 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: List[ChatMessage]
+    surface: str = "global_chat"
 
 class ChatResponse(BaseModel):
+    request_id: str
     message: str
+    mode: str
+    citations: List[dict[str, Any]] = []
 
-SYSTEM_PROMPT = """
-You are Vidya, the official, highly intelligent AI assistant for the VidyaVerse student opportunity tracking platform. 
-Your tone should be encouraging, punchy, direct, and slightly brutalist like a high-tier hackathon mentor. 
-You are deeply knowledgeable about career prep, competitive programming (Codebases, LeetCode, HackerRank), writing strong resumes, and networking.
-Do NOT use overly flowery language. Give tactical, actionable advice.
-When a student asks you a question, leverage your knowledge of top tech companies (Google, Meta, Stripe) to provide elite insights.
-Use markdown for formatting. You can use emojis strategically, but keep them professional.
-"""
+
+async def _get_profile(user_id) -> Profile | None:
+    return await Profile.find_one(Profile.user_id == user_id)
 
 @router.post("", response_model=ChatResponse, include_in_schema=False)
 @router.post("/", response_model=ChatResponse)
@@ -55,45 +32,25 @@ async def chat_with_vidya(
     request: ChatRequest,
     current_user: User = Depends(get_current_user)
 ):
-    if not LLM_API_KEY:
-         raise HTTPException(
-             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, 
-             detail="Underlying AI service is not configured (Missing API Key)."
-         )
-         
     try:
-        # Construct the message array including the System Prompt
-        api_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-        
-        # Add user's context
-        context_msg = f"[System Context: The current user interacting with you is named {current_user.full_name} ({current_user.email}).]"
-        api_messages.append({"role": "system", "content": context_msg})
-        
-        # Append the historical conversation
-        for msg in request.messages:
-            if msg.role in ["user", "assistant"]:
-                api_messages.append({"role": msg.role, "content": msg.content})
-                
-        response = await client.chat.completions.create(
-            model=LLM_MODEL,
-            messages=api_messages,
-            # OpenRouter optional headers for ranking.
-            extra_headers=(
-                {
-                    "HTTP-Referer": "http://localhost:3000",
-                    "X-Title": "VidyaVerse AI",
-                }
-                if "openrouter.ai" in LLM_API_BASE_URL.lower()
-                else None
-            ),
+        profile = await _get_profile(current_user.id)
+        result = await assistant_service.chat(
+            user=current_user,
+            messages=[message.model_dump() for message in request.messages],
+            surface=(request.surface or "global_chat").strip() or "global_chat",
+            profile=profile,
         )
-        
-        if response.choices and len(response.choices) > 0:
-            ai_reply = response.choices[0].message.content
-            return ChatResponse(message=ai_reply)
-        else:
-             raise HTTPException(status_code=500, detail="Empty response received from AI Model")
-             
+        return ChatResponse(
+            request_id=str(result.get("request_id") or ""),
+            message=str(result.get("message") or ""),
+            mode=str(result.get("mode") or "general"),
+            citations=list(result.get("citations") or []),
+        )
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
     except Exception as e:
         print(f"LLM API Error: {str(e)}")
         raise HTTPException(

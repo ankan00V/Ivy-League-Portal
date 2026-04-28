@@ -6,7 +6,14 @@ import { useRouter } from "next/navigation";
 import { apiUrl } from "@/lib/api";
 import { ADMIN_DASHBOARD_PATH } from "@/lib/admin-routes";
 import { getApiErrorMessage, getUnknownErrorMessage } from "@/lib/error-utils";
-import { COOKIE_SESSION_SENTINEL, getAccessToken, hasAuthSession, setAccessToken } from "@/lib/auth-session";
+import {
+  clearPendingAdminChallenge,
+  COOKIE_SESSION_SENTINEL,
+  getAccessToken,
+  getPendingAdminChallenge,
+  hasAuthSession,
+  setAccessToken,
+} from "@/lib/auth-session";
 
 type CurrentUser = {
   is_admin?: boolean;
@@ -15,8 +22,9 @@ type CurrentUser = {
 export default function AdminAuthPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [otp, setOtp] = useState("");
   const [totpCode, setTotpCode] = useState("");
+  const [challengeToken, setChallengeToken] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
@@ -24,28 +32,38 @@ export default function AdminAuthPage() {
   useEffect(() => {
     const run = async () => {
       const token = getAccessToken();
-      if (!token && !hasAuthSession()) {
+      if (token || hasAuthSession()) {
+        try {
+          const headers =
+            token && token !== COOKIE_SESSION_SENTINEL ? { Authorization: `Bearer ${token}` } : undefined;
+          const meRes = await fetch(apiUrl("/api/v1/users/me"), {
+            credentials: "include",
+            headers,
+          });
+          if (meRes.ok) {
+            const me = (await meRes.json()) as CurrentUser;
+            router.replace(Boolean(me.is_admin) ? ADMIN_DASHBOARD_PATH : "/dashboard");
+            return;
+          }
+        } catch {
+          // Fall through to challenge mode.
+        }
+      }
+
+      const pending = getPendingAdminChallenge();
+      if (!pending) {
+        setError("Start from the normal login page with your admin email and password.");
         return;
       }
-      try {
-        const headers =
-          token && token !== COOKIE_SESSION_SENTINEL ? { Authorization: `Bearer ${token}` } : undefined;
-        const meRes = await fetch(apiUrl("/api/v1/users/me"), {
-          credentials: "include",
-          headers,
-        });
-        if (!meRes.ok) {
-          return;
-        }
-        const me = (await meRes.json()) as CurrentUser;
-        if (Boolean(me.is_admin)) {
-          router.replace(ADMIN_DASHBOARD_PATH);
-          return;
-        }
-        router.replace("/dashboard");
-      } catch {
-        // Keep user on page and allow auth retry.
+
+      setEmail(pending.email);
+      setChallengeToken(pending.adminChallengeToken);
+      if (pending.debugOtp) {
+        setOtp(pending.debugOtp);
+        setInfo(`Password verified. Use the emailed OTP and authenticator TOTP. Debug OTP: ${pending.debugOtp}`);
+        return;
       }
+      setInfo("Password verified. Enter the email OTP and your authenticator TOTP to continue.");
     };
     void run();
   }, [router]);
@@ -56,28 +74,30 @@ export default function AdminAuthPage() {
     setError(null);
     setInfo(null);
     try {
-      const response = await fetch(apiUrl("/api/v1/auth/admin/login"), {
+      const response = await fetch(apiUrl("/api/v1/auth/admin/verify"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           email: email.trim().toLowerCase(),
-          password,
+          otp: otp.trim(),
           totp_code: totpCode.trim(),
+          admin_challenge_token: challengeToken,
         }),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(getApiErrorMessage(payload, "Admin authentication failed"));
+        throw new Error(getApiErrorMessage(payload, "Admin verification failed"));
       }
       const token = String(payload.access_token || "");
       if (!token) {
         throw new Error("Auth token missing from response");
       }
+      clearPendingAdminChallenge();
       setAccessToken(token);
       setInfo("Authentication successful. Redirecting...");
       router.replace(ADMIN_DASHBOARD_PATH);
     } catch (err) {
-      setError(getUnknownErrorMessage(err, "Unable to authenticate admin session"));
+      setError(getUnknownErrorMessage(err, "Unable to verify admin session"));
     } finally {
       setLoading(false);
     }
@@ -95,9 +115,9 @@ export default function AdminAuthPage() {
       }}
     >
       <section className="card-panel" style={{ width: "min(520px, 100%)", padding: "1.5rem" }}>
-        <h1 style={{ marginBottom: "0.5rem" }}>Secure Access</h1>
+        <h1 style={{ marginBottom: "0.5rem" }}>Admin Verification</h1>
         <p style={{ color: "var(--text-secondary)", marginBottom: "1rem" }}>
-          Enter credentials and TOTP code to continue.
+          Finish admin sign-in with the email OTP and authenticator TOTP.
         </p>
 
         <form onSubmit={onSubmit} style={{ display: "grid", gap: "0.85rem" }}>
@@ -106,32 +126,35 @@ export default function AdminAuthPage() {
             <input
               type="email"
               value={email}
-              onChange={(event) => setEmail(event.target.value)}
+              readOnly
               required
               autoComplete="username"
               style={{
                 border: "1px solid var(--border-subtle)",
                 borderRadius: "0.5rem",
                 padding: "0.7rem 0.85rem",
-                background: "var(--bg-panel)",
+                background: "var(--bg-surface-hover)",
                 color: "var(--text-primary)",
               }}
             />
           </label>
           <label style={{ display: "grid", gap: "0.35rem" }}>
-            <span>Password</span>
+            <span>Email OTP</span>
             <input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]{6}"
+              maxLength={6}
+              value={otp}
+              onChange={(event) => setOtp(event.target.value.replace(/\D/g, ""))}
               required
-              autoComplete="current-password"
               style={{
                 border: "1px solid var(--border-subtle)",
                 borderRadius: "0.5rem",
                 padding: "0.7rem 0.85rem",
                 background: "var(--bg-panel)",
                 color: "var(--text-primary)",
+                letterSpacing: "0.2em",
               }}
             />
           </label>
@@ -155,8 +178,8 @@ export default function AdminAuthPage() {
               }}
             />
           </label>
-          <button type="submit" className="btn-primary" disabled={loading} style={{ marginTop: "0.35rem" }}>
-            {loading ? "Authenticating..." : "Continue"}
+          <button type="submit" className="btn-primary" disabled={loading || !challengeToken} style={{ marginTop: "0.35rem" }}>
+            {loading ? "Verifying..." : "Continue"}
           </button>
         </form>
 

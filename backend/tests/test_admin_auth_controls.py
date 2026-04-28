@@ -2,7 +2,7 @@ import sys
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi import HTTPException
 
@@ -49,6 +49,70 @@ class TestAdminAuthControls(unittest.IsolatedAsyncioTestCase):
             shadow_scopes = auth_endpoint._scopes_for_user(shadow_admin)
         self.assertIn("admin", reserved_scopes)
         self.assertNotIn("admin", shadow_scopes)
+
+    async def test_reserved_admin_password_login_returns_verification_challenge(self) -> None:
+        admin_user = SimpleNamespace(
+            id="admin-user-id",
+            email="ghoshankan005@gmail.com",
+            hashed_password="hashed-password",
+            is_admin=True,
+            is_active=True,
+            account_type="candidate",
+        )
+        form_data = SimpleNamespace(username="ghoshankan005@gmail.com", password="secret-password")
+        unlocked = SimpleNamespace(locked=False)
+        fake_user_model = SimpleNamespace(email=object(), find_one=AsyncMock(return_value=admin_user))
+
+        with (
+            patch("app.api.api_v1.endpoints.auth.settings.ADMIN_BOOTSTRAP_EMAIL", "ghoshankan005@gmail.com"),
+            patch.object(auth_endpoint.auth_security_service, "check_lock", new=AsyncMock(return_value=unlocked)),
+            patch.object(auth_endpoint.auth_security_service, "audit_event", new=AsyncMock()),
+            patch("app.api.api_v1.endpoints.auth.User", fake_user_model),
+            patch("app.api.api_v1.endpoints.auth.verify_password", return_value=True),
+            patch("app.api.api_v1.endpoints.auth._issue_admin_email_otp", new=AsyncMock(return_value=("debug", 60, "123456"))),
+            patch("app.api.api_v1.endpoints.auth._create_admin_challenge_token", return_value="challenge-token"),
+        ):
+            payload = await auth_endpoint.login_access_token(form_data=form_data)
+
+        self.assertTrue(payload.requires_admin_verification)
+        self.assertEqual(payload.admin_challenge_token, "challenge-token")
+        self.assertEqual(payload.admin_verification_path, "/control/auth")
+        self.assertEqual(payload.debug_otp, "123456")
+
+    async def test_admin_verify_uses_otp_and_totp_before_issuing_token(self) -> None:
+        admin_user = SimpleNamespace(
+            id="admin-user-id",
+            email="ghoshankan005@gmail.com",
+            is_admin=True,
+            is_active=True,
+            account_type="candidate",
+        )
+        unlocked = SimpleNamespace(locked=False)
+        fake_user_model = SimpleNamespace(email=object(), find_one=AsyncMock(return_value=admin_user))
+        payload = auth_endpoint.AdminVerifyRequest(
+            email="ghoshankan005@gmail.com",
+            otp="123456",
+            totp_code="654321",
+            admin_challenge_token="challenge-token",
+        )
+
+        with (
+            patch("app.api.api_v1.endpoints.auth.settings.ADMIN_BOOTSTRAP_EMAIL", "ghoshankan005@gmail.com"),
+            patch("app.api.api_v1.endpoints.auth._decode_admin_challenge_token", return_value="admin-user-id"),
+            patch.object(auth_endpoint.auth_security_service, "check_lock", new=AsyncMock(return_value=unlocked)),
+            patch.object(auth_endpoint.auth_security_service, "audit_event", new=AsyncMock()),
+            patch.object(auth_endpoint.auth_security_service, "record_success", new=AsyncMock()),
+            patch("app.api.api_v1.endpoints.auth.User", fake_user_model),
+            patch("app.api.api_v1.endpoints.auth.validate_otp", new=AsyncMock(return_value=True)),
+            patch("app.api.api_v1.endpoints.auth.delete_otp", new=AsyncMock()),
+            patch("app.api.api_v1.endpoints.auth._validate_admin_totp_or_raise"),
+            patch("app.api.api_v1.endpoints.auth.create_access_token", return_value="final-jwt"),
+            patch("app.api.api_v1.endpoints.auth.auth_cookie_only_mode_enabled", return_value=False),
+        ):
+            result = await auth_endpoint.verify_admin_access_token(payload=payload)
+
+        self.assertEqual(result["access_token"], "final-jwt")
+        self.assertEqual(result["token_type"], "bearer")
 
 
 if __name__ == "__main__":

@@ -12,6 +12,7 @@ function createNonce(): string {
 
 function cspValue(nonce: string): string {
   const isProduction = process.env.NODE_ENV === "production";
+  const connectSrc = isProduction ? "'self'" : "'self' https: http: ws: wss:";
   const directives = [
     "default-src 'self'",
     "base-uri 'self'",
@@ -21,7 +22,7 @@ function cspValue(nonce: string): string {
     "style-src 'self' 'unsafe-inline' https:",
     "img-src 'self' data: blob: https:",
     "font-src 'self' data: https:",
-    "connect-src 'self' https: http: ws: wss:",
+    `connect-src ${connectSrc}`,
     "worker-src 'self' blob:",
     "manifest-src 'self'",
     "form-action 'self'",

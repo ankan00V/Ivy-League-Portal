@@ -47,6 +47,7 @@ from app.models.analytics_funnel_aggregate import AnalyticsFunnelAggregate
 from app.models.analytics_cohort_aggregate import AnalyticsCohortAggregate
 from app.models.feature_store_row import FeatureStoreRow
 from app.models.mlops_incident import MlopsIncident
+from app.models.assistant_conversation_turn import AssistantConversationTurn
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.services.experiment_service import experiment_service
@@ -58,6 +59,7 @@ from app.services.job_runner import job_runner, register_default_jobs
 from app.services.system_metrics import refresh_freshness_metrics
 from app.services.embedding_service import embedding_service
 from app.services.nlp_service import nlp_service
+from app.services.model_artifact_service import model_artifact_service
 from app.services.vector_service import opportunity_vector_service
 from app.core.redis import close_redis
 from app.core.metrics import CONTENT_TYPE_LATEST, init_metrics, render_metrics
@@ -94,6 +96,7 @@ async def lifespan(app: FastAPI):
             raise RuntimeError("AUTH_SESSION_COOKIE_SECURE must be true in production.")
         if bool(settings.MONGODB_TLS_ALLOW_INVALID_CERTS):
             raise RuntimeError("MONGODB_TLS_ALLOW_INVALID_CERTS must be false in production.")
+        model_artifact_service.ensure_learned_ranker_artifact_ready()
         if settings.MLOPS_ALERTS_ENABLED and settings.MLOPS_ENFORCE_LIVE_ALERT_CHANNELS_IN_PRODUCTION:
             has_live_channel = any(
                 [
@@ -219,6 +222,7 @@ async def lifespan(app: FastAPI):
             AnalyticsCohortAggregate,
             FeatureStoreRow,
             MlopsIncident,
+            AssistantConversationTurn,
         ]
         ),
         timeout=max(10.0, ping_timeout_seconds * 2.0),
@@ -233,6 +237,8 @@ async def lifespan(app: FastAPI):
         init_metrics()
     except Exception:
         pass
+    if settings.ENVIRONMENT.strip().lower() == "production":
+        embedding_service.ensure_healthy_for_production()
     try:
         await experiment_service.ensure_defaults()
     except Exception as exc:
@@ -445,7 +451,21 @@ app.add_middleware(
 @app.get("/health", tags=["system"])
 def health_check():
     """Health check endpoint for load balancers."""
-    return {"status": "healthy", "environment": settings.ENVIRONMENT}
+    return {
+        "status": "healthy",
+        "environment": settings.ENVIRONMENT,
+        "embedding": embedding_service.status(),
+        "learned_ranker": {
+            "enabled": bool(settings.LEARNED_RANKER_ENABLED),
+            "artifact_uri": model_artifact_service.resolve_learned_ranker_uri(),
+            "artifact_ready": model_artifact_service.learned_ranker_artifact_exists(),
+        },
+        "warehouse": {
+            "enabled": bool(settings.ANALYTICS_WAREHOUSE_ENABLED),
+            "export_enabled": bool(settings.ANALYTICS_WAREHOUSE_EXPORT_ENABLED),
+            "export_root": settings.ANALYTICS_WAREHOUSE_EXPORT_ROOT,
+        },
+    }
 
 @app.get("/metrics", tags=["system"])
 async def metrics_endpoint(_: Any = Depends(require_scopes(["metrics:read"]))):  # type: ignore[name-defined]

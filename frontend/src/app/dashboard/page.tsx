@@ -137,7 +137,7 @@ const formatStableDate = (value: string) => {
 
 export default function DashboardPage() {
     const router = useRouter();
-    const allowSimulatedFallback = process.env.NODE_ENV !== "production";
+    const allowSimulatedFallback = process.env.NEXT_PUBLIC_DEMO_MODE === "1";
     const [isAuthenticated, setIsAuthenticated] = useState(false);
     const [recommended, setRecommended] = useState<OpportunityCard[]>([]);
     const [, setRecommendationsSource] = useState<DataSourceState>("no_data");
@@ -148,10 +148,14 @@ export default function DashboardPage() {
     const [appCount, setAppCount] = useState<number>(0);
     const [posts, setPosts] = useState<ActivityPost[]>([]);
     const [, setPostsSource] = useState<DataSourceState>("no_data");
+    const [backendHealthy, setBackendHealthy] = useState(true);
+    const [dashboardNotice, setDashboardNotice] = useState<string | null>(null);
     const lastImpressionBatchRef = useRef("");
 
     const fetchDashboardData = useCallback(async () => {
         try {
+            setDashboardNotice(null);
+            setBackendHealthy(true);
             const token = getAccessToken();
             const hasAuth = Boolean(token);
             setIsAuthenticated(hasAuth);
@@ -246,9 +250,11 @@ export default function DashboardPage() {
                 if (allowSimulatedFallback) {
                     setRecommended(DEV_SIMULATED_OPPORTUNITIES);
                     setRecommendationsSource("simulated");
+                    setDashboardNotice("Demo mode is enabled. Showing seeded recommendations.");
                 } else {
                     setRecommended([]);
                     setRecommendationsSource("no_data");
+                    setDashboardNotice("No recommendations available yet.");
                 }
             }
 
@@ -265,6 +271,7 @@ export default function DashboardPage() {
                 } else if (allowSimulatedFallback) {
                     setPosts(DEV_SIMULATED_POSTS);
                     setPostsSource("simulated");
+                    setDashboardNotice((current) => current || "Demo mode is enabled. Showing seeded community activity.");
                 } else {
                     setPosts([]);
                     setPostsSource("no_data");
@@ -272,6 +279,7 @@ export default function DashboardPage() {
             } else if (allowSimulatedFallback) {
                 setPosts(DEV_SIMULATED_POSTS);
                 setPostsSource("simulated");
+                setDashboardNotice((current) => current || "Backend posts are unavailable. Showing seeded community activity.");
             } else {
                 setPosts([]);
                 setPostsSource("no_data");
@@ -279,16 +287,19 @@ export default function DashboardPage() {
         } catch (error) {
             const message = error instanceof Error ? error.message : "unknown error";
             console.warn(`[Dashboard] Data refresh failed: ${message}`);
+            setBackendHealthy(false);
             if (allowSimulatedFallback) {
                 setRecommended(DEV_SIMULATED_OPPORTUNITIES);
                 setPosts(DEV_SIMULATED_POSTS);
                 setRecommendationsSource("simulated");
                 setPostsSource("simulated");
+                setDashboardNotice("Backend is unavailable. Demo mode is serving seeded data.");
             } else {
                 setRecommended([]);
                 setPosts([]);
                 setRecommendationsSource("no_data");
                 setPostsSource("no_data");
+                setDashboardNotice("Backend is unavailable. Live dashboard data could not be loaded.");
             }
         }
     }, [allowSimulatedFallback, router]);
@@ -444,6 +455,30 @@ export default function DashboardPage() {
                         {isAuthenticated ? "View Profile" : "Sign In"}
                     </button>
                 </motion.header>
+
+                {(dashboardNotice || !backendHealthy) && (
+                    <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="card-panel"
+                        style={{
+                            marginBottom: "1.5rem",
+                            background: backendHealthy ? "var(--bg-surface)" : "color-mix(in srgb, #ffcc66 18%, var(--bg-surface) 82%)",
+                            borderColor: backendHealthy ? "var(--border-subtle)" : "#ffcc66",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "0.75rem",
+                        }}
+                    >
+                        {backendHealthy ? <CircleCheck size={18} /> : <CircleAlert size={18} />}
+                        <div>
+                            <div style={{ fontWeight: 700 }}>{backendHealthy ? "Dashboard status" : "Backend status"}</div>
+                            <div style={{ color: "var(--text-secondary)" }}>
+                                {dashboardNotice || (backendHealthy ? "Live mode" : "Service unavailable")}
+                            </div>
+                        </div>
+                    </motion.div>
+                )}
 
                 {/* Infinite Marquee */}
                 <div style={{ 

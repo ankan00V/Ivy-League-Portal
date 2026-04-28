@@ -14,7 +14,7 @@ from openai import AsyncOpenAI
 
 from app.core.cache import cache_get_bytes, cache_key, cache_set_bytes
 from app.core.config import settings
-from app.core.metrics import CACHE_HITS_TOTAL, CACHE_MISSES_TOTAL
+from app.core.metrics import CACHE_HITS_TOTAL, CACHE_MISSES_TOTAL, EMBEDDING_PROVIDER_HEALTH
 
 TOKEN_PATTERN = re.compile(r"[A-Za-z0-9+#]+")
 logger = logging.getLogger(__name__)
@@ -40,6 +40,7 @@ class EmbeddingService:
         )
         self._local_model_disabled = False
         self._local_model_failure_logged = False
+        self._active_mode = "boot"
 
     @property
     def dimension(self) -> int:
@@ -51,6 +52,30 @@ class EmbeddingService:
         norms = np.linalg.norm(vectors, axis=1, keepdims=True)
         norms = np.clip(norms, 1e-12, None)
         return vectors / norms
+
+    def _report_health(self, *, provider: str, mode: str, healthy: bool) -> None:
+        self._active_mode = mode
+        if EMBEDDING_PROVIDER_HEALTH is not None:
+            EMBEDDING_PROVIDER_HEALTH.labels(provider=provider, mode=mode).set(1.0 if healthy else 0.0)
+
+    def is_degraded(self) -> bool:
+        return self._active_mode in {"hash_fallback", "unavailable"}
+
+    def status(self) -> dict[str, str | bool]:
+        return {
+            "provider": self.provider,
+            "mode": self._active_mode,
+            "degraded": self.is_degraded(),
+        }
+
+    def ensure_healthy_for_production(self) -> None:
+        if not settings.EMBEDDING_HEALTH_ENFORCE_IN_PRODUCTION:
+            return
+        if settings.EMBEDDING_HEALTH_FAIL_ON_HASH_FALLBACK and self.is_degraded():
+            raise RuntimeError(
+                f"Embedding provider is degraded (mode={self._active_mode}). "
+                "Production requires a healthy embedding backend."
+            )
 
     def _ensure_local_model(self):
         if self._local_model_disabled:
@@ -114,9 +139,11 @@ class EmbeddingService:
                 if vectors.ndim == 1:
                     vectors = vectors.reshape(1, -1)
                 self._label_dim = int(vectors.shape[1])
+                self._report_health(provider=self.provider, mode="sentence_transformers", healthy=True)
                 return vectors
             except Exception as exc:
                 self._local_model_disabled = True
+                self._report_health(provider=self.provider, mode="hash_fallback", healthy=False)
                 if not self._local_model_failure_logged:
                     logger.warning(
                         "[EmbeddingService] sentence-transformers unavailable; falling back to hash embedding: %s",
@@ -127,6 +154,7 @@ class EmbeddingService:
         vectors = np.asarray([self._hash_embed_text(value) for value in values], dtype=np.float32)
         if vectors.ndim == 1:
             vectors = vectors.reshape(1, -1)
+        self._report_health(provider=self.provider, mode="hash_fallback", healthy=False)
         return self._normalize(vectors)
 
     async def embed_texts(self, texts: Iterable[str]) -> np.ndarray:
@@ -147,9 +175,11 @@ class EmbeddingService:
                 if vectors.ndim == 1:
                     vectors = vectors.reshape(1, -1)
                 self._label_dim = int(vectors.shape[1])
+                self._report_health(provider=self.provider, mode="openai", healthy=True)
                 return vectors
             except Exception as exc:
                 print(f"[EmbeddingService] OpenAI embeddings failed, falling back: {exc}")
+                self._report_health(provider=self.provider, mode="unavailable", healthy=False)
                 return None
 
         if self.provider == "openai":

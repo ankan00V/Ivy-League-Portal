@@ -53,6 +53,10 @@ class ModelVersionResponse(BaseModel):
     split_strategy: str = "time"
     training_metadata: dict[str, Any] = Field(default_factory=dict)
     model_card: dict[str, Any] = Field(default_factory=dict)
+    artifact_uri: Optional[str] = None
+    artifact_provider: Optional[str] = None
+    feature_schema: dict[str, Any] = Field(default_factory=dict)
+    serving_ready: bool = False
     notes: Optional[str] = None
 
 
@@ -219,6 +223,10 @@ async def list_models(_: User = Depends(get_current_admin_user)) -> Any:
             split_strategy=model.split_strategy,
             training_metadata=dict(model.training_metadata or {}),
             model_card=dict(model.model_card or {}),
+            artifact_uri=model.artifact_uri,
+            artifact_provider=model.artifact_provider,
+            feature_schema=dict(model.feature_schema or {}),
+            serving_ready=bool(model.serving_ready),
             notes=model.notes,
         )
         for model in models
@@ -249,6 +257,10 @@ async def activate_model(model_id: str, _: User = Depends(get_current_admin_user
         split_strategy=model.split_strategy,
         training_metadata=dict(model.training_metadata or {}),
         model_card=dict(model.model_card or {}),
+        artifact_uri=model.artifact_uri,
+        artifact_provider=model.artifact_provider,
+        feature_schema=dict(model.feature_schema or {}),
+        serving_ready=bool(model.serving_ready),
         notes=model.notes,
     )
 
@@ -282,6 +294,10 @@ async def rollback_active_model(_: User = Depends(get_current_admin_user)) -> An
         split_strategy=model.split_strategy,
         training_metadata=dict(model.training_metadata or {}),
         model_card=dict(model.model_card or {}),
+        artifact_uri=model.artifact_uri,
+        artifact_provider=model.artifact_provider,
+        feature_schema=dict(model.feature_schema or {}),
+        serving_ready=bool(model.serving_ready),
         notes=model.notes,
     )
 

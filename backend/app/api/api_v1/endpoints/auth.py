@@ -12,6 +12,7 @@ import requests as http_requests
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
+from jose import JWTError, jwt
 from pydantic import BaseModel, EmailStr, field_validator
 
 from app.api.deps import get_current_admin_user
@@ -33,10 +34,12 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 OTP_EXPIRY_SECONDS = 300
+ADMIN_CHALLENGE_EXPIRY_SECONDS = 600
 LOCAL_ENV_NAMES = {"local", "dev", "development", "test"}
 VALID_ACCOUNT_TYPES = {"candidate", "employer"}
 LOCAL_OAUTH_HOSTS = {"localhost", "127.0.0.1"}
 COOKIE_SESSION_SENTINEL = "__cookie_session__"
+ADMIN_CHALLENGE_SCOPE = "admin:challenge"
 
 
 def _scopes_for_user(user: User) -> list[str]:
@@ -277,6 +280,99 @@ def _clear_session_cookie(response: Optional[Response]) -> None:
     )
 
 
+class PasswordLoginResponse(BaseModel):
+    access_token: str = ""
+    token_type: str = "bearer"
+    requires_admin_verification: bool = False
+    admin_challenge_token: str | None = None
+    admin_verification_path: str | None = None
+    otp_delivery: Literal["email", "debug"] | None = None
+    otp_expires_in_seconds: int | None = None
+    otp_cooldown_seconds: int | None = None
+    debug_otp: str | None = None
+
+
+class AdminVerifyRequest(BaseModel):
+    email: EmailStr
+    otp: str
+    totp_code: str
+    admin_challenge_token: str
+
+    @field_validator("otp", mode="before")
+    @classmethod
+    def normalize_otp(cls, value: str) -> str:
+        otp = str(value or "").strip()
+        if len(otp) != 6 or not otp.isdigit():
+            raise ValueError("OTP must be a 6-digit numeric code")
+        return otp
+
+    @field_validator("totp_code", mode="before")
+    @classmethod
+    def normalize_totp_code(cls, value: str) -> str:
+        code = str(value or "").strip()
+        if not code.isdigit() or len(code) != max(6, int(settings.ADMIN_TOTP_DIGITS)):
+            raise ValueError(f"TOTP code must be a {max(6, int(settings.ADMIN_TOTP_DIGITS))}-digit number")
+        return code
+
+    @field_validator("admin_challenge_token", mode="before")
+    @classmethod
+    def normalize_admin_challenge_token(cls, value: str) -> str:
+        token = str(value or "").strip()
+        if not token:
+            raise ValueError("admin_challenge_token is required")
+        return token
+
+
+def _create_admin_challenge_token(user: User) -> str:
+    return create_access_token(
+        str(user.id),
+        expires_delta=timedelta(seconds=ADMIN_CHALLENGE_EXPIRY_SECONDS),
+        scopes=[ADMIN_CHALLENGE_SCOPE],
+    )
+
+
+def _decode_admin_challenge_token(token: str) -> str:
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+    except JWTError as exc:
+        raise HTTPException(status_code=401, detail="Invalid or expired admin verification session") from exc
+
+    subject = str(payload.get("sub") or "").strip()
+    raw_scopes = payload.get("scopes") or []
+    scopes = [str(scope) for scope in raw_scopes] if isinstance(raw_scopes, list) else [str(raw_scopes)]
+    if not subject or ADMIN_CHALLENGE_SCOPE not in scopes:
+        raise HTTPException(status_code=401, detail="Invalid or expired admin verification session")
+    return subject
+
+
+async def _issue_admin_email_otp(email: str) -> tuple[Literal["email", "debug"], int, str | None]:
+    cooldown_seconds = max(1, int(settings.OTP_SEND_COOLDOWN_SECONDS))
+    remaining_cooldown = await get_otp_cooldown_remaining(
+        email,
+        purpose="signin",
+        cooldown_seconds=cooldown_seconds,
+    )
+    if remaining_cooldown > 0:
+        return "email", remaining_cooldown, None
+
+    otp = f"{secrets.randbelow(1_000_000):06d}"
+    await set_otp(
+        email,
+        otp,
+        expire_seconds=OTP_EXPIRY_SECONDS,
+        purpose="signin",
+    )
+
+    try:
+        await send_email_otp(email, otp)
+        return "email", cooldown_seconds, None
+    except Exception:
+        if str(settings.ENVIRONMENT).strip().lower() in LOCAL_ENV_NAMES and bool(settings.OTP_ALLOW_DEBUG_FALLBACK):
+            return "debug", cooldown_seconds, otp
+        await delete_otp(email, purpose="signin")
+        raise
+
+
 @router.post("/register", response_model=UserResponse)
 async def register_user(
     user_in: UserCreate
@@ -305,7 +401,7 @@ async def register_user(
     return user
 
 
-@router.post("/login", response_model=Token)
+@router.post("/login", response_model=PasswordLoginResponse)
 async def login_access_token(
     form_data: OAuth2PasswordRequestForm = Depends(),
     request: Request = None,  # type: ignore[assignment]
@@ -316,20 +412,6 @@ async def login_access_token(
     """
     normalized_email = str(form_data.username or "").strip().lower()
     ip_address, user_agent = _request_context(request)
-    if is_reserved_admin_email(normalized_email):
-        await auth_security_service.audit_event(
-            event_type="login.password",
-            email=normalized_email,
-            purpose="signin",
-            success=False,
-            reason="reserved_admin_identity",
-            ip_address=ip_address,
-            user_agent=user_agent,
-        )
-        raise HTTPException(
-            status_code=403,
-            detail="Use the dedicated admin authentication flow.",
-        )
 
     lock = await auth_security_service.check_lock(email=normalized_email, action="password_login", purpose="signin")
     if lock.locked:
@@ -383,6 +465,55 @@ async def login_access_token(
             user_id=user.id,
         )
         raise HTTPException(status_code=400, detail="Inactive user")
+    if is_reserved_admin_email(normalized_email):
+        if not bool(getattr(user, "is_admin", False)):
+            await auth_security_service.audit_event(
+                event_type="login.admin",
+                email=normalized_email,
+                purpose="signin",
+                success=False,
+                reason="admin_identity_not_provisioned",
+                ip_address=ip_address,
+                user_agent=user_agent,
+                user_id=user.id,
+            )
+            raise HTTPException(status_code=403, detail="Admin identity is not provisioned")
+
+        try:
+            delivery, otp_cooldown_seconds, debug_otp = await _issue_admin_email_otp(normalized_email)
+        except Exception as exc:
+            await auth_security_service.audit_event(
+                event_type="login.admin",
+                email=normalized_email,
+                purpose="signin",
+                success=False,
+                reason="otp_delivery_failed",
+                ip_address=ip_address,
+                user_agent=user_agent,
+                user_id=user.id,
+            )
+            raise HTTPException(status_code=503, detail=f"Unable to start admin verification: {exc}") from exc
+
+        await auth_security_service.audit_event(
+            event_type="login.admin",
+            email=normalized_email,
+            account_type=str(getattr(user, "account_type", "candidate") or "candidate"),
+            purpose="signin",
+            success=True,
+            reason="password_verified_pending_otp_totp",
+            ip_address=ip_address,
+            user_agent=user_agent,
+            user_id=user.id,
+        )
+        return PasswordLoginResponse(
+            requires_admin_verification=True,
+            admin_challenge_token=_create_admin_challenge_token(user),
+            admin_verification_path="/control/auth",
+            otp_delivery=delivery,
+            otp_expires_in_seconds=OTP_EXPIRY_SECONDS,
+            otp_cooldown_seconds=otp_cooldown_seconds,
+            debug_otp=debug_otp,
+        )
     if str(getattr(user, "account_type", "candidate")).strip().lower() == "employer":
         _ensure_employer_corporate_email(user.email)
 
@@ -423,25 +554,18 @@ class AdminLoginRequest(BaseModel):
         return code
 
 
-@router.post("/admin/login", response_model=Token, include_in_schema=False)
-async def login_admin_access_token(
-    payload: AdminLoginRequest,
+@router.post("/admin/verify", response_model=Token, include_in_schema=False)
+async def verify_admin_access_token(
+    payload: AdminVerifyRequest,
     request: Request = None,  # type: ignore[assignment]
     response: Response = None,  # type: ignore[assignment]
 ) -> Any:
     normalized_email = str(payload.email or "").strip().lower()
     ip_address, user_agent = _request_context(request)
     if not is_reserved_admin_email(normalized_email):
-        await auth_security_service.audit_event(
-            event_type="login.admin",
-            email=normalized_email,
-            purpose="signin",
-            success=False,
-            reason="reserved_admin_email_mismatch",
-            ip_address=ip_address,
-            user_agent=user_agent,
-        )
         raise HTTPException(status_code=403, detail="Not authorized")
+
+    challenge_user_id = _decode_admin_challenge_token(payload.admin_challenge_token)
 
     lock = await auth_security_service.check_lock(email=normalized_email, action="admin_login", purpose="signin")
     if lock.locked:
@@ -463,8 +587,7 @@ async def login_admin_access_token(
         )
 
     user = await User.find_one(User.email == normalized_email)
-    password_ok = bool(user and verify_password(payload.password, str(getattr(user, "hashed_password", ""))))
-    if not user or not password_ok or not bool(getattr(user, "is_admin", False)):
+    if not user or not bool(getattr(user, "is_admin", False)) or str(user.id) != challenge_user_id:
         failure = await auth_security_service.record_failure(
             email=normalized_email,
             action="admin_login",
@@ -475,28 +598,42 @@ async def login_admin_access_token(
             email=normalized_email,
             purpose="signin",
             success=False,
-            reason="invalid_credentials",
+            reason="invalid_admin_challenge",
             ip_address=ip_address,
             user_agent=user_agent,
             lock_applied=failure.locked,
             lock_until=failure.lock_until,
             user_id=user.id if user else None,
         )
-        raise HTTPException(status_code=400, detail="Invalid admin credentials")
+        raise HTTPException(status_code=400, detail="Invalid admin verification session")
 
     if not user.is_active:
+        raise HTTPException(status_code=400, detail="Inactive user")
+
+    is_valid = await validate_otp(
+        normalized_email,
+        payload.otp,
+        purpose="signin",
+    )
+    if not is_valid:
+        failure = await auth_security_service.record_failure(
+            email=normalized_email,
+            action="admin_login",
+            purpose="signin",
+        )
         await auth_security_service.audit_event(
             event_type="login.admin",
             email=normalized_email,
-            account_type=str(getattr(user, "account_type", "candidate") or "candidate"),
             purpose="signin",
             success=False,
-            reason="inactive_user",
+            reason="invalid_or_expired_otp",
             ip_address=ip_address,
             user_agent=user_agent,
+            lock_applied=failure.locked,
+            lock_until=failure.lock_until,
             user_id=user.id,
         )
-        raise HTTPException(status_code=400, detail="Inactive user")
+        raise HTTPException(status_code=400, detail="Invalid or expired OTP")
 
     try:
         _validate_admin_totp_or_raise(user, payload.totp_code)
@@ -526,6 +663,7 @@ async def login_admin_access_token(
         )
         raise exc
 
+    await delete_otp(normalized_email, purpose="signin")
     await auth_security_service.record_success(email=normalized_email, action="admin_login", purpose="signin")
     await auth_security_service.audit_event(
         event_type="login.admin",
@@ -547,6 +685,19 @@ async def login_admin_access_token(
     )
     _set_session_cookie(response, token)
     return _token_response_payload(token)
+
+
+@router.post("/admin/login", response_model=Token, include_in_schema=False)
+async def login_admin_access_token(
+    payload: AdminLoginRequest,
+    request: Request = None,  # type: ignore[assignment]
+    response: Response = None,  # type: ignore[assignment]
+) -> Any:
+    del payload, request, response
+    raise HTTPException(
+        status_code=410,
+        detail="Start from the normal login page. Admin sign-in now requires password, email OTP, and TOTP.",
+    )
 
 
 class OTPSendRequest(BaseModel):

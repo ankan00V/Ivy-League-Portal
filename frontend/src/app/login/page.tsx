@@ -7,7 +7,13 @@ import React, { useEffect, useMemo, useState } from "react";
 
 import BrandLogo from "@/components/BrandLogo";
 import { apiUrl } from "@/lib/api";
-import { getAccessToken, hasAuthSession, resolvePostAuthRoute, setAccessToken } from "@/lib/auth-session";
+import {
+  getAccessToken,
+  hasAuthSession,
+  resolvePostAuthRoute,
+  setAccessToken,
+  setPendingAdminChallenge,
+} from "@/lib/auth-session";
 import { getApiErrorMessage, getUnknownErrorMessage } from "@/lib/error-utils";
 
 type AuthStep = "email" | "otp" | "password";
@@ -17,6 +23,18 @@ type OAuthProviderStatus = {
   google: boolean;
   linkedin: boolean;
   microsoft: boolean;
+};
+
+type PasswordLoginResponse = {
+  access_token?: string;
+  token_type?: string;
+  requires_admin_verification?: boolean;
+  admin_challenge_token?: string;
+  admin_verification_path?: string;
+  otp_delivery?: "email" | "debug";
+  otp_expires_in_seconds?: number;
+  otp_cooldown_seconds?: number;
+  debug_otp?: string | null;
 };
 
 const LOGIN_VISUALS = {
@@ -219,9 +237,26 @@ export default function LoginPage() {
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: body.toString(),
       });
-      const payload = await res.json().catch(() => ({}));
+      const payload = (await res.json().catch(() => ({}))) as PasswordLoginResponse;
       if (!res.ok) {
         throw new Error(getApiErrorMessage(payload, "Invalid email/password"));
+      }
+      if (payload.requires_admin_verification) {
+        const challengeToken = String(payload.admin_challenge_token || "");
+        if (!challengeToken) {
+          throw new Error("Admin verification session was not created");
+        }
+        setPendingAdminChallenge({
+          email: normalizedEmail,
+          adminChallengeToken: challengeToken,
+          otpDelivery: payload.otp_delivery,
+          otpCooldownSeconds: payload.otp_cooldown_seconds,
+          otpExpiresInSeconds: payload.otp_expires_in_seconds,
+          debugOtp: payload.debug_otp,
+        });
+        setInfo("Password verified. Continue with OTP and TOTP.");
+        router.push(payload.admin_verification_path || "/control/auth");
+        return;
       }
       const token = String(payload.access_token || "");
       if (!token) {

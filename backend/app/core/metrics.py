@@ -35,6 +35,9 @@ OPPORTUNITY_STALE: Optional["Gauge"] = None
 RANKING_REQUESTS_TOTAL: Optional["Counter"] = None
 RANKING_REQUEST_LATENCY_MS: Optional["Histogram"] = None
 INTERACTION_EVENTS_TOTAL: Optional["Counter"] = None
+WAREHOUSE_EXPORTS_TOTAL: Optional["Counter"] = None
+ONLINE_FEATURE_PUBLISH_TOTAL: Optional["Counter"] = None
+EMBEDDING_PROVIDER_HEALTH: Optional["Gauge"] = None
 
 
 def init_metrics() -> None:
@@ -54,6 +57,9 @@ def init_metrics() -> None:
     global RANKING_REQUESTS_TOTAL
     global RANKING_REQUEST_LATENCY_MS
     global INTERACTION_EVENTS_TOTAL
+    global WAREHOUSE_EXPORTS_TOTAL
+    global ONLINE_FEATURE_PUBLISH_TOTAL
+    global EMBEDDING_PROVIDER_HEALTH
 
     if not metrics_available() or Counter is None or Histogram is None or Gauge is None:
         return
@@ -144,6 +150,21 @@ def init_metrics() -> None:
         "opportunity_interaction_events_total",
         "Interaction events by type and experiment variant.",
         labelnames=("interaction_type", "ranking_mode", "experiment_key", "experiment_variant", "traffic_type"),
+    )
+    WAREHOUSE_EXPORTS_TOTAL = Counter(
+        "warehouse_exports_total",
+        "Warehouse export attempts by format and status.",
+        labelnames=("format", "status"),
+    )
+    ONLINE_FEATURE_PUBLISH_TOTAL = Counter(
+        "online_feature_publish_total",
+        "Online feature publication counts by target and status.",
+        labelnames=("target", "status"),
+    )
+    EMBEDDING_PROVIDER_HEALTH = Gauge(
+        "embedding_provider_health",
+        "Embedding provider health: 1 healthy, 0 degraded.",
+        labelnames=("provider", "mode"),
     )
 
 

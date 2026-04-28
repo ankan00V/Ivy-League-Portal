@@ -5,6 +5,7 @@ import { ADMIN_DASHBOARD_PATH } from "@/lib/admin-routes";
 export const ACCESS_TOKEN_KEY = "access_token";
 export const ACCESS_TOKEN_EXPIRES_AT_KEY = "access_token_expires_at";
 export const AUTH_SESSION_PRESENT_KEY = "auth_session_present";
+export const ADMIN_CHALLENGE_KEY = "admin_pending_challenge";
 export const COOKIE_SESSION_SENTINEL = "__cookie_session__";
 export const AUTH_STATE_EVENT = "auth-state-changed";
 export const ACCESS_TOKEN_LIFETIME_MS = 24 * 60 * 60 * 1000;
@@ -21,6 +22,15 @@ type OnboardingStatus = {
 
 type CurrentUser = {
   is_admin?: boolean;
+};
+
+type PendingAdminChallenge = {
+  email: string;
+  adminChallengeToken: string;
+  otpDelivery?: "email" | "debug";
+  otpCooldownSeconds?: number;
+  otpExpiresInSeconds?: number;
+  debugOtp?: string | null;
 };
 
 function dispatchAuthState(reason: AuthStateReason): void {
@@ -113,6 +123,39 @@ export function clearAccessToken(reason: AuthStateReason = "logout"): void {
     // Best-effort cookie invalidation.
   });
   clearStoredAuth(reason);
+}
+
+export function setPendingAdminChallenge(payload: PendingAdminChallenge): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  sessionStorage.setItem(ADMIN_CHALLENGE_KEY, JSON.stringify(payload));
+}
+
+export function getPendingAdminChallenge(): PendingAdminChallenge | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const raw = sessionStorage.getItem(ADMIN_CHALLENGE_KEY);
+  if (!raw) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw) as PendingAdminChallenge;
+    if (!parsed?.email || !parsed?.adminChallengeToken) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function clearPendingAdminChallenge(): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  sessionStorage.removeItem(ADMIN_CHALLENGE_KEY);
 }
 
 export function getAuthStateEventName(): string {

@@ -28,6 +28,10 @@ class RankingModelVersion(Document):
     training_rows: int = 0
     label_window_hours: int = 72
     split_strategy: str = "time"
+    artifact_uri: Optional[str] = None
+    artifact_provider: Optional[str] = None
+    feature_schema: dict[str, Any] = Field(default_factory=dict)
+    serving_ready: bool = False
 
     baselines: dict[str, Any] = Field(default_factory=dict)
     lifecycle: dict[str, Any] = Field(default_factory=dict)

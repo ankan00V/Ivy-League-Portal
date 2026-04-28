@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Optional
 
 from app.core.config import settings
+from app.services.model_artifact_service import model_artifact_service
 
 from app.services.personalization.feature_builder import RankerFeatures
 
@@ -44,7 +45,9 @@ class LearnedRanker:
         if not getattr(settings, "LEARNED_RANKER_ENABLED", False):
             return
 
-        model_path = Path(getattr(settings, "LEARNED_RANKER_MODEL_PATH", "") or "")
+        configured_uri = model_artifact_service.resolve_learned_ranker_uri()
+        resolved_local_path = model_artifact_service.resolve_local_path(configured_uri)
+        model_path = resolved_local_path or Path(getattr(settings, "LEARNED_RANKER_MODEL_PATH", "") or "")
         if not model_path:
             return
         if not model_path.exists():
