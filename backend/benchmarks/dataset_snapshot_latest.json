@@ -1,17 +1,17 @@
 {
   "counts": {
-    "applications": 19,
-    "drift_reports": 48,
-    "experiment_assignments": 302,
+    "applications": 0,
+    "drift_reports": 56,
+    "experiment_assignments": 300,
     "experiments": 3,
-    "opportunities": 331,
-    "opportunity_interactions": 20987,
-    "profiles": 320,
-    "ranking_model_versions": 47,
+    "opportunities": 330,
+    "opportunity_interactions": 15706,
+    "profiles": 319,
+    "ranking_model_versions": 55,
     "users": 323
   },
-  "generated_at": "2026-04-27T06:36:52.871519",
-  "snapshot_date": "April 27, 2026",
+  "generated_at": "2026-04-29T06:32:01.374565",
+  "snapshot_date": "April 29, 2026",
   "source_distribution": {
     "aicte_internship": 10,
     "codeforces": 2,
@@ -30,7 +30,7 @@
     "promilo": 7,
     "techgig": 1,
     "unstop": 32,
-    "wayup": 10,
+    "wayup": 9,
     "ycombinator_jobs": 12
   }
 }

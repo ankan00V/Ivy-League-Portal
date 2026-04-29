@@ -90,38 +90,38 @@ flowchart LR
 <!-- DATASET_SNAPSHOT:START -->
 
 ## Dataset Size (Verified Snapshot)
-Snapshot date: **April 27, 2026**
+Snapshot date: **April 29, 2026**
 
-- Opportunities: **331**
-- Applications: **19**
-- Opportunity interactions: **20,987**
+- Opportunities: **330**
+- Applications: **0**
+- Opportunity interactions: **15,706**
 - Experiments: **3**
-- Experiment assignments: **302**
-- Ranking model versions: **47**
-- Drift reports: **48**
-- Profiles: **320**
+- Experiment assignments: **300**
+- Ranking model versions: **55**
+- Drift reports: **56**
+- Profiles: **319**
 - Users: **323**
 
 Source distribution for opportunities:
+- `freshersworld`: 61
+- `internshala`: 58
+- `indeed_india`: 53
+- `unstop`: 32
+- `linkedin`: 19
+- `ivy_rss`: 15
+- `hackerearth`: 12
+- `ycombinator_jobs`: 12
 - `aicte_internship`: 10
-- `codeforces`: 2
+- `makeintern`: 9
+- `wayup`: 9
 - `devfolio`: 8
 - `devpost`: 8
 - `foundit`: 8
-- `freshersworld`: 61
-- `hack2skill`: 5
-- `hackerearth`: 12
-- `handshake`: 1
-- `indeed_india`: 53
-- `internshala`: 58
-- `ivy_rss`: 15
-- `linkedin`: 19
-- `makeintern`: 9
 - `promilo`: 7
+- `hack2skill`: 5
+- `codeforces`: 2
+- `handshake`: 1
 - `techgig`: 1
-- `unstop`: 32
-- `wayup`: 10
-- `ycombinator_jobs`: 12
 
 <!-- DATASET_SNAPSHOT:END -->
 
