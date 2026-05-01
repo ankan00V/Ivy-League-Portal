@@ -14,3 +14,4 @@ backend/storage/model_artifacts/
 backend/storage/warehouse/
 backend/models/
 backend/backend/
+backend/uvicorn_local.log
