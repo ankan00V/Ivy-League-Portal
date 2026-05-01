@@ -12,7 +12,6 @@ jobs:
     env:
       MONGODB_URL: ${{ secrets.MONGODB_URL }}
       MONGODB_DB_NAME: ${{ secrets.MONGODB_DB_NAME }}
-      MLOPS_ENFORCE_BLOCKING_GATES: ${{ vars.MLOPS_ENFORCE_BLOCKING_GATES }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -37,22 +36,16 @@ jobs:
           fi
 
       - name: Run real-traffic parity gate
-        run: |
-          if [ "${MLOPS_ENFORCE_BLOCKING_GATES}" = "true" ]; then
-            echo "Strict blocking mode enabled."
-            python backend/scripts/check_real_traffic_rollout_readiness.py --days 14 --fail-on-not-ready
-          else
-            echo "Report mode: set MLOPS_ENFORCE_BLOCKING_GATES=true to enforce blocking."
-            python backend/scripts/check_real_traffic_rollout_readiness.py --days 14
-          fi
+        run: python backend/scripts/check_real_traffic_rollout_readiness.py --days 14 --fail-on-not-ready
 
       - name: Run champion/challenger gate
-        run: |
-          if [ "${MLOPS_ENFORCE_BLOCKING_GATES}" = "true" ]; then
-            python backend/scripts/check_champion_challenger_gate.py --days 14 --fail-on-not-ready
-          else
-            python backend/scripts/check_champion_challenger_gate.py --days 14
-          fi
+        run: python backend/scripts/check_champion_challenger_gate.py --days 14 --fail-on-not-ready
+
+      - name: Run DS operating-loop gate
+        run: python backend/scripts/check_ds_release_gates.py --lookback-days 14 --fail-on-not-ready
+
+      - name: Run assistant quality gate
+        run: python backend/benchmarks/run_assistant_quality_eval.py --fail-on-regression
 
       - name: Upload release ML gate artifacts
         if: always()
@@ -64,4 +57,6 @@ jobs:
             docs/portfolio/real_traffic_rollout_readiness.md
             backend/benchmarks/champion_challenger_gate.json
             docs/portfolio/champion_challenger_gate.md
+            backend/benchmarks/ds_release_gates.json
+            backend/benchmarks/assistant_quality_eval.json
           if-no-files-found: ignore

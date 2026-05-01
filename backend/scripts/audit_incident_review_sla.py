@@ -4,7 +4,7 @@ import argparse
 import asyncio
 import json
 import sys
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +17,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.core.config import settings
+from app.core.time import utc_now
 from app.models.mlops_incident import MlopsIncident
 from app.services.mlops.incident_service import mlops_incident_service
 
@@ -59,13 +60,13 @@ def _render_markdown(payload: dict[str, Any]) -> str:
 
 
 async def _build_payload(*, days: int) -> dict[str, Any]:
-    since = datetime.utcnow() - timedelta(days=max(1, min(int(days), 90)))
+    since = utc_now() - timedelta(days=max(1, min(int(days), 90)))
     incidents = await MlopsIncident.find_many(MlopsIncident.created_at >= since).sort("-created_at").to_list()
 
     violations: list[dict[str, Any]] = []
     overdue_reviews = 0
     breached_sla = 0
-    now = datetime.utcnow()
+    now = utc_now()
     for incident in incidents:
         incident = await mlops_incident_service.refresh_sla(incident)
         review_due_at = incident.review_due_at
@@ -87,7 +88,7 @@ async def _build_payload(*, days: int) -> dict[str, Any]:
             )
 
     return {
-        "generated_at": datetime.utcnow().isoformat(),
+        "generated_at": utc_now().isoformat(),
         "window_days": int(days),
         "summary": {
             "incidents_scanned": len(incidents),

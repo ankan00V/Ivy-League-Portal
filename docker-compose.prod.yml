@@ -19,6 +19,11 @@ services:
   clickhouse:
     image: clickhouse/clickhouse-server:24.8
     restart: always
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8123/ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
     environment:
       CLICKHOUSE_DB: ${ANALYTICS_WAREHOUSE_CLICKHOUSE_DATABASE:-vidyaverse}
       CLICKHOUSE_USER: ${ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME:-vidyaverse}
@@ -57,6 +62,17 @@ services:
       - ANALYTICS_WAREHOUSE_CLICKHOUSE_DATABASE=${ANALYTICS_WAREHOUSE_CLICKHOUSE_DATABASE:-vidyaverse}
       - ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME=${ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME:-vidyaverse}
       - ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD=${ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD}
+      - ANALYTICS_WAREHOUSE_CLICKHOUSE_SECURE=${ANALYTICS_WAREHOUSE_CLICKHOUSE_SECURE:-false}
+      - ANALYTICS_WAREHOUSE_REQUIRED_MARTS=${ANALYTICS_WAREHOUSE_REQUIRED_MARTS:-["mart_daily_metrics","mart_funnel_metrics","mart_cohort_metrics","mart_feature_freshness","mart_parity_scorecard","mart_training_dataset","mart_ranking_slice_metrics","mart_metadata"]}
+      - ANALYTICS_WAREHOUSE_MAX_STALENESS_MINUTES=${ANALYTICS_WAREHOUSE_MAX_STALENESS_MINUTES:-180}
+      - ANALYTICS_WAREHOUSE_ENFORCE_CLICKHOUSE_IN_PRODUCTION=${ANALYTICS_WAREHOUSE_ENFORCE_CLICKHOUSE_IN_PRODUCTION:-true}
+      - ANALYTICS_BI_TOOL_URL=${ANALYTICS_BI_TOOL_URL:-http://metabase:3000}
+      - LEARNED_RANKER_ENABLED=${LEARNED_RANKER_ENABLED:-true}
+      - LEARNED_RANKER_ARTIFACT_URI=${LEARNED_RANKER_ARTIFACT_URI}
+      - LEARNED_RANKER_ARTIFACT_CHECKSUM_SHA256=${LEARNED_RANKER_ARTIFACT_CHECKSUM_SHA256}
+      - LEARNED_RANKER_REQUIRE_ARTIFACT_IN_PRODUCTION=${LEARNED_RANKER_REQUIRE_ARTIFACT_IN_PRODUCTION:-true}
+      - LEARNED_RANKER_REQUIRE_LOADED_IN_PRODUCTION=${LEARNED_RANKER_REQUIRE_LOADED_IN_PRODUCTION:-true}
+      - MODEL_REGISTRY_REQUIRE_APPROVED_FOR_ACTIVATION=${MODEL_REGISTRY_REQUIRE_APPROVED_FOR_ACTIVATION:-true}
       - MLOPS_MODEL_ARTIFACT_S3_ENDPOINT_URL=${MLOPS_MODEL_ARTIFACT_S3_ENDPOINT_URL:-http://minio:9000}
       - MLOPS_MODEL_ARTIFACT_S3_REGION=${MLOPS_MODEL_ARTIFACT_S3_REGION:-us-east-1}
       - MLOPS_MODEL_ARTIFACT_S3_ACCESS_KEY_ID=${MLOPS_MODEL_ARTIFACT_S3_ACCESS_KEY_ID}
@@ -86,6 +102,20 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  metabase:
+    image: metabase/metabase:v0.50.32
+    restart: always
+    ports:
+      - "3001:3000"
+    environment:
+      MB_DB_FILE: /metabase-data/metabase.db
+      MB_SITE_URL: ${ANALYTICS_BI_PUBLIC_URL:-http://localhost:3001}
+    volumes:
+      - metabase_data:/metabase-data
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
   frontend:
     build:
       context: ./frontend
@@ -106,3 +136,4 @@ volumes:
   redis_data:
   clickhouse_data:
   minio_data:
+  metabase_data:

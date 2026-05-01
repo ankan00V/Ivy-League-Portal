@@ -220,6 +220,20 @@ class Settings(BaseSettings):
     ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD: Optional[str] = None
     ANALYTICS_WAREHOUSE_CLICKHOUSE_SECURE: bool = False
     ANALYTICS_WAREHOUSE_CLICKHOUSE_TABLE_PREFIX: str = "mart_"
+    ANALYTICS_WAREHOUSE_REQUIRED_MARTS: list[str] = [
+        "mart_daily_metrics",
+        "mart_funnel_metrics",
+        "mart_cohort_metrics",
+        "mart_feature_freshness",
+        "mart_parity_scorecard",
+        "mart_training_dataset",
+        "mart_ranking_slice_metrics",
+        "mart_metadata",
+    ]
+    ANALYTICS_WAREHOUSE_MAX_STALENESS_MINUTES: int = 180
+    ANALYTICS_WAREHOUSE_ENFORCE_CLICKHOUSE_IN_PRODUCTION: bool = True
+    ANALYTICS_WAREHOUSE_ENFORCE_FRESHNESS_IN_PRODUCTION: bool = True
+    ANALYTICS_BI_TOOL_URL: Optional[str] = None
     ONLINE_FEATURES_PUBLISH_ENABLED: bool = True
     ONLINE_FEATURES_KEY_PREFIX: str = "vidyaverse:features"
     ONLINE_FEATURES_TTL_SECONDS: int = 60 * 60 * 24 * 14
@@ -255,6 +269,8 @@ class Settings(BaseSettings):
     LEARNED_RANKER_ROLLOUT_EXPERIMENT_KEY: str = "learned_ranker_rollout"
     LEARNED_RANKER_ROLLBACK_ON_GUARDRAIL_FAILURE: bool = True
     LEARNED_RANKER_REQUIRE_ARTIFACT_IN_PRODUCTION: bool = True
+    LEARNED_RANKER_REQUIRE_LOADED_IN_PRODUCTION: bool = True
+    MODEL_REGISTRY_REQUIRE_APPROVED_FOR_ACTIVATION: bool = True
 
     # Data + MLOps (ranking weights)
     MLOPS_AUTORUN_ENABLED: bool = True

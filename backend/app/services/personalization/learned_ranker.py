@@ -54,7 +54,9 @@ class LearnedRanker:
                     expected_sha256=model_artifact_service.expected_checksum(),
                 )
                 model_path = Path(synced.local_path)
-            except Exception:
+            except Exception as exc:
+                if bool(settings.LEARNED_RANKER_REQUIRE_LOADED_IN_PRODUCTION) and settings.ENVIRONMENT.strip().lower() == "production":
+                    raise RuntimeError(f"Learned ranker artifact could not be synchronized: {exc}") from exc
                 model_path = None
         if model_path is None:
             fallback = str(getattr(settings, "LEARNED_RANKER_MODEL_PATH", "") or "").strip()
@@ -101,6 +103,15 @@ class LearnedRanker:
         self._model_kind = model_kind
         self._feature_names = feature_names or []
         self._loaded_path = path_str
+
+    def ensure_loaded_for_production(self) -> None:
+        if not getattr(settings, "LEARNED_RANKER_ENABLED", False):
+            return
+        self.reload_if_needed()
+        if not self.is_loaded:
+            raise RuntimeError(
+                "LEARNED_RANKER_ENABLED=true but no learned ranker model could be loaded."
+            )
 
     def score(self, features: RankerFeatures) -> Optional[RankerResult]:
         self.reload_if_needed()

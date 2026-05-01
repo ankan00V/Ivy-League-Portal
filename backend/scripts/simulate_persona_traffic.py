@@ -20,6 +20,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.core.config import settings
+from app.core.time import utc_now
 from app.models.application import Application
 from app.models.experiment import Experiment, ExperimentAssignment, ExperimentVariant
 from app.models.model_drift_report import ModelDriftReport
@@ -180,7 +181,7 @@ class Persona:
 
 
 def _now() -> datetime:
-    return datetime.utcnow()
+    return utc_now()
 
 
 def _sanitize(value: str) -> str:

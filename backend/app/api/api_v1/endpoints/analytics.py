@@ -127,15 +127,18 @@ async def list_exports(
     return [row.model_dump(mode="json") for row in rows]
 
 
+@router.get("/warehouse/freshness", response_model=dict)
+async def warehouse_freshness(_: User = Depends(get_current_admin_user)) -> Any:
+    return await warehouse_export_service.freshness_status()
+
+
 @router.get("/warehouse/overview", response_model=dict)
 async def warehouse_overview(
     lookback_days: int = 30,
     _: User = Depends(get_current_admin_user),
 ) -> Any:
     return {
-        "feature_freshness": await data_science_observability_service.feature_freshness_summary(),
-        "slice_metrics": await data_science_observability_service.ranking_slice_metrics(lookback_days=lookback_days),
-        "parity": await data_science_observability_service.parity_scorecard(lookback_days=lookback_days),
-        "assistant_quality": await data_science_observability_service.assistant_quality_summary(),
+        **await data_science_observability_service.operating_loop_snapshot(lookback_days=lookback_days),
+        "warehouse_freshness": await warehouse_export_service.freshness_status(),
         "latest_exports": [row.model_dump(mode="json") for row in await warehouse_export_service.latest_runs(limit=5)],
     }

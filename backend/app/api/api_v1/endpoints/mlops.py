@@ -75,6 +75,23 @@ class ArtifactRegisterRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class ArtifactReviewRequest(BaseModel):
+    notes: Optional[str] = None
+
+
+class ArtifactCompareResponse(BaseModel):
+    left: dict[str, Any]
+    right: dict[str, Any]
+    metric_deltas_right_minus_left: dict[str, float]
+    feature_schema: dict[str, Any]
+    same_checksum: bool
+
+
+class ArtifactRollbackRequest(BaseModel):
+    model_version_id: Optional[str] = None
+    artifact_id: Optional[str] = None
+
+
 class ArtifactVersionResponse(BaseModel):
     id: str
     model_family: str
@@ -88,6 +105,10 @@ class ArtifactVersionResponse(BaseModel):
     feature_schema: dict[str, Any] = Field(default_factory=dict)
     training_metadata: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    reviewer: Optional[str] = None
+    review_notes: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
+    promoted_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 
@@ -250,6 +271,10 @@ def _serialize_artifact(model: ModelArtifactVersion) -> ArtifactVersionResponse:
         feature_schema=dict(model.feature_schema or {}),
         training_metadata=dict(model.training_metadata or {}),
         metadata=dict(model.metadata or {}),
+        reviewer=model.reviewer,
+        review_notes=model.review_notes,
+        reviewed_at=model.reviewed_at,
+        promoted_at=model.promoted_at,
         created_at=model.created_at,
         updated_at=model.updated_at,
     )
@@ -294,6 +319,8 @@ async def activate_model(model_id: str, _: User = Depends(get_current_admin_user
         if str(exc) == "model_not_found":
             raise HTTPException(status_code=404, detail="Model not found") from exc
         raise
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return ModelVersionResponse(
         id=str(model.id),
@@ -380,6 +407,83 @@ async def register_artifact(request: ArtifactRegisterRequest, _: User = Depends(
         training_metadata=dict(request.training_metadata or {}),
         metadata=dict(request.metadata or {}),
     )
+    return _serialize_artifact(row)
+
+
+@router.get("/artifacts/compare", response_model=ArtifactCompareResponse)
+async def compare_artifacts(
+    left_artifact_id: str,
+    right_artifact_id: str,
+    _: User = Depends(get_current_admin_user),
+) -> Any:
+    try:
+        return await model_artifact_service.compare_artifacts(
+            artifact_id_a=left_artifact_id,
+            artifact_id_b=right_artifact_id,
+        )
+    except ValueError as exc:
+        if str(exc) == "artifact_not_found":
+            raise HTTPException(status_code=404, detail="Artifact not found") from exc
+        raise
+
+
+@router.post("/artifacts/{artifact_id}/approve", response_model=ArtifactVersionResponse)
+async def approve_artifact(
+    artifact_id: str,
+    request: ArtifactReviewRequest,
+    user: User = Depends(get_current_admin_user),
+) -> Any:
+    try:
+        row = await model_artifact_service.approve_artifact(
+            artifact_id=artifact_id,
+            reviewer=user.email,
+            notes=request.notes or "",
+        )
+    except ValueError as exc:
+        if str(exc) == "artifact_not_found":
+            raise HTTPException(status_code=404, detail="Artifact not found") from exc
+        raise
+    return _serialize_artifact(row)
+
+
+@router.post("/artifacts/{artifact_id}/reject", response_model=ArtifactVersionResponse)
+async def reject_artifact(
+    artifact_id: str,
+    request: ArtifactReviewRequest,
+    user: User = Depends(get_current_admin_user),
+) -> Any:
+    try:
+        row = await model_artifact_service.reject_artifact(
+            artifact_id=artifact_id,
+            reviewer=user.email,
+            notes=request.notes or "",
+        )
+    except ValueError as exc:
+        if str(exc) == "artifact_not_found":
+            raise HTTPException(status_code=404, detail="Artifact not found") from exc
+        raise
+    return _serialize_artifact(row)
+
+
+@router.post("/artifacts/rollback", response_model=ArtifactVersionResponse)
+async def rollback_artifact(
+    request: ArtifactRollbackRequest,
+    _: User = Depends(get_current_admin_user),
+) -> Any:
+    try:
+        row = await model_artifact_service.rollback_artifact(
+            model_version_id=request.model_version_id,
+            artifact_id=request.artifact_id,
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        if detail == "artifact_not_found":
+            raise HTTPException(status_code=404, detail="Artifact not found") from exc
+        if detail == "rollback_target_not_found":
+            raise HTTPException(status_code=409, detail="No approved rollback artifact found") from exc
+        if detail == "artifact_not_approved":
+            raise HTTPException(status_code=409, detail="Rollback artifact is not approved") from exc
+        raise
     return _serialize_artifact(row)
 
 
@@ -604,6 +708,22 @@ async def drift_summary(
     _: User = Depends(get_current_admin_user),
 ) -> Any:
     return await data_science_observability_service.drift_summary(limit=limit)
+
+
+@router.get("/model-promotions", response_model=list[dict])
+async def model_promotion_history(
+    limit: int = 10,
+    _: User = Depends(get_current_admin_user),
+) -> Any:
+    return await data_science_observability_service.model_promotion_history(limit=limit)
+
+
+@router.get("/operating-loop", response_model=dict)
+async def ds_operating_loop(
+    lookback_days: int = settings.MLOPS_GUARDRAIL_LOOKBACK_DAYS,
+    _: User = Depends(get_current_admin_user),
+) -> Any:
+    return await data_science_observability_service.operating_loop_snapshot(lookback_days=lookback_days)
 
 
 @router.get("/lifecycle", response_model=dict)

@@ -5,7 +5,7 @@ import asyncio
 import hashlib
 import json
 import sys
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +18,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.core.config import settings
+from app.core.time import utc_now
 from app.models.feature_store_row import FeatureStoreRow
 from app.models.opportunity import Opportunity
 from app.models.opportunity_interaction import OpportunityInteraction
@@ -61,8 +62,8 @@ def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
 
 async def _snapshot(args: argparse.Namespace) -> dict[str, Any]:
     lookback_days = max(1, min(int(args.lookback_days), 3650))
-    since = datetime.utcnow() - timedelta(days=lookback_days)
-    generated_at = datetime.utcnow()
+    generated_at = utc_now()
+    since = generated_at - timedelta(days=lookback_days)
 
     dataset_tag = (args.name or "snapshot").strip().lower().replace(" ", "-")
     timestamp = generated_at.strftime("%Y%m%d-%H%M%S")

@@ -65,6 +65,8 @@ from app.services.system_metrics import refresh_freshness_metrics
 from app.services.embedding_service import embedding_service
 from app.services.nlp_service import nlp_service
 from app.services.model_artifact_service import model_artifact_service
+from app.services.personalization.learned_ranker import learned_ranker
+from app.services.warehouse_export_service import warehouse_export_service
 from app.services.vector_service import opportunity_vector_service
 from app.core.redis import close_redis
 from app.core.metrics import CONTENT_TYPE_LATEST, init_metrics, render_metrics
@@ -88,9 +90,57 @@ def _csp_has_unsafe_tokens(csp_value: str) -> bool:
     return "'unsafe-inline'" in normalized or "'unsafe-eval'" in normalized
 
 
+def _validate_production_analytics_config() -> None:
+    if not settings.ANALYTICS_WAREHOUSE_ENABLED or not settings.ANALYTICS_WAREHOUSE_EXPORT_ENABLED:
+        return
+    if not settings.ANALYTICS_WAREHOUSE_ENFORCE_CLICKHOUSE_IN_PRODUCTION:
+        return
+    if not settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED:
+        raise RuntimeError("ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED must be true in production.")
+    if not (settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST or "").strip():
+        raise RuntimeError("ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST is required in production.")
+    if not (settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_DATABASE or "").strip():
+        raise RuntimeError("ANALYTICS_WAREHOUSE_CLICKHOUSE_DATABASE is required in production.")
+    if not (settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME or "").strip():
+        raise RuntimeError("ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME is required in production.")
+    if not (settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD or "").strip():
+        raise RuntimeError("ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD is required in production.")
+
+
+def validate_production_operational_config() -> None:
+    if settings.ENVIRONMENT.strip().lower() != "production":
+        return
+    mongo_url = (settings.MONGODB_URL or "").strip().lower()
+    redis_url = (settings.REDIS_URL or "").strip().lower()
+    if settings.SECRET_KEY.startswith("your_super_secret_key_here"):
+        raise RuntimeError("SECRET_KEY must be set via environment in production.")
+    if mongo_url.startswith("mongodb://localhost") or mongo_url.startswith("mongodb://127.0.0.1"):
+        raise RuntimeError("Production requires managed MongoDB; MONGODB_URL cannot point at localhost.")
+    if redis_url.startswith("redis://localhost") or redis_url.startswith("redis://127.0.0.1"):
+        raise RuntimeError("Production requires managed Redis/Upstash; REDIS_URL cannot point at localhost.")
+    _validate_production_analytics_config()
+    if not (settings.MLOPS_MODEL_ARTIFACT_S3_REGION or "").strip():
+        raise RuntimeError("Production model artifact registry requires S3/MinIO region.")
+    if not (settings.MLOPS_MODEL_ARTIFACT_S3_ACCESS_KEY_ID or "").strip():
+        raise RuntimeError("Production model artifact registry requires S3/MinIO access key.")
+    if not (settings.MLOPS_MODEL_ARTIFACT_S3_SECRET_ACCESS_KEY or "").strip():
+        raise RuntimeError("Production model artifact registry requires S3/MinIO secret key.")
+    if not ((settings.LLM_API_KEY or settings.OPENROUTER_API_KEY or "").strip()):
+        raise RuntimeError("Production assistant requires an LLM API key.")
+    if settings.LLM_JUDGE_ENABLED and not (
+        (settings.LLM_JUDGE_API_KEY or settings.LLM_API_KEY or settings.OPENROUTER_API_KEY or "").strip()
+    ):
+        raise RuntimeError("LLM judge is enabled but no judge/LLM API key is configured.")
+    if settings.SMTP_REQUIRE_AUTH and not ((settings.SMTP_USER or "").strip() and (settings.SMTP_PASSWORD or "").strip()):
+        raise RuntimeError("Production SMTP auth requires SMTP_USER and SMTP_PASSWORD.")
+    if not ((settings.GOOGLE_OAUTH_CLIENT_ID or "").strip() and (settings.GOOGLE_OAUTH_CLIENT_SECRET or "").strip()):
+        raise RuntimeError("Production requires Google OAuth client id/secret.")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     if settings.ENVIRONMENT.strip().lower() == "production":
+        validate_production_operational_config()
         if settings.SECRET_KEY.startswith("your_super_secret_key_here"):
             raise RuntimeError("SECRET_KEY must be set via environment in production.")
         if not settings.AUTH_SESSION_COOKIE_ENABLED:
@@ -102,6 +152,8 @@ async def lifespan(app: FastAPI):
         if bool(settings.MONGODB_TLS_ALLOW_INVALID_CERTS):
             raise RuntimeError("MONGODB_TLS_ALLOW_INVALID_CERTS must be false in production.")
         model_artifact_service.ensure_learned_ranker_artifact_ready()
+        if bool(settings.LEARNED_RANKER_REQUIRE_LOADED_IN_PRODUCTION):
+            learned_ranker.ensure_loaded_for_production()
         if settings.MLOPS_ALERTS_ENABLED and settings.MLOPS_ENFORCE_LIVE_ALERT_CHANNELS_IN_PRODUCTION:
             has_live_channel = any(
                 [
@@ -459,7 +511,7 @@ app.add_middleware(
 )
 
 @app.get("/health", tags=["system"])
-def health_check():
+async def health_check():
     """Health check endpoint for load balancers."""
     return {
         "status": "healthy",
@@ -476,6 +528,10 @@ def health_check():
             "export_enabled": bool(settings.ANALYTICS_WAREHOUSE_EXPORT_ENABLED),
             "export_root": settings.ANALYTICS_WAREHOUSE_EXPORT_ROOT,
             "models_dir": settings.ANALYTICS_WAREHOUSE_SQL_MODELS_DIR,
+            "clickhouse_enabled": bool(settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED),
+            "clickhouse_host": settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST,
+            "bi_tool_url": (settings.ANALYTICS_BI_TOOL_URL or "").strip() or None,
+            "freshness": await warehouse_export_service.freshness_status(),
         },
     }
 

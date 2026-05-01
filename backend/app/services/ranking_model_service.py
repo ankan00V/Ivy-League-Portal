@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Optional
 
+from app.core.config import settings
 from app.core.time import utc_now
 from app.models.ranking_model_version import RankingModelVersion
 from app.services.model_artifact_service import model_artifact_service
@@ -81,6 +82,8 @@ class RankingModelService:
         if not model:
             raise ValueError("model_not_found")
         if str(model.artifact_uri or "").strip():
+            if bool(settings.MODEL_REGISTRY_REQUIRE_APPROVED_FOR_ACTIVATION):
+                await model_artifact_service.require_model_version_artifact_approved(model)
             model_artifact_service.ensure_model_version_artifact_ready(model)
 
         model.is_active = True

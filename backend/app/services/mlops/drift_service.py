@@ -7,6 +7,7 @@ from typing import Any, Optional
 import numpy as np
 
 from app.core.config import settings
+from app.core.metrics import MODEL_INPUT_DRIFT_VALUE
 from app.models.model_drift_report import ModelDriftReport
 from app.models.opportunity_interaction import OpportunityInteraction
 from app.models.ranking_model_version import RankingModelVersion
@@ -118,6 +119,11 @@ class DriftService:
             alert=bool(alert),
         )
         await report.insert()
+        if MODEL_INPUT_DRIFT_VALUE is not None:
+            MODEL_INPUT_DRIFT_VALUE.labels(metric="query_bucket_psi").set(float(metrics["query_bucket_psi"]))
+            MODEL_INPUT_DRIFT_VALUE.labels(metric="max_feature_mean_z").set(float(metrics["max_feature_mean_z"]))
+            MODEL_INPUT_DRIFT_VALUE.labels(metric="alert").set(1.0 if alert else 0.0)
+            MODEL_INPUT_DRIFT_VALUE.labels(metric="impressions").set(float(metrics["impressions"]))
         return report
 
 

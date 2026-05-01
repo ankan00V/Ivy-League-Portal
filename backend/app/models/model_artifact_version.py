@@ -21,6 +21,10 @@ class ModelArtifactVersion(Document):
     metadata: dict[str, Any] = Field(default_factory=dict)
     status: str = Field(default="registered")
     verified: bool = False
+    reviewer: Optional[str] = None
+    review_notes: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
+    promoted_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 

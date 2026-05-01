@@ -4,7 +4,7 @@ import argparse
 import asyncio
 import json
 import sys
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +17,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.core.config import settings
+from app.core.time import utc_now
 from app.models.mlops_incident import MlopsIncident
 from app.models.model_drift_report import ModelDriftReport
 from app.models.ranking_model_version import RankingModelVersion
@@ -34,7 +35,7 @@ def _safe_float(value: Any, digits: int = 6) -> str:
 
 
 async def _build_scorecard(*, days: int) -> dict[str, Any]:
-    since = datetime.utcnow() - timedelta(days=max(1, min(days, 90)))
+    since = utc_now() - timedelta(days=max(1, min(days, 90)))
     incidents = await MlopsIncident.find_many(MlopsIncident.created_at >= since).to_list()
     drift_reports = (
         await ModelDriftReport.find_many(ModelDriftReport.created_at >= since)
@@ -52,10 +53,10 @@ async def _build_scorecard(*, days: int) -> dict[str, Any]:
     latest_model_row = latest_model[0] if latest_model else None
 
     return {
-        "generated_at": datetime.utcnow().isoformat(),
+        "generated_at": utc_now().isoformat(),
         "window_days": int(days),
         "window_start": since.isoformat(),
-        "window_end": datetime.utcnow().isoformat(),
+        "window_end": utc_now().isoformat(),
         "incidents": {
             "total": total_incidents,
             "open": open_incidents,

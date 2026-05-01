@@ -2,6 +2,7 @@ import sys
 import tempfile
 import unittest
 import sys
+from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -11,6 +12,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.services.warehouse_export_service import warehouse_export_service
+from app.core.time import utc_now
 
 try:
     import duckdb  # type: ignore  # noqa: F401
@@ -121,6 +123,55 @@ class TestWarehouseClickHouseExport(unittest.TestCase):
         self.assertTrue(any("CREATE TABLE IF NOT EXISTS" in command for command in commands))
         self.assertEqual(inserts[0][0], "mart_daily_metrics")
         self.assertEqual(inserts[0][1][0][1], '{"ctr": 0.12}')
+
+
+class TestWarehouseFreshnessGate(unittest.IsolatedAsyncioTestCase):
+    async def test_freshness_status_reports_missing_when_no_successful_export_exists(self) -> None:
+        class FakeQuery:
+            def sort(self, *_args):
+                return self
+
+            def limit(self, *_args):
+                return self
+
+            async def to_list(self):
+                return []
+
+        with patch("app.services.warehouse_export_service.WarehouseExportRun.find_many", return_value=FakeQuery()):
+            status = await warehouse_export_service.freshness_status(required_marts=["mart_daily_metrics"])
+
+        self.assertFalse(status["fresh"])
+        self.assertEqual(status["status"], "missing")
+        self.assertEqual(status["missing_marts"], ["mart_daily_metrics"])
+
+    async def test_freshness_status_marks_required_marts_stale_after_slo(self) -> None:
+        run = SimpleNamespace(
+            id="run-1",
+            status="ok",
+            exported_tables=["mart_daily_metrics"],
+            mart_files={},
+            metadata={},
+            created_at=utc_now() - timedelta(minutes=15),
+        )
+
+        class FakeQuery:
+            def sort(self, *_args):
+                return self
+
+            def limit(self, *_args):
+                return self
+
+            async def to_list(self):
+                return [run]
+
+        with (
+            patch("app.services.warehouse_export_service.WarehouseExportRun.find_many", return_value=FakeQuery()),
+            patch("app.services.warehouse_export_service.settings.ANALYTICS_WAREHOUSE_MAX_STALENESS_MINUTES", 5),
+        ):
+            status = await warehouse_export_service.freshness_status(required_marts=["mart_daily_metrics"])
+
+        self.assertFalse(status["fresh"])
+        self.assertEqual(status["stale_marts"], ["mart_daily_metrics"])
 
 
 if __name__ == "__main__":

@@ -38,6 +38,12 @@ INTERACTION_EVENTS_TOTAL: Optional["Counter"] = None
 WAREHOUSE_EXPORTS_TOTAL: Optional["Counter"] = None
 ONLINE_FEATURE_PUBLISH_TOTAL: Optional["Counter"] = None
 EMBEDDING_PROVIDER_HEALTH: Optional["Gauge"] = None
+FEATURE_FRESHNESS_SECONDS: Optional["Gauge"] = None
+MODEL_INPUT_DRIFT_VALUE: Optional["Gauge"] = None
+RANKING_SLICE_RATE: Optional["Gauge"] = None
+ASSISTANT_QUALITY_VALUE: Optional["Gauge"] = None
+PARITY_SCORECARD_VALUE: Optional["Gauge"] = None
+MODEL_PROMOTION_INFO: Optional["Gauge"] = None
 
 
 def init_metrics() -> None:
@@ -60,6 +66,12 @@ def init_metrics() -> None:
     global WAREHOUSE_EXPORTS_TOTAL
     global ONLINE_FEATURE_PUBLISH_TOTAL
     global EMBEDDING_PROVIDER_HEALTH
+    global FEATURE_FRESHNESS_SECONDS
+    global MODEL_INPUT_DRIFT_VALUE
+    global RANKING_SLICE_RATE
+    global ASSISTANT_QUALITY_VALUE
+    global PARITY_SCORECARD_VALUE
+    global MODEL_PROMOTION_INFO
 
     if not metrics_available() or Counter is None or Histogram is None or Gauge is None:
         return
@@ -165,6 +177,35 @@ def init_metrics() -> None:
         "embedding_provider_health",
         "Embedding provider health: 1 healthy, 0 degraded.",
         labelnames=("provider", "mode"),
+    )
+    FEATURE_FRESHNESS_SECONDS = Gauge(
+        "ds_feature_freshness_seconds",
+        "Seconds since the latest feature-store row was updated.",
+    )
+    MODEL_INPUT_DRIFT_VALUE = Gauge(
+        "ds_model_input_drift_value",
+        "Latest model input drift metrics by metric name.",
+        labelnames=("metric",),
+    )
+    RANKING_SLICE_RATE = Gauge(
+        "ds_ranking_slice_rate",
+        "Ranking slice CTR/apply-rate metrics by monitored slice.",
+        labelnames=("slice_type", "slice_name", "metric"),
+    )
+    ASSISTANT_QUALITY_VALUE = Gauge(
+        "ds_assistant_quality_value",
+        "Assistant quality metrics by prompt version and route.",
+        labelnames=("metric", "prompt_version", "route"),
+    )
+    PARITY_SCORECARD_VALUE = Gauge(
+        "ds_parity_scorecard_value",
+        "Offline/online parity scorecard values by mode and metric.",
+        labelnames=("mode", "metric"),
+    )
+    MODEL_PROMOTION_INFO = Gauge(
+        "ds_model_promotion_info",
+        "Model promotion history and active-state marker.",
+        labelnames=("model_id", "model_name", "status", "reason"),
     )
 
 

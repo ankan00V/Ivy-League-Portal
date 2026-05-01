@@ -58,8 +58,8 @@ jobs:
           check_required "STAGING_PLAYWRIGHT_EMPLOYER_PASSWORD" "${STAGING_PLAYWRIGHT_EMPLOYER_PASSWORD}"
 
           if [ "${missing}" -ne 0 ]; then
-            echo "STAGING_E2E_READY=false" >> "$GITHUB_ENV"
-            echo "Staging test identities are incomplete. Running in report mode."
+            echo "Staging test identities are incomplete."
+            exit 1
           else
             echo "STAGING_E2E_READY=true" >> "$GITHUB_ENV"
           fi
@@ -77,9 +77,3 @@ jobs:
           PLAYWRIGHT_STAGING_EMPLOYER_PASSWORD: ${{ env.STAGING_PLAYWRIGHT_EMPLOYER_PASSWORD }}
           CI: "true"
         run: npm run e2e:staging -- --reporter=list
-
-      - name: Enforce staging gate when required
-        if: env.STAGING_E2E_READY != 'true' && env.STAGING_E2E_REQUIRED == 'true'
-        run: |
-          echo "Blocking run: STAGING_E2E_REQUIRED=true but staging secrets are incomplete."
-          exit 1

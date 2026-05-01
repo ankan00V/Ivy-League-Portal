@@ -103,3 +103,69 @@ groups:
           summary: "Embedding provider is degraded"
           description: "Embedding service has fallen back to degraded mode."
           runbook: "docs/runbooks/incident-response.md#embedding-provider-degraded"
+
+      - alert: VidyaVerseFeatureStoreFreshnessGateFailed
+        expr: max(ds_feature_freshness_seconds) > 10800
+        for: 15m
+        labels:
+          severity: page
+          service: vidyaverse-feature-store
+        annotations:
+          summary: "Feature-store freshness release gate failed"
+          description: "Feature-store rows are older than the production freshness gate."
+          runbook: "docs/runbooks/data-platform-and-mlops.md#release-gates"
+
+      - alert: VidyaVerseModelInputDriftGateFailed
+        expr: max(ds_model_input_drift_value{metric="alert"}) > 0
+        for: 5m
+        labels:
+          severity: page
+          service: vidyaverse-mlops
+        annotations:
+          summary: "Model input drift release gate failed"
+          description: "The latest model input drift report is alerting."
+          runbook: "docs/runbooks/data-platform-and-mlops.md#release-gates"
+
+      - alert: VidyaVerseParityRegressionGateFailed
+        expr: |
+          (
+            max(ds_parity_scorecard_value{mode="ml",metric="ctr"})
+            -
+            max(ds_parity_scorecard_value{mode="semantic",metric="ctr"})
+          ) < 0
+          or
+          (
+            max(ds_parity_scorecard_value{mode="ml",metric="apply_rate"})
+            -
+            max(ds_parity_scorecard_value{mode="semantic",metric="apply_rate"})
+          ) < 0
+        for: 20m
+        labels:
+          severity: page
+          service: vidyaverse-ranking
+        annotations:
+          summary: "Parity scorecard regressed"
+          description: "ML mode is below semantic baseline on CTR or apply-rate."
+          runbook: "docs/runbooks/data-platform-and-mlops.md#release-gates"
+
+      - alert: VidyaVerseAssistantQualityGateFailed
+        expr: max(ds_assistant_quality_value{metric="failure_rate"}) > 0.05
+        for: 15m
+        labels:
+          severity: page
+          service: vidyaverse-assistant
+        annotations:
+          summary: "Assistant quality release gate failed"
+          description: "Assistant failure rate is above the production gate."
+          runbook: "docs/runbooks/data-platform-and-mlops.md#release-gates"
+
+      - alert: VidyaVerseRankerSliceApplyRateLow
+        expr: ds_ranking_slice_rate{metric="apply_rate",slice_type=~"domain|institution|geography|segment"} < 0.01
+        for: 45m
+        labels:
+          severity: warn
+          service: vidyaverse-ranking
+        annotations:
+          summary: "Per-slice ranker apply rate is low"
+          description: "{{ $labels.slice_type }}/{{ $labels.slice_name }} apply-rate is below the per-slice threshold."
+          runbook: "docs/runbooks/data-platform-and-mlops.md#per-slice-alerting"

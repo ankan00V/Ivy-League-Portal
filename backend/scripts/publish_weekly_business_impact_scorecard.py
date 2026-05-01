@@ -5,7 +5,7 @@ import asyncio
 import json
 import sys
 from collections import Counter, defaultdict
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +18,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.core.config import settings
+from app.core.time import utc_now
 from app.models.application import Application
 from app.models.opportunity_interaction import OpportunityInteraction
 from app.models.ranking_request_telemetry import RankingRequestTelemetry
@@ -223,7 +224,7 @@ async def _main() -> int:
     args = parser.parse_args()
 
     days = max(1, min(int(args.days), 30))
-    now = datetime.utcnow()
+    now = utc_now()
     current_start = now - timedelta(days=days)
     previous_start = current_start - timedelta(days=days)
 
@@ -243,7 +244,7 @@ async def _main() -> int:
             "request_failure_rate": _delta(current_window, previous_window, "request_failure_rate"),
         }
         payload = {
-            "generated_at": datetime.utcnow().isoformat(),
+            "generated_at": utc_now().isoformat(),
             "window_days": days,
             "current_window": current_window,
             "previous_window": previous_window,

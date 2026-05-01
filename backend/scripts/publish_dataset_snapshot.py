@@ -5,7 +5,6 @@ import asyncio
 import json
 import sys
 from collections import Counter
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +17,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.core.config import settings
+from app.core.time import utc_now
 from app.models.application import Application
 from app.models.experiment import Experiment, ExperimentAssignment
 from app.models.model_drift_report import ModelDriftReport
@@ -32,7 +32,7 @@ MARKER_END = "<!-- DATASET_SNAPSHOT:END -->"
 
 
 async def _collect_snapshot() -> dict[str, Any]:
-    generated_at = datetime.utcnow()
+    generated_at = utc_now()
     opportunities = await Opportunity.find_many().to_list()
     source_counter = Counter(
         str(getattr(item, "source", "") or "unknown").strip().lower() or "unknown"

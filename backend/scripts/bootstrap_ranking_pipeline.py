@@ -26,6 +26,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.core.config import settings
+from app.core.time import utc_now
 from app.models.experiment import Experiment, ExperimentAssignment
 from app.models.opportunity import Opportunity
 from app.models.opportunity_interaction import OpportunityInteraction
@@ -103,7 +104,7 @@ def _ranking_mode_from_variant(variant: str) -> str:
 
 
 def _utc_now_naive() -> datetime:
-    return datetime.utcnow().replace(microsecond=0)
+    return utc_now().replace(tzinfo=None, microsecond=0)
 
 
 def _sample_event_time(*, now: datetime, days: int, rng: random.Random) -> datetime:

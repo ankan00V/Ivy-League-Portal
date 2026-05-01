@@ -4,7 +4,6 @@ import argparse
 import json
 import sys
 import uuid
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +15,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.core.config import settings
+from app.core.time import utc_now
 
 
 def _post_json(*, url: str, payload: dict[str, Any], timeout: float) -> dict[str, Any]:
@@ -50,7 +50,7 @@ def main() -> int:
         raise RuntimeError("MLOPS_ALERT_PAGERDUTY_ROUTING_KEY is required for synthetic alert delivery checks.")
 
     test_id = f"synthetic-{uuid.uuid4().hex[:12]}"
-    occurred_at = datetime.utcnow().isoformat()
+    occurred_at = utc_now().isoformat()
 
     slack_payload = {
         "text": f"VidyaVerse synthetic alert delivery check `{test_id}`",

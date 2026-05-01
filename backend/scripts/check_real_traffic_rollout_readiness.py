@@ -4,7 +4,6 @@ import argparse
 import asyncio
 import json
 import sys
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +16,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.core.config import settings
+from app.core.time import utc_now
 from app.models.experiment import Experiment
 from app.models.opportunity_interaction import OpportunityInteraction
 from app.models.ranking_request_telemetry import RankingRequestTelemetry
@@ -172,7 +172,7 @@ async def _main() -> int:
             await _mode_readiness(candidate_mode="ml", baseline_mode="baseline", days=days),
         ]
         payload = {
-            "generated_at": datetime.utcnow().isoformat(),
+            "generated_at": utc_now().isoformat(),
             "window_days": days,
             "overall_ready": all(bool(item.get("ready")) for item in modes),
             "modes": modes,

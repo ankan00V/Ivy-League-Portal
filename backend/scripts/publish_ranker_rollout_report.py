@@ -5,7 +5,7 @@ import asyncio
 import json
 import sys
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +18,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.core.config import settings
+from app.core.time import utc_now
 from app.models.opportunity_interaction import OpportunityInteraction
 from app.models.ranking_model_version import RankingModelVersion
 from app.models.ranking_request_telemetry import RankingRequestTelemetry
@@ -51,7 +52,7 @@ def _guardrail_failure(report: dict[str, Any]) -> tuple[bool, list[str]]:
 
 
 async def _build_report(*, days: int) -> dict[str, Any]:
-    since = datetime.utcnow() - timedelta(days=max(1, min(int(days), 30)))
+    since = utc_now() - timedelta(days=max(1, min(int(days), 30)))
     baseline_mode = str(settings.LEARNED_RANKER_STAGED_BASELINE_MODE or "semantic").strip().lower() or "semantic"
 
     active_model = await RankingModelVersion.find_one(RankingModelVersion.is_active == True)  # noqa: E712
@@ -86,7 +87,7 @@ async def _build_report(*, days: int) -> dict[str, Any]:
     rollback_recommended, rollback_reasons = _guardrail_failure(guardrail_report)
 
     return {
-        "generated_at": datetime.utcnow().isoformat(),
+        "generated_at": utc_now().isoformat(),
         "window_days": int(days),
         "baseline_mode": baseline_mode,
         "active_model": None

@@ -25,6 +25,10 @@ class ArtifactSyncResult:
 
 
 class ModelArtifactService:
+    APPROVED_STATUS = "approved"
+    REJECTED_STATUS = "rejected"
+    VERIFIED_STATUS = "verified"
+
     def resolve_learned_ranker_uri(self) -> str:
         explicit = str(settings.LEARNED_RANKER_ARTIFACT_URI or "").strip()
         if explicit:
@@ -184,7 +188,7 @@ class ModelArtifactService:
             feature_schema=dict(feature_schema or {}),
             training_metadata=dict(training_metadata or {}),
             metadata=dict(metadata or {}),
-            status="verified",
+            status=self.VERIFIED_STATUS,
             verified=True,
             created_at=utc_now(),
             updated_at=utc_now(),
@@ -200,8 +204,113 @@ class ModelArtifactService:
                 "downloaded": sync.downloaded,
                 "registered_at": utc_now().isoformat(),
             }
-            model_version.serving_ready = True
+            model_version.serving_ready = False
             await model_version.save()
+        return row
+
+    async def approve_artifact(self, *, artifact_id: str, reviewer: str, notes: str = "") -> ModelArtifactVersion:
+        row = await ModelArtifactVersion.get(artifact_id)
+        if row is None:
+            raise ValueError("artifact_not_found")
+
+        sync = self.sync_artifact(
+            uri=row.artifact_uri,
+            expected_sha256=str(row.checksum_sha256 or "").strip(),
+        )
+        now = utc_now()
+        row.storage_provider = sync.storage_provider
+        row.checksum_sha256 = sync.checksum_sha256
+        row.local_cache_path = sync.local_path
+        row.verified = True
+        row.status = self.APPROVED_STATUS
+        row.reviewer = reviewer.strip() or "unknown"
+        row.review_notes = notes.strip() or None
+        row.reviewed_at = now
+        row.updated_at = now
+        await row.save()
+
+        if row.model_version_id:
+            model = await RankingModelVersion.get(row.model_version_id)
+            if model is not None:
+                self._attach_artifact_to_model(model=model, artifact=row, sync=sync)
+                model.serving_ready = True
+                await model.save()
+        return row
+
+    async def reject_artifact(self, *, artifact_id: str, reviewer: str, notes: str = "") -> ModelArtifactVersion:
+        row = await ModelArtifactVersion.get(artifact_id)
+        if row is None:
+            raise ValueError("artifact_not_found")
+        now = utc_now()
+        row.status = self.REJECTED_STATUS
+        row.reviewer = reviewer.strip() or "unknown"
+        row.review_notes = notes.strip() or None
+        row.reviewed_at = now
+        row.updated_at = now
+        await row.save()
+        return row
+
+    async def compare_artifacts(self, *, artifact_id_a: str, artifact_id_b: str) -> dict[str, Any]:
+        left = await ModelArtifactVersion.get(artifact_id_a)
+        right = await ModelArtifactVersion.get(artifact_id_b)
+        if left is None or right is None:
+            raise ValueError("artifact_not_found")
+
+        left_metrics = dict((left.training_metadata or {}).get("metrics") or {})
+        right_metrics = dict((right.training_metadata or {}).get("metrics") or {})
+        metric_keys = sorted(set(left_metrics) | set(right_metrics))
+        metric_deltas = {
+            key: self._safe_float(right_metrics.get(key)) - self._safe_float(left_metrics.get(key))
+            for key in metric_keys
+        }
+        left_features = set((left.feature_schema or {}).get("features") or (left.feature_schema or {}).keys())
+        right_features = set((right.feature_schema or {}).get("features") or (right.feature_schema or {}).keys())
+        return {
+            "left": self._artifact_summary(left),
+            "right": self._artifact_summary(right),
+            "metric_deltas_right_minus_left": {key: round(value, 6) for key, value in metric_deltas.items()},
+            "feature_schema": {
+                "added": sorted(right_features - left_features),
+                "removed": sorted(left_features - right_features),
+                "common_count": len(left_features & right_features),
+            },
+            "same_checksum": bool((left.checksum_sha256 or "") and left.checksum_sha256 == right.checksum_sha256),
+        }
+
+    async def rollback_artifact(
+        self,
+        *,
+        model_version_id: str | None = None,
+        artifact_id: str | None = None,
+    ) -> ModelArtifactVersion:
+        if artifact_id:
+            row = await ModelArtifactVersion.get(artifact_id)
+            if row is None:
+                raise ValueError("artifact_not_found")
+        else:
+            filters: list[Any] = [ModelArtifactVersion.status == self.APPROVED_STATUS]
+            if model_version_id:
+                filters.append(ModelArtifactVersion.model_version_id == model_version_id)
+            rows = await ModelArtifactVersion.find_many(*filters).sort("-reviewed_at", "-created_at").limit(2).to_list()
+            if not rows:
+                raise ValueError("rollback_target_not_found")
+            row = rows[1] if len(rows) > 1 else rows[0]
+
+        if row.status != self.APPROVED_STATUS:
+            raise ValueError("artifact_not_approved")
+        sync = self.sync_artifact(
+            uri=row.artifact_uri,
+            expected_sha256=str(row.checksum_sha256 or "").strip(),
+        )
+        row.promoted_at = utc_now()
+        row.updated_at = utc_now()
+        await row.save()
+        if row.model_version_id:
+            model = await RankingModelVersion.get(row.model_version_id)
+            if model is not None:
+                self._attach_artifact_to_model(model=model, artifact=row, sync=sync)
+                model.serving_ready = True
+                await model.save()
         return row
 
     def ensure_model_version_artifact_ready(self, model: RankingModelVersion) -> ArtifactSyncResult | None:
@@ -215,6 +324,25 @@ class ModelArtifactService:
             expected_sha256=str(model.artifact_checksum_sha256 or "").strip(),
         )
 
+    async def require_model_version_artifact_approved(self, model: RankingModelVersion) -> None:
+        artifact_uri = str(model.artifact_uri or "").strip()
+        if not artifact_uri:
+            return
+
+        row = None
+        if model.id is not None:
+            row = await ModelArtifactVersion.find_one(
+                ModelArtifactVersion.status == self.APPROVED_STATUS,
+                ModelArtifactVersion.model_version_id == str(model.id),
+            )
+        if row is None:
+            row = await ModelArtifactVersion.find_one(
+                ModelArtifactVersion.status == self.APPROVED_STATUS,
+                ModelArtifactVersion.artifact_uri == artifact_uri,
+            )
+        if row is None:
+            raise RuntimeError(f"Model version {model.id} artifact is not approved for activation.")
+
     def ensure_learned_ranker_artifact_ready(self) -> None:
         if not getattr(settings, "LEARNED_RANKER_ENABLED", False):
             return
@@ -224,6 +352,55 @@ class ModelArtifactService:
             uri=self.resolve_learned_ranker_uri(),
             expected_sha256=self.expected_checksum(),
         )
+
+    def _attach_artifact_to_model(
+        self,
+        *,
+        model: RankingModelVersion,
+        artifact: ModelArtifactVersion,
+        sync: ArtifactSyncResult,
+    ) -> None:
+        model.artifact_uri = artifact.artifact_uri
+        model.artifact_provider = sync.storage_provider
+        model.artifact_checksum_sha256 = sync.checksum_sha256
+        model.feature_schema = dict(artifact.feature_schema or model.feature_schema or {})
+        manifest = dict(model.artifact_manifest or {})
+        manifest.update(
+            {
+                "artifact_version_id": str(artifact.id),
+                "artifact_status": artifact.status,
+                "local_cache_path": sync.local_path,
+                "verified": sync.verified,
+                "downloaded": sync.downloaded,
+                "approved_at": artifact.reviewed_at.isoformat() if artifact.reviewed_at else None,
+                "promoted_at": utc_now().isoformat(),
+            }
+        )
+        model.artifact_manifest = manifest
+
+    def _artifact_summary(self, row: ModelArtifactVersion) -> dict[str, Any]:
+        return {
+            "id": str(row.id),
+            "model_family": row.model_family,
+            "model_version_id": row.model_version_id,
+            "artifact_uri": row.artifact_uri,
+            "checksum_sha256": row.checksum_sha256,
+            "status": row.status,
+            "verified": bool(row.verified),
+            "reviewer": row.reviewer,
+            "reviewed_at": row.reviewed_at.isoformat() if row.reviewed_at else None,
+            "training_window": {
+                "start": (row.training_metadata or {}).get("training_window_start"),
+                "end": (row.training_metadata or {}).get("training_window_end"),
+            },
+            "code_version": (row.training_metadata or {}).get("code_version"),
+        }
+
+    def _safe_float(self, value: Any) -> float:
+        try:
+            return float(value or 0.0)
+        except Exception:
+            return 0.0
 
 
 model_artifact_service = ModelArtifactService()

@@ -1,66 +1,59 @@
 {
-  "title": "VidyaVerse Production Overview",
-  "tags": ["vidyaverse", "mlops", "ranking"],
+  "title": "VidyaVerse Data Science Operating Loop",
+  "tags": ["vidyaverse", "mlops", "datascience", "gates"],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "refresh": "30s",
   "panels": [
     {
       "id": 1,
       "type": "timeseries",
-      "title": "Ranking Request Latency p95 (ms)",
+      "title": "Feature Freshness (seconds)",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (le, request_kind) (rate(ranking_request_latency_ms_bucket{traffic_type=\"real\"}[5m])))",
-          "legendFormat": "{{request_kind}}",
+          "expr": "max(ds_feature_freshness_seconds)",
+          "legendFormat": "feature_store",
           "refId": "A"
         }
-      ],
-      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] }
+      ]
     },
     {
       "id": 2,
       "type": "timeseries",
-      "title": "Freshness SLA Breach",
+      "title": "Opportunity Freshness SLA",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
       "targets": [
         {
           "expr": "max(opportunity_freshness_sla_breached)",
-          "legendFormat": "SLA breach",
+          "legendFormat": "sla_breach",
           "refId": "A"
-        },
-        {
-          "expr": "max(opportunity_freshness_seconds)",
-          "legendFormat": "freshness_seconds",
-          "refId": "B"
         }
       ]
     },
     {
       "id": 3,
       "type": "timeseries",
-      "title": "CTR by Variant (real traffic)",
+      "title": "Model Input Drift",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
       "targets": [
         {
-          "expr": "sum by (experiment_variant) (rate(opportunity_interaction_events_total{interaction_type=\"click\",traffic_type=\"real\"}[15m])) / clamp_min(sum by (experiment_variant) (rate(opportunity_interaction_events_total{interaction_type=\"impression\",traffic_type=\"real\"}[15m])), 1e-9)",
-          "legendFormat": "{{experiment_variant}}",
+          "expr": "max by (metric) (ds_model_input_drift_value{metric=~\"query_bucket_psi|max_feature_mean_z|alert\"})",
+          "legendFormat": "{{metric}}",
           "refId": "A"
         }
-      ],
-      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] }
+      ]
     },
     {
       "id": 4,
       "type": "timeseries",
-      "title": "Apply Rate by Variant (real traffic)",
+      "title": "Parity CTR / Apply Rate",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
       "targets": [
         {
-          "expr": "sum by (experiment_variant) (rate(opportunity_interaction_events_total{interaction_type=\"apply\",traffic_type=\"real\"}[15m])) / clamp_min(sum by (experiment_variant) (rate(opportunity_interaction_events_total{interaction_type=\"impression\",traffic_type=\"real\"}[15m])), 1e-9)",
-          "legendFormat": "{{experiment_variant}}",
+          "expr": "max by (mode, metric) (ds_parity_scorecard_value{metric=~\"ctr|apply_rate\"})",
+          "legendFormat": "{{mode}} {{metric}}",
           "refId": "A"
         }
       ],
@@ -69,12 +62,12 @@
     {
       "id": 5,
       "type": "timeseries",
-      "title": "Request Error Rate (5m)",
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+      "title": "Ranker Slice CTR",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
       "targets": [
         {
-          "expr": "sum by (request_kind) (rate(ranking_requests_total{success=\"false\",traffic_type=\"real\"}[5m])) / clamp_min(sum by (request_kind) (rate(ranking_requests_total{traffic_type=\"real\"}[5m])), 1e-9)",
-          "legendFormat": "{{request_kind}}",
+          "expr": "max by (slice_type, slice_name) (ds_ranking_slice_rate{metric=\"ctr\"})",
+          "legendFormat": "{{slice_type}}/{{slice_name}}",
           "refId": "A"
         }
       ],
@@ -83,12 +76,12 @@
     {
       "id": 6,
       "type": "timeseries",
-      "title": "Assistant Failure Rate (real traffic)",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "title": "Ranker Slice Apply Rate",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
       "targets": [
         {
-          "expr": "sum(rate(ranking_requests_total{request_kind=\"assistant_chat\",success=\"false\",traffic_type=\"real\"}[10m])) / clamp_min(sum(rate(ranking_requests_total{request_kind=\"assistant_chat\",traffic_type=\"real\"}[10m])), 1e-9)",
-          "legendFormat": "assistant_failure_rate",
+          "expr": "max by (slice_type, slice_name) (ds_ranking_slice_rate{metric=\"apply_rate\"})",
+          "legendFormat": "{{slice_type}}/{{slice_name}}",
           "refId": "A"
         }
       ],
@@ -97,8 +90,48 @@
     {
       "id": 7,
       "type": "timeseries",
+      "title": "Assistant Failure / Hallucination / Citation Quality",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
+      "targets": [
+        {
+          "expr": "max by (metric, prompt_version, route) (ds_assistant_quality_value{metric=~\"failure_rate|hallucination_rate|citation_correctness\"})",
+          "legendFormat": "{{metric}} {{prompt_version}} {{route}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Assistant Route Counts",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "targets": [
+        {
+          "expr": "max by (route) (ds_assistant_quality_value{metric=\"route_count\"})",
+          "legendFormat": "{{route}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Model Promotion State",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "targets": [
+        {
+          "expr": "max by (model_name, status, reason) (ds_model_promotion_info)",
+          "legendFormat": "{{status}} {{model_name}} {{reason}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
       "title": "Warehouse Export Errors",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 },
       "targets": [
         {
           "expr": "increase(warehouse_exports_total{status=\"error\"}[30m])",
@@ -108,20 +141,20 @@
       ]
     },
     {
-      "id": 8,
+      "id": 11,
       "type": "timeseries",
-      "title": "Embedding Provider Health",
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 32 },
+      "title": "Ranking Request Latency p95 (ms)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 40 },
       "targets": [
         {
-          "expr": "min by (provider, mode) (embedding_provider_health)",
-          "legendFormat": "{{provider}}/{{mode}}",
+          "expr": "histogram_quantile(0.95, sum by (le, request_kind) (rate(ranking_request_latency_ms_bucket{traffic_type=\"real\"}[5m])))",
+          "legendFormat": "{{request_kind}}",
           "refId": "A"
         }
       ],
-      "fieldConfig": { "defaults": { "min": 0, "max": 1 }, "overrides": [] }
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] }
     }
   ],
   "templating": { "list": [] },
-  "time": { "from": "now-6h", "to": "now" }
+  "time": { "from": "now-24h", "to": "now" }
 }

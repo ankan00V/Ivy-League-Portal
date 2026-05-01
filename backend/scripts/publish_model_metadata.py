@@ -4,7 +4,6 @@ import argparse
 import asyncio
 import json
 import sys
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -61,6 +60,7 @@ async def _collect_snapshot(max_models: int) -> dict[str, Any]:
     from app.core.config import settings
     from app.models.model_drift_report import ModelDriftReport
     from app.models.ranking_model_version import RankingModelVersion
+    from app.core.time import utc_now
 
     client = AsyncIOMotorClient(settings.MONGODB_URL, **_client_kwargs())
     await init_beanie(
@@ -74,7 +74,7 @@ async def _collect_snapshot(max_models: int) -> dict[str, Any]:
     latest_drift = drift[0] if drift else None
 
     snapshot = {
-        "generated_at": datetime.utcnow().isoformat(),
+        "generated_at": utc_now().isoformat(),
         "policy": {
             "mode": settings.MLOPS_ACTIVATION_POLICY,
             "auto_activate": bool(settings.MLOPS_AUTO_ACTIVATE),

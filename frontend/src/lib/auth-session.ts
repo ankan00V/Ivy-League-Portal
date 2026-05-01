@@ -11,6 +11,7 @@ export const AUTH_STATE_EVENT = "auth-state-changed";
 export const ACCESS_TOKEN_LIFETIME_MS = 24 * 60 * 60 * 1000;
 
 let volatileAccessToken: string | null = null;
+let volatileAdminChallenge: PendingAdminChallenge | null = null;
 
 type AuthStateReason = "login" | "logout" | "expired";
 
@@ -136,32 +137,26 @@ export function setPendingAdminChallenge(payload: PendingAdminChallenge): void {
   if (typeof window === "undefined") {
     return;
   }
-  sessionStorage.setItem(ADMIN_CHALLENGE_KEY, JSON.stringify(payload));
+  volatileAdminChallenge = payload;
+  sessionStorage.removeItem(ADMIN_CHALLENGE_KEY);
 }
 
 export function getPendingAdminChallenge(): PendingAdminChallenge | null {
   if (typeof window === "undefined") {
     return null;
   }
-  const raw = sessionStorage.getItem(ADMIN_CHALLENGE_KEY);
-  if (!raw) {
+  sessionStorage.removeItem(ADMIN_CHALLENGE_KEY);
+  if (!volatileAdminChallenge?.email || !volatileAdminChallenge?.adminChallengeToken) {
     return null;
   }
-  try {
-    const parsed = JSON.parse(raw) as PendingAdminChallenge;
-    if (!parsed?.email || !parsed?.adminChallengeToken) {
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
+  return volatileAdminChallenge;
 }
 
 export function clearPendingAdminChallenge(): void {
   if (typeof window === "undefined") {
     return;
   }
+  volatileAdminChallenge = null;
   sessionStorage.removeItem(ADMIN_CHALLENGE_KEY);
 }
 

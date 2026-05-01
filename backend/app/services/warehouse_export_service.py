@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from app.core.config import settings
@@ -380,6 +380,60 @@ class WarehouseExportService:
     async def latest_runs(self, *, limit: int = 20) -> list[WarehouseExportRun]:
         safe_limit = max(1, min(int(limit), 100))
         return await WarehouseExportRun.find_many().sort("-created_at").limit(safe_limit).to_list()
+
+    async def freshness_status(self, *, required_marts: list[str] | None = None) -> dict[str, Any]:
+        marts = list(required_marts or settings.ANALYTICS_WAREHOUSE_REQUIRED_MARTS or [])
+        latest_rows = await WarehouseExportRun.find_many({"status": "ok"}).sort("-created_at").limit(1).to_list()
+        latest = latest_rows[0] if latest_rows else None
+        if latest is None:
+            return {
+                "status": "missing",
+                "fresh": False,
+                "required_marts": marts,
+                "missing_marts": marts,
+                "stale_marts": [],
+                "max_staleness_minutes": int(settings.ANALYTICS_WAREHOUSE_MAX_STALENESS_MINUTES),
+                "latest_export_at": None,
+                "age_minutes": None,
+            }
+
+        exported = set(latest.exported_tables or [])
+        exported.update((latest.mart_files or {}).keys())
+        missing = sorted(mart for mart in marts if mart not in exported)
+        age_minutes = self._age_minutes(latest.created_at)
+        max_staleness = max(1, int(settings.ANALYTICS_WAREHOUSE_MAX_STALENESS_MINUTES))
+        stale_marts = sorted(marts) if age_minutes > max_staleness else []
+        fresh = not missing and not stale_marts
+        return {
+            "status": "fresh" if fresh else "stale",
+            "fresh": fresh,
+            "required_marts": marts,
+            "missing_marts": missing,
+            "stale_marts": stale_marts,
+            "max_staleness_minutes": max_staleness,
+            "latest_export_at": latest.created_at.isoformat(),
+            "age_minutes": round(age_minutes, 3),
+            "export_run_id": str(latest.id),
+            "clickhouse_enabled": bool((latest.metadata or {}).get("clickhouse_enabled")),
+            "clickhouse_tables": list((latest.metadata or {}).get("clickhouse_tables") or []),
+            "bi_tool_url": (settings.ANALYTICS_BI_TOOL_URL or "").strip() or None,
+        }
+
+    async def assert_required_marts_fresh(self) -> dict[str, Any]:
+        status = await self.freshness_status()
+        if not bool(status.get("fresh")):
+            raise RuntimeError(
+                "Analytics warehouse marts are not fresh: "
+                f"missing={status.get('missing_marts')}, stale={status.get('stale_marts')}, "
+                f"age_minutes={status.get('age_minutes')}."
+            )
+        return status
+
+    def _age_minutes(self, value: datetime) -> float:
+        observed = value
+        if observed.tzinfo is None:
+            observed = observed.replace(tzinfo=timezone.utc)
+        return max(0.0, (utc_now() - observed).total_seconds() / 60.0)
 
 
 warehouse_export_service = WarehouseExportService()

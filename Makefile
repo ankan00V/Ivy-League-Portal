@@ -1,4 +1,4 @@
-.PHONY: up down dev dev-api dev-web slim-up slim-down doctor
+.PHONY: up down dev dev-api dev-web slim-up slim-down doctor ds-gates assistant-eval weekly-ds-scorecard
 
 up:
 	docker compose up -d mongo redis
@@ -24,3 +24,12 @@ slim-down:
 
 doctor:
 	slim doctor
+
+ds-gates:
+	cd backend && python3 scripts/check_ds_release_gates.py --fail-on-not-ready
+
+assistant-eval:
+	cd backend && python3 benchmarks/run_assistant_quality_eval.py --fail-on-regression
+
+weekly-ds-scorecard:
+	cd backend && python3 scripts/publish_weekly_ds_scorecard.py

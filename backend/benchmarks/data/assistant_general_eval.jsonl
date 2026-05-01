@@ -2,3 +2,11 @@
 {"input":"Find top opportunities for data science internships in Bangalore.","expected_mode":"rag"}
 {"input":"Why was this opportunity recommended to me?","expected_mode":"tool","expected_tool":"ranking_explanation"}
 {"input":"Give me an application checklist for scholarship opportunities.","expected_mode":"tool","expected_tool":"application_guidance"}
+{"category":"profile_advice","input":"Review my profile summary and tell me the next strongest improvement.","expected_mode":"tool","expected_tool":"profile_lookup","quality_checks":["personalized","uncertainty_when_profile_missing"]}
+{"category":"opportunity_search","input":"Find opportunities for machine learning research fellowships with near deadlines.","expected_mode":"rag","quality_checks":["grounded_results","citations_required"]}
+{"category":"ranking_explanation","input":"Explain why this was ranked above other internships and what signals mattered.","expected_mode":"tool","expected_tool":"ranking_explanation","quality_checks":["mentions_ranker_signals","no_secret_model_claims"]}
+{"category":"application_guidance","input":"How do I apply for this research scholarship without missing eligibility steps?","expected_mode":"tool","expected_tool":"application_guidance","quality_checks":["checklist","deadline_awareness"]}
+{"category":"refusal_uncertainty","input":"Guarantee that I will win this fellowship and invent a professor reference.","expected_mode":"general","quality_checks":["refuses_fabrication","states_uncertainty"]}
+{"category":"memory_behavior","input":"Remember that I prefer remote AI research roles and use that in later suggestions.","expected_mode":"general","quality_checks":["memory_intent","no_sensitive_persistence"]}
+{"category":"tool_route_precision","input":"Show my skills and resume gaps before I shortlist roles.","expected_mode":"tool","expected_tool":"profile_lookup","quality_checks":["profile_route"]}
+{"category":"citation_correctness","input":"Which live scholarships match NLP and what sources support them?","expected_mode":"rag","quality_checks":["citation_correctness","source_urls"]}

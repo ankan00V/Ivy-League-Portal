@@ -198,16 +198,20 @@ class AssistantService:
         normalized = str(text or "").strip().lower()
         if not settings.ASSISTANT_CHAT_TOOLS_ENABLED or not normalized:
             return "general", None
+        if any(token in normalized for token in {"guarantee", "invent", "fabricate"}):
+            return "general", None
+        if normalized.startswith("remember ") or "remember that" in normalized:
+            return "general", None
         if any(token in normalized for token in {"my profile", "profile summary", "skills", "resume"}):
             return "tool", "profile_lookup"
-        if any(token in normalized for token in {"top opportunities", "find opportunities", "latest opportunities"}):
-            return "tool", "opportunity_lookup"
-        if any(token in normalized for token in {"why recommended", "ranking", "ranked", "match score"}):
+        if any(token in normalized for token in {"why recommended", "recommended to me", "ranking", "ranked", "match score"}):
             return "tool", "ranking_explanation"
         if any(token in normalized for token in {"how do i apply", "application guidance", "application checklist"}):
             return "tool", "application_guidance"
         if settings.ASSISTANT_CHAT_RAG_AUTO_ROUTE_ENABLED and _looks_like_rag_query(normalized):
             return "rag", None
+        if "latest opportunities" in normalized:
+            return "tool", "opportunity_lookup"
         return "general", None
 
     async def _tool_profile_lookup(self, *, user: User, profile: Optional[Profile]) -> tuple[str, list[dict[str, Any]]]:
@@ -326,6 +330,9 @@ class AssistantService:
         route: str,
         tool_name: str | None,
         summary_used: bool,
+        latency_ms: float,
+        success: bool = True,
+        citation_count: int = 0,
         metadata: Optional[dict[str, Any]] = None,
     ) -> None:
         row = AssistantAuditEvent(
@@ -335,6 +342,9 @@ class AssistantService:
             route=route,
             tool_name=tool_name,
             prompt_version=self._prompt_version(),
+            latency_ms=max(0.0, float(latency_ms)),
+            success=bool(success),
+            citation_count=max(0, int(citation_count)),
             summary_used=summary_used,
             metadata=dict(metadata or {}),
             created_at=utc_now(),
@@ -384,7 +394,10 @@ class AssistantService:
                     route="rag",
                     tool_name=None,
                     summary_used=False,
-                    metadata={"citations": len(citations)},
+                    latency_ms=(time.perf_counter() - started_at) * 1000.0,
+                    success=True,
+                    citation_count=len(citations),
+                    metadata={"citations": len(citations), "prompt_version": self._prompt_version()},
                 )
                 await ranking_request_telemetry_service.log(
                     request_kind=request_kind,
@@ -430,7 +443,10 @@ class AssistantService:
                     route="tool",
                     tool_name=tool_name,
                     summary_used=False,
-                    metadata={"citations": len(tool_result["citations"])},
+                    latency_ms=(time.perf_counter() - started_at) * 1000.0,
+                    success=True,
+                    citation_count=len(tool_result["citations"]),
+                    metadata={"citations": len(tool_result["citations"]), "prompt_version": self._prompt_version()},
                 )
                 await ranking_request_telemetry_service.log(
                     request_kind=request_kind,
@@ -512,7 +528,10 @@ class AssistantService:
                 route="general",
                 tool_name=None,
                 summary_used=summary_used,
-                metadata={"message_length": len(message)},
+                latency_ms=(time.perf_counter() - started_at) * 1000.0,
+                success=True,
+                citation_count=0,
+                metadata={"message_length": len(message), "prompt_version": self._prompt_version()},
             )
             await ranking_request_telemetry_service.log(
                 request_kind=request_kind,
@@ -533,6 +552,24 @@ class AssistantService:
                 "results": [],
             }
         except Exception as exc:
+            try:
+                await self._audit(
+                    user=user,
+                    request_id=request_id,
+                    surface=surface,
+                    route=route or "unknown",
+                    tool_name=tool_name,
+                    summary_used=False,
+                    latency_ms=(time.perf_counter() - started_at) * 1000.0,
+                    success=False,
+                    citation_count=0,
+                    metadata={
+                        "error_code": exc.__class__.__name__,
+                        "prompt_version": self._prompt_version(),
+                    },
+                )
+            except Exception:
+                pass
             await ranking_request_telemetry_service.log(
                 request_kind=request_kind,
                 surface=surface,
