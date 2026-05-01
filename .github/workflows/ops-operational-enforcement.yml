@@ -12,6 +12,21 @@ jobs:
     env:
       MONGODB_URL: ${{ secrets.MONGODB_URL }}
       MONGODB_DB_NAME: ${{ secrets.MONGODB_DB_NAME }}
+      REDIS_URL: ${{ secrets.REDIS_URL }}
+      ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED: "true"
+      ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST: ${{ vars.ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST }}
+      ANALYTICS_WAREHOUSE_CLICKHOUSE_PORT: ${{ vars.ANALYTICS_WAREHOUSE_CLICKHOUSE_PORT || '8123' }}
+      ANALYTICS_WAREHOUSE_CLICKHOUSE_DATABASE: ${{ vars.ANALYTICS_WAREHOUSE_CLICKHOUSE_DATABASE || 'vidyaverse' }}
+      ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME: ${{ secrets.ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME }}
+      ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD: ${{ secrets.ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD }}
+      ANALYTICS_WAREHOUSE_CLICKHOUSE_SECURE: ${{ vars.ANALYTICS_WAREHOUSE_CLICKHOUSE_SECURE || 'false' }}
+      LEARNED_RANKER_ARTIFACT_URI: ${{ vars.LEARNED_RANKER_ARTIFACT_URI }}
+      MODEL_ARTIFACT_BUCKET: ${{ vars.MODEL_ARTIFACT_BUCKET }}
+      MLOPS_MODEL_ARTIFACT_S3_ENDPOINT_URL: ${{ vars.MLOPS_MODEL_ARTIFACT_S3_ENDPOINT_URL }}
+      MLOPS_MODEL_ARTIFACT_S3_REGION: ${{ vars.MLOPS_MODEL_ARTIFACT_S3_REGION }}
+      MLOPS_MODEL_ARTIFACT_S3_ACCESS_KEY_ID: ${{ secrets.MLOPS_MODEL_ARTIFACT_S3_ACCESS_KEY_ID }}
+      MLOPS_MODEL_ARTIFACT_S3_SECRET_ACCESS_KEY: ${{ secrets.MLOPS_MODEL_ARTIFACT_S3_SECRET_ACCESS_KEY }}
+      ANALYTICS_BI_TOOL_URL: ${{ vars.ANALYTICS_BI_TOOL_URL }}
       MLOPS_ALERT_SLACK_WEBHOOK_URL: ${{ secrets.MLOPS_ALERT_SLACK_WEBHOOK_URL }}
       MLOPS_ALERT_PAGERDUTY_ROUTING_KEY: ${{ secrets.MLOPS_ALERT_PAGERDUTY_ROUTING_KEY }}
       MLOPS_INCIDENT_DEFAULT_OWNER: ${{ vars.MLOPS_INCIDENT_DEFAULT_OWNER }}
@@ -49,6 +64,13 @@ jobs:
 
           check_required "MONGODB_URL" "${MONGODB_URL}"
           check_required "MONGODB_DB_NAME" "${MONGODB_DB_NAME}"
+          check_required "REDIS_URL" "${REDIS_URL}"
+          check_required "ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST" "${ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST}"
+          check_required "ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME" "${ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME}"
+          check_required "ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD" "${ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD}"
+          check_required "MLOPS_MODEL_ARTIFACT_S3_REGION" "${MLOPS_MODEL_ARTIFACT_S3_REGION}"
+          check_required "MLOPS_MODEL_ARTIFACT_S3_ACCESS_KEY_ID" "${MLOPS_MODEL_ARTIFACT_S3_ACCESS_KEY_ID}"
+          check_required "MLOPS_MODEL_ARTIFACT_S3_SECRET_ACCESS_KEY" "${MLOPS_MODEL_ARTIFACT_S3_SECRET_ACCESS_KEY}"
           check_required "MLOPS_ALERT_SLACK_WEBHOOK_URL" "${MLOPS_ALERT_SLACK_WEBHOOK_URL}"
           check_required "MLOPS_ALERT_PAGERDUTY_ROUTING_KEY" "${MLOPS_ALERT_PAGERDUTY_ROUTING_KEY}"
           check_required "MLOPS_INCIDENT_DEFAULT_OWNER" "${MLOPS_INCIDENT_DEFAULT_OWNER}"
@@ -71,6 +93,12 @@ jobs:
             echo "- Secondary on-call: **${MLOPS_ONCALL_SECONDARY}**"
           } > docs/portfolio/oncall_ownership.md
 
+      - name: Verify managed production infrastructure
+        run: python backend/scripts/check_production_infra_readiness.py --include-bi
+
+      - name: Run backup and restore drills
+        run: python backend/scripts/test_backup_restore_drill.py --execute
+
       - name: Run synthetic Slack and PagerDuty delivery check
         run: python backend/scripts/synthetic_alert_delivery_check.py
 
@@ -87,4 +115,6 @@ jobs:
             docs/portfolio/incident_review_sla_audit.md
             backend/benchmarks/incident_review_sla_audit.json
             backend/benchmarks/synthetic_alert_delivery.json
+            backend/benchmarks/production_infra_readiness.json
+            backend/benchmarks/backup_restore_drill.json
           if-no-files-found: ignore

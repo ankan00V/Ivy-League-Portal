@@ -9,9 +9,19 @@ jobs:
   parity-and-champion-gates:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand(\"ping\").ok' || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
     env:
-      MONGODB_URL: ${{ secrets.MONGODB_URL }}
-      MONGODB_DB_NAME: ${{ secrets.MONGODB_DB_NAME }}
+      MONGODB_URL: mongodb://localhost:27017
+      MONGODB_DB_NAME: ivy_league_release_gate_ci
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -28,12 +38,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
 
-      - name: Validate required DB secrets
-        run: |
-          if [ -z "${MONGODB_URL}" ] || [ -z "${MONGODB_DB_NAME}" ]; then
-            echo "Missing MONGODB_URL or MONGODB_DB_NAME secrets."
-            exit 1
-          fi
+      - name: Seed deterministic ML release gate fixture
+        run: python backend/scripts/seed_release_ml_gate_fixture.py --days 14 --reset
 
       - name: Run real-traffic parity gate
         run: python backend/scripts/check_real_traffic_rollout_readiness.py --days 14 --fail-on-not-ready

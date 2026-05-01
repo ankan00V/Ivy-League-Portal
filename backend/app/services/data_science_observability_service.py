@@ -25,6 +25,15 @@ from app.models.ranking_request_telemetry import RankingRequestTelemetry
 from app.models.feature_store_row import FeatureStoreRow
 
 
+def _seconds_since(timestamp: Any) -> float | None:
+    if timestamp is None:
+        return None
+    now = utc_now()
+    if getattr(timestamp, "tzinfo", None) is None and now.tzinfo is not None:
+        now = now.replace(tzinfo=None)
+    return max(0.0, (now - timestamp).total_seconds())
+
+
 def _safe_ratio(numerator: float, denominator: float) -> float:
     if denominator <= 0:
         return 0.0
@@ -43,10 +52,7 @@ class DataScienceObservabilityService:
         latest = await FeatureStoreRow.find_many().sort("-updated_at").limit(1).to_list()
         count = await FeatureStoreRow.find_many().count()
         latest_row = latest[0] if latest else None
-        now = utc_now()
-        freshness_seconds = None
-        if latest_row and latest_row.updated_at:
-            freshness_seconds = max(0.0, (now - latest_row.updated_at).total_seconds())
+        freshness_seconds = _seconds_since(latest_row.updated_at) if latest_row else None
         if FEATURE_FRESHNESS_SECONDS is not None:
             FEATURE_FRESHNESS_SECONDS.set(float(freshness_seconds or 0.0))
         return {

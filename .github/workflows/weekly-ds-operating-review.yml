@@ -1,0 +1,54 @@
+name: Weekly DS Operating Review
+
+on:
+  schedule:
+    - cron: "20 5 * * 1"
+  workflow_dispatch:
+
+jobs:
+  publish-ds-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      MONGODB_URL: ${{ secrets.MONGODB_URL }}
+      MONGODB_DB_NAME: ${{ secrets.MONGODB_DB_NAME }}
+      ANALYTICS_BI_TOOL_URL: ${{ vars.ANALYTICS_BI_TOOL_URL }}
+      GRAFANA_DS_DASHBOARD_URL: ${{ vars.GRAFANA_DS_DASHBOARD_URL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Validate required secrets
+        run: |
+          if [ -z "${MONGODB_URL}" ] || [ -z "${MONGODB_DB_NAME}" ]; then
+            echo "Missing MONGODB_URL or MONGODB_DB_NAME."
+            exit 1
+          fi
+
+      - name: Publish weekly DS scorecard
+        run: |
+          python backend/scripts/publish_weekly_ds_scorecard.py \
+            --days 7 \
+            --dashboard-url "${GRAFANA_DS_DASHBOARD_URL:-${ANALYTICS_BI_TOOL_URL}}"
+
+      - name: Upload DS review artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-ds-operating-review
+          path: |
+            docs/portfolio/weekly_ds_scorecard.md
+            backend/benchmarks/weekly_ds_scorecard.json
+          if-no-files-found: ignore

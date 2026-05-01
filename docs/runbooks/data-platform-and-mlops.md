@@ -41,19 +41,28 @@
    - `python backend/scripts/check_warehouse_release_gate.py --json`
    - `python backend/scripts/check_ds_release_gates.py --fail-on-not-ready`
    - `python backend/benchmarks/run_assistant_quality_eval.py --fail-on-regression`
+   - `python backend/scripts/check_production_infra_readiness.py --include-bi`
    - this fails if any `ANALYTICS_WAREHOUSE_REQUIRED_MARTS` table is missing or older than `ANALYTICS_WAREHOUSE_MAX_STALENESS_MINUTES`
 
 ## Warehouse Rebuild
 
-1. Manual rebuild:
+1. Scheduled rebuild:
+   - backend APScheduler enqueues `analytics.warehouse.rebuild` every `ANALYTICS_WAREHOUSE_REBUILD_INTERVAL_HOURS`
+   - `.github/workflows/warehouse-mart-refresh.yml` rebuilds and gates marts every 6 hours when production secrets are configured
+2. Manual rebuild:
    - `POST /api/v1/analytics/warehouse/rebuild`
-2. Inspect latest exports:
+   - `make warehouse-refresh`
+3. Inspect latest exports:
    - `GET /api/v1/analytics/warehouse/exports`
-3. Inspect freshness:
+4. Inspect freshness:
    - `GET /api/v1/analytics/warehouse/freshness`
-4. Inspect marts:
+5. Inspect marts:
    - `GET /api/v1/analytics/warehouse/marts`
    - `GET /api/v1/analytics/warehouse/marts/{mart_name}`
+6. BI surfaces:
+   - Grafana provisions `ops/grafana/vidyaverse-production-overview.json` with `ops/grafana/provisioning`
+   - Metabase is included in production compose for ClickHouse marts
+   - Managed Superset/Metabase can point at the same ClickHouse database and required `mart_*` tables
 
 ## Model Artifact Registry
 
@@ -79,6 +88,9 @@
 - Restore:
   - `mongorestore --uri "$MONGODB_URL" --archive="$BACKUP_ARCHIVE" --gzip --drop`
   - `python backend/scripts/check_ds_release_gates.py --fail-on-not-ready`
+- Drill:
+  - `python backend/scripts/test_backup_restore_drill.py --execute`
+  - Add `--require-mongodump` on runners where MongoDB Database Tools are installed to force archive-based proof.
 
 ### Model Artifacts
 
@@ -88,6 +100,8 @@
 - MinIO backup copy:
   - `mc mirror --overwrite "$MINIO_ALIAS/$MODEL_ARTIFACT_BUCKET" "$MINIO_BACKUP_ALIAS/model-artifacts"`
 - For local cache recovery, delete `backend/storage/model_artifacts` and re-run artifact registration or service startup sync.
+- Drill:
+  - `MODEL_ARTIFACT_BUCKET=... python backend/scripts/test_backup_restore_drill.py --execute`
 
 ### Warehouse
 
@@ -110,12 +124,25 @@
 
 These gates block stale features, drift alerts, parity regression, assistant failure rate, and missing staging/ML readiness.
 
+## Production Proof
+
+- Managed infra readiness:
+  - `python backend/scripts/check_production_infra_readiness.py --include-bi`
+- Backup/restore drill:
+  - `python backend/scripts/test_backup_restore_drill.py --execute`
+- Alert delivery:
+  - `python backend/scripts/synthetic_alert_delivery_check.py`
+- Weekly operational enforcement:
+  - `.github/workflows/ops-operational-enforcement.yml`
+
 ## Dashboard Scorecards
 
 - Refresh operating-loop metrics:
   - `GET /api/v1/mlops/operating-loop`
 - Persist weekly scorecard:
   - `python backend/scripts/publish_weekly_ds_scorecard.py --dashboard-url "$GRAFANA_DS_DASHBOARD_URL" --dashboard-snapshot-path "$SNAPSHOT_PATH"`
+- Automated review:
+  - `.github/workflows/weekly-ds-operating-review.yml`
 - Store rendered dashboard screenshots:
   - `scripts/capture_dashboard_screenshots.sh`
 

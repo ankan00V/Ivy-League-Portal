@@ -10,3 +10,4 @@ scrape_configs:
     static_configs:
       - targets:
           - host.docker.internal:8000
+          - backend:8000

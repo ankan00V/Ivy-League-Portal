@@ -1,4 +1,4 @@
-.PHONY: up down dev dev-api dev-web slim-up slim-down doctor ds-gates assistant-eval weekly-ds-scorecard
+.PHONY: up down dev dev-api dev-web slim-up slim-down doctor warehouse-refresh ds-gates assistant-eval weekly-ds-scorecard infra-check backup-restore-drill
 
 up:
 	docker compose up -d mongo redis
@@ -25,6 +25,10 @@ slim-down:
 doctor:
 	slim doctor
 
+warehouse-refresh:
+	cd backend && python3 scripts/rebuild_analytics_warehouse.py --lookback-days 30 --traffic-type real
+	cd backend && python3 scripts/check_warehouse_release_gate.py --json
+
 ds-gates:
 	cd backend && python3 scripts/check_ds_release_gates.py --fail-on-not-ready
 
@@ -33,3 +37,9 @@ assistant-eval:
 
 weekly-ds-scorecard:
 	cd backend && python3 scripts/publish_weekly_ds_scorecard.py
+
+infra-check:
+	cd backend && python3 scripts/check_production_infra_readiness.py --include-bi
+
+backup-restore-drill:
+	cd backend && python3 scripts/test_backup_restore_drill.py --execute

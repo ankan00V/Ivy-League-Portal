@@ -1,0 +1,72 @@
+name: Warehouse Mart Refresh
+
+on:
+  schedule:
+    - cron: "10 */6 * * *"
+  workflow_dispatch:
+
+jobs:
+  rebuild-and-gate-marts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      MONGODB_URL: ${{ secrets.MONGODB_URL }}
+      MONGODB_DB_NAME: ${{ secrets.MONGODB_DB_NAME }}
+      ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED: "true"
+      ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST: ${{ vars.ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST }}
+      ANALYTICS_WAREHOUSE_CLICKHOUSE_PORT: ${{ vars.ANALYTICS_WAREHOUSE_CLICKHOUSE_PORT || '8123' }}
+      ANALYTICS_WAREHOUSE_CLICKHOUSE_DATABASE: ${{ vars.ANALYTICS_WAREHOUSE_CLICKHOUSE_DATABASE || 'vidyaverse' }}
+      ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME: ${{ secrets.ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME }}
+      ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD: ${{ secrets.ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD }}
+      ANALYTICS_WAREHOUSE_CLICKHOUSE_SECURE: ${{ vars.ANALYTICS_WAREHOUSE_CLICKHOUSE_SECURE || 'false' }}
+      ANALYTICS_WAREHOUSE_ENFORCE_FRESHNESS_IN_PRODUCTION: "true"
+      ANALYTICS_BI_TOOL_URL: ${{ vars.ANALYTICS_BI_TOOL_URL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Validate warehouse secrets
+        run: |
+          missing=0
+          for key in MONGODB_URL MONGODB_DB_NAME ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD; do
+            if [ -z "${!key}" ]; then
+              echo "[missing] ${key}"
+              missing=1
+            else
+              echo "[ok] ${key}"
+            fi
+          done
+          if [ "${missing}" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Rebuild analytics warehouse marts
+        run: python backend/scripts/rebuild_analytics_warehouse.py --lookback-days 30 --traffic-type real
+
+      - name: Enforce mart freshness gate
+        run: python backend/scripts/check_warehouse_release_gate.py --json
+
+      - name: Run DS release gates
+        run: python backend/scripts/check_ds_release_gates.py --lookback-days 30 --fail-on-not-ready
+
+      - name: Upload warehouse artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: warehouse-mart-refresh
+          path: |
+            backend/benchmarks/ds_release_gates.json
+            backend/storage/warehouse/marts
+          if-no-files-found: ignore
