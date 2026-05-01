@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 
-from app.core.config import settings
+from app.core.config import analytics_bi_tool_url, settings
 from app.core.metrics import WAREHOUSE_EXPORTS_TOTAL
 from app.core.time import utc_now
 from app.models.analytics_cohort_aggregate import AnalyticsCohortAggregate
@@ -310,8 +310,17 @@ class WarehouseExportService:
     def _clickhouse_value(self, value: Any) -> Any:
         if value is None:
             return ""
+        if isinstance(value, (datetime, date)):
+            return value.isoformat()
         if isinstance(value, (dict, list, tuple)):
             return json.dumps(value, default=str, sort_keys=True)
+        return value
+
+    def _mart_value(self, value: Any) -> Any:
+        if isinstance(value, (datetime, date)):
+            return value.isoformat()
+        if isinstance(value, (dict, list, tuple)):
+            return json.loads(json.dumps(value, default=str))
         return value
 
     def _materialize_clickhouse(self, *, duckdb_path: str, table_names: list[str]) -> list[str]:
@@ -375,7 +384,10 @@ class WarehouseExportService:
         with duckdb.connect(str(duckdb_path), read_only=True) as conn:
             rows = conn.execute(f"SELECT * FROM {safe_name} LIMIT {safe_limit}").fetchall()
             columns = [item[0] for item in conn.description]
-        return [dict(zip(columns, row)) for row in rows]
+        return [
+            {column: self._mart_value(value) for column, value in zip(columns, row)}
+            for row in rows
+        ]
 
     async def latest_runs(self, *, limit: int = 20) -> list[WarehouseExportRun]:
         safe_limit = max(1, min(int(limit), 100))
@@ -416,7 +428,7 @@ class WarehouseExportService:
             "export_run_id": str(latest.id),
             "clickhouse_enabled": bool((latest.metadata or {}).get("clickhouse_enabled")),
             "clickhouse_tables": list((latest.metadata or {}).get("clickhouse_tables") or []),
-            "bi_tool_url": (settings.ANALYTICS_BI_TOOL_URL or "").strip() or None,
+            "bi_tool_url": analytics_bi_tool_url(),
         }
 
     async def assert_required_marts_fresh(self) -> dict[str, Any]:

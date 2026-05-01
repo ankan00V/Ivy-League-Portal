@@ -8,7 +8,7 @@ from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from app.core.config import auth_cookie_only_mode_enabled, resolved_csp_value, settings
+from app.core.config import analytics_bi_tool_url, auth_cookie_only_mode_enabled, resolved_csp_value, settings
 
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -530,7 +530,7 @@ async def health_check():
             "models_dir": settings.ANALYTICS_WAREHOUSE_SQL_MODELS_DIR,
             "clickhouse_enabled": bool(settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED),
             "clickhouse_host": settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST,
-            "bi_tool_url": (settings.ANALYTICS_BI_TOOL_URL or "").strip() or None,
+            "bi_tool_url": analytics_bi_tool_url(),
             "freshness": await warehouse_export_service.freshness_status(),
         },
     }

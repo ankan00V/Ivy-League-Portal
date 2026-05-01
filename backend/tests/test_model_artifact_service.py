@@ -18,7 +18,10 @@ class TestModelArtifactService(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             model_path = Path(tmpdir) / "ranker.txt"
             model_path.write_text("model", encoding="utf-8")
-            with patch("app.services.model_artifact_service.settings.LEARNED_RANKER_ARTIFACT_URI", model_path.as_uri()):
+            with (
+                patch("app.services.model_artifact_service.settings.LEARNED_RANKER_ARTIFACT_URI", model_path.as_uri()),
+                patch("app.services.model_artifact_service.settings.LEARNED_RANKER_ARTIFACT_CHECKSUM_SHA256", ""),
+            ):
                 self.assertTrue(model_artifact_service.learned_ranker_artifact_exists())
 
     def test_missing_artifact_returns_false(self) -> None:

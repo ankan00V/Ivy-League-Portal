@@ -233,6 +233,7 @@ class Settings(BaseSettings):
     ANALYTICS_WAREHOUSE_MAX_STALENESS_MINUTES: int = 180
     ANALYTICS_WAREHOUSE_ENFORCE_CLICKHOUSE_IN_PRODUCTION: bool = True
     ANALYTICS_WAREHOUSE_ENFORCE_FRESHNESS_IN_PRODUCTION: bool = True
+    ANALYTICS_WAREHOUSE_BI_TOOL_URL: Optional[str] = None
     ANALYTICS_BI_TOOL_URL: Optional[str] = None
     ONLINE_FEATURES_PUBLISH_ENABLED: bool = True
     ONLINE_FEATURES_KEY_PREFIX: str = "vidyaverse:features"
@@ -394,6 +395,11 @@ def smtp_from_email_value() -> str:
     if otp_from and (not smtp_from or smtp_from.lower() == default_from):
         return otp_from
     return smtp_from or otp_from or default_from
+
+
+def analytics_bi_tool_url() -> Optional[str]:
+    value = (settings.ANALYTICS_WAREHOUSE_BI_TOOL_URL or settings.ANALYTICS_BI_TOOL_URL or "").strip()
+    return value or None
 
 
 def smtp_from_name_value() -> Optional[str]:

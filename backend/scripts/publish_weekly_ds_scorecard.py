@@ -15,7 +15,7 @@ REPO_ROOT = BACKEND_ROOT.parent
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from app.core.config import settings
+from app.core.config import analytics_bi_tool_url, settings
 from app.core.time import utc_now
 from app.models.assistant_audit_event import AssistantAuditEvent
 from app.models.feature_store_row import FeatureStoreRow
@@ -87,7 +87,7 @@ def _render_markdown(payload: dict[str, Any]) -> str:
 async def _main() -> int:
     parser = argparse.ArgumentParser(description="Persist DS dashboard snapshot data into a weekly scorecard.")
     parser.add_argument("--days", type=int, default=7)
-    parser.add_argument("--dashboard-url", type=str, default=settings.ANALYTICS_BI_TOOL_URL or "")
+    parser.add_argument("--dashboard-url", type=str, default=analytics_bi_tool_url() or "")
     parser.add_argument("--dashboard-snapshot-path", type=str, default="")
     parser.add_argument("--markdown-out", type=str, default="docs/portfolio/weekly_ds_scorecard.md")
     parser.add_argument("--json-out", type=str, default="backend/benchmarks/weekly_ds_scorecard.json")

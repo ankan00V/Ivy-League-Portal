@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import numpy as np
+import certifi
 from beanie import init_beanie
 from beanie.odm.operators.find.comparison import In
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -35,8 +36,28 @@ class Row:
     features: dict[str, float]
 
 
+def _client_kwargs() -> dict[str, Any]:
+    kwargs: dict[str, Any] = {}
+    url = (settings.MONGODB_URL or "").strip()
+    tls_needed = bool(
+        settings.MONGODB_TLS_FORCE
+        or settings.ENVIRONMENT.strip().lower() == "production"
+        or url.startswith("mongodb+srv://")
+        or "tls=true" in url.lower()
+    )
+    if tls_needed:
+        kwargs.update(
+            {
+                "tls": True,
+                "tlsCAFile": certifi.where(),
+                "tlsAllowInvalidCertificates": bool(settings.MONGODB_TLS_ALLOW_INVALID_CERTS),
+            }
+        )
+    return kwargs
+
+
 async def _init_db() -> None:
-    client = AsyncIOMotorClient(settings.MONGODB_URL, tls=True, tlsAllowInvalidCertificates=True)
+    client = AsyncIOMotorClient(settings.MONGODB_URL, **_client_kwargs())
     await init_beanie(
         database=client[settings.MONGODB_DB_NAME],
         document_models=[

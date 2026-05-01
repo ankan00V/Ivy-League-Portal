@@ -10,3 +10,7 @@ backend/.env.*
 backend/benchmarks/results.json
 frontend/test-results/
 backend/storage/resumes/
+backend/storage/model_artifacts/
+backend/storage/warehouse/
+backend/models/
+backend/backend/

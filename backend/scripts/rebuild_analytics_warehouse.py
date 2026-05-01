@@ -22,6 +22,7 @@ from app.models.analytics_funnel_aggregate import AnalyticsFunnelAggregate
 from app.models.feature_store_row import FeatureStoreRow
 from app.models.opportunity_interaction import OpportunityInteraction
 from app.models.ranking_request_telemetry import RankingRequestTelemetry
+from app.models.warehouse_export_run import WarehouseExportRun
 from app.services.analytics_warehouse_service import analytics_warehouse_service
 
 
@@ -56,6 +57,7 @@ async def _run(*, lookback_days: int, traffic_type: str) -> dict[str, Any]:
             AnalyticsFunnelAggregate,
             AnalyticsCohortAggregate,
             FeatureStoreRow,
+            WarehouseExportRun,
         ],
     )
     try:

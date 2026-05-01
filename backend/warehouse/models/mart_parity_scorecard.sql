@@ -1,8 +1,8 @@
 WITH request_metrics AS (
     SELECT
         ranking_mode,
-        AVG(COALESCE(TRY_CAST(metrics.latency_mean_ms AS DOUBLE), 0)) AS latency_mean_ms,
-        AVG(COALESCE(TRY_CAST(metrics.failure_rate AS DOUBLE), 0)) AS failure_rate
+        AVG(COALESCE(TRY_CAST(json_extract_string(to_json(metrics), '$.latency_mean_ms') AS DOUBLE), 0)) AS latency_mean_ms,
+        AVG(COALESCE(TRY_CAST(json_extract_string(to_json(metrics), '$.failure_rate') AS DOUBLE), 0)) AS failure_rate
     FROM analytics_daily
     WHERE metric_type = 'request'
     GROUP BY 1
@@ -10,8 +10,8 @@ WITH request_metrics AS (
 interaction_metrics AS (
     SELECT
         ranking_mode,
-        AVG(COALESCE(TRY_CAST(metrics.ctr AS DOUBLE), 0)) AS ctr,
-        AVG(COALESCE(TRY_CAST(metrics.apply_rate AS DOUBLE), 0)) AS apply_rate
+        AVG(COALESCE(TRY_CAST(json_extract_string(to_json(metrics), '$.ctr') AS DOUBLE), 0)) AS ctr,
+        AVG(COALESCE(TRY_CAST(json_extract_string(to_json(metrics), '$.apply_rate') AS DOUBLE), 0)) AS apply_rate
     FROM analytics_daily
     WHERE metric_type = 'interaction'
     GROUP BY 1

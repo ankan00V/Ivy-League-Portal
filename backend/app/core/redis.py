@@ -23,7 +23,7 @@ def get_redis() -> Optional["Redis"]:
         return None
     if _redis is not None:
         return _redis
-    _redis = Redis.from_url(settings.REDIS_URL, encoding=None, decode_responses=False)
+    _redis = Redis.from_url(settings.REDIS_URL, encoding="utf-8", decode_responses=False)
     return _redis
 
 
@@ -35,4 +35,3 @@ async def close_redis() -> None:
         await _redis.close()
     finally:
         _redis = None
-
