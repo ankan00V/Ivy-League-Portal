@@ -104,11 +104,23 @@ class WarehouseExportService:
         export_format = str(settings.ANALYTICS_WAREHOUSE_EXPORT_FORMAT or "").strip().lower()
         return bool(settings.ANALYTICS_WAREHOUSE_EXPORT_ENABLED) and export_format not in {"", "disabled"}
 
+    def _backend_root(self) -> Path:
+        return Path(__file__).resolve().parents[2]
+
+    def _resolve_config_path(self, value: str) -> Path:
+        raw = Path(value)
+        if raw.is_absolute():
+            return raw
+        normalized = raw.as_posix()
+        if normalized.startswith("backend/"):
+            return self._backend_root() / normalized.removeprefix("backend/")
+        return self._backend_root() / raw
+
     def _safe_root(self) -> Path:
-        return Path(settings.ANALYTICS_WAREHOUSE_EXPORT_ROOT).resolve()
+        return self._resolve_config_path(settings.ANALYTICS_WAREHOUSE_EXPORT_ROOT).resolve()
 
     def _models_dir(self) -> Path:
-        return Path(settings.ANALYTICS_WAREHOUSE_SQL_MODELS_DIR).resolve()
+        return self._resolve_config_path(settings.ANALYTICS_WAREHOUSE_SQL_MODELS_DIR).resolve()
 
     def _render_sql(self, template: str, *, table_name: str, traffic_type: str, lookback_days: int) -> str:
         return (
@@ -246,7 +258,7 @@ class WarehouseExportService:
     ) -> tuple[str, list[str], dict[str, str]]:
         import duckdb  # type: ignore
 
-        duckdb_path = Path(settings.ANALYTICS_WAREHOUSE_DUCKDB_PATH).resolve()
+        duckdb_path = self._resolve_config_path(settings.ANALYTICS_WAREHOUSE_DUCKDB_PATH).resolve()
         duckdb_path.parent.mkdir(parents=True, exist_ok=True)
 
         exported_tables: list[str] = []

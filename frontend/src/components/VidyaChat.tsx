@@ -1,6 +1,5 @@
 "use client";
 import React, { useState, useRef, useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";
 import { MessageSquare, X, Send, Bot, User, Loader2, Link2 } from "lucide-react";
 
 import { apiUrl } from "@/lib/api";
@@ -147,7 +146,7 @@ export default function VidyaChat() {
 
   return (
     <>
-      <motion.button
+      <button
         className="card-panel"
         style={{
           position: "fixed",
@@ -164,38 +163,30 @@ export default function VidyaChat() {
           zIndex: 50,
           padding: 0,
         }}
-        whileHover={{ scale: 1.05 }}
-        whileTap={{ scale: 0.95, y: 4, boxShadow: "0px 0px 0px #000000" }}
         onClick={() => setIsOpen(true)}
         aria-label="Open Vidya AI chat"
-        initial={{ opacity: 0, scale: 0 }}
-        animate={{ opacity: isOpen ? 0 : 1, scale: isOpen ? 0 : 1 }}
+        hidden={isOpen}
       >
         <MessageSquare size={28} />
-      </motion.button>
+      </button>
 
-      <AnimatePresence>
-        {isOpen && (
-          <motion.div
-            initial={{ opacity: 0, y: 20, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 20, scale: 0.95 }}
-            transition={{ type: "spring", stiffness: 300, damping: 25 }}
-            className="card-panel"
-            style={{
-              position: "fixed",
-              bottom: "2rem",
-              right: "2rem",
-              width: "400px",
-              height: "600px",
-              maxHeight: "80vh",
-              display: "flex",
-              flexDirection: "column",
-              zIndex: 50,
-              padding: 0,
-              overflow: "hidden",
-            }}
-          >
+      {isOpen && (
+        <div
+          className="card-panel"
+          style={{
+            position: "fixed",
+            bottom: "2rem",
+            right: "2rem",
+            width: "400px",
+            height: "600px",
+            maxHeight: "80vh",
+            display: "flex",
+            flexDirection: "column",
+            zIndex: 50,
+            padding: 0,
+            overflow: "hidden",
+          }}
+        >
             <div
               style={{
                 background: "var(--brand-primary)",
@@ -304,9 +295,8 @@ export default function VidyaChat() {
                 {isLoading ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
               </button>
             </form>
-          </motion.div>
-        )}
-      </AnimatePresence>
+        </div>
+      )}
     </>
   );
 }
