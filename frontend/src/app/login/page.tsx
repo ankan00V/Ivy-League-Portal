@@ -121,8 +121,11 @@ export default function LoginPage() {
     if (!otpCooldownKey || otpCooldownKey === currentOtpKey) {
       return;
     }
-    setOtpCooldownSeconds(0);
-    setOtpCooldownKey(null);
+    const timeoutId = window.setTimeout(() => {
+      setOtpCooldownSeconds(0);
+      setOtpCooldownKey(null);
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
   }, [currentOtpKey, otpCooldownKey, step]);
 
   const resetMessages = () => {

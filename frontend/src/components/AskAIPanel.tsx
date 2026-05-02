@@ -197,8 +197,11 @@ export default function AskAIPanel({ surface, suggestedQueries }: AskAIPanelProp
     if (typeof window === "undefined") {
       return;
     }
-    setSavedQueries(safeParse<string[]>(window.localStorage.getItem(savedQueriesStorageKey), []));
-    setHistory(safeParse<AskAIHistoryEntry[]>(window.localStorage.getItem(historyStorageKey), []));
+    const timeoutId = window.setTimeout(() => {
+      setSavedQueries(safeParse<string[]>(window.localStorage.getItem(savedQueriesStorageKey), []));
+      setHistory(safeParse<AskAIHistoryEntry[]>(window.localStorage.getItem(historyStorageKey), []));
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
   }, [historyStorageKey, savedQueriesStorageKey]);
 
   useEffect(() => {
@@ -466,14 +469,19 @@ export default function AskAIPanel({ surface, suggestedQueries }: AskAIPanelProp
       return null;
     }
 
-    const now = Date.now();
+    const currentEntry = history.find((entry) => entry.request_id === response.request_id);
+    const currentCreatedAt = currentEntry ? new Date(currentEntry.created_at).getTime() : Number.NaN;
+    if (!Number.isFinite(currentCreatedAt)) {
+      return null;
+    }
+
     const oneDayMs = 24 * 60 * 60 * 1000;
     const previous = history.find((entry) => {
       if (entry.request_id === response.request_id) {
         return false;
       }
       const createdAt = new Date(entry.created_at).getTime();
-      return Number.isFinite(createdAt) && now - createdAt >= oneDayMs;
+      return Number.isFinite(createdAt) && currentCreatedAt - createdAt >= oneDayMs;
     });
 
     if (!previous) {

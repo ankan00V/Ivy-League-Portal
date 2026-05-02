@@ -85,8 +85,11 @@ export default function RegisterPage() {
     if (!otpCooldownKey || otpCooldownKey === currentOtpKey) {
       return;
     }
-    setOtpCooldownSeconds(0);
-    setOtpCooldownKey(null);
+    const timeoutId = window.setTimeout(() => {
+      setOtpCooldownSeconds(0);
+      setOtpCooldownKey(null);
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
   }, [currentOtpKey, otpCooldownKey, step]);
 
   const fullName = useMemo(() => `${firstName} ${lastName}`.trim(), [firstName, lastName]);

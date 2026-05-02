@@ -114,7 +114,10 @@ export default function EmployerApplicationsPage() {
   );
 
   useEffect(() => {
-    void fetchRows("initial");
+    const timeoutId = window.setTimeout(() => {
+      void fetchRows("initial");
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
   }, [fetchRows]);
 
   const applySearch = () => {

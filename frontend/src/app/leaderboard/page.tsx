@@ -53,22 +53,22 @@ export default function LeaderboardPage() {
     useEffect(() => {
         const token = getAccessToken();
         const query = searchQuery.trim();
-
-        if (!query) {
-            setSearchResults([]);
-            setSearchError(null);
-            setSearchLoading(false);
-            return;
-        }
-
-        if (!token) {
-            setSearchResults([]);
-            setSearchError("Sign in to search your rank.");
-            return;
-        }
-
         const controller = new AbortController();
         const timer = window.setTimeout(async () => {
+            if (!query) {
+                setSearchResults([]);
+                setSearchError(null);
+                setSearchLoading(false);
+                return;
+            }
+
+            if (!token) {
+                setSearchResults([]);
+                setSearchError("Sign in to search your rank.");
+                setSearchLoading(false);
+                return;
+            }
+
             setSearchLoading(true);
             setSearchError(null);
             try {

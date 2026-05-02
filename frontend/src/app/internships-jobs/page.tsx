@@ -191,8 +191,11 @@ export default function InternshipsJobsPage() {
     );
 
     useEffect(() => {
-        void fetchOpportunities();
-        void triggerLiveRefresh();
+        const timeoutId = window.setTimeout(() => {
+            void fetchOpportunities();
+            void triggerLiveRefresh();
+        }, 0);
+        return () => window.clearTimeout(timeoutId);
     }, []);
 
     useEffect(() => {

@@ -185,8 +185,11 @@ export function useOpportunityFeed() {
   );
 
   useEffect(() => {
-    void fetchOpportunities();
-    void triggerLiveRefresh();
+    const timeoutId = window.setTimeout(() => {
+      void fetchOpportunities();
+      void triggerLiveRefresh();
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
   }, []);
 
   useEffect(() => {

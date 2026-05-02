@@ -555,7 +555,10 @@ export default function AdminOpsPage() {
   }, [router]);
 
   useEffect(() => {
-    void loadAdminData();
+    const timeoutId = window.setTimeout(() => {
+      void loadAdminData();
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
   }, [loadAdminData]);
 
   useEffect(() => {
