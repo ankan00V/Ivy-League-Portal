@@ -9,18 +9,39 @@ jobs:
   rebuild-and-gate-marts:
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand(\"ping\").ok' || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      clickhouse:
+        image: clickhouse/clickhouse-server:24.8
+        env:
+          CLICKHOUSE_DB: vidyaverse
+        ports:
+          - 8123:8123
+        options: >-
+          --health-cmd "clickhouse-client --query 'SELECT 1' || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
     env:
-      MONGODB_URL: ${{ secrets.MONGODB_URL }}
-      MONGODB_DB_NAME: ${{ secrets.MONGODB_DB_NAME }}
+      MONGODB_URL: mongodb://localhost:27017
+      MONGODB_DB_NAME: ivy_league_warehouse_ci
       ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED: "true"
-      ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST: ${{ vars.ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST }}
-      ANALYTICS_WAREHOUSE_CLICKHOUSE_PORT: ${{ vars.ANALYTICS_WAREHOUSE_CLICKHOUSE_PORT || '8123' }}
-      ANALYTICS_WAREHOUSE_CLICKHOUSE_DATABASE: ${{ vars.ANALYTICS_WAREHOUSE_CLICKHOUSE_DATABASE || 'vidyaverse' }}
-      ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME: ${{ secrets.ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME }}
-      ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD: ${{ secrets.ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD }}
-      ANALYTICS_WAREHOUSE_CLICKHOUSE_SECURE: ${{ vars.ANALYTICS_WAREHOUSE_CLICKHOUSE_SECURE || 'false' }}
+      ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST: localhost
+      ANALYTICS_WAREHOUSE_CLICKHOUSE_PORT: "8123"
+      ANALYTICS_WAREHOUSE_CLICKHOUSE_DATABASE: vidyaverse
+      ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME: default
+      ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD: ""
+      ANALYTICS_WAREHOUSE_CLICKHOUSE_SECURE: "false"
       ANALYTICS_WAREHOUSE_ENFORCE_FRESHNESS_IN_PRODUCTION: "true"
-      ANALYTICS_BI_TOOL_URL: ${{ vars.ANALYTICS_BI_TOOL_URL }}
+      ONLINE_FEATURES_PUBLISH_ENABLED: "false"
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -37,20 +58,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
 
-      - name: Validate warehouse secrets
-        run: |
-          missing=0
-          for key in MONGODB_URL MONGODB_DB_NAME ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD; do
-            if [ -z "${!key}" ]; then
-              echo "[missing] ${key}"
-              missing=1
-            else
-              echo "[ok] ${key}"
-            fi
-          done
-          if [ "${missing}" -ne 0 ]; then
-            exit 1
-          fi
+      - name: Seed deterministic warehouse fixture
+        run: python backend/scripts/seed_release_ml_gate_fixture.py --days 30 --reset
 
       - name: Rebuild analytics warehouse marts
         run: python backend/scripts/rebuild_analytics_warehouse.py --lookback-days 30 --traffic-type real
