@@ -23,6 +23,8 @@ jobs:
         image: clickhouse/clickhouse-server:24.8
         env:
           CLICKHOUSE_DB: vidyaverse
+          CLICKHOUSE_USER: warehouse_ci
+          CLICKHOUSE_PASSWORD: warehouse_ci_password
         ports:
           - 8123:8123
         options: >-
@@ -37,8 +39,8 @@ jobs:
       ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST: localhost
       ANALYTICS_WAREHOUSE_CLICKHOUSE_PORT: "8123"
       ANALYTICS_WAREHOUSE_CLICKHOUSE_DATABASE: vidyaverse
-      ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME: default
-      ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD: ""
+      ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME: warehouse_ci
+      ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD: warehouse_ci_password
       ANALYTICS_WAREHOUSE_CLICKHOUSE_SECURE: "false"
       ANALYTICS_WAREHOUSE_ENFORCE_FRESHNESS_IN_PRODUCTION: "true"
       ONLINE_FEATURES_PUBLISH_ENABLED: "false"
