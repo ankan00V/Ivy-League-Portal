@@ -243,7 +243,7 @@ If you are evaluating engineering depth, inspect:
 - benchmark artifacts and reproducibility scripts
 
 ## 15) README Maintenance Policy
-This README is release-facing documentation. It should be updated whenever there is a major change to:
+This README is release facing documentation. It should be updated whenever there is a major change to:
 - architecture
 - ML/ranking behavior
 - security model
