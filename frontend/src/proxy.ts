@@ -15,7 +15,8 @@ function cspValue(nonce: string): string {
   const apiOrigin = process.env.NEXT_PUBLIC_API_ORIGIN?.trim();
   const extraConnect = process.env.NEXT_PUBLIC_CSP_CONNECT_SRC_EXTRA?.trim();
   const reportUri = process.env.NEXT_PUBLIC_CSP_REPORT_URI?.trim() || "/api/v1/security/csp-report";
-  const connectParts = new Set<string>(["'self'"]);
+  const trustedTypesEnabled = process.env.NEXT_PUBLIC_CSP_ENABLE_TRUSTED_TYPES === "1";
+  const connectParts = new Set<string>(["'self'", "https://prod.spline.design"]);
   if (apiOrigin) connectParts.add(apiOrigin);
   if (extraConnect) {
     for (const token of extraConnect.split(/\s+/)) {
@@ -32,7 +33,7 @@ function cspValue(nonce: string): string {
     "object-src 'none'",
     "frame-ancestors 'none'",
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
-    isProduction ? `style-src 'self' 'nonce-${nonce}' https:` : "style-src 'self' 'unsafe-inline' https:",
+    "style-src 'self' 'unsafe-inline' https:",
     "img-src 'self' data: blob: https:",
     "font-src 'self' data: https:",
     `connect-src ${connectSrc}`,
@@ -42,7 +43,7 @@ function cspValue(nonce: string): string {
     `report-uri ${reportUri}`,
     "report-to csp-endpoint",
   ];
-  if (isProduction) {
+  if (isProduction && trustedTypesEnabled) {
     directives.push("require-trusted-types-for 'script'");
     directives.push("trusted-types default nextjs nextjs#bundler");
   }
