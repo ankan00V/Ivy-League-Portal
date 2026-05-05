@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 import hashlib
 import hmac
 import math
@@ -23,6 +23,12 @@ def _normalize_purpose(purpose: str) -> str:
 def _hash_otp(email: str, otp: str, purpose: str) -> str:
     payload = f"{_normalize_email(email)}:{_normalize_purpose(purpose)}:{otp}:{settings.SECRET_KEY}"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _as_utc_aware(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 async def set_otp(
@@ -87,11 +93,13 @@ async def get_otp_cooldown_remaining(
         return 0
 
     now = utc_now()
-    if record.expires_at <= now:
+    expires_at = _as_utc_aware(record.expires_at)
+    created_at = _as_utc_aware(record.created_at)
+    if expires_at <= now:
         await record.delete()
         return 0
 
-    elapsed = max(0.0, (now - record.created_at).total_seconds())
+    elapsed = max(0.0, (now - created_at).total_seconds())
     remaining = int(math.ceil(safe_cooldown - elapsed))
     return max(0, remaining)
 
@@ -107,7 +115,7 @@ async def get_otp(email: str, purpose: str = "signin") -> str | None:
     if not record:
         return None
 
-    if record.expires_at <= utc_now():
+    if _as_utc_aware(record.expires_at) <= utc_now():
         await record.delete()
         return None
 
