@@ -24,6 +24,14 @@ from app.services.opportunity_visibility import (
     is_student_visible_opportunity,
     resolve_opportunity_portal,
 )
+from app.services.opportunity_trust import (
+    TRUST_STATUS_BLOCKED,
+    TRUST_STATUS_NEEDS_REVIEW,
+    TRUST_STATUS_UNREVIEWED,
+    TRUST_STATUS_VERIFIED,
+    apply_trust_assessment,
+    assess_opportunity_trust,
+)
 
 router = APIRouter(include_in_schema=False)
 
@@ -68,6 +76,9 @@ class AdminOverviewResponse(BaseModel):
     active_opportunities_total: int
     expired_opportunities_total: int
     inactive_opportunities_total: int
+    verified_opportunities_total: int
+    needs_review_opportunities_total: int
+    blocked_opportunities_total: int
     social_posts_total: int
     social_comments_total: int
     jobs_dead_count: int
@@ -89,6 +100,8 @@ class AdminOpportunityCreate(BaseModel):
     duration_end: datetime
     deadline: datetime
     lifecycle_status: str = "published"
+    trust_status: Optional[str] = None
+    verification_evidence: list[str] = Field(default_factory=list)
 
 
 class AdminOpportunityUpdate(BaseModel):
@@ -106,6 +119,8 @@ class AdminOpportunityUpdate(BaseModel):
     duration_end: Optional[datetime] = None
     deadline: Optional[datetime] = None
     lifecycle_status: Optional[str] = None
+    trust_status: Optional[str] = None
+    verification_evidence: Optional[list[str]] = None
 
 
 class AdminOpportunityResponse(BaseModel):
@@ -121,6 +136,11 @@ class AdminOpportunityResponse(BaseModel):
     location: Optional[str] = None
     eligibility: Optional[str] = None
     ppo_available: Optional[str] = None
+    trust_status: str
+    trust_score: int
+    risk_score: int
+    risk_reasons: list[str]
+    verification_evidence: list[str]
     lifecycle_status: str
     duration_start: Optional[datetime] = None
     duration_end: Optional[datetime] = None
@@ -192,6 +212,11 @@ def _opportunity_payload(row: Opportunity) -> AdminOpportunityResponse:
         location=row.location,
         eligibility=row.eligibility,
         ppo_available=row.ppo_available,
+        trust_status=row.trust_status or TRUST_STATUS_UNREVIEWED,
+        trust_score=int(row.trust_score or 0),
+        risk_score=int(row.risk_score or 0),
+        risk_reasons=list(row.risk_reasons or []),
+        verification_evidence=list(row.verification_evidence or []),
         lifecycle_status=row.lifecycle_status or "published",
         duration_start=row.duration_start,
         duration_end=row.duration_end,
@@ -209,6 +234,18 @@ def _validate_lifecycle_status(value: str) -> str:
     if lifecycle_status not in {"draft", "published", "paused", "closed"}:
         raise HTTPException(status_code=400, detail="Invalid lifecycle_status")
     return lifecycle_status
+
+
+def _validate_trust_status(value: str) -> str:
+    trust_status = str(value or TRUST_STATUS_UNREVIEWED).strip().lower()
+    if trust_status not in {
+        TRUST_STATUS_VERIFIED,
+        TRUST_STATUS_UNREVIEWED,
+        TRUST_STATUS_NEEDS_REVIEW,
+        TRUST_STATUS_BLOCKED,
+    }:
+        raise HTTPException(status_code=400, detail="Invalid trust_status")
+    return trust_status
 
 
 def _normalize_ppo_available(value: Optional[str]) -> Optional[str]:
@@ -247,6 +284,9 @@ async def admin_overview(
     inactive_opportunities_total = sum(
         1 for row in opportunities if (str(row.lifecycle_status or "published").strip().lower() != "published")
     )
+    verified_opportunities_total = sum(1 for row in opportunities if (str(row.trust_status or TRUST_STATUS_UNREVIEWED).strip().lower() == TRUST_STATUS_VERIFIED))
+    needs_review_opportunities_total = sum(1 for row in opportunities if (str(row.trust_status or TRUST_STATUS_UNREVIEWED).strip().lower() == TRUST_STATUS_NEEDS_REVIEW))
+    blocked_opportunities_total = sum(1 for row in opportunities if (str(row.trust_status or TRUST_STATUS_UNREVIEWED).strip().lower() == TRUST_STATUS_BLOCKED))
     social_posts_total = await Post.find_many().count()
     social_comments_total = await SocialComment.find_many().count()
     jobs_dead_count = await BackgroundJob.find_many(BackgroundJob.status == "dead").count()
@@ -257,6 +297,9 @@ async def admin_overview(
         active_opportunities_total=active_opportunities_total,
         expired_opportunities_total=expired_opportunities_total,
         inactive_opportunities_total=inactive_opportunities_total,
+        verified_opportunities_total=verified_opportunities_total,
+        needs_review_opportunities_total=needs_review_opportunities_total,
+        blocked_opportunities_total=blocked_opportunities_total,
         social_posts_total=social_posts_total,
         social_comments_total=social_comments_total,
         jobs_dead_count=jobs_dead_count,
@@ -268,9 +311,13 @@ async def admin_overview(
 async def admin_list_opportunities(
     limit: int = Query(default=100, ge=1, le=500),
     skip: int = Query(default=0, ge=0),
+    trust_status: Optional[str] = Query(default=None),
     _: User = Depends(get_current_admin_user),
 ) -> Any:
-    rows = await Opportunity.find_many().sort("-updated_at").skip(skip).limit(limit).to_list()
+    query = Opportunity.find_many()
+    if trust_status:
+        query = Opportunity.find_many(Opportunity.trust_status == _validate_trust_status(trust_status))
+    rows = await query.sort("-updated_at").skip(skip).limit(limit).to_list()
     return [_opportunity_payload(row) for row in rows]
 
 
@@ -312,6 +359,13 @@ async def admin_create_opportunity(
         updated_at=utc_now(),
         last_seen_at=utc_now(),
     )
+    apply_trust_assessment(opportunity, assess_opportunity_trust(opportunity))
+    if payload.trust_status:
+        opportunity.trust_status = _validate_trust_status(payload.trust_status)
+        opportunity.reviewed_by_user_id = current_user.id
+        opportunity.reviewed_at = utc_now()
+    if payload.verification_evidence:
+        opportunity.verification_evidence = list(payload.verification_evidence)
     _apply_lifecycle_status(opportunity, lifecycle_status)
     await opportunity.insert()
     await _audit_admin_action(
@@ -338,6 +392,8 @@ async def admin_update_opportunity(
     updates = payload.model_dump(exclude_none=True)
     if "lifecycle_status" in updates:
         updates["lifecycle_status"] = _validate_lifecycle_status(str(updates["lifecycle_status"] or ""))
+    if "trust_status" in updates:
+        updates["trust_status"] = _validate_trust_status(str(updates["trust_status"] or ""))
     if "opportunity_type" in updates:
         updates["opportunity_type"] = canonical_opportunity_type(str(updates["opportunity_type"] or "")) or row.opportunity_type
     if "ppo_available" in updates:
@@ -359,6 +415,14 @@ async def admin_update_opportunity(
         description=row.description,
         portal_category=row.portal_category,
     )
+    computed_assessment = assess_opportunity_trust(row)
+    apply_trust_assessment(row, computed_assessment)
+    if "trust_status" in updates:
+        row.trust_status = str(updates["trust_status"])
+        row.reviewed_by_user_id = current_user.id
+        row.reviewed_at = utc_now()
+    if "verification_evidence" in updates and updates["verification_evidence"] is not None:
+        row.verification_evidence = list(updates["verification_evidence"])
     if "lifecycle_status" in updates:
         _apply_lifecycle_status(row, str(updates["lifecycle_status"]))
     row.updated_at = utc_now()

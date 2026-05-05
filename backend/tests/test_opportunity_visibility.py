@@ -32,14 +32,16 @@ class TestOpportunityVisibility(unittest.TestCase):
 
     def test_is_student_visible_opportunity_rejects_expired_or_unpublished_rows(self) -> None:
         now = utc_now()
-        published = SimpleNamespace(lifecycle_status="published", deadline=now + timedelta(days=2))
+        published = SimpleNamespace(lifecycle_status="published", deadline=now + timedelta(days=2), trust_status="verified", risk_score=12)
         expired = SimpleNamespace(lifecycle_status="published", deadline=now - timedelta(minutes=1))
-        paused = SimpleNamespace(lifecycle_status="paused", deadline=now + timedelta(days=2))
+        paused = SimpleNamespace(lifecycle_status="paused", deadline=now + timedelta(days=2), trust_status="verified", risk_score=12)
+        blocked = SimpleNamespace(lifecycle_status="published", deadline=now + timedelta(days=2), trust_status="blocked", risk_score=92)
 
         self.assertTrue(is_student_visible_opportunity(published, now=now))
         self.assertTrue(is_opportunity_expired(expired, now=now))
         self.assertFalse(is_student_visible_opportunity(expired, now=now))
         self.assertFalse(is_student_visible_opportunity(paused, now=now))
+        self.assertFalse(is_student_visible_opportunity(blocked, now=now))
 
 
 if __name__ == "__main__":

@@ -16,6 +16,13 @@ class Opportunity(Document):
     location: Optional[str] = None
     eligibility: Optional[str] = None
     ppo_available: Optional[str] = None
+    trust_status: str = Field(default="unreviewed", json_schema_extra={"index": True})  # verified | unreviewed | needs_review | blocked
+    trust_score: int = Field(default=50, ge=0, le=100)
+    risk_score: int = Field(default=50, ge=0, le=100)
+    risk_reasons: list[str] = Field(default_factory=list)
+    verification_evidence: list[str] = Field(default_factory=list)
+    reviewed_by_user_id: Optional[PydanticObjectId] = Field(default=None, json_schema_extra={"index": True})
+    reviewed_at: Optional[datetime] = None
     is_employer_post: bool = False
     posted_by_user_id: Optional[PydanticObjectId] = Field(default=None, json_schema_extra={"index": True})
     lifecycle_status: str = Field(default="published", json_schema_extra={"index": True})  # draft | published | paused | closed
@@ -39,6 +46,10 @@ class Opportunity(Document):
             "university",
             "source",
             "ppo_available",
+            "trust_status",
+            "risk_score",
+            "reviewed_by_user_id",
+            "reviewed_at",
             "duration_start",
             "duration_end",
             "deadline",

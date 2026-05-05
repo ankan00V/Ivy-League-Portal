@@ -21,6 +21,7 @@ from urllib3.util.retry import Retry
 
 from app.core.config import settings
 from app.core.time import utc_now
+from app.services.opportunity_trust import apply_trust_assessment, apply_trust_assessment_preserving_review, assess_opportunity_trust
 
 logger = logging.getLogger(__name__)
 
@@ -1573,6 +1574,7 @@ async def _insert_and_broadcast(
         normalized_payload["deadline"] = _to_naive_utc(opp_data.get("deadline"))
         normalized_payload["domain"] = opp_data.get("domain") or classification["primary_domain"]
         normalized_payload["source"] = opp_data.get("source") or source_name.lower().replace(" ", "_")
+        normalized_payload.update(assess_opportunity_trust(normalized_payload).as_update())
         normalized_records.append(normalized_payload)
 
     if len(normalized_records) > 1:
@@ -1624,6 +1626,16 @@ async def _insert_and_broadcast(
                     if getattr(existing, field, None) != incoming:
                         setattr(existing, field, incoming)
                         changed = True
+                next_assessment = assess_opportunity_trust(existing)
+                if (
+                    getattr(existing, "trust_status", None) != next_assessment.trust_status
+                    or int(getattr(existing, "trust_score", 0) or 0) != next_assessment.trust_score
+                    or int(getattr(existing, "risk_score", 0) or 0) != next_assessment.risk_score
+                    or list(getattr(existing, "risk_reasons", []) or []) != next_assessment.risk_reasons
+                    or list(getattr(existing, "verification_evidence", []) or []) != next_assessment.verification_evidence
+                ):
+                    apply_trust_assessment_preserving_review(existing, next_assessment)
+                    changed = True
                 existing.last_seen_at = now_naive
                 if changed:
                     existing.updated_at = now_naive

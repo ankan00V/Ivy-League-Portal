@@ -14,6 +14,11 @@ export interface Opportunity {
   university: string;
   domain: string;
   source?: string;
+  trust_status?: string;
+  trust_score?: number;
+  risk_score?: number;
+  risk_reasons?: string[];
+  verification_evidence?: string[];
   created_at?: string;
   updated_at?: string;
   last_seen_at?: string;

@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any, Literal
 
 from app.services.scraper import is_opportunity_active
+from app.services.opportunity_trust import is_trust_visible
 
 OpportunityPortal = Literal["career", "competitive", "other"]
 
@@ -83,4 +84,6 @@ def is_student_visible_opportunity(opportunity: Any, *, now: datetime | None = N
     lifecycle = str(getattr(opportunity, "lifecycle_status", "published") or "published").strip().lower()
     if lifecycle != "published":
         return False
-    return not is_opportunity_expired(opportunity, now=now)
+    if is_opportunity_expired(opportunity, now=now):
+        return False
+    return is_trust_visible(opportunity)

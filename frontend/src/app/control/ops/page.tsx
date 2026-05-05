@@ -13,6 +13,7 @@ import {
   Pencil,
   RefreshCw,
   Shield,
+  ShieldAlert,
   Trash2,
   Trophy,
   Users2,
@@ -33,6 +34,9 @@ type AdminOverview = {
   active_opportunities_total: number;
   expired_opportunities_total: number;
   inactive_opportunities_total: number;
+  verified_opportunities_total: number;
+  needs_review_opportunities_total: number;
+  blocked_opportunities_total: number;
   social_posts_total: number;
   social_comments_total: number;
   jobs_dead_count: number;
@@ -41,6 +45,7 @@ type AdminOverview = {
 
 type OpportunityPortal = "career" | "competitive" | "other";
 type OpportunityLifecycle = "draft" | "published" | "paused" | "closed";
+type OpportunityTrust = "verified" | "unreviewed" | "needs_review" | "blocked";
 
 type Opportunity = {
   id: string;
@@ -55,6 +60,11 @@ type Opportunity = {
   location?: string | null;
   eligibility?: string | null;
   ppo_available?: string | null;
+  trust_status: OpportunityTrust;
+  trust_score: number;
+  risk_score: number;
+  risk_reasons: string[];
+  verification_evidence: string[];
   lifecycle_status: OpportunityLifecycle;
   duration_start?: string | null;
   duration_end?: string | null;
@@ -118,6 +128,7 @@ type AdminSection =
   | "active"
   | "expired"
   | "inactive"
+  | "review"
   | "automation"
   | "community"
   | "users"
@@ -162,6 +173,7 @@ const sectionMeta: Array<{
   { key: "active", label: "Live", icon: Shield, description: "Visible on student portals now" },
   { key: "expired", label: "Expired", icon: FileClock, description: "Past deadline, editable for resurfacing" },
   { key: "inactive", label: "Inactive", icon: EyeOff, description: "Draft, paused, or manually closed" },
+  { key: "review", label: "Review", icon: ShieldAlert, description: "Trust moderation queue and blocked listings" },
   { key: "automation", label: "Jobs", icon: Bot, description: "Queue and background operations" },
   { key: "community", label: "Community", icon: Trophy, description: "Posts and comments moderation" },
   { key: "users", label: "Users", icon: Users2, description: "Access and account controls" },
@@ -483,6 +495,14 @@ export default function AdminOpsPage() {
     () => sortedOpportunities.filter((row) => !row.is_expired && row.lifecycle_status !== "published"),
     [sortedOpportunities],
   );
+  const needsReviewOpportunities = useMemo(
+    () => sortedOpportunities.filter((row) => row.trust_status === "needs_review"),
+    [sortedOpportunities],
+  );
+  const blockedOpportunities = useMemo(
+    () => sortedOpportunities.filter((row) => row.trust_status === "blocked"),
+    [sortedOpportunities],
+  );
 
   const splitByPortal = useCallback((rows: Opportunity[]) => {
     return {
@@ -723,6 +743,72 @@ export default function AdminOpsPage() {
     }
   };
 
+  const updateTrustStatus = async (id: string, trustStatus: OpportunityTrust) => {
+    const token = getAccessToken();
+    if (!token) {
+      router.replace(ADMIN_LOGIN_PATH);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(apiUrl(`/api/v1/admin/opportunities/${id}`), {
+        method: "PATCH",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          ...authHeaders(token),
+        },
+        body: JSON.stringify({ trust_status: trustStatus }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(getApiErrorMessage(payload, "Unable to update trust status"));
+      }
+      setInfo(`Opportunity marked ${trustStatus}.`);
+      await loadAdminData();
+    } catch (err) {
+      setError(getUnknownErrorMessage(err, "Unable to update trust status"));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const queueTrustBackfill = async () => {
+    const token = getAccessToken();
+    if (!token) {
+      router.replace(ADMIN_LOGIN_PATH);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(apiUrl("/api/v1/admin/jobs/enqueue"), {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          ...authHeaders(token),
+        },
+        body: JSON.stringify({
+          job_type: "opportunities.trust_backfill",
+          payload: { batch_size: 200 },
+          max_attempts: 3,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(getApiErrorMessage(payload, "Unable to queue trust backfill"));
+      }
+      setInfo(`Trust backfill queued: ${String(payload.job_id || "")}`);
+      await loadAdminData();
+    } catch (err) {
+      setError(getUnknownErrorMessage(err, "Unable to queue trust backfill"));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const enqueueJob = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const token = getAccessToken();
@@ -906,6 +992,9 @@ export default function AdminOpsPage() {
             <MetricCard label="Live Opportunities" value={overview?.active_opportunities_total ?? "-"} hint="Visible on student portals" tone="primary" />
             <MetricCard label="Expired Opportunities" value={overview?.expired_opportunities_total ?? "-"} hint="Past deadline, edit to resurface" />
             <MetricCard label="Inactive Opportunities" value={overview?.inactive_opportunities_total ?? "-"} hint="Draft, paused, or closed" />
+            <MetricCard label="Verified Sources" value={overview?.verified_opportunities_total ?? "-"} hint="Low-risk listings visible to students" />
+            <MetricCard label="Needs Review" value={overview?.needs_review_opportunities_total ?? "-"} hint="Queued for manual trust moderation" tone="accent" />
+            <MetricCard label="Blocked Sources" value={overview?.blocked_opportunities_total ?? "-"} hint="Stopped from reaching students" />
             <MetricCard label="Dead Background Jobs" value={overview?.jobs_dead_count ?? "-"} hint="Needs admin intervention" tone="accent" />
           </div>
 
@@ -926,6 +1015,12 @@ export default function AdminOpsPage() {
               <h3 style={{ fontSize: "1.12rem" }}>Queue operational jobs</h3>
               <p style={{ color: "var(--text-secondary)" }}>
                 Scraper refresh, analytics work, and incident follow-up stay isolated from publishing controls.
+              </p>
+            </button>
+            <button type="button" style={{ ...panelStyle(), padding: "1rem", textAlign: "left" }} onClick={() => setActiveSection("review")}>
+              <h3 style={{ fontSize: "1.12rem" }}>Review suspicious listings</h3>
+              <p style={{ color: "var(--text-secondary)" }}>
+                Manual moderation clears false positives and hard-blocks questionable sources before they reach students.
               </p>
             </button>
           </div>
@@ -1121,6 +1216,92 @@ export default function AdminOpsPage() {
         </SectionShell>
       ) : null}
 
+      {activeSection === "review" ? (
+        <SectionShell
+          title="Trust Moderation Queue"
+          subtitle="Listings in needs review are held back from students until a human verifies or blocks them."
+          actions={
+            <button type="button" style={actionButtonStyle("publish")} onClick={() => void queueTrustBackfill()} disabled={loading}>
+              Queue Trust Backfill
+            </button>
+          }
+        >
+          <div style={{ display: "grid", gap: "1rem" }}>
+            <div style={{ display: "grid", gap: "0.65rem" }}>
+              <h3 style={{ fontSize: "1.1rem", marginBottom: "0.15rem" }}>Needs Review</h3>
+              <p style={{ color: "var(--text-secondary)", fontSize: "0.94rem" }}>
+                Review risk reasons, source identity, and host mismatch before promoting to verified.
+              </p>
+              {needsReviewOpportunities.length === 0 ? (
+                <div style={{ ...panelStyle("var(--bg-base)"), padding: "1rem", color: "var(--text-secondary)" }}>No items currently require review.</div>
+              ) : (
+                needsReviewOpportunities.map((row) => (
+                  <article key={row.id} style={{ ...panelStyle("var(--bg-base)"), padding: "1rem", display: "grid", gap: "0.7rem" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap" }}>
+                      <div>
+                        <strong style={{ color: "var(--text-primary)", fontSize: "1.02rem" }}>{row.title}</strong>
+                        <div style={{ color: "var(--text-secondary)", marginTop: "0.2rem" }}>
+                          {(row.university || "Unknown")} · {(row.source || "unknown source")} · risk {row.risk_score}/100
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                        <button type="button" style={actionButtonStyle("publish")} onClick={() => void updateTrustStatus(row.id, "verified")} disabled={loading}>
+                          Verify
+                        </button>
+                        <button type="button" style={actionButtonStyle("mute")} onClick={() => void updateTrustStatus(row.id, "unreviewed")} disabled={loading}>
+                          Return
+                        </button>
+                        <button type="button" style={actionButtonStyle("delete")} onClick={() => void updateTrustStatus(row.id, "blocked")} disabled={loading}>
+                          Block
+                        </button>
+                      </div>
+                    </div>
+                    <p style={{ color: "var(--text-secondary)" }}>{row.description}</p>
+                    <div style={{ display: "grid", gap: "0.3rem" }}>
+                      <strong style={{ color: "var(--text-primary)" }}>Risk reasons</strong>
+                      {(row.risk_reasons || []).length === 0 ? (
+                        <span style={{ color: "var(--text-secondary)" }}>No explicit reasons captured.</span>
+                      ) : (
+                        row.risk_reasons.map((reason) => (
+                          <span key={`${row.id}-${reason}`} style={{ color: "var(--text-secondary)" }}>{reason}</span>
+                        ))
+                      )}
+                    </div>
+                    <a href={row.url} target="_blank" rel="noreferrer" style={{ color: "var(--brand-primary)", fontWeight: 700 }}>
+                      {row.url}
+                    </a>
+                  </article>
+                ))
+              )}
+            </div>
+
+            <div style={{ display: "grid", gap: "0.65rem" }}>
+              <h3 style={{ fontSize: "1.1rem", marginBottom: "0.15rem" }}>Blocked Listings</h3>
+              <p style={{ color: "var(--text-secondary)", fontSize: "0.94rem" }}>
+                These are currently excluded from all student-facing surfaces and apply redirects.
+              </p>
+              {blockedOpportunities.length === 0 ? (
+                <div style={{ ...panelStyle("var(--bg-base)"), padding: "1rem", color: "var(--text-secondary)" }}>No blocked opportunities right now.</div>
+              ) : (
+                blockedOpportunities.slice(0, 40).map((row) => (
+                  <article key={row.id} style={{ ...panelStyle("var(--bg-base)"), padding: "1rem", display: "grid", gap: "0.55rem" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap" }}>
+                      <strong style={{ color: "var(--text-primary)" }}>{row.title}</strong>
+                      <button type="button" style={actionButtonStyle("publish")} onClick={() => void updateTrustStatus(row.id, "needs_review")} disabled={loading}>
+                        Reopen For Review
+                      </button>
+                    </div>
+                    <div style={{ color: "var(--text-secondary)" }}>
+                      {(row.source || "unknown source")} · risk {row.risk_score}/100
+                    </div>
+                  </article>
+                ))
+              )}
+            </div>
+          </div>
+        </SectionShell>
+      ) : null}
+
       {activeSection === "automation" ? (
         <SectionShell title="Background Jobs" subtitle="Operational jobs stay in their own tab so publishing and maintenance are separated.">
           <form onSubmit={enqueueJob} style={{ display: "grid", gap: "0.7rem", marginBottom: "1rem" }}>
@@ -1134,6 +1315,9 @@ export default function AdminOpsPage() {
             </label>
             <button type="submit" style={actionButtonStyle("publish")} disabled={loading}>
               Queue Job
+            </button>
+            <button type="button" style={actionButtonStyle("neutral")} onClick={() => void queueTrustBackfill()} disabled={loading}>
+              Queue Trust Backfill
             </button>
           </form>
 

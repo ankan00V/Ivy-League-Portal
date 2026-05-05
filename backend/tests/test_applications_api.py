@@ -56,8 +56,14 @@ class TestApplicationsApi(unittest.TestCase):
         opportunity = SimpleNamespace(
             id=opportunity_id,
             title="Example Internship",
+            description="Official internship listing from a known company with a real source page and role details.",
+            url="https://linkedin.com/jobs/view/example-internship",
             domain="Engineering",
             opportunity_type="Internship",
+            trust_status="verified",
+            trust_score=88,
+            risk_score=12,
+            lifecycle_status="published",
         )
 
         with (
@@ -85,8 +91,14 @@ class TestApplicationsApi(unittest.TestCase):
         opportunity = SimpleNamespace(
             id=opportunity_id,
             title="Example Hackathon",
+            description="Official hackathon listing from a verified organizer with clear eligibility and timeline.",
+            url="https://devfolio.co/hackathons/example-hackathon",
             domain="Engineering",
             opportunity_type="Hackathon",
+            trust_status="verified",
+            trust_score=86,
+            risk_score=14,
+            lifecycle_status="published",
         )
         FakeApplication.existing = SimpleNamespace(
             id=PydanticObjectId("69e111317cdc2b7901074b83"),
@@ -123,8 +135,14 @@ class TestApplicationsApi(unittest.TestCase):
         opportunity = SimpleNamespace(
             id=opportunity_id,
             title="Example Fellowship",
+            description="Official fellowship listing with published requirements, institution context, and clear application flow.",
+            url="https://wellfound.com/jobs/example-fellowship",
             domain="Research",
             opportunity_type="Opportunity",
+            trust_status="verified",
+            trust_score=80,
+            risk_score=20,
+            lifecycle_status="published",
         )
 
         with (
@@ -146,3 +164,34 @@ class TestApplicationsApi(unittest.TestCase):
         self.assertEqual(len(FakeApplication.created_instances), 1)
         FakeApplication.created_instances[0].insert.assert_awaited_once()
         self.assertEqual(response.status, "In Progress")
+
+    def test_apply_to_opportunity_rejects_blocked_opportunity(self) -> None:
+        user_id = PydanticObjectId("69e111317cdc2b7901074b81")
+        opportunity_id = PydanticObjectId("69e111317cdc2b7901074b82")
+        current_user = SimpleNamespace(id=user_id)
+        opportunity = SimpleNamespace(
+            id=opportunity_id,
+            title="Pay to apply internship",
+            description="Pay Rs 999 application fee to reserve your internship spot.",
+            url="https://random-opportunity-example.com/apply",
+            domain="Engineering",
+            opportunity_type="Internship",
+            trust_status="blocked",
+            risk_score=95,
+            lifecycle_status="published",
+        )
+
+        with (
+            patch.object(applications_endpoint, "Application", FakeApplication),
+            patch.object(applications_endpoint.Opportunity, "get", new=AsyncMock(return_value=opportunity)),
+        ):
+            with self.assertRaises(applications_endpoint.HTTPException) as context:
+                asyncio.run(
+                    applications_endpoint.apply_to_opportunity(
+                        opportunity_id=opportunity_id,
+                        current_user=current_user,
+                    )
+                )
+
+        self.assertEqual(context.exception.status_code, 400)
+        self.assertIn("not eligible", str(context.exception.detail))

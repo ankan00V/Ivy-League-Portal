@@ -90,6 +90,26 @@ export default function OpportunitiesPage() {
             .join(" ");
     };
 
+    const renderTrustBadge = (opp: Opportunity) => {
+        const isVerified = (opp.trust_status || "").toLowerCase() === "verified";
+        return (
+            <span
+                style={{
+                    fontSize: "0.72rem",
+                    padding: "0.22rem 0.58rem",
+                    borderRadius: "999px",
+                    background: isVerified ? "#dcfce7" : "#fff7d6",
+                    color: "#111111",
+                    fontWeight: 900,
+                    textTransform: "uppercase",
+                    border: `2px solid ${isVerified ? "#86efac" : "#facc15"}`,
+                }}
+            >
+                {isVerified ? "Verified Source" : "Source Check Pending"}
+            </span>
+        );
+    };
+
     const renderCompetitiveCard = (opp: Opportunity, idx: number) => {
         const imageUrl = imageFallbackMap[opp.id] ? FALLBACK_IMAGE : getCompetitionImage(opp);
         return (
@@ -202,6 +222,7 @@ export default function OpportunitiesPage() {
                         >
                             {formatSourceLabel(opp.source)}
                         </span>
+                        {renderTrustBadge(opp)}
                     </div>
 
                     <div>
@@ -336,6 +357,7 @@ export default function OpportunitiesPage() {
                                 >
                                     {opp.opportunity_type || "Opportunity"}
                                 </span>
+                                {renderTrustBadge(opp)}
                             </div>
                             <h2
                                 style={{

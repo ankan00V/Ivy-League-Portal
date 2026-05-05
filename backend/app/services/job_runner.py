@@ -360,9 +360,19 @@ async def _job_analytics_warehouse_rebuild(payload: dict[str, Any]) -> dict[str,
     )
 
 
+async def _job_opportunity_trust_backfill(payload: dict[str, Any]) -> dict[str, Any]:
+    from app.services.opportunity_trust_backfill import backfill_opportunity_trust
+
+    return await backfill_opportunity_trust(
+        batch_size=int(payload.get("batch_size") or 200),
+        limit=int(payload["limit"]) if payload.get("limit") is not None else None,
+    )
+
+
 def register_default_jobs() -> None:
     job_runner.register("scraper.run", _job_scraper)
     job_runner.register("mlops.retrain", _job_mlops_retrain)
     job_runner.register("mlops.drift", _job_mlops_drift)
     job_runner.register("mlops.alert", _job_mlops_alert)
     job_runner.register("analytics.warehouse.rebuild", _job_analytics_warehouse_rebuild)
+    job_runner.register("opportunities.trust_backfill", _job_opportunity_trust_backfill)

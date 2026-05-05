@@ -54,6 +54,11 @@ class OpportunityResponse(OpportunityCreate):
     id: PydanticObjectId
     domain: Optional[str] = None
     source: Optional[str] = None
+    trust_status: str = "unreviewed"
+    trust_score: int = 50
+    risk_score: int = 50
+    risk_reasons: list[str] = Field(default_factory=list)
+    verification_evidence: list[str] = Field(default_factory=list)
     created_at: datetime
     updated_at: Optional[datetime] = None
     last_seen_at: Optional[datetime] = None
@@ -171,6 +176,11 @@ def _to_recommended_response(payload: dict[str, Any]) -> RecommendedOpportunityR
         deadline=opportunity.deadline,
         domain=opportunity.domain,
         source=opportunity.source,
+        trust_status=getattr(opportunity, "trust_status", "unreviewed"),
+        trust_score=int(getattr(opportunity, "trust_score", 50) or 50),
+        risk_score=int(getattr(opportunity, "risk_score", 50) or 50),
+        risk_reasons=list(getattr(opportunity, "risk_reasons", []) or []),
+        verification_evidence=list(getattr(opportunity, "verification_evidence", []) or []),
         created_at=opportunity.created_at,
         updated_at=opportunity.updated_at,
         last_seen_at=opportunity.last_seen_at,

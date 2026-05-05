@@ -9,6 +9,12 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from app.services.scraper import _dedupe_by_url, _extract_deadline_from_text, is_opportunity_active
 from app.core.time import utc_now
+from app.services.opportunity_trust import (
+    TRUST_STATUS_BLOCKED,
+    TRUST_STATUS_NEEDS_REVIEW,
+    TRUST_STATUS_VERIFIED,
+    assess_opportunity_trust,
+)
 
 
 class DummyOpportunity:
@@ -41,6 +47,45 @@ class TestScraperIngestionHelpers(unittest.TestCase):
         expired = is_opportunity_active(DummyOpportunity(deadline=now - timedelta(days=1)), now=now)
         self.assertTrue(active)
         self.assertFalse(expired)
+
+    def test_assess_opportunity_trust_blocks_fee_based_opportunities(self) -> None:
+        assessment = assess_opportunity_trust(
+            {
+                "title": "Internship with registration fee",
+                "description": "Pay Rs 999 application fee via UPI to secure your internship slot today.",
+                "url": "https://random-opportunity-example.com/apply",
+                "source": "manual",
+                "university": "Unknown",
+            }
+        )
+        self.assertEqual(assessment.trust_status, TRUST_STATUS_BLOCKED)
+        self.assertGreaterEqual(assessment.risk_score, 75)
+
+    def test_assess_opportunity_trust_verifies_established_sources(self) -> None:
+        assessment = assess_opportunity_trust(
+            {
+                "title": "Official Hackathon",
+                "description": "Established public hackathon with published dates, organizer info, and eligibility details for students.",
+                "url": "https://devfolio.co/hackathons/example",
+                "source": "devfolio",
+                "university": "Devfolio",
+            }
+        )
+        self.assertEqual(assessment.trust_status, TRUST_STATUS_VERIFIED)
+        self.assertLess(assessment.risk_score, 45)
+
+    def test_assess_opportunity_trust_flags_source_host_mismatch(self) -> None:
+        assessment = assess_opportunity_trust(
+            {
+                "title": "Devfolio hackathon clone",
+                "description": "Hackathon listing with copied branding and enough text to avoid thin-description penalties for this check.",
+                "url": "https://fake-devfolio-event.xyz/register",
+                "source": "devfolio",
+                "university": "Devfolio",
+            }
+        )
+        self.assertIn(assessment.trust_status, {TRUST_STATUS_NEEDS_REVIEW, TRUST_STATUS_BLOCKED})
+        self.assertGreaterEqual(assessment.risk_score, 45)
 
 
 if __name__ == "__main__":

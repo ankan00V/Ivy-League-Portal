@@ -11,6 +11,7 @@ from app.models.application import Application
 from app.models.opportunity import Opportunity
 from app.models.user import User
 from app.services.interaction_service import interaction_service
+from app.services.opportunity_visibility import is_student_visible_opportunity
 
 router = APIRouter()
 
@@ -93,6 +94,8 @@ async def apply_to_opportunity(
     opp = await Opportunity.get(opportunity_id)
     if not opp:
         raise HTTPException(status_code=404, detail="Opportunity not found")
+    if not is_student_visible_opportunity(opp):
+        raise HTTPException(status_code=400, detail="This opportunity is not eligible for student applications.")
         
     # Treat repeated apply clicks as idempotent so the frontend can still redirect.
     existing = await Application.find_one(Application.user_id == current_user.id, Application.opportunity_id == opportunity_id)

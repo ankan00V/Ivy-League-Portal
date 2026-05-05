@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 from beanie import PydanticObjectId
+from datetime import datetime, timezone
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
@@ -146,6 +147,41 @@ class TestOpportunitiesAPI(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(context.exception.status_code, 400)
         self.assertIn("traffic_type must be 'real'", str(context.exception.detail))
+
+    def test_recommended_response_includes_trust_metadata(self) -> None:
+        opportunity = type(
+            "OpportunityRow",
+            (),
+            {
+                "id": PydanticObjectId("64b64b64b64b64b64b64b64f"),
+                "title": "Verified opportunity",
+                "description": "Official opportunity from a known organizer.",
+                "url": "https://devfolio.co/example",
+                "opportunity_type": "Hackathon",
+                "university": "Devfolio",
+                "portal_category": "competitive",
+                "deadline": None,
+                "domain": "engineering",
+                "source": "devfolio",
+                "trust_status": "verified",
+                "trust_score": 88,
+                "risk_score": 12,
+                "risk_reasons": [],
+                "verification_evidence": ["trusted host"],
+                "created_at": datetime.now(timezone.utc),
+                "updated_at": datetime.now(timezone.utc),
+                "last_seen_at": datetime.now(timezone.utc),
+            },
+        )()
+        payload = opportunities_endpoint._to_recommended_response(
+            {
+                "opportunity": opportunity,
+                "match_score": 72.0,
+                "match_reasons": ["Strong fit"],
+            }
+        )
+        self.assertEqual(payload.trust_status, "verified")
+        self.assertEqual(payload.trust_score, 88)
 
 
 if __name__ == "__main__":
