@@ -30,6 +30,20 @@ class TestEmailConfigResolution(unittest.TestCase):
 
         self.assertEqual(resolved, "otp@vidyaverse.com")
 
+    def test_otp_body_uses_company_support_metadata(self) -> None:
+        with (
+            patch.object(email_service.settings, "AUTH_COMPANY_NAME", "VidyaVerse"),
+            patch.object(email_service.settings, "AUTH_COMPANY_ADDRESS", "Jalandhar, Punjab, India"),
+            patch.object(email_service.settings, "AUTH_SUPPORT_EMAIL", "support&alerts@example.com"),
+        ):
+            text_body = email_service._otp_text_body(otp="123456")
+            html_body = email_service._otp_html_body(otp="123456")
+
+        self.assertIn("VidyaVerse Security Verification", text_body)
+        self.assertIn("support&alerts@example.com", text_body)
+        self.assertIn("Jalandhar, Punjab, India", html_body)
+        self.assertIn("support&amp;alerts@example.com", html_body)
+
 
 class TestEmailDeliveryRetries(unittest.IsolatedAsyncioTestCase):
     async def test_send_email_otp_retries_then_succeeds(self) -> None:

@@ -149,6 +149,10 @@ class Settings(BaseSettings):
     SMTP_FROM_NAME: Optional[str] = None
     AUTH_OTP_FROM_EMAIL: Optional[str] = None  # compatibility alias
     AUTH_OTP_FROM_NAME: Optional[str] = None   # compatibility alias
+    EMAIL_AUTH_SECRET: Optional[str] = None
+    AUTH_COMPANY_NAME: str = "VidyaVerse"
+    AUTH_COMPANY_ADDRESS: Optional[str] = None
+    AUTH_SUPPORT_EMAIL: Optional[str] = None
 
     # OTP delivery behavior
     OTP_ALLOW_DEBUG_FALLBACK: bool = False

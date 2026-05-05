@@ -2,6 +2,7 @@ import asyncio
 import aiosmtplib
 from email.message import EmailMessage
 from email.utils import formataddr
+from html import escape
 import logging
 from pathlib import Path
 
@@ -13,16 +14,33 @@ logger = logging.getLogger(__name__)
 
 
 def _otp_text_body(*, otp: str, expiry_minutes: int = 5) -> str:
+    company_name = (settings.AUTH_COMPANY_NAME or "VidyaVerse").strip() or "VidyaVerse"
+    support_email = (settings.AUTH_SUPPORT_EMAIL or "").strip()
+    support_line = f"Need help? Contact {support_email}.\n\n" if support_email else ""
     return (
-        "VidyaVerse Security Verification\n\n"
+        f"{company_name} Security Verification\n\n"
         f"Your verification code is: {otp}\n\n"
         f"This code expires in {expiry_minutes} minutes.\n"
         "If you did not request this code, you can safely ignore this email.\n\n"
-        "VidyaVerse Team"
+        f"{support_line}"
+        f"{company_name} Team"
     )
 
 
 def _otp_html_body(*, otp: str, expiry_minutes: int = 5) -> str:
+    company_name = escape((settings.AUTH_COMPANY_NAME or "VidyaVerse").strip() or "VidyaVerse")
+    company_address = escape((settings.AUTH_COMPANY_ADDRESS or "").strip())
+    support_email = escape((settings.AUTH_SUPPORT_EMAIL or "").strip())
+    support_html = (
+        f'<p style="margin:10px 0 0 0;font-size:13px;line-height:1.6;color:#52525b;">Need help? Contact {support_email}.</p>'
+        if support_email
+        else ""
+    )
+    address_html = (
+        f'<span style="color:#52525b;">{company_address}</span><br />'
+        if company_address
+        else ""
+    )
     return f"""\
 <!doctype html>
 <html lang="en">
@@ -59,7 +77,7 @@ def _otp_html_body(*, otp: str, expiry_minutes: int = 5) -> str:
                   </tr>
                 </table>
                 <div style="font-size:12px;letter-spacing:1.8px;font-weight:700;text-transform:uppercase;color:#8a5a00;margin-bottom:10px;">
-                  VidyaVerse Security
+                  {company_name} Security
                 </div>
                 <h1 style="margin:0 0 10px 0;font-size:34px;line-height:1.1;font-weight:700;color:#111827;">
                   Your verification code
@@ -75,9 +93,11 @@ def _otp_html_body(*, otp: str, expiry_minutes: int = 5) -> str:
                 <p style="margin:18px 0 0 0;font-size:14px;line-height:1.6;color:#52525b;">
                   If you did not request this code, you can safely ignore this email.
                 </p>
+                {support_html}
                 <hr style="border:none;border-top:1px solid #d4c6a7;margin:22px 0 16px 0;" />
                 <p style="margin:0;font-size:14px;line-height:1.6;color:#27272a;">
-                  <strong>VidyaVerse</strong><br />
+                  <strong>{company_name}</strong><br />
+                  {address_html}
                   AI Opportunity Intelligence Platform
                 </p>
               </td>
