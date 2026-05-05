@@ -59,7 +59,11 @@ jobs:
 
           if [ "${missing}" -ne 0 ]; then
             echo "Staging test identities are incomplete."
-            exit 1
+            if [ "${STAGING_E2E_REQUIRED}" = "true" ]; then
+              echo "STAGING_E2E_REQUIRED=true, failing the scheduled staging gate."
+              exit 1
+            fi
+            echo "STAGING_E2E_REQUIRED is not true; treating this as an informational readiness report."
           else
             echo "STAGING_E2E_READY=true" >> "$GITHUB_ENV"
           fi
