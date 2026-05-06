@@ -404,7 +404,7 @@ def _extract_deadline_from_text(text: str) -> datetime | None:
 
 
 def is_opportunity_active(opportunity: Any, now: datetime | None = None) -> bool:
-    current_time = _to_naive_utc(now) or utc_now()
+    current_time = _to_naive_utc(now or utc_now())
     deadline = _to_naive_utc(getattr(opportunity, "deadline", None))
     if deadline and deadline < current_time:
         return False
@@ -1526,7 +1526,7 @@ async def _delete_opportunities(records: Iterable[Any]) -> int:
 
 
 async def _cleanup_inactive_opportunities(Opportunity) -> dict[str, int]:
-    now = utc_now()
+    now = _to_naive_utc(utc_now())
     cleanup_report = {
         "expired_deleted": 0,
         "stale_deleted": 0,
@@ -1615,7 +1615,7 @@ async def _insert_and_broadcast(
         url = normalized_payload["url"]
 
         try:
-            now_naive = utc_now()
+            now_naive = _to_naive_utc(utc_now())
             existing = existing_by_url.get(url)
             if existing:
                 changed = False

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 from bisect import bisect_left
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from beanie.odm.operators.find.comparison import In
@@ -18,13 +19,14 @@ from app.services.personalization.feature_builder import build_ranker_features, 
 from app.services.personalization.learned_ranker import learned_ranker
 from app.services.ranking_model_service import ranking_model_service
 from app.services.vector_service import opportunity_vector_service
-from app.core.time import utc_now
+from app.core.time import as_utc_aware, utc_now
 
 
 def _activity_sort_key(opportunity: Opportunity) -> tuple[datetime, datetime]:
-    latest_touch = opportunity.last_seen_at or opportunity.updated_at or opportunity.created_at
-    created_at = opportunity.created_at or latest_touch or datetime.min
-    return latest_touch or datetime.min, created_at
+    minimum = datetime.min.replace(tzinfo=timezone.utc)
+    latest_touch = as_utc_aware(opportunity.last_seen_at or opportunity.updated_at or opportunity.created_at)
+    created_at = as_utc_aware(opportunity.created_at) or latest_touch or minimum
+    return latest_touch or minimum, created_at
 
 
 def _profile_query(profile: Profile) -> str:
@@ -98,7 +100,10 @@ class RecommendationService:
             if action not in {"click", "save", "apply"}:
                 continue
             key = str(item.opportunity_id)
-            positive_map.setdefault(key, []).append(item.created_at)
+            created_at = as_utc_aware(item.created_at)
+            if created_at is None:
+                continue
+            positive_map.setdefault(key, []).append(created_at)
 
         for times in positive_map.values():
             times.sort()
@@ -117,12 +122,16 @@ class RecommendationService:
             if score is None:
                 continue
 
+            created_at = as_utc_aware(item.created_at)
+            if created_at is None:
+                continue
+
             key = str(item.opportunity_id)
             times = positive_map.get(key, [])
             label = 0
             if times:
-                left = bisect_left(times, item.created_at)
-                if left < len(times) and times[left] <= (item.created_at + label_window):
+                left = bisect_left(times, created_at)
+                if left < len(times) and times[left] <= (created_at + label_window):
                     label = 1
 
             if label == 1:
@@ -197,7 +206,9 @@ class RecommendationService:
         type_score: dict[str, float] = defaultdict(float)
 
         for interaction in interactions:
-            created_at = interaction.created_at
+            created_at = as_utc_aware(interaction.created_at)
+            if created_at is None:
+                continue
             if created_at >= window_7d:
                 recent_interactions_7d += 1
             if created_at >= window_30d:
@@ -355,10 +366,18 @@ class RecommendationService:
 
         semantic_query = (query or "").strip() or _profile_query(profile)
         if semantic_query:
-            semantic_results = await opportunity_vector_service.search(
-                semantic_query,
-                top_k=min(max(150, limit * 10), 500),
-            )
+            semantic_timeout = max(0.25, min(float(settings.RECOMMENDATION_SEMANTIC_TIMEOUT_SECONDS), 15.0))
+            try:
+                semantic_results = await asyncio.wait_for(
+                    opportunity_vector_service.search(
+                        semantic_query,
+                        top_k=min(max(150, limit * 10), 500),
+                    ),
+                    timeout=semantic_timeout,
+                )
+            except Exception as exc:
+                semantic_results = []
+                meta["semantic_fallback_reason"] = exc.__class__.__name__
             semantic_scores = {
                 result["id"]: max(0.0, float(result.get("similarity") or 0.0)) * 100.0
                 for result in semantic_results

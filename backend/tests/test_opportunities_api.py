@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 from beanie import PydanticObjectId
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
@@ -33,6 +33,59 @@ class TestOpportunitiesAPI(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(experiment_key, "ranking_mode_v2")
         self.assertEqual(experiment_variant, "ml_canary")
+
+    def test_opportunity_freshness_accepts_naive_mongo_datetimes(self) -> None:
+        opportunity = type(
+            "OpportunityStub",
+            (),
+            {
+                "last_seen_at": datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=5),
+                "updated_at": None,
+                "created_at": None,
+            },
+        )()
+
+        freshness = opportunities_endpoint._freshness_seconds([opportunity])
+
+        self.assertIsNotNone(freshness)
+        self.assertGreaterEqual(freshness or 0.0, 0.0)
+
+    def test_opportunity_sort_key_accepts_mixed_datetime_awareness(self) -> None:
+        naive = type(
+            "OpportunityStub",
+            (),
+            {
+                "last_seen_at": datetime(2026, 5, 6, 4, 0),
+                "updated_at": None,
+                "created_at": datetime(2026, 5, 6, 3, 0, tzinfo=timezone.utc),
+            },
+        )()
+        aware = type(
+            "OpportunityStub",
+            (),
+            {
+                "last_seen_at": datetime(2026, 5, 6, 5, 0, tzinfo=timezone.utc),
+                "updated_at": None,
+                "created_at": datetime(2026, 5, 6, 2, 0),
+            },
+        )()
+
+        sorted([naive, aware], key=opportunities_endpoint._activity_sort_key, reverse=True)
+
+    async def test_trigger_scraper_enqueues_for_authenticated_user(self) -> None:
+        user = DummyUser()
+        job = type("JobStub", (), {"id": PydanticObjectId("64b64b64b64b64b64b64b64c")})()
+
+        with (
+            patch.object(opportunities_endpoint.settings, "JOBS_ENABLED", True),
+            patch("app.services.scraper.get_scraper_runtime_status", return_value={"is_running": False}),
+            patch("app.services.job_runner.job_runner.enqueue", new=AsyncMock(return_value=job)) as enqueue,
+        ):
+            payload = await opportunities_endpoint.trigger_scraper(user)
+
+        enqueue.assert_awaited_once()
+        self.assertEqual(payload["status"], "queued")
+        self.assertEqual(payload["message"], "Scraper job enqueued.")
 
     async def test_ask_ai_shortlist_logs_telemetry(self) -> None:
         user = DummyUser()

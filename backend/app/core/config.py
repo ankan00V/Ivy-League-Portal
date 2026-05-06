@@ -93,6 +93,7 @@ class Settings(BaseSettings):
     CACHE_EMBEDDING_TTL_SECONDS: int = 60 * 60 * 24  # 24h
     CACHE_SEARCH_TTL_SECONDS: int = 60  # 1m
     CACHE_MAX_TEXT_LENGTH: int = 1200
+    RECOMMENDATION_SEMANTIC_TIMEOUT_SECONDS: float = 3.0
 
     # Observability / Metrics
     METRICS_ENABLED: bool = True

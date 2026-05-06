@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 from datetime import datetime
 import sys
@@ -77,6 +78,66 @@ class TestRecommendationService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ranked[0]["opportunity"].id, opportunities[0].id)
         self.assertEqual(meta["model_version_id"], "model-123")
         self.assertGreater(ranked[0]["semantic_score"], ranked[1]["semantic_score"])
+
+    async def test_semantic_timeout_still_returns_live_ranked_rows(self) -> None:
+        service = RecommendationService()
+        user_id = "user-semantic-timeout"
+        profile = SimpleNamespace(
+            user_id=user_id,
+            bio="",
+            skills="react typescript",
+            interests="frontend",
+            education="",
+            achievements="",
+        )
+        opportunities = [
+            SimpleNamespace(
+                id="opp-frontend",
+                title="Frontend Internship",
+                description="Build React dashboards.",
+                url="https://example.com/frontend",
+                domain="Software",
+                opportunity_type="Internship",
+                university="Company",
+                source="example_source",
+                deadline=None,
+                created_at=utc_now(),
+                updated_at=utc_now(),
+                last_seen_at=utc_now(),
+            )
+        ]
+
+        async def _slow_search(*args, **kwargs):  # noqa: ANN002, ANN003
+            await asyncio.sleep(0.35)
+            return []
+
+        with (
+            patch(
+                "app.services.recommendation_service.ranking_model_service.get_active",
+                new=AsyncMock(
+                    return_value=type(
+                        "ActiveModel",
+                        (),
+                        {"model_version_id": "model-timeout", "weights": {"semantic": 0.6, "baseline": 0.25, "behavior": 0.15}},
+                    )()
+                ),
+            ),
+            patch("app.services.recommendation_service.opportunity_vector_service.search", new=AsyncMock(side_effect=_slow_search)),
+            patch.object(service, "_build_behavior_map", new=AsyncMock(return_value={"domain": {}, "type": {}, "stats": {}})),
+            patch.object(service, "_learn_user_filter_threshold", new=AsyncMock(return_value=None)),
+            patch("app.services.recommendation_service.settings.RECOMMENDATION_SEMANTIC_TIMEOUT_SECONDS", 0.001),
+        ):
+            ranked, meta = await service.rank(
+                user_id=user_id,
+                profile=profile,
+                opportunities=opportunities,
+                limit=1,
+                ranking_mode="semantic",
+            )
+
+        self.assertEqual(len(ranked), 1)
+        self.assertEqual(ranked[0]["opportunity"].id, "opp-frontend")
+        self.assertEqual(meta.get("semantic_fallback_reason"), "TimeoutError")
 
     async def test_ml_mode_falls_back_for_entire_request_on_ranker_failure(self) -> None:
         service = RecommendationService()

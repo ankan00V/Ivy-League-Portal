@@ -9,3 +9,11 @@ def utc_now() -> datetime:
 
 def utc_iso() -> str:
     return utc_now().isoformat()
+
+
+def as_utc_aware(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)

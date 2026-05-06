@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal, Optional
 
 from beanie import PydanticObjectId
@@ -31,7 +31,7 @@ from app.services.opportunity_visibility import (
 from app.services.rag_service import rag_service
 from app.services.recommendation_service import recommendation_service
 from app.services.ranking_request_telemetry_service import ranking_request_telemetry_service
-from app.core.time import utc_now
+from app.core.time import as_utc_aware, utc_now
 
 router = APIRouter()
 
@@ -197,9 +197,10 @@ def _to_recommended_response(payload: dict[str, Any]) -> RecommendedOpportunityR
 
 
 def _activity_sort_key(opportunity: Opportunity) -> tuple[datetime, datetime]:
-    latest_touch = opportunity.last_seen_at or opportunity.updated_at or opportunity.created_at
-    created_at = opportunity.created_at or latest_touch or datetime.min
-    return latest_touch or datetime.min, created_at
+    minimum = datetime.min.replace(tzinfo=timezone.utc)
+    latest_touch = as_utc_aware(opportunity.last_seen_at or opportunity.updated_at or opportunity.created_at)
+    created_at = as_utc_aware(opportunity.created_at) or latest_touch or minimum
+    return latest_touch or minimum, created_at
 
 
 def _filter_active_opportunities(opportunities: list[Opportunity]) -> list[Opportunity]:
@@ -216,7 +217,7 @@ def _freshness_seconds(opportunities: list[Opportunity]) -> float | None:
     now = utc_now()
     freshness_values: list[float] = []
     for opportunity in opportunities:
-        last = opportunity.last_seen_at or opportunity.updated_at or opportunity.created_at
+        last = as_utc_aware(opportunity.last_seen_at or opportunity.updated_at or opportunity.created_at)
         if last is None:
             continue
         freshness_values.append(max(0.0, (now - last).total_seconds()))
@@ -320,7 +321,7 @@ async def _ensure_live_feed_if_stale() -> None:
             asyncio.create_task(run_scheduled_scrapers())
         return
 
-    latest_seen = latest_items[0].last_seen_at or latest_items[0].updated_at or latest_items[0].created_at
+    latest_seen = as_utc_aware(latest_items[0].last_seen_at or latest_items[0].updated_at or latest_items[0].created_at)
     if latest_seen is None:
         if settings.JOBS_ENABLED:
             await job_runner.enqueue(job_type="scraper.run", dedupe_key="scraper.run")
@@ -982,17 +983,37 @@ async def create_opportunity(
 
 @router.post("/trigger-scraper", response_model=dict)
 async def trigger_scraper(
-    _: User = Depends(get_current_admin_user),
+    _: User = Depends(get_current_active_user),
 ) -> Any:
     """
-    Trigger the resilient scraper manually to fetch remote opportunities (Unstop, Naukri) and insert into DB.
+    Trigger the resilient scraper manually to fetch remote opportunities.
+
+    The internships/jobs page calls this when the live feed is empty or
+    unavailable, so this must be available to authenticated users. The job
+    runner still deduplicates concurrent refresh requests.
     """
     from app.services.job_runner import job_runner
+    from app.services.scraper import get_scraper_runtime_status, run_scheduled_scrapers
+
+    runtime = get_scraper_runtime_status()
+    if runtime.get("is_running"):
+        return {
+            "message": "Scraper is already running.",
+            "status": "running",
+        }
+
+    if not settings.JOBS_ENABLED:
+        asyncio.create_task(run_scheduled_scrapers(force=True))
+        return {
+            "message": "Scraper started in background.",
+            "status": "started",
+        }
 
     job = await job_runner.enqueue(job_type="scraper.run", dedupe_key="scraper.run.manual")
 
     return {
         "message": "Scraper job enqueued.",
+        "status": "queued",
         "job_id": str(job.id),
     }
 

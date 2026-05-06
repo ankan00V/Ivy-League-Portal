@@ -1,5 +1,5 @@
 import unittest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from app.core.time import utc_now
@@ -42,6 +42,27 @@ class TestOpportunityVisibility(unittest.TestCase):
         self.assertFalse(is_student_visible_opportunity(expired, now=now))
         self.assertFalse(is_student_visible_opportunity(paused, now=now))
         self.assertFalse(is_student_visible_opportunity(blocked, now=now))
+
+    def test_is_student_visible_opportunity_accepts_naive_mongo_deadlines(self) -> None:
+        now = datetime(2026, 5, 6, 4, 0, tzinfo=timezone.utc)
+        naive_future = datetime(2026, 5, 7, 4, 0)
+        naive_past = datetime(2026, 5, 5, 4, 0)
+
+        published = SimpleNamespace(
+            lifecycle_status="published",
+            deadline=naive_future,
+            trust_status="verified",
+            risk_score=12,
+        )
+        expired = SimpleNamespace(
+            lifecycle_status="published",
+            deadline=naive_past,
+            trust_status="verified",
+            risk_score=12,
+        )
+
+        self.assertTrue(is_student_visible_opportunity(published, now=now))
+        self.assertTrue(is_opportunity_expired(expired, now=now))
 
 
 if __name__ == "__main__":

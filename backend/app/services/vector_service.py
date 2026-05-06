@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from hashlib import md5
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any, Iterable, Optional
 
 import numpy as np
@@ -15,7 +15,7 @@ from app.models.vector_index_entry import VectorIndexEntry
 from app.services.embedding_service import embedding_service
 from app.core.config import settings
 from app.core.metrics import CACHE_HITS_TOTAL, CACHE_MISSES_TOTAL
-from app.core.time import utc_now
+from app.core.time import as_utc_aware, utc_now
 
 try:
     import faiss  # type: ignore
@@ -33,14 +33,6 @@ def _opportunity_to_text(opportunity: Opportunity) -> str:
             opportunity.university or "",
         ]
     ).strip()
-
-
-def _normalize_deadline(deadline: datetime | None) -> datetime | None:
-    if deadline is None:
-        return None
-    if deadline.tzinfo is None:
-        return deadline
-    return deadline.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def _text_hash(text: str) -> str:
@@ -187,10 +179,10 @@ class OpportunityVectorService:
 
         max_deadline_days = filters.get("max_deadline_days")
         if isinstance(max_deadline_days, int):
-            deadline = meta.get("deadline")
+            deadline = as_utc_aware(meta.get("deadline"))
             if deadline is None:
                 return False
-            days_left = (_normalize_deadline(deadline) - utc_now()).days
+            days_left = (deadline - utc_now()).days
             if days_left > max_deadline_days:
                 return False
 

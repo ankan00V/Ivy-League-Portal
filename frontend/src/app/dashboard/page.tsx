@@ -3,7 +3,7 @@ import React, { useState, useCallback, useEffect, useMemo, useRef } from "react"
 import Sidebar from "@/components/Sidebar";
 import { motion, useMotionValue, useTransform } from "framer-motion";
 import type { HTMLMotionProps } from "framer-motion";
-import { TrendingUp, Briefcase, ShieldCheck, Activity, Sparkles, Star, CircleAlert, CircleCheck, X } from "lucide-react";
+import { TrendingUp, Briefcase, ShieldCheck, Activity, Sparkles, Star, CircleAlert, CircleCheck, X, Loader2 } from "lucide-react";
 import { apiUrl } from "@/lib/api";
 import { getAccessToken } from "@/lib/auth-session";
 import { useRouter } from "next/navigation";
@@ -135,6 +135,15 @@ const formatStableDate = (value: string) => {
     return `${year}-${month}-${day}`;
 };
 
+const normalizeOpportunityCards = (items: OpportunityCard[]) =>
+    items.map((item, idx) => ({
+        ...item,
+        ranking_mode: item.ranking_mode || "baseline",
+        experiment_key: item.experiment_key || "ranking_mode",
+        experiment_variant: item.experiment_variant || item.ranking_mode || "baseline",
+        rank_position: item.rank_position ?? idx + 1,
+    }));
+
 export default function DashboardPage() {
     const router = useRouter();
     const allowSimulatedFallback = process.env.NEXT_PUBLIC_DEMO_MODE === "1";
@@ -150,12 +159,15 @@ export default function DashboardPage() {
     const [, setPostsSource] = useState<DataSourceState>("no_data");
     const [backendHealthy, setBackendHealthy] = useState(true);
     const [dashboardNotice, setDashboardNotice] = useState<string | null>(null);
+    const [recommendationsLoading, setRecommendationsLoading] = useState(true);
     const lastImpressionBatchRef = useRef("");
+    const hasRecommendationsRef = useRef(false);
 
     const fetchDashboardData = useCallback(async () => {
         try {
             setDashboardNotice(null);
             setBackendHealthy(true);
+            setRecommendationsLoading(!hasRecommendationsRef.current);
             const token = getAccessToken();
             const hasAuth = Boolean(token);
             setIsAuthenticated(hasAuth);
@@ -206,55 +218,35 @@ export default function DashboardPage() {
 
             // 2. Personalized opportunities when authenticated, else public fallback
             let recommendationLoaded = false;
-            if (authHeaders) {
-                const oppsRes = await fetch(apiUrl("/api/v1/opportunities/recommended/me?limit=3"), { headers: authHeaders });
-                if (oppsRes.ok) {
-                    const oData: OpportunityCard[] = await oppsRes.json();
-                    if (oData.length > 0) {
-                        setRecommended(
-                            oData.map((item, idx) => ({
-                                ...item,
-                                ranking_mode: item.ranking_mode || "baseline",
-                                experiment_key: item.experiment_key || "ranking_mode",
-                                experiment_variant: item.experiment_variant || item.ranking_mode || "baseline",
-                                rank_position: item.rank_position ?? idx + 1,
-                            }))
-                        );
-                        setRecommendationsSource("live");
-                        recommendationLoaded = true;
-                    }
-                }
-            }
-
-            if (!recommendationLoaded) {
-                const fallback = await fetch(apiUrl("/api/v1/opportunities/?limit=3"));
-                if (fallback.ok) {
-                    const fallbackData: OpportunityCard[] = await fallback.json();
-                    if (fallbackData.length > 0) {
-                        setRecommended(
-                            fallbackData.map((item, idx) => ({
-                                ...item,
-                                ranking_mode: item.ranking_mode || "baseline",
-                                experiment_key: item.experiment_key || "ranking_mode",
-                                experiment_variant: item.experiment_variant || item.ranking_mode || "baseline",
-                                rank_position: item.rank_position ?? idx + 1,
-                            }))
-                        );
-                        setRecommendationsSource("live");
-                        recommendationLoaded = true;
-                    }
+            const fallback = await fetch(apiUrl("/api/v1/opportunities/?limit=3"));
+            if (fallback.ok) {
+                const fallbackData: OpportunityCard[] = await fallback.json();
+                if (fallbackData.length > 0) {
+                    setRecommended(normalizeOpportunityCards(fallbackData));
+                    hasRecommendationsRef.current = true;
+                    setRecommendationsLoading(false);
+                    setRecommendationsSource("live");
+                    recommendationLoaded = true;
                 }
             }
 
             if (!recommendationLoaded) {
                 if (allowSimulatedFallback) {
                     setRecommended(DEV_SIMULATED_OPPORTUNITIES);
+                    hasRecommendationsRef.current = true;
+                    setRecommendationsLoading(false);
                     setRecommendationsSource("simulated");
                     setDashboardNotice("Demo mode is enabled. Showing seeded recommendations.");
                 } else {
                     setRecommended([]);
+                    hasRecommendationsRef.current = false;
+                    setRecommendationsLoading(false);
                     setRecommendationsSource("no_data");
-                    setDashboardNotice("No recommendations available yet.");
+                    setDashboardNotice(
+                        hasAuth
+                            ? "Complete more profile details to improve matching, or check back after the live scraper refresh finishes."
+                            : "Sign in to unlock personalized recommendations."
+                    );
                 }
             }
 
@@ -290,12 +282,16 @@ export default function DashboardPage() {
             setBackendHealthy(false);
             if (allowSimulatedFallback) {
                 setRecommended(DEV_SIMULATED_OPPORTUNITIES);
+                hasRecommendationsRef.current = true;
+                setRecommendationsLoading(false);
                 setPosts(DEV_SIMULATED_POSTS);
                 setRecommendationsSource("simulated");
                 setPostsSource("simulated");
                 setDashboardNotice("Backend is unavailable. Demo mode is serving seeded data.");
             } else {
                 setRecommended([]);
+                hasRecommendationsRef.current = false;
+                setRecommendationsLoading(false);
                 setPosts([]);
                 setRecommendationsSource("no_data");
                 setPostsSource("no_data");
@@ -316,6 +312,18 @@ export default function DashboardPage() {
             window.clearInterval(interval);
         };
     }, [fetchDashboardData]);
+
+    useEffect(() => {
+        if (!recommendationsLoading) {
+            return;
+        }
+        const timeout = window.setTimeout(() => {
+            if (!hasRecommendationsRef.current) {
+                setRecommendationsLoading(false);
+            }
+        }, 8000);
+        return () => window.clearTimeout(timeout);
+    }, [recommendationsLoading]);
 
     const getMatchPercent = (seed: string) => {
         let hash = 0;
@@ -388,6 +396,9 @@ export default function DashboardPage() {
             };
         });
     }, [profileStrength]);
+    const recommendationEmptyMessage = isAuthenticated && profileStrengthPercent < 65
+        ? "Complete your profile to improve matching. Add skills, interests, education, and a short bio so VidyaVerse can rank better opportunities."
+        : "No recommendation rows are available right now. Live opportunities will appear here after the scraper refreshes.";
 
     useEffect(() => {
         const token = getAccessToken();
@@ -590,8 +601,32 @@ export default function DashboardPage() {
                         </div>
 
                         {activeRecommendations.length === 0 ? (
-                            <div className="card-panel" style={{ fontWeight: 700, color: "var(--text-secondary)" }}>
-                                No recommendation rows are available right now.
+                            <div
+                                className="card-panel"
+                                style={{
+                                    fontWeight: 700,
+                                    color: "var(--text-secondary)",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: "0.85rem",
+                                    minHeight: "92px",
+                                }}
+                            >
+                                {recommendationsLoading ? (
+                                    <>
+                                        <Loader2 size={22} className="animate-spin" style={{ color: "var(--brand-accent)", flex: "0 0 auto" }} />
+                                        <div>
+                                            <div style={{ color: "var(--text-primary)", marginBottom: "0.2rem" }}>
+                                                Curating the best possible opportunities for you
+                                            </div>
+                                            <div style={{ fontSize: "0.95rem", fontWeight: 600 }}>
+                                                Matching live opportunities according to your profile.
+                                            </div>
+                                        </div>
+                                    </>
+                                ) : (
+                                    recommendationEmptyMessage
+                                )}
                             </div>
                         ) : (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
