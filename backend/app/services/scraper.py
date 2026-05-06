@@ -97,6 +97,15 @@ GENERIC_PORTAL_LISTINGS: list[dict[str, Any]] = [
         ],
     },
     {
+        "source": "major_league_hacking",
+        "label": "Major League Hacking",
+        "default_type": "Hackathon",
+        "default_university": "Major League Hacking",
+        "listings": [
+            "https://mlh.io/seasons/2026/events",
+        ],
+    },
+    {
         "source": "glassdoor",
         "label": "Glassdoor",
         "default_type": "Job",
@@ -106,12 +115,49 @@ GENERIC_PORTAL_LISTINGS: list[dict[str, Any]] = [
         ],
     },
     {
+        "source": "naukri",
+        "label": "Naukri",
+        "default_type": "Job",
+        "default_university": "Naukri Recruiters",
+        "listings": [
+            "https://www.naukri.com/internship-jobs",
+            "https://www.naukri.com/fresher-jobs",
+        ],
+    },
+    {
         "source": "foundit",
         "label": "Foundit",
         "default_type": "Job",
         "default_university": "Foundit Recruiters",
         "listings": [
             "https://www.foundit.in/srp/results?query=internship&locations=India",
+        ],
+    },
+    {
+        "source": "instahyre",
+        "label": "Instahyre",
+        "default_type": "Job",
+        "default_university": "Instahyre Recruiters",
+        "listings": [
+            "https://www.instahyre.com/candidate/opportunities/",
+        ],
+    },
+    {
+        "source": "hirist",
+        "label": "Hirist",
+        "default_type": "Job",
+        "default_university": "Hirist",
+        "listings": [
+            "https://www.hirist.tech/",
+        ],
+    },
+    {
+        "source": "cuvette",
+        "label": "Cuvette",
+        "default_type": "Internship",
+        "default_university": "Cuvette",
+        "listings": [
+            "https://www.cuvette.tech/jobs",
         ],
     },
     {

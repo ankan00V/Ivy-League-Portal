@@ -50,6 +50,24 @@ def _profile_query(profile: Profile) -> str:
 
 
 class RecommendationService:
+    def _diversify_ranked(self, items: list[dict[str, Any]], *, per_source_cap: int = 2) -> list[dict[str, Any]]:
+        capped = max(1, per_source_cap)
+        source_counts: dict[str, int] = {}
+        primary: list[dict[str, Any]] = []
+        overflow: list[dict[str, Any]] = []
+
+        for item in items:
+            opportunity = item.get("opportunity")
+            raw_source = str(getattr(opportunity, "source", "") or "").strip().lower() or "unknown"
+            count = source_counts.get(raw_source, 0)
+            if count < capped:
+                primary.append(item)
+                source_counts[raw_source] = count + 1
+            else:
+                overflow.append(item)
+
+        return primary + overflow
+
     def _quantile(self, values: list[float], q: float) -> float:
         if not values:
             return 0.0
@@ -586,6 +604,7 @@ class RecommendationService:
             ),
             reverse=True,
         )
+        ranked = self._diversify_ranked(ranked, per_source_cap=2)
 
         return ranked[: max(1, min(limit, 50))], meta
 

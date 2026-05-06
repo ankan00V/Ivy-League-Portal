@@ -74,6 +74,19 @@ class TestScraperIngestionHelpers(unittest.TestCase):
         self.assertEqual(assessment.trust_status, TRUST_STATUS_VERIFIED)
         self.assertLess(assessment.risk_score, 45)
 
+    def test_assess_opportunity_trust_verifies_new_allowlisted_sources(self) -> None:
+        assessment = assess_opportunity_trust(
+            {
+                "title": "Startup internship listing",
+                "description": "Published startup internship with role details, published host identity, and a clear application path for students.",
+                "url": "https://www.instahyre.com/job/example-role/",
+                "source": "instahyre",
+                "university": "Instahyre",
+            }
+        )
+        self.assertEqual(assessment.trust_status, TRUST_STATUS_VERIFIED)
+        self.assertLess(assessment.risk_score, 45)
+
     def test_assess_opportunity_trust_flags_source_host_mismatch(self) -> None:
         assessment = assess_opportunity_trust(
             {

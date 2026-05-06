@@ -447,8 +447,18 @@ export default function InternshipsJobsPage() {
         );
     };
 
+    const trustSummary = (opp: Opportunity) => {
+        const trustScore = Math.max(0, Math.min(100, Number(opp.trust_score || 0)));
+        const evidence = Array.isArray(opp.verification_evidence) ? opp.verification_evidence[0] : null;
+        return {
+            scoreLabel: `${trustScore}/100 source confidence`,
+            evidenceLabel: evidence || "Organizer, host, and listing source are being continuously checked.",
+        };
+    };
+
     const renderCompetitiveCard = (opp: Opportunity, idx: number) => {
         const imageUrl = imageFallbackMap[opp.id] ? FALLBACK_IMAGE : getCompetitionImage(opp);
+        const trust = trustSummary(opp);
         return (
             <motion.article
                 key={opp.id || idx}
@@ -591,6 +601,14 @@ export default function InternshipsJobsPage() {
                         >
                             {opp.description}
                         </p>
+                        <div style={{ marginTop: "0.65rem", display: "grid", gap: "0.18rem" }}>
+                            <div style={{ fontSize: "0.8rem", fontWeight: 800, color: "var(--text-primary)" }}>
+                                {trust.scoreLabel}
+                            </div>
+                            <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", fontWeight: 600 }}>
+                                {trust.evidenceLabel}
+                            </div>
+                        </div>
                     </div>
 
                     <div
@@ -647,6 +665,7 @@ export default function InternshipsJobsPage() {
 
     const renderCareerCard = (opp: Opportunity, idx: number) => {
         const imageUrl = imageFallbackMap[opp.id] ? FALLBACK_IMAGE : getCompetitionImage(opp);
+        const trust = trustSummary(opp);
         return (
             <motion.article
                 key={opp.id || idx}
@@ -794,6 +813,14 @@ export default function InternshipsJobsPage() {
                     >
                         {opp.description}
                     </p>
+                    <div style={{ display: "grid", gap: "0.18rem" }}>
+                        <div style={{ fontSize: "0.8rem", fontWeight: 800, color: "var(--text-primary)" }}>
+                            {trust.scoreLabel}
+                        </div>
+                        <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", fontWeight: 600 }}>
+                            {trust.evidenceLabel}
+                        </div>
+                    </div>
 
                     <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap", marginTop: "auto" }}>
                         <button

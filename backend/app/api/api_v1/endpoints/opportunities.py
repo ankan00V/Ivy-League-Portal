@@ -213,6 +213,34 @@ def _filter_active_opportunities(opportunities: list[Opportunity]) -> list[Oppor
     return active
 
 
+def _feed_priority(opportunity: Opportunity) -> tuple[int, int, float, datetime, datetime]:
+    trust_status = str(getattr(opportunity, "trust_status", "") or "").strip().lower()
+    trust_tier = 2 if trust_status == "verified" else 1 if trust_status == "unreviewed" else 0
+    trust_score = int(getattr(opportunity, "trust_score", 0) or 0)
+    risk_score = int(getattr(opportunity, "risk_score", 100) or 100)
+    latest_touch, created_at = _activity_sort_key(opportunity)
+    freshness_bonus = max(0.0, 100.0 - min(float(risk_score), 100.0))
+    return trust_tier, trust_score, freshness_bonus, latest_touch, created_at
+
+
+def _diversify_by_source(items: list[Any], *, source_getter, per_source_cap: int = 2) -> list[Any]:
+    capped = max(1, per_source_cap)
+    source_counts: dict[str, int] = {}
+    primary: list[T] = []
+    overflow: list[T] = []
+
+    for item in items:
+        raw_source = str(source_getter(item) or "").strip().lower() or "unknown"
+        count = source_counts.get(raw_source, 0)
+        if count < capped:
+            primary.append(item)
+            source_counts[raw_source] = count + 1
+        else:
+            overflow.append(item)
+
+    return primary + overflow
+
+
 def _freshness_seconds(opportunities: list[Opportunity]) -> float | None:
     now = utc_now()
     freshness_values: list[float] = []
@@ -299,7 +327,9 @@ async def _load_active_opportunities(
             )
             == normalized_portal
         ]
-    return active[safe_skip : safe_skip + safe_limit]
+    curated = sorted(active, key=_feed_priority, reverse=True)
+    curated = _diversify_by_source(curated, source_getter=lambda item: getattr(item, "source", None), per_source_cap=2)
+    return curated[safe_skip : safe_skip + safe_limit]
 
 
 async def _ensure_live_feed_if_stale() -> None:
