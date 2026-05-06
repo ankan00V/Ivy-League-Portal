@@ -31,12 +31,21 @@ def _activity_sort_key(opportunity: Opportunity) -> tuple[datetime, datetime]:
 
 def _profile_query(profile: Profile) -> str:
     values = [
-        profile.bio or "",
-        profile.skills or "",
-        profile.interests or "",
-        profile.education or "",
-        profile.achievements or "",
+        getattr(profile, "bio", "") or "",
+        getattr(profile, "skills", "") or "",
+        getattr(profile, "interests", "") or "",
+        getattr(profile, "education", "") or "",
+        getattr(profile, "achievements", "") or "",
+        getattr(profile, "domain", "") or "",
+        getattr(profile, "course", "") or "",
+        getattr(profile, "course_specialization", "") or "",
+        getattr(profile, "current_job_role", "") or "",
+        getattr(profile, "experience_summary", "") or "",
+        getattr(profile, "preferred_roles", "") or "",
+        getattr(profile, "preferred_locations", "") or "",
+        getattr(profile, "user_type", "") or "",
     ]
+    values.extend(getattr(profile, "goals", []) or [])
     return " ".join(value for value in values if value).strip()
 
 

@@ -4,7 +4,7 @@ import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { MessageSquare, Heart, Share2, Paperclip, Trophy, Hash } from "lucide-react";
 import { apiUrl } from "@/lib/api";
-import { getAccessToken } from "@/lib/auth-session";
+import { createAuthenticatedFetchInit, getAccessToken } from "@/lib/auth-session";
 
 interface SocialPost {
     id: string;
@@ -48,9 +48,10 @@ export default function SocialPage() {
             try {
                 const token = getAccessToken();
                 const query = activeGroup === "Global" ? "" : `?domain=${encodeURIComponent(mapGroupToDomain(activeGroup))}`;
-                const res = await fetch(apiUrl(`/api/v1/social/posts${query}`), {
-                    headers: token ? { Authorization: `Bearer ${token}` } : {},
-                });
+                const res = await fetch(
+                    apiUrl(`/api/v1/social/posts${query}`),
+                    createAuthenticatedFetchInit({}, token),
+                );
                 if (res.ok) {
                     const data = await res.json();
                     if (!cancelled) {
@@ -94,17 +95,22 @@ export default function SocialPage() {
         setPosting(true);
         setError(null);
         try {
-            const res = await fetch(apiUrl("/api/v1/social/posts"), {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${token}`,
-                },
-                body: JSON.stringify({
-                    domain: mapGroupToDomain(activeGroup),
-                    content: newPostContent.trim(),
-                }),
-            });
+            const res = await fetch(
+                apiUrl("/api/v1/social/posts"),
+                createAuthenticatedFetchInit(
+                    {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                        },
+                        body: JSON.stringify({
+                            domain: mapGroupToDomain(activeGroup),
+                            content: newPostContent.trim(),
+                        }),
+                    },
+                    token,
+                ),
+            );
             const data = await res.json().catch(() => ({}));
             if (!res.ok) {
                 throw new Error(data.detail || "Could not create post.");
@@ -126,12 +132,15 @@ export default function SocialPage() {
         }
 
         try {
-            const res = await fetch(apiUrl(`/api/v1/social/posts/${id}/like`), {
-                method: "POST",
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                },
-            });
+            const res = await fetch(
+                apiUrl(`/api/v1/social/posts/${id}/like`),
+                createAuthenticatedFetchInit(
+                    {
+                        method: "POST",
+                    },
+                    token,
+                ),
+            );
             if (!res.ok) {
                 return;
             }
@@ -150,9 +159,10 @@ export default function SocialPage() {
         setCommentLoadingByPost((prev) => ({ ...prev, [postId]: true }));
         try {
             const token = getAccessToken();
-            const res = await fetch(apiUrl(`/api/v1/social/posts/${postId}/comments`), {
-                headers: token ? { Authorization: `Bearer ${token}` } : {},
-            });
+            const res = await fetch(
+                apiUrl(`/api/v1/social/posts/${postId}/comments`),
+                createAuthenticatedFetchInit({}, token),
+            );
             const data = await res.json().catch(() => []);
             if (res.ok && Array.isArray(data)) {
                 setCommentsByPost((prev) => ({ ...prev, [postId]: data }));
@@ -186,14 +196,19 @@ export default function SocialPage() {
         }
 
         try {
-            const res = await fetch(apiUrl(`/api/v1/social/posts/${postId}/comments`), {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${token}`,
-                },
-                body: JSON.stringify({ content: commentText }),
-            });
+            const res = await fetch(
+                apiUrl(`/api/v1/social/posts/${postId}/comments`),
+                createAuthenticatedFetchInit(
+                    {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                        },
+                        body: JSON.stringify({ content: commentText }),
+                    },
+                    token,
+                ),
+            );
             const data = await res.json().catch(() => ({}));
             if (!res.ok) {
                 throw new Error(data.detail || "Could not add comment.");

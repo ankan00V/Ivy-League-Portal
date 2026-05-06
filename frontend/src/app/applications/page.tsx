@@ -4,7 +4,7 @@ import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Copyleft as Clock, Bookmark, Play, CheckCircle, Activity } from "lucide-react";
 import { apiUrl } from "@/lib/api";
-import { getAccessToken } from "@/lib/auth-session";
+import { createAuthenticatedFetchInit, getAccessToken } from "@/lib/auth-session";
 
 interface ApplicationRow {
     id: string;
@@ -30,9 +30,10 @@ export default function ApplicationsPage() {
                     }
                     return;
                 }
-                const res = await fetch(apiUrl("/api/v1/applications/"), {
-                    headers: { "Authorization": `Bearer ${token}` }
-                });
+                const res = await fetch(
+                    apiUrl("/api/v1/applications/"),
+                    createAuthenticatedFetchInit({}, token),
+                );
                 if (res.ok) {
                     const data = await res.json();
                     if (!cancelled) {

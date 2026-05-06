@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from "react";
 
 import { apiUrl } from "@/lib/api";
-import { clearAccessToken, getAccessToken } from "@/lib/auth-session";
+import { clearAccessToken, createAuthenticatedFetchInit, getAccessToken } from "@/lib/auth-session";
 import { getApiErrorMessage, getUnknownErrorMessage } from "@/lib/error-utils";
 
 type UseOnboardingFlowArgs<TProfile, TPayload> = {
@@ -71,12 +71,8 @@ export function useOnboardingFlow<TProfile, TPayload, TStatus extends { complete
     const run = async () => {
       try {
         const [profileRes, statusRes] = await Promise.all([
-          fetch(apiUrl("/api/v1/users/me/profile"), {
-            headers: { Authorization: `Bearer ${token}` },
-          }),
-          fetch(apiUrl("/api/v1/users/me/onboarding-status"), {
-            headers: { Authorization: `Bearer ${token}` },
-          }),
+          fetch(apiUrl("/api/v1/users/me/profile"), createAuthenticatedFetchInit({}, token)),
+          fetch(apiUrl("/api/v1/users/me/onboarding-status"), createAuthenticatedFetchInit({}, token)),
         ]);
         if (!profileRes.ok) {
           throw new Error("Failed to load profile");
@@ -134,13 +130,16 @@ export function useOnboardingFlow<TProfile, TPayload, TStatus extends { complete
     try {
       const form = new FormData();
       form.append("file", file);
-      const res = await fetch(apiUrl("/api/v1/users/me/resume"), {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        body: form,
-      });
+      const res = await fetch(
+        apiUrl("/api/v1/users/me/resume"),
+        createAuthenticatedFetchInit(
+          {
+            method: "POST",
+            body: form,
+          },
+          token,
+        ),
+      );
       const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
       if (!res.ok) {
         throw new Error(getApiErrorMessage(payload, "Unable to upload resume"));
@@ -162,10 +161,15 @@ export function useOnboardingFlow<TProfile, TPayload, TStatus extends { complete
     setResumeUploading(true);
     setError(null);
     try {
-      const res = await fetch(apiUrl("/api/v1/users/me/resume"), {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await fetch(
+        apiUrl("/api/v1/users/me/resume"),
+        createAuthenticatedFetchInit(
+          {
+            method: "DELETE",
+          },
+          token,
+        ),
+      );
       const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
       if (!res.ok) {
         throw new Error(getApiErrorMessage(payload, "Unable to remove resume"));
@@ -188,22 +192,28 @@ export function useOnboardingFlow<TProfile, TPayload, TStatus extends { complete
     setError(null);
     try {
       const payloadToSave = buildOnboardingPayload(profile);
-      const res = await fetch(apiUrl("/api/v1/users/me/onboarding"), {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payloadToSave),
-      });
+      const res = await fetch(
+        apiUrl("/api/v1/users/me/onboarding"),
+        createAuthenticatedFetchInit(
+          {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(payloadToSave),
+          },
+          token,
+        ),
+      );
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(getApiErrorMessage(payload, "Unable to save onboarding"));
       }
 
-      const statusRes = await fetch(apiUrl("/api/v1/users/me/onboarding-status"), {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const statusRes = await fetch(
+        apiUrl("/api/v1/users/me/onboarding-status"),
+        createAuthenticatedFetchInit({}, token),
+      );
       const onboardingStatus = statusRes.ok ? ((await statusRes.json()) as TStatus) : null;
       setStatus(onboardingStatus);
 

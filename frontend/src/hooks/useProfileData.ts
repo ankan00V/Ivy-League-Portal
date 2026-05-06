@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from "react";
 
 import { apiUrl } from "@/lib/api";
-import { getAccessToken } from "@/lib/auth-session";
+import { createAuthenticatedFetchInit, getAccessToken } from "@/lib/auth-session";
 import { getApiErrorMessage, getUnknownErrorMessage } from "@/lib/error-utils";
 
 type UseProfileDataArgs<TProfile, TUpdatePayload> = {
@@ -77,8 +77,8 @@ export function useProfileData<TProfile, TUpdatePayload>({
     const loadProfile = async (showFatalErrors: boolean) => {
       try {
         const [userResult, profileResult] = await Promise.allSettled([
-          fetch(apiUrl("/api/v1/users/me"), { headers: { Authorization: `Bearer ${token}` } }),
-          fetch(apiUrl("/api/v1/users/me/profile"), { headers: { Authorization: `Bearer ${token}` } }),
+          fetch(apiUrl("/api/v1/users/me"), createAuthenticatedFetchInit({}, token)),
+          fetch(apiUrl("/api/v1/users/me/profile"), createAuthenticatedFetchInit({}, token)),
         ]);
 
         let userError: string | null = null;
@@ -182,14 +182,19 @@ export function useProfileData<TProfile, TUpdatePayload>({
     setError(null);
     try {
       const payloadToSave = buildProfileUpdatePayload(profile);
-      const res = await fetch(apiUrl("/api/v1/users/me/profile"), {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payloadToSave),
-      });
+      const res = await fetch(
+        apiUrl("/api/v1/users/me/profile"),
+        createAuthenticatedFetchInit(
+          {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(payloadToSave),
+          },
+          token,
+        ),
+      );
       const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
       if (!res.ok) {
         throw new Error(getApiErrorMessage(payload, "Unable to update profile"));
@@ -226,13 +231,16 @@ export function useProfileData<TProfile, TUpdatePayload>({
     try {
       const form = new FormData();
       form.append("file", file);
-      const res = await fetch(apiUrl("/api/v1/users/me/resume"), {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        body: form,
-      });
+      const res = await fetch(
+        apiUrl("/api/v1/users/me/resume"),
+        createAuthenticatedFetchInit(
+          {
+            method: "POST",
+            body: form,
+          },
+          token,
+        ),
+      );
       const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
       if (!res.ok) {
         throw new Error(getApiErrorMessage(payload, "Unable to upload resume"));
@@ -256,10 +264,15 @@ export function useProfileData<TProfile, TUpdatePayload>({
     setMessage(null);
     setError(null);
     try {
-      const res = await fetch(apiUrl("/api/v1/users/me/resume"), {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await fetch(
+        apiUrl("/api/v1/users/me/resume"),
+        createAuthenticatedFetchInit(
+          {
+            method: "DELETE",
+          },
+          token,
+        ),
+      );
       const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
       if (!res.ok) {
         throw new Error(getApiErrorMessage(payload, "Unable to remove resume"));
@@ -281,9 +294,10 @@ export function useProfileData<TProfile, TUpdatePayload>({
     }
     setError(null);
     try {
-      const res = await fetch(apiUrl("/api/v1/users/me/resume/download"), {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await fetch(
+        apiUrl("/api/v1/users/me/resume/download"),
+        createAuthenticatedFetchInit({}, token),
+      );
       if (!res.ok) {
         const payload = await res.json().catch(() => ({}));
         throw new Error(getApiErrorMessage(payload, "Unable to download resume"));

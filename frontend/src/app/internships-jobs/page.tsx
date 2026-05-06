@@ -7,7 +7,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { MapPin, Calendar, Send, Bookmark } from "lucide-react";
 import Image from "next/image";
 import { apiUrl } from "@/lib/api";
-import { getAccessToken } from "@/lib/auth-session";
+import { createAuthenticatedFetchInit, getAccessToken } from "@/lib/auth-session";
 import { logTrackedOpportunityEvent, useOpportunityFeedImpressions } from "@/lib/opportunity-feed-tracker";
 
 interface Opportunity {
@@ -36,8 +36,9 @@ interface Opportunity {
     model_version_id?: string;
 }
 
-const FEED_REFRESH_MS = 10 * 1000;
-const FEED_RETRY_MS = 5 * 1000;
+const FEED_REFRESH_MS = 60 * 1000;
+const FEED_RETRY_MS = 15 * 1000;
+const PERSONALIZED_FETCH_TIMEOUT_MS = 2500;
 const COMPETITIVE_KEYWORDS = [
     "hackathon",
     "competition",
@@ -62,6 +63,29 @@ const buildOpportunitiesSignature = (items: Opportunity[]): string =>
         )
         .join("|");
 
+async function fetchJsonWithTimeout<T>(
+    path: string,
+    init: RequestInit,
+    timeoutMs: number,
+): Promise<T | null> {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        const response = await fetch(apiUrl(path), {
+            ...init,
+            signal: controller.signal,
+        });
+        if (!response.ok) {
+            return null;
+        }
+        return (await response.json()) as T;
+    } catch {
+        return null;
+    } finally {
+        window.clearTimeout(timeoutId);
+    }
+}
+
 export default function InternshipsJobsPage() {
     const [activeTab, setActiveTab] = useState("All");
     const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
@@ -84,11 +108,15 @@ export default function InternshipsJobsPage() {
             return;
         }
         try {
-            await fetch(apiUrl("/api/v1/opportunities/trigger-scraper"), {
-                method: "POST",
-                credentials: "include",
-                headers: { Authorization: `Bearer ${token}` },
-            });
+            await fetch(
+                apiUrl("/api/v1/opportunities/trigger-scraper"),
+                createAuthenticatedFetchInit(
+                    {
+                        method: "POST",
+                    },
+                    token,
+                ),
+            );
         } catch (error) {
             const message = error instanceof Error ? error.message : "unknown error";
             console.warn(`[Opportunities] Trigger scraper failed: ${message}`);
@@ -99,14 +127,12 @@ export default function InternshipsJobsPage() {
         try {
             const token = getAccessToken();
             if (token) {
-                const personalizedRes = await fetch(
-                    apiUrl("/api/v1/opportunities/recommended/me?limit=100&ranking_mode=ab&portal=career"),
-                    {
-                        headers: { Authorization: `Bearer ${token}` },
-                    }
+                const rawData = await fetchJsonWithTimeout<Opportunity[]>(
+                    "/api/v1/opportunities/recommended/me?limit=100&ranking_mode=ab&portal=career",
+                    createAuthenticatedFetchInit({}, token),
+                    PERSONALIZED_FETCH_TIMEOUT_MS,
                 );
-                if (personalizedRes.ok) {
-                    const rawData: Opportunity[] = await personalizedRes.json();
+                if (Array.isArray(rawData) && rawData.length > 0) {
                     const data: Opportunity[] = rawData.map((item, idx) => ({
                         ...item,
                         ranking_mode: item.ranking_mode || "baseline",
@@ -312,12 +338,15 @@ export default function InternshipsJobsPage() {
             if (opportunity.model_version_id) {
                 query.set("model_version_id", opportunity.model_version_id);
             }
-            const res = await fetch(apiUrl(`/api/v1/applications/${opportunity.id}?${query.toString()}`), {
-                method: "POST",
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                },
-            });
+            const res = await fetch(
+                apiUrl(`/api/v1/applications/${opportunity.id}?${query.toString()}`),
+                createAuthenticatedFetchInit(
+                    {
+                        method: "POST",
+                    },
+                    token,
+                ),
+            );
             const data = await res.json().catch(() => ({}));
             if (!res.ok) {
                 throw new Error(data.detail || "Application failed");

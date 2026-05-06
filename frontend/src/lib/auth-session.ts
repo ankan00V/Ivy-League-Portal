@@ -93,6 +93,22 @@ export function getAccessToken(): string | null {
   return COOKIE_SESSION_SENTINEL;
 }
 
+export function createAuthenticatedFetchInit(
+  init: RequestInit = {},
+  token: string | null = getAccessToken(),
+): RequestInit {
+  const normalizedToken = token && token !== COOKIE_SESSION_SENTINEL ? token : null;
+  const headers = new Headers(init.headers || undefined);
+  if (normalizedToken) {
+    headers.set("Authorization", `Bearer ${normalizedToken}`);
+  }
+  return {
+    ...init,
+    credentials: "include",
+    headers,
+  };
+}
+
 export function hasAuthSession(): boolean {
   if (typeof window === "undefined") {
     return false;

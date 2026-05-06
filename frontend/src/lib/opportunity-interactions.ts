@@ -1,5 +1,5 @@
 import { apiUrl } from "@/lib/api";
-import { getAccessToken } from "@/lib/auth-session";
+import { createAuthenticatedFetchInit, getAccessToken } from "@/lib/auth-session";
 
 export type OpportunityInteractionType = "impression" | "view" | "click" | "apply" | "save";
 export type RankingMode = "baseline" | "semantic" | "ml" | "ab";
@@ -71,16 +71,20 @@ export async function logOpportunityInteraction(input: OpportunityInteractionInp
   };
 
   try {
-    const res = await fetch(apiUrl("/api/v1/opportunities/interactions"), {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-      credentials: "include",
-      keepalive: true,
-    });
+    const res = await fetch(
+      apiUrl("/api/v1/opportunities/interactions"),
+      createAuthenticatedFetchInit(
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+          keepalive: true,
+        },
+        token,
+      ),
+    );
 
     return res.ok;
   } catch {

@@ -206,18 +206,26 @@ export default function DashboardPage() {
             const strengthPromise = hasAuth
                 ? fetchJsonWithTimeout<ProfileStrengthSummary>("/api/v1/users/me/profile-strength", authInit, 3500)
                 : Promise.resolve(null);
-            const opportunitiesPromise = fetchJsonWithTimeout<OpportunityCard[]>("/api/v1/opportunities/?limit=3", {}, 3500);
+            const personalizedRecommendationsPromise = hasAuth
+                ? fetchJsonWithTimeout<OpportunityCard[]>(
+                    "/api/v1/opportunities/recommended/me?limit=6&ranking_mode=ab&portal=competitive",
+                    authInit,
+                    2500,
+                )
+                : Promise.resolve(null);
+            const opportunitiesPromise = fetchJsonWithTimeout<OpportunityCard[]>("/api/v1/opportunities/?limit=6", {}, 3500);
             const postsPromise = fetchJsonWithTimeout<ActivityPost[]>(
                 "/api/v1/social/posts?limit=2",
                 authInit,
                 3500,
             );
 
-            const [profileData, appsData, rankingData, strengthData, fallbackData, postsData] = await Promise.all([
+            const [profileData, appsData, rankingData, strengthData, personalizedData, fallbackData, postsData] = await Promise.all([
                 profilePromise,
                 appsPromise,
                 rankingPromise,
                 strengthPromise,
+                personalizedRecommendationsPromise,
                 opportunitiesPromise,
                 postsPromise,
             ]);
@@ -242,8 +250,14 @@ export default function DashboardPage() {
                 setProfileStrength(null);
             }
 
-            if (Array.isArray(fallbackData) && fallbackData.length > 0) {
-                setRecommended(normalizeOpportunityCards(fallbackData));
+            const liveRecommendations = Array.isArray(personalizedData) && personalizedData.length > 0
+                ? personalizedData
+                : Array.isArray(fallbackData)
+                    ? fallbackData
+                    : [];
+
+            if (liveRecommendations.length > 0) {
+                setRecommended(normalizeOpportunityCards(liveRecommendations));
                 hasRecommendationsRef.current = true;
                 setRecommendationsLoading(false);
                 setRecommendationsSource("live");

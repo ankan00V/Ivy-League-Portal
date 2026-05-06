@@ -20,7 +20,7 @@ import {
 import BrandLogo from "@/components/BrandLogo";
 import { useTheme } from "@/context/ThemeContext";
 import { apiUrl } from "@/lib/api";
-import { getAccessToken } from "@/lib/auth-session";
+import { createAuthenticatedFetchInit, getAccessToken } from "@/lib/auth-session";
 import { formatTopPercent, type RankingSummary } from "@/lib/ranking-summary";
 
 type NavLink = {
@@ -65,11 +65,10 @@ export default function Sidebar() {
         return;
       }
       try {
-        const res = await fetch(apiUrl("/api/v1/users/me/ranking-summary"), {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
+        const res = await fetch(
+          apiUrl("/api/v1/users/me/ranking-summary"),
+          createAuthenticatedFetchInit({}, token),
+        );
         if (!res.ok) {
           if (!cancelled) {
             setRankingSummary(null);
