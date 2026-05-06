@@ -5,7 +5,7 @@ import { motion, useMotionValue, useTransform } from "framer-motion";
 import type { HTMLMotionProps } from "framer-motion";
 import { TrendingUp, Briefcase, ShieldCheck, Activity, Sparkles, Star, CircleAlert, CircleCheck, X, Loader2 } from "lucide-react";
 import { apiUrl } from "@/lib/api";
-import { getAccessToken } from "@/lib/auth-session";
+import { COOKIE_SESSION_SENTINEL, getAccessToken } from "@/lib/auth-session";
 import { useRouter } from "next/navigation";
 import { isMongoObjectId, logOpportunityInteraction } from "@/lib/opportunity-interactions";
 import { formatTopPercent, type RankingSummary } from "@/lib/ranking-summary";
@@ -144,6 +144,26 @@ const normalizeOpportunityCards = (items: OpportunityCard[]) =>
         rank_position: item.rank_position ?? idx + 1,
     }));
 
+const fetchJsonWithTimeout = async <T,>(path: string, init: RequestInit = {}, timeoutMs = 4500): Promise<T | null> => {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        const response = await fetch(apiUrl(path), {
+            ...init,
+            credentials: "include",
+            signal: controller.signal,
+        });
+        if (!response.ok) {
+            return null;
+        }
+        return (await response.json()) as T;
+    } catch {
+        return null;
+    } finally {
+        window.clearTimeout(timeout);
+    }
+};
+
 export default function DashboardPage() {
     const router = useRouter();
     const allowSimulatedFallback = process.env.NEXT_PUBLIC_DEMO_MODE === "1";
@@ -171,44 +191,50 @@ export default function DashboardPage() {
             const token = getAccessToken();
             const hasAuth = Boolean(token);
             setIsAuthenticated(hasAuth);
-            const authHeaders = token ? { Authorization: `Bearer ${token}` } : undefined;
+            const authHeaders = token && token !== COOKIE_SESSION_SENTINEL ? { Authorization: `Bearer ${token}` } : undefined;
 
-            // 1. Fetch Profile + Applications only when authenticated
-            if (authHeaders && hasAuth) {
-                const [profileRes, appsRes, rankingRes, strengthRes] = await Promise.all([
-                    fetch(apiUrl("/api/v1/users/me/profile"), { headers: authHeaders }),
-                    fetch(apiUrl("/api/v1/applications/"), { headers: authHeaders }),
-                    fetch(apiUrl("/api/v1/users/me/ranking-summary"), { headers: authHeaders }),
-                    fetch(apiUrl("/api/v1/users/me/profile-strength"), { headers: authHeaders }),
-                ]);
+            const authInit = authHeaders ? { headers: authHeaders } : {};
+            const profilePromise = hasAuth
+                ? fetchJsonWithTimeout<ProfileSummary>("/api/v1/users/me/profile", authInit, 3500)
+                : Promise.resolve(null);
+            const appsPromise = hasAuth
+                ? fetchJsonWithTimeout<unknown[]>("/api/v1/applications/", authInit, 3500)
+                : Promise.resolve(null);
+            const rankingPromise = hasAuth
+                ? fetchJsonWithTimeout<RankingSummary>("/api/v1/users/me/ranking-summary", authInit, 3500)
+                : Promise.resolve(null);
+            const strengthPromise = hasAuth
+                ? fetchJsonWithTimeout<ProfileStrengthSummary>("/api/v1/users/me/profile-strength", authInit, 3500)
+                : Promise.resolve(null);
+            const opportunitiesPromise = fetchJsonWithTimeout<OpportunityCard[]>("/api/v1/opportunities/?limit=3", {}, 3500);
+            const postsPromise = fetchJsonWithTimeout<ActivityPost[]>(
+                "/api/v1/social/posts?limit=2",
+                authInit,
+                3500,
+            );
 
-                if (profileRes.ok) {
-                    const pData = await profileRes.json();
-                    if (String(pData.account_type || "").toLowerCase() === "employer") {
+            const [profileData, appsData, rankingData, strengthData, fallbackData, postsData] = await Promise.all([
+                profilePromise,
+                appsPromise,
+                rankingPromise,
+                strengthPromise,
+                opportunitiesPromise,
+                postsPromise,
+            ]);
+
+            if (hasAuth) {
+                if (profileData) {
+                    if (String(profileData.account_type || "").toLowerCase() === "employer") {
                         router.replace("/employer/dashboard");
                         return;
                     }
-                    setProfile(pData);
+                    setProfile(profileData);
                 }
-
-                if (appsRes.ok) {
-                    const aData = await appsRes.json();
-                    setAppCount(aData.length);
+                if (Array.isArray(appsData)) {
+                    setAppCount(appsData.length);
                 }
-
-                if (rankingRes.ok) {
-                    const rankingData: RankingSummary = await rankingRes.json();
-                    setRankingSummary(rankingData);
-                } else {
-                    setRankingSummary(null);
-                }
-
-                if (strengthRes.ok) {
-                    const strengthData: ProfileStrengthSummary = await strengthRes.json();
-                    setProfileStrength(strengthData);
-                } else {
-                    setProfileStrength(null);
-                }
+                setRankingSummary(rankingData);
+                setProfileStrength(strengthData);
             } else {
                 setProfile(null);
                 setAppCount(0);
@@ -216,21 +242,12 @@ export default function DashboardPage() {
                 setProfileStrength(null);
             }
 
-            // 2. Personalized opportunities when authenticated, else public fallback
-            let recommendationLoaded = false;
-            const fallback = await fetch(apiUrl("/api/v1/opportunities/?limit=3"));
-            if (fallback.ok) {
-                const fallbackData: OpportunityCard[] = await fallback.json();
-                if (fallbackData.length > 0) {
-                    setRecommended(normalizeOpportunityCards(fallbackData));
-                    hasRecommendationsRef.current = true;
-                    setRecommendationsLoading(false);
-                    setRecommendationsSource("live");
-                    recommendationLoaded = true;
-                }
-            }
-
-            if (!recommendationLoaded) {
+            if (Array.isArray(fallbackData) && fallbackData.length > 0) {
+                setRecommended(normalizeOpportunityCards(fallbackData));
+                hasRecommendationsRef.current = true;
+                setRecommendationsLoading(false);
+                setRecommendationsSource("live");
+            } else {
                 if (allowSimulatedFallback) {
                     setRecommended(DEV_SIMULATED_OPPORTUNITIES);
                     hasRecommendationsRef.current = true;
@@ -250,28 +267,13 @@ export default function DashboardPage() {
                 }
             }
 
-            // 3. Network posts are public; include auth only when available.
-            const postsRes = await fetch(
-                apiUrl("/api/v1/social/posts?limit=2"),
-                authHeaders ? { headers: authHeaders } : undefined,
-            );
-            if (postsRes.ok) {
-                const pData = await postsRes.json();
-                if (Array.isArray(pData) && pData.length > 0) {
-                    setPosts(pData);
-                    setPostsSource("live");
-                } else if (allowSimulatedFallback) {
-                    setPosts(DEV_SIMULATED_POSTS);
-                    setPostsSource("simulated");
-                    setDashboardNotice((current) => current || "Demo mode is enabled. Showing seeded community activity.");
-                } else {
-                    setPosts([]);
-                    setPostsSource("no_data");
-                }
+            if (Array.isArray(postsData) && postsData.length > 0) {
+                setPosts(postsData);
+                setPostsSource("live");
             } else if (allowSimulatedFallback) {
                 setPosts(DEV_SIMULATED_POSTS);
                 setPostsSource("simulated");
-                setDashboardNotice((current) => current || "Backend posts are unavailable. Showing seeded community activity.");
+                setDashboardNotice((current) => current || "Demo mode is enabled. Showing seeded community activity.");
             } else {
                 setPosts([]);
                 setPostsSource("no_data");
@@ -306,7 +308,7 @@ export default function DashboardPage() {
         }, 0);
         const interval = window.setInterval(() => {
             void fetchDashboardData();
-        }, 10000);
+        }, 60000);
         return () => {
             window.clearTimeout(firstRun);
             window.clearInterval(interval);
@@ -367,20 +369,34 @@ export default function DashboardPage() {
     );
     const activePosts = posts;
     const incoscoreValue = rankingSummary?.incoscore ?? profile?.incoscore ?? 0;
-    const profileStrengthPercent = profileStrength ? clampPercent(profileStrength.strength_percent) : 0;
-    const incoscoreDisplay = isAuthenticated ? incoscoreValue.toFixed(1) : "--";
+    const profileStrengthPercent = profileStrength ? clampPercent(profileStrength.strength_percent) : null;
+    const incoscoreDisplay = isAuthenticated ? (rankingSummary || profile ? incoscoreValue.toFixed(1) : "--") : "--";
     const applicationDisplay = isAuthenticated ? String(appCount) : "--";
-    const profileStrengthDisplay = isAuthenticated ? `${profileStrengthPercent}%` : "--";
+    const profileStrengthDisplay = isAuthenticated
+        ? profileStrengthPercent !== null
+            ? `${profileStrengthPercent}%`
+            : "--"
+        : "--";
     const rankingTitle = rankingSummary
         ? `Top ${formatTopPercent(rankingSummary.top_percent)}% Globally`
-        : "Sign in for live rank";
+        : isAuthenticated
+            ? "Live rank calculating"
+            : "Sign in for live rank";
     const rankingDetail = rankingSummary
         ? `Rank #${rankingSummary.rank} of ${rankingSummary.total_users}`
-        : "Live global percentile";
+        : isAuthenticated
+            ? "Complete profile signals to improve rank"
+            : "Live global percentile";
     const profileStrengthHint = profileStrength
         ? `${profileStrength.completed_signals}/${profileStrength.total_signals} profile signals complete`
-        : "Sign in to compute live profile strength";
-    const profileStrengthRecommendation = profileStrength?.recommendation || "Complete profile fields for better matching.";
+        : isAuthenticated
+            ? "Profile strength calculating"
+            : "Sign in to compute live profile strength";
+    const profileStrengthRecommendation = profileStrength?.recommendation || (
+        isAuthenticated
+            ? "Add skills, interests, education, and bio to unlock better matching."
+            : "Complete profile fields for better matching."
+    );
     const profileStrengthMissingDetails = useMemo(() => {
         if (!profileStrength) return [];
         const apiDetails = profileStrength.missing_signal_details;
@@ -396,7 +412,7 @@ export default function DashboardPage() {
             };
         });
     }, [profileStrength]);
-    const recommendationEmptyMessage = isAuthenticated && profileStrengthPercent < 65
+    const recommendationEmptyMessage = isAuthenticated && (profileStrengthPercent ?? 0) < 65
         ? "Complete your profile to improve matching. Add skills, interests, education, and a short bio so VidyaVerse can rank better opportunities."
         : "No recommendation rows are available right now. Live opportunities will appear here after the scraper refreshes.";
 
