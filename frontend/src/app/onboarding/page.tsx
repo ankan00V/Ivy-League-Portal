@@ -35,8 +35,10 @@ type ProfilePayload = {
   company_description: string;
   hiring_for: "myself" | "others" | "";
   goals: string[];
+  career_intent: string[];
   preferred_roles: string;
   preferred_locations: string;
+  work_preferences: string[];
   pan_india: boolean;
   prefer_wfh: boolean;
   consent_data_processing: boolean;
@@ -47,6 +49,7 @@ type ProfilePayload = {
   bio: string;
   skills: string;
   interests: string;
+  interest_graph: string[];
   achievements: string;
   education: string;
 };
@@ -78,8 +81,10 @@ type OnboardingUpdatePayload = {
   company_description?: string;
   hiring_for?: "myself" | "others";
   goals?: string[];
+  career_intent?: string[];
   preferred_roles?: string;
   preferred_locations?: string;
+  work_preferences?: string[];
   pan_india: boolean;
   prefer_wfh: boolean;
   consent_data_processing: boolean;
@@ -87,6 +92,7 @@ type OnboardingUpdatePayload = {
   bio?: string;
   skills?: string;
   interests?: string;
+  interest_graph?: string[];
   achievements?: string;
   education?: string;
 };
@@ -186,13 +192,12 @@ function splitCsv(value: string): string[] {
     .filter(Boolean);
 }
 
-function mergeCsvValue(value: string, token: string): string {
-  const items = splitCsv(value);
-  const exists = items.some((item) => item.toLowerCase() === token.toLowerCase());
-  const next = exists
-    ? items.filter((item) => item.toLowerCase() !== token.toLowerCase())
-    : [...items, token];
-  return next.join(", ");
+function toggleStringArray(values: string[], token: string): string[] {
+  const exists = values.some((item) => item.toLowerCase() === token.toLowerCase());
+  if (exists) {
+    return values.filter((item) => item.toLowerCase() !== token.toLowerCase());
+  }
+  return [...values, token];
 }
 
 function getAccountTypeFromOnboardingProfile(profile: ProfilePayload): string {
@@ -238,6 +243,15 @@ function buildOnboardingPayload(profile: ProfilePayload): OnboardingUpdatePayloa
   }
   if (profile.goals.length > 0) {
     payload.goals = [...profile.goals];
+  }
+  if (profile.career_intent.length > 0) {
+    payload.career_intent = [...profile.career_intent];
+  }
+  if (profile.work_preferences.length > 0) {
+    payload.work_preferences = [...profile.work_preferences];
+  }
+  if (profile.interest_graph.length > 0) {
+    payload.interest_graph = [...profile.interest_graph];
   }
 
   withOptionalString(payload, "domain", profile.domain);
@@ -287,8 +301,10 @@ function hydrateOnboardingProfilePayload(payload: Record<string, unknown>, previ
     company_description: asText(payload.company_description, previous.company_description),
     hiring_for: (typeof payload.hiring_for === "string" ? payload.hiring_for : previous.hiring_for) as "myself" | "others" | "",
     goals: Array.isArray(payload.goals) ? payload.goals.map((item) => String(item)) : previous.goals,
+    career_intent: Array.isArray(payload.career_intent) ? payload.career_intent.map((item) => String(item)) : previous.career_intent,
     preferred_roles: asText(payload.preferred_roles, previous.preferred_roles),
     preferred_locations: asText(payload.preferred_locations, previous.preferred_locations),
+    work_preferences: Array.isArray(payload.work_preferences) ? payload.work_preferences.map((item) => String(item)) : previous.work_preferences,
     pan_india: asBoolean("pan_india", previous.pan_india),
     prefer_wfh: asBoolean("prefer_wfh", previous.prefer_wfh),
     consent_data_processing: asBoolean("consent_data_processing", previous.consent_data_processing),
@@ -299,6 +315,7 @@ function hydrateOnboardingProfilePayload(payload: Record<string, unknown>, previ
     bio: asText(payload.bio, previous.bio),
     skills: asText(payload.skills, previous.skills),
     interests: asText(payload.interests, previous.interests),
+    interest_graph: Array.isArray(payload.interest_graph) ? payload.interest_graph.map((item) => String(item)) : previous.interest_graph,
     achievements: asText(payload.achievements, previous.achievements),
     education: asText(payload.education, previous.education),
   };
@@ -325,8 +342,10 @@ export default function OnboardingPage() {
     company_description: "",
     hiring_for: "",
     goals: [],
+    career_intent: [],
     preferred_roles: "",
     preferred_locations: "",
+    work_preferences: [],
     pan_india: false,
     prefer_wfh: false,
     consent_data_processing: false,
@@ -337,6 +356,7 @@ export default function OnboardingPage() {
     bio: "",
     skills: "",
     interests: "",
+    interest_graph: [],
     achievements: "",
     education: "",
   });
@@ -799,8 +819,17 @@ export default function OnboardingPage() {
                           <button
                             key={role}
                             type="button"
-                            className={pillButtonClass(splitCsv(profile.preferred_roles).some((item) => item.toLowerCase() === role.toLowerCase()))}
-                            onClick={() => updateProfile("preferred_roles", mergeCsvValue(profile.preferred_roles, role))}
+                            className={pillButtonClass(profile.career_intent.some((item) => item.toLowerCase() === role.toLowerCase()))}
+                            onClick={() =>
+                              setProfile((prev) => {
+                                const careerIntent = toggleStringArray(prev.career_intent, role);
+                                return {
+                                  ...prev,
+                                  career_intent: careerIntent,
+                                  preferred_roles: careerIntent.join(", "),
+                                };
+                              })
+                            }
                           >
                             {role}
                           </button>
@@ -814,8 +843,17 @@ export default function OnboardingPage() {
                           <button
                             key={interest}
                             type="button"
-                            className={pillButtonClass(splitCsv(profile.interests).some((item) => item.toLowerCase() === interest.toLowerCase()))}
-                            onClick={() => updateProfile("interests", mergeCsvValue(profile.interests, interest))}
+                            className={pillButtonClass(profile.interest_graph.some((item) => item.toLowerCase() === interest.toLowerCase()))}
+                            onClick={() =>
+                              setProfile((prev) => {
+                                const interestGraph = toggleStringArray(prev.interest_graph, interest);
+                                return {
+                                  ...prev,
+                                  interest_graph: interestGraph,
+                                  interests: interestGraph.join(", "),
+                                };
+                              })
+                            }
                           >
                             {interest}
                           </button>
@@ -825,7 +863,16 @@ export default function OnboardingPage() {
                   </div>
                 </FormSection>
                 <FormSection label="Interested Career Roles">
-                  <input className="input-base" value={profile.preferred_roles} onChange={(e) => updateProfile("preferred_roles", e.target.value)} placeholder="Data Scientist, Backend Engineer, Analyst..." />
+                  <input
+                    className="input-base"
+                    value={profile.preferred_roles}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      updateProfile("preferred_roles", value);
+                      updateProfile("career_intent", splitCsv(value));
+                    }}
+                    placeholder="Data Scientist, Backend Engineer, Analyst..."
+                  />
                 </FormSection>
                 <FormSection label="Preferred Work Location">
                   <input className="input-base" value={profile.preferred_locations} onChange={(e) => updateProfile("preferred_locations", e.target.value)} placeholder="Bangalore, Pune, Remote..." />
@@ -836,7 +883,7 @@ export default function OnboardingPage() {
                       const active =
                         (item === "Remote" && profile.prefer_wfh) ||
                         (item === "Pan India" && profile.pan_india) ||
-                        (item !== "Remote" && item !== "Pan India" && splitCsv(profile.preferred_locations).some((value) => value.toLowerCase() === item.toLowerCase()));
+                        profile.work_preferences.some((value) => value.toLowerCase() === item.toLowerCase());
                       return (
                         <button
                           key={item}
@@ -844,14 +891,22 @@ export default function OnboardingPage() {
                           className={pillButtonClass(active)}
                           onClick={() => {
                             if (item === "Remote") {
-                              updateProfile("prefer_wfh", !profile.prefer_wfh);
+                              setProfile((prev) => ({
+                                ...prev,
+                                prefer_wfh: !prev.prefer_wfh,
+                                work_preferences: toggleStringArray(prev.work_preferences, item),
+                              }));
                               return;
                             }
                             if (item === "Pan India") {
-                              updateProfile("pan_india", !profile.pan_india);
+                              setProfile((prev) => ({
+                                ...prev,
+                                pan_india: !prev.pan_india,
+                                work_preferences: toggleStringArray(prev.work_preferences, item),
+                              }));
                               return;
                             }
-                            updateProfile("preferred_locations", mergeCsvValue(profile.preferred_locations, item));
+                            updateProfile("work_preferences", toggleStringArray(profile.work_preferences, item));
                           }}
                         >
                           {item}

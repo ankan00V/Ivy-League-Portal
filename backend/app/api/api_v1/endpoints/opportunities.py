@@ -171,6 +171,12 @@ class ScraperSourceHealthResponse(BaseModel):
     failed: int = 0
     status: str = "unknown"
     errors: list[str] = Field(default_factory=list)
+    latest_seen_at: Optional[str] = None
+    freshness_minutes: Optional[int] = None
+    coverage_count: int = 0
+    stale: bool = False
+    fetch_duration_ms: Optional[float] = None
+    upsert_duration_ms: Optional[float] = None
 
 
 class ScraperHealthResponse(BaseModel):
@@ -442,15 +448,43 @@ async def read_scraper_health() -> ScraperHealthResponse:
     source_rows = []
     for row in list(last_report.get("sources") or []):
         errors = list(row.get("errors") or [])
+        source_name = str(row.get("source") or "unknown")
+        latest_seen = None
+        coverage_count = 0
+        try:
+            latest_items = await Opportunity.find_many({"source": source_name}).sort("-last_seen_at").limit(1).to_list()
+            latest_item = latest_items[0] if latest_items else None
+            latest_seen = as_utc_aware(
+                getattr(latest_item, "last_seen_at", None)
+                or getattr(latest_item, "updated_at", None)
+                or getattr(latest_item, "created_at", None)
+            )
+            coverage_count = await Opportunity.find_many({"source": source_name}).count()
+        except CollectionWasNotInitialized:
+            latest_seen = None
+            coverage_count = 0
+        freshness_minutes: Optional[int] = None
+        stale = False
+        latest_seen_at: Optional[str] = None
+        if latest_seen is not None:
+            freshness_minutes = max(0, int((utc_now() - latest_seen).total_seconds() // 60))
+            stale = freshness_minutes > max(1, settings.SCRAPER_MAX_STALENESS_MINUTES)
+            latest_seen_at = latest_seen.isoformat()
         source_rows.append(
             ScraperSourceHealthResponse(
-                source=str(row.get("source") or "unknown"),
+                source=source_name,
                 fetched=int(row.get("fetched") or 0),
                 inserted=int(row.get("inserted") or 0),
                 updated=int(row.get("updated") or 0),
                 failed=int(row.get("failed") or 0),
                 status="error" if errors else "ok",
                 errors=errors,
+                latest_seen_at=latest_seen_at,
+                freshness_minutes=freshness_minutes,
+                coverage_count=int(coverage_count or 0),
+                stale=stale,
+                fetch_duration_ms=float(row.get("fetch_duration_ms") or 0.0),
+                upsert_duration_ms=float(row.get("upsert_duration_ms") or 0.0),
             )
         )
 

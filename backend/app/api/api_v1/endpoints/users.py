@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -47,6 +48,9 @@ PROFILE_SIGNAL_METADATA: dict[str, tuple[str, str]] = {
     "bio": ("Bio", "Write a short profile bio."),
     "skills": ("Skills", "Add your core skills."),
     "interests": ("Interests", "Add your interests."),
+    "career_intent": ("Career Intent", "Select the role tracks or career outcomes you want."),
+    "interest_graph": ("Interest Graph", "Choose a few interest areas to personalize recommendations."),
+    "work_preferences": ("Work Preferences", "Set your preferred work style, location, or job setup."),
     "education": ("Education", "Add education details."),
     "certificates": ("Certificates", "Add relevant certifications."),
     "projects": ("Projects", "Add your key projects."),
@@ -88,8 +92,10 @@ class ProfileUpdate(BaseModel):
     company_description: Optional[str] = None
     hiring_for: Optional[str] = None
     goals: Optional[list[str]] = None
+    career_intent: Optional[list[str] | str] = None
     preferred_roles: Optional[str] = None
     preferred_locations: Optional[str] = None
+    work_preferences: Optional[list[str] | str] = None
     pan_india: Optional[bool] = None
     prefer_wfh: Optional[bool] = None
     consent_data_processing: Optional[bool] = None
@@ -98,6 +104,7 @@ class ProfileUpdate(BaseModel):
     bio: Optional[str] = None
     skills: Optional[str] = None
     interests: Optional[str] = None
+    interest_graph: Optional[list[str] | str] = None
     achievements: Optional[str] = None
     education: Optional[str] = None
     certificates: Optional[str] = None
@@ -176,13 +183,13 @@ class ProfileUpdate(BaseModel):
             raise ValueError("hiring_for must be myself or others")
         return candidate
 
-    @field_validator("goals", mode="before")
+    @field_validator("goals", "career_intent", "work_preferences", "interest_graph", mode="before")
     @classmethod
     def normalize_goals(cls, value: Optional[list[str] | str]) -> Optional[list[str]]:
         if value is None:
             return None
         if isinstance(value, str):
-            parts = [chunk.strip() for chunk in value.split(",")]
+            parts = [chunk.strip() for chunk in re.split(r"[,;\n/]+", value)]
         else:
             parts = [str(chunk).strip() for chunk in value]
         clean: list[str] = []
@@ -256,8 +263,10 @@ class ProfileResponse(BaseModel):
     company_description: Optional[str] = None
     hiring_for: Optional[str] = None
     goals: list[str] = Field(default_factory=list)
+    career_intent: list[str] = Field(default_factory=list)
     preferred_roles: Optional[str] = None
     preferred_locations: Optional[str] = None
+    work_preferences: list[str] = Field(default_factory=list)
     pan_india: bool = False
     prefer_wfh: bool = False
     consent_data_processing: bool = False
@@ -270,6 +279,7 @@ class ProfileResponse(BaseModel):
     bio: Optional[str] = None
     skills: Optional[str] = None
     interests: Optional[str] = None
+    interest_graph: list[str] = Field(default_factory=list)
     achievements: Optional[str] = None
     education: Optional[str] = None
     certificates: Optional[str] = None
@@ -642,6 +652,9 @@ def _profile_strength_checks(profile: Profile) -> list[tuple[str, bool]]:
                     ("course_specialization", _text_present("course_specialization")),
                     ("passout_year", _value("passout_year") is not None),
                     ("college_name", _text_present("college_name")),
+                    ("career_intent", len(_value("career_intent", []) or []) > 0),
+                    ("interest_graph", len(_value("interest_graph", []) or []) > 0),
+                    ("work_preferences", len(_value("work_preferences", []) or []) > 0),
                 ]
             )
         elif user_type == "professional":

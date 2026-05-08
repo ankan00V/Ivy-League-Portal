@@ -122,6 +122,33 @@ type AuditEvent = {
   created_at: string;
 };
 
+type ScraperSourceHealth = {
+  source: string;
+  fetched: number;
+  inserted: number;
+  updated: number;
+  failed: number;
+  status: string;
+  errors: string[];
+  latest_seen_at?: string | null;
+  freshness_minutes?: number | null;
+  coverage_count: number;
+  stale: boolean;
+  fetch_duration_ms?: number | null;
+  upsert_duration_ms?: number | null;
+};
+
+type ScraperHealth = {
+  is_running: boolean;
+  last_status: string;
+  consecutive_failures: number;
+  last_started_at?: string | null;
+  last_finished_at?: string | null;
+  last_successful_at?: string | null;
+  auto_update: Record<string, unknown>;
+  sources: ScraperSourceHealth[];
+};
+
 type AdminSection =
   | "overview"
   | "create"
@@ -473,6 +500,7 @@ export default function AdminOpsPage() {
   const [comments, setComments] = useState<AdminComment[]>([]);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
+  const [scraperHealth, setScraperHealth] = useState<ScraperHealth | null>(null);
   const [oppDraft, setOppDraft] = useState<OpportunityDraft>(emptyOpportunityDraft);
   const [editingOpportunityId, setEditingOpportunityId] = useState<string | null>(null);
   const [jobType, setJobType] = useState("scraper.run");
@@ -532,7 +560,7 @@ export default function AdminOpsPage() {
         return;
       }
 
-      const [overviewRes, oppsRes, jobsRes, postsRes, commentsRes, usersRes, auditsRes] = await Promise.all([
+      const [overviewRes, oppsRes, jobsRes, postsRes, commentsRes, usersRes, auditsRes, scraperHealthRes] = await Promise.all([
         fetch(apiUrl("/api/v1/admin/overview"), { credentials: "include", headers }),
         fetch(apiUrl("/api/v1/admin/opportunities?limit=240"), { credentials: "include", headers }),
         fetch(apiUrl("/api/v1/admin/jobs/recent?limit=60"), { credentials: "include", headers }),
@@ -540,16 +568,17 @@ export default function AdminOpsPage() {
         fetch(apiUrl("/api/v1/admin/social/comments?limit=80"), { credentials: "include", headers }),
         fetch(apiUrl("/api/v1/admin/users?limit=120"), { credentials: "include", headers }),
         fetch(apiUrl("/api/v1/admin/audit-events?limit=120"), { credentials: "include", headers }),
+        fetch(apiUrl("/api/v1/opportunities/scraper/health"), { credentials: "include", headers }),
       ]);
 
-      for (const response of [overviewRes, oppsRes, jobsRes, postsRes, commentsRes, usersRes, auditsRes]) {
+      for (const response of [overviewRes, oppsRes, jobsRes, postsRes, commentsRes, usersRes, auditsRes, scraperHealthRes]) {
         if (!response.ok) {
           const payload = await response.json().catch(() => ({}));
           throw new Error(getApiErrorMessage(payload, "Unable to load admin dashboard data"));
         }
       }
 
-      const [overviewPayload, oppsPayload, jobsPayload, postsPayload, commentsPayload, usersPayload, auditsPayload] =
+      const [overviewPayload, oppsPayload, jobsPayload, postsPayload, commentsPayload, usersPayload, auditsPayload, scraperHealthPayload] =
         await Promise.all([
           overviewRes.json(),
           oppsRes.json(),
@@ -558,6 +587,7 @@ export default function AdminOpsPage() {
           commentsRes.json(),
           usersRes.json(),
           auditsRes.json(),
+          scraperHealthRes.json(),
         ]);
 
       setOverview(overviewPayload as AdminOverview);
@@ -567,6 +597,7 @@ export default function AdminOpsPage() {
       setComments((commentsPayload as AdminComment[]) || []);
       setUsers((usersPayload as AdminUser[]) || []);
       setAuditEvents((auditsPayload as AuditEvent[]) || []);
+      setScraperHealth((scraperHealthPayload as ScraperHealth) || null);
     } catch (err) {
       setError(getUnknownErrorMessage(err, "Unable to load admin data"));
     } finally {
@@ -1320,6 +1351,69 @@ export default function AdminOpsPage() {
               Queue Trust Backfill
             </button>
           </form>
+
+          <div style={{ display: "grid", gap: "0.9rem", marginBottom: "1rem" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "0.8rem" }}>
+              <MetricCard label="Scraper status" value={scraperHealth?.last_status || "unknown"} tone={scraperHealth?.is_running ? "accent" : "default"} />
+              <MetricCard label="Running" value={scraperHealth?.is_running ? "Yes" : "No"} tone={scraperHealth?.is_running ? "accent" : "primary"} />
+              <MetricCard label="Failures" value={String(scraperHealth?.consecutive_failures ?? 0)} tone={(scraperHealth?.consecutive_failures ?? 0) > 0 ? "accent" : "primary"} />
+              <MetricCard label="Last success" value={scraperHealth?.last_successful_at ? formatDateTime(scraperHealth.last_successful_at) : "Never"} />
+            </div>
+
+            <div style={{ overflowX: "auto", ...panelStyle("var(--bg-base)") }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "1120px" }}>
+                <thead>
+                  <tr style={{ borderBottom: "2px solid var(--border-subtle)" }}>
+                    <th align="left" style={{ padding: "0.8rem 0.9rem" }}>Source</th>
+                    <th align="left" style={{ padding: "0.8rem 0.9rem" }}>Status</th>
+                    <th align="left" style={{ padding: "0.8rem 0.9rem" }}>Coverage</th>
+                    <th align="left" style={{ padding: "0.8rem 0.9rem" }}>Freshness</th>
+                    <th align="left" style={{ padding: "0.8rem 0.9rem" }}>Fetched</th>
+                    <th align="left" style={{ padding: "0.8rem 0.9rem" }}>Inserted</th>
+                    <th align="left" style={{ padding: "0.8rem 0.9rem" }}>Updated</th>
+                    <th align="left" style={{ padding: "0.8rem 0.9rem" }}>Fetch ms</th>
+                    <th align="left" style={{ padding: "0.8rem 0.9rem" }}>Upsert ms</th>
+                    <th align="left" style={{ padding: "0.8rem 0.9rem" }}>Errors</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(scraperHealth?.sources || []).length === 0 ? (
+                    <tr>
+                      <td colSpan={10} style={{ padding: "1rem 0.9rem", color: "var(--text-secondary)" }}>
+                        No scraper source telemetry has been recorded yet.
+                      </td>
+                    </tr>
+                  ) : (
+                    (scraperHealth?.sources || []).map((source) => (
+                      <tr key={source.source} style={{ borderTop: "1px solid color-mix(in srgb, var(--border-subtle) 30%, transparent)" }}>
+                        <td style={{ padding: "0.85rem 0.9rem", fontWeight: 700 }}>{source.source}</td>
+                        <td style={{ padding: "0.85rem 0.9rem" }}>
+                          <span style={{ color: source.stale || source.status === "error" ? "#b91c1c" : "#15803d", fontWeight: 800 }}>
+                            {source.stale ? "stale" : source.status}
+                          </span>
+                        </td>
+                        <td style={{ padding: "0.85rem 0.9rem" }}>{source.coverage_count}</td>
+                        <td style={{ padding: "0.85rem 0.9rem" }}>
+                          {source.freshness_minutes == null ? "Unknown" : `${source.freshness_minutes} min`}
+                          <div style={{ color: "var(--text-secondary)", fontSize: "0.82rem" }}>
+                            {source.latest_seen_at ? formatDateTime(source.latest_seen_at) : "No sightings yet"}
+                          </div>
+                        </td>
+                        <td style={{ padding: "0.85rem 0.9rem" }}>{source.fetched}</td>
+                        <td style={{ padding: "0.85rem 0.9rem" }}>{source.inserted}</td>
+                        <td style={{ padding: "0.85rem 0.9rem" }}>{source.updated}</td>
+                        <td style={{ padding: "0.85rem 0.9rem" }}>{Math.round(source.fetch_duration_ms || 0)}</td>
+                        <td style={{ padding: "0.85rem 0.9rem" }}>{Math.round(source.upsert_duration_ms || 0)}</td>
+                        <td style={{ padding: "0.85rem 0.9rem", color: "var(--text-secondary)" }}>
+                          {source.errors.length > 0 ? source.errors.join(" | ") : "-"}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
 
           <div style={{ overflowX: "auto", ...panelStyle("var(--bg-base)") }}>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>

@@ -51,6 +51,9 @@ const PROFILE_SIGNAL_FALLBACK: Record<string, { label: string; description: stri
     course: { label: "Course", description: "Add your course/degree." },
     passout_year: { label: "Passout Year", description: "Set your graduation year." },
     college_name: { label: "College Name", description: "Add your institute/college name." },
+    career_intent: { label: "Career Intent", description: "Choose the roles you want recommendations to optimize for." },
+    interest_graph: { label: "Interest Graph", description: "Pick interest areas so opportunities can be ranked faster." },
+    work_preferences: { label: "Work Preferences", description: "Choose your preferred work setup and job style." },
     current_job_role: { label: "Current Role", description: "Add your current role." },
     total_work_experience: { label: "Work Experience", description: "Add your total work experience." },
     bio: { label: "Bio", description: "Add a short bio." },
@@ -624,8 +627,14 @@ export default function DashboardPage() {
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0, transition: { type: "spring", stiffness: 300, damping: 24 } }}
                         className="card-panel"
+                        style={{
+                            maxHeight: "520px",
+                            display: "flex",
+                            flexDirection: "column",
+                            minHeight: 0,
+                        }}
                     >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexShrink: 0 }}>
                             <h2 style={{ fontSize: '1.5rem' }}>Live Recommendations</h2>
                             <Activity size={14} className="animate-pulse" style={{ color: '#10b981' }} />
                         </div>
@@ -659,7 +668,17 @@ export default function DashboardPage() {
                                 )}
                             </div>
                         ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                        <div
+                            style={{
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '1rem',
+                                flex: '1 1 auto',
+                                overflowY: 'auto',
+                                paddingRight: '0.35rem',
+                                minHeight: 0,
+                            }}
+                        >
                             {activeRecommendations.map((opp, idx) => (
                                 <div key={opp.id || idx}
                                     className="card-panel"
@@ -668,7 +687,8 @@ export default function DashboardPage() {
                                         justifyContent: 'space-between',
                                         alignItems: 'center',
                                         cursor: isAuthenticated ? 'pointer' : 'default',
-                                        padding: '1rem 1.25rem'
+                                        padding: '1rem 1.25rem',
+                                        flexShrink: 0,
                                     }}
                                     onClick={() => {
                                         if (!isAuthenticated) {
@@ -718,16 +738,22 @@ export default function DashboardPage() {
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0, transition: { type: "spring", stiffness: 300, damping: 24 } }}
                         className="card-panel"
+                        style={{
+                            maxHeight: "520px",
+                            display: "flex",
+                            flexDirection: "column",
+                            minHeight: 0,
+                        }}
                     >
-                        <div style={{ display: "flex", justifyContent: "space-between", gap: "0.8rem", flexWrap: "wrap", marginBottom: "1.2rem" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: "0.8rem", flexWrap: "wrap", marginBottom: "1.2rem", flexShrink: 0 }}>
                             <h2 style={{ fontSize: '1.5rem', fontFamily: 'var(--font-serif)', fontWeight: 400 }}>Live Network Activity</h2>
                         </div>
                         {activePosts.length === 0 ? (
                             <div style={{ fontWeight: 700, color: "var(--text-secondary)" }}>No social timeline rows are available.</div>
                         ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', flex: '1 1 auto', overflowY: 'auto', paddingRight: '0.35rem', minHeight: 0 }}>
                             {activePosts.map((post, index) => (
-                                <div key={post.id || index} style={{ borderBottom: index !== activePosts.length - 1 ? '2px solid var(--border-subtle)' : 'none', paddingBottom: index !== activePosts.length - 1 ? '1.25rem' : '0' }}>
+                                <div key={post.id || index} style={{ borderBottom: index !== activePosts.length - 1 ? '2px solid var(--border-subtle)' : 'none', paddingBottom: index !== activePosts.length - 1 ? '1.25rem' : '0', flexShrink: 0 }}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
                                         <div style={{ width: 40, height: 40, borderRadius: 'var(--radius-sm)', background: 'var(--brand-accent)', border: '2px solid var(--border-subtle)', boxShadow: 'var(--shadow-sm)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#000000', fontSize: '1rem', fontWeight: 800, fontFamily: 'var(--font-serif)' }}>
                                             VV

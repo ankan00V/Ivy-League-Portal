@@ -112,7 +112,7 @@ class RetrainingService:
         impressions = [item for item in impressions if isinstance(item.features, dict)]
 
         positives = await OpportunityInteraction.find_many(
-            In(OpportunityInteraction.interaction_type, ["click", "apply"]),
+            In(OpportunityInteraction.interaction_type, ["click", "save", "apply", "shortlisted", "interview"]),
             OpportunityInteraction.created_at >= window_start,
             OpportunityInteraction.created_at <= (window_end + label_window),
         ).to_list()

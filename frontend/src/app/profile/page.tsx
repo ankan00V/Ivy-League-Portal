@@ -70,8 +70,10 @@ type ProfilePayload = {
   company_description: string;
   hiring_for: "myself" | "others" | "";
   goals: string[];
+  career_intent: string[];
   preferred_roles: string;
   preferred_locations: string;
+  work_preferences: string[];
   pan_india: boolean;
   prefer_wfh: boolean;
   consent_data_processing: boolean;
@@ -79,6 +81,7 @@ type ProfilePayload = {
   bio: string;
   skills: string;
   interests: string;
+  interest_graph: string[];
   achievements: string;
   education: string;
   certificates: string;
@@ -125,8 +128,10 @@ type ProfileUpdatePayload = {
   company_description?: string;
   hiring_for?: "myself" | "others";
   goals?: string[];
+  career_intent?: string[];
   preferred_roles?: string;
   preferred_locations?: string;
+  work_preferences?: string[];
   pan_india: boolean;
   prefer_wfh: boolean;
   consent_data_processing: boolean;
@@ -134,6 +139,7 @@ type ProfileUpdatePayload = {
   bio?: string;
   skills?: string;
   interests?: string;
+  interest_graph?: string[];
   achievements?: string;
   education?: string;
   certificates?: string;
@@ -274,8 +280,10 @@ function hydrateProfilePayload(profilePayload: Record<string, unknown>): Profile
     company_description: toText(profilePayload.company_description),
     hiring_for: (toText(profilePayload.hiring_for) || "") as "myself" | "others" | "",
     goals: toStringArray(profilePayload.goals),
+    career_intent: toStringArray(profilePayload.career_intent),
     preferred_roles: toText(profilePayload.preferred_roles),
     preferred_locations: toText(profilePayload.preferred_locations),
+    work_preferences: toStringArray(profilePayload.work_preferences),
     pan_india: Boolean(profilePayload.pan_india),
     prefer_wfh: Boolean(profilePayload.prefer_wfh),
     consent_data_processing: Boolean(profilePayload.consent_data_processing),
@@ -283,6 +291,7 @@ function hydrateProfilePayload(profilePayload: Record<string, unknown>): Profile
     bio: toText(profilePayload.bio),
     skills: toText(profilePayload.skills),
     interests: toText(profilePayload.interests),
+    interest_graph: toStringArray(profilePayload.interest_graph),
     achievements: toText(profilePayload.achievements),
     education: toText(profilePayload.education),
     certificates: toText(profilePayload.certificates),
@@ -323,6 +332,8 @@ function buildProfileUpdatePayload(profile: ProfilePayload): ProfileUpdatePayloa
     consent_data_processing: profile.consent_data_processing,
     consent_updates: profile.consent_updates,
     goals: [...profile.goals],
+    career_intent: [...profile.career_intent],
+    work_preferences: [...profile.work_preferences],
     hobbies: [...profile.hobbies],
     social_links: Object.fromEntries(
       Object.entries(profile.social_links)
@@ -364,6 +375,7 @@ function buildProfileUpdatePayload(profile: ProfilePayload): ProfileUpdatePayloa
   assignOptionalText(payload, "bio", profile.bio);
   assignOptionalText(payload, "skills", profile.skills);
   assignOptionalText(payload, "interests", profile.interests);
+  payload.interest_graph = [...profile.interest_graph];
   assignOptionalText(payload, "achievements", profile.achievements);
   assignOptionalText(payload, "education", profile.education);
   assignOptionalText(payload, "certificates", profile.certificates);
@@ -484,8 +496,10 @@ export default function ProfilePage() {
     company_description: "",
     hiring_for: "",
     goals: [],
+    career_intent: [],
     preferred_roles: "",
     preferred_locations: "",
+    work_preferences: [],
     pan_india: false,
     prefer_wfh: false,
     consent_data_processing: false,
@@ -493,6 +507,7 @@ export default function ProfilePage() {
     bio: "",
     skills: "",
     interests: "",
+    interest_graph: [],
     achievements: "",
     education: "",
     certificates: "",

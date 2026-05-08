@@ -177,8 +177,8 @@ async def _build_training_rows(
         if baseline_score <= 0 and semantic_score <= 0:
             baseline_score, _reasons = __import__("app.services.intelligence", fromlist=["score_opportunity_match"]).score_opportunity_match(profile, opportunity)  # type: ignore[attr-defined]
 
-        behavior_map = behavior_by_user.get(user_id) or {"domain": {}, "type": {}}
-        behavior_domain_pref, behavior_type_pref = recommendation_service._behavior_prefs(opportunity, behavior_map)  # type: ignore[attr-defined]
+        behavior_map = behavior_by_user.get(user_id) or {"domain": {}, "type": {}, "source": {}}
+        behavior_domain_pref, behavior_type_pref, behavior_source_pref = recommendation_service._behavior_prefs(opportunity, behavior_map)  # type: ignore[attr-defined]
         overlap = skills_overlap_score(profile=profile, opportunity=opportunity)
 
         feats = build_ranker_features(
@@ -190,6 +190,7 @@ async def _build_training_rows(
             behavior_score=behavior_score,
             behavior_domain_pref=behavior_domain_pref,
             behavior_type_pref=behavior_type_pref,
+            behavior_source_pref=behavior_source_pref,
         ).values
 
         rows.append(Row(user_id=user_id, opportunity_id=opportunity_id, label=label, features=feats))

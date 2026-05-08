@@ -26,8 +26,10 @@ class Profile(Document):
     company_description: Optional[str] = None
     hiring_for: Optional[str] = None  # myself | others
     goals: list[str] = Field(default_factory=list)
+    career_intent: list[str] = Field(default_factory=list)
     preferred_roles: Optional[str] = None
     preferred_locations: Optional[str] = None
+    work_preferences: list[str] = Field(default_factory=list)
     pan_india: bool = False
     prefer_wfh: bool = False
     consent_data_processing: bool = False
@@ -40,6 +42,7 @@ class Profile(Document):
     bio: Optional[str] = None
     skills: Optional[str] = None
     interests: Optional[str] = None
+    interest_graph: list[str] = Field(default_factory=list)
     achievements: Optional[str] = None
     education: Optional[str] = None
     certificates: Optional[str] = None
@@ -65,13 +68,13 @@ class Profile(Document):
     resume_uploaded_at: Optional[datetime] = None
     incoscore: float = 0.0
 
-    @field_validator("goals", "hobbies", mode="before")
+    @field_validator("goals", "career_intent", "work_preferences", "interest_graph", "hobbies", mode="before")
     @classmethod
     def normalize_optional_string_list(cls, value):
         if value is None:
             return []
         if isinstance(value, list):
-            return value
+            return [str(item).strip() for item in value if str(item).strip()]
         if isinstance(value, str):
             return [part.strip() for part in value.split(",") if part and part.strip()]
         return []

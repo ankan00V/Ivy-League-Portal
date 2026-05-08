@@ -46,6 +46,9 @@ def _profile_query(profile: Profile) -> str:
         getattr(profile, "user_type", "") or "",
     ]
     values.extend(getattr(profile, "goals", []) or [])
+    values.extend(getattr(profile, "career_intent", []) or [])
+    values.extend(getattr(profile, "interest_graph", []) or [])
+    values.extend(getattr(profile, "work_preferences", []) or [])
     return " ".join(value for value in values if value).strip()
 
 
@@ -99,7 +102,7 @@ class RecommendationService:
 
         Training signal:
         - impression(match_score) is a candidate sample
-        - positive label if click/save/apply occurred for same opportunity within label window
+        - positive label if click/save/apply/shortlisted/interview occurred for same opportunity within label window
         """
         since = utc_now() - timedelta(days=max(7, min(int(lookback_days), 365)))
         label_window = timedelta(hours=max(1, min(int(label_window_hours), 168)))
@@ -124,7 +127,7 @@ class RecommendationService:
             if mode and mode not in target_modes:
                 continue
             action = (getattr(item, "interaction_type", "") or "").strip().lower()
-            if action not in {"click", "save", "apply"}:
+            if action not in {"click", "save", "apply", "shortlisted", "interview"}:
                 continue
             key = str(item.opportunity_id)
             created_at = as_utc_aware(item.created_at)
@@ -196,6 +199,7 @@ class RecommendationService:
             return {
                 "domain": {},
                 "type": {},
+                "source": {},
                 "stats": {
                     "recent_interactions_7d": 0.0,
                     "recent_interactions_30d": 0.0,
@@ -227,10 +231,14 @@ class RecommendationService:
             "click": 1.0,
             "save": 1.2,
             "apply": 1.8,
+            "shortlisted": 2.8,
+            "interview": 3.5,
+            "rejected": -1.25,
         }
 
         domain_score: dict[str, float] = defaultdict(float)
         type_score: dict[str, float] = defaultdict(float)
+        source_score: dict[str, float] = defaultdict(float)
 
         for interaction in interactions:
             created_at = as_utc_aware(interaction.created_at)
@@ -259,18 +267,26 @@ class RecommendationService:
                 domain_score[opportunity.domain.lower()] += weight
             if opportunity.opportunity_type:
                 type_score[opportunity.opportunity_type.lower()] += weight
+            if getattr(opportunity, "source", None):
+                source_score[str(opportunity.source).lower()] += weight
 
         def _normalize(values: dict[str, float]) -> dict[str, float]:
             if not values:
                 return {}
-            maximum = max(values.values())
+            positive_only = {key: max(0.0, float(score)) for key, score in values.items()}
+            maximum = max(positive_only.values())
             if maximum <= 0:
                 return {}
-            return {key: round((score / maximum) * 100.0, 3) for key, score in values.items()}
+            return {
+                key: round((score / maximum) * 100.0, 3)
+                for key, score in positive_only.items()
+                if score > 0
+            }
 
         return {
             "domain": _normalize(domain_score),
             "type": _normalize(type_score),
+            "source": _normalize(source_score),
             "stats": {
                 "recent_interactions_7d": float(recent_interactions_7d),
                 "recent_interactions_30d": float(recent_interactions_30d),
@@ -289,25 +305,34 @@ class RecommendationService:
     def _behavior_score(self, opportunity: Opportunity, behavior_map: dict[str, dict[str, float]]) -> float:
         domain_map = behavior_map.get("domain", {})
         type_map = behavior_map.get("type", {})
+        source_map = behavior_map.get("source", {})
 
-        domain_key = (opportunity.domain or "").lower()
-        type_key = (opportunity.opportunity_type or "").lower()
+        domain_key = str(getattr(opportunity, "domain", "") or "").lower()
+        type_key = str(getattr(opportunity, "opportunity_type", "") or "").lower()
+        source_key = str(getattr(opportunity, "source", "") or "").lower()
 
         domain_score = domain_map.get(domain_key, 0.0)
         type_score = type_map.get(type_key, 0.0)
+        source_score = source_map.get(source_key, 0.0)
 
-        return round((0.65 * domain_score) + (0.35 * type_score), 3)
+        return round((0.5 * domain_score) + (0.25 * type_score) + (0.25 * source_score), 3)
 
     def _behavior_prefs(
         self, opportunity: Opportunity, behavior_map: dict[str, dict[str, float]]
-    ) -> tuple[float, float]:
+    ) -> tuple[float, float, float]:
         domain_map = behavior_map.get("domain", {})
         type_map = behavior_map.get("type", {})
+        source_map = behavior_map.get("source", {})
 
-        domain_key = (opportunity.domain or "").lower()
-        type_key = (opportunity.opportunity_type or "").lower()
+        domain_key = str(getattr(opportunity, "domain", "") or "").lower()
+        type_key = str(getattr(opportunity, "opportunity_type", "") or "").lower()
+        source_key = str(getattr(opportunity, "source", "") or "").lower()
 
-        return float(domain_map.get(domain_key, 0.0)), float(type_map.get(type_key, 0.0))
+        return (
+            float(domain_map.get(domain_key, 0.0)),
+            float(type_map.get(type_key, 0.0)),
+            float(source_map.get(source_key, 0.0)),
+        )
 
     async def rank(
         self,
@@ -420,7 +445,7 @@ class RecommendationService:
             baseline_score, baseline_reasons = score_opportunity_match(profile, opportunity)
             semantic_score = round(float(semantic_scores.get(str(opportunity.id), 0.0)), 3)
             behavior_score = self._behavior_score(opportunity, behavior_map)
-            behavior_domain_pref, behavior_type_pref = self._behavior_prefs(opportunity, behavior_map)
+            behavior_domain_pref, behavior_type_pref, behavior_source_pref = self._behavior_prefs(opportunity, behavior_map)
             overlap_score = skills_overlap_score(profile=profile, opportunity=opportunity)
             heuristic_blend_score = round(
                 (weights["semantic"] * semantic_score)
@@ -437,6 +462,7 @@ class RecommendationService:
                 behavior_score=behavior_score,
                 behavior_domain_pref=behavior_domain_pref,
                 behavior_type_pref=behavior_type_pref,
+                behavior_source_pref=behavior_source_pref,
                 user_recent_interactions_7d=float(behavior_stats.get("recent_interactions_7d") or 0.0),
                 user_recent_interactions_30d=float(behavior_stats.get("recent_interactions_30d") or 0.0),
                 user_recent_applies_30d=float(behavior_stats.get("recent_applies_30d") or 0.0),
@@ -465,6 +491,8 @@ class RecommendationService:
                     reasons.append(f"Semantic match score: {semantic_score:.1f}")
                 if behavior_score > 0:
                     reasons.append(f"Behavioral preference boost: {behavior_score:.1f}")
+                if behavior_source_pref > 0:
+                    reasons.append("Historically strong outcomes from similar sources.")
 
             candidates.append(
                 {
@@ -475,6 +503,7 @@ class RecommendationService:
                     "skills_overlap_score": round(float(overlap_score), 6),
                     "behavior_domain_pref": round(float(behavior_domain_pref), 6),
                     "behavior_type_pref": round(float(behavior_type_pref), 6),
+                    "behavior_source_pref": round(float(behavior_source_pref), 6),
                     "heuristic_blend_score": heuristic_blend_score,
                     "ml_raw_score": ml_raw_score,
                     "shadow_ml_raw_score": None,
@@ -552,6 +581,7 @@ class RecommendationService:
                     "skills_overlap_score": candidate["skills_overlap_score"],
                     "behavior_domain_pref": candidate["behavior_domain_pref"],
                     "behavior_type_pref": candidate["behavior_type_pref"],
+                    "behavior_source_pref": candidate["behavior_source_pref"],
                     "geo_match_score": candidate["geo_match_score"],
                     "source_trust": candidate["source_trust"],
                     "sequence_ctr_30d": candidate["sequence_ctr_30d"],
