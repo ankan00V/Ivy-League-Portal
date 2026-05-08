@@ -19,6 +19,13 @@ interface Opportunity {
     university: string;
     domain: string;
     source?: string;
+    canonical_key?: string;
+    location?: string;
+    work_mode?: string;
+    stipend?: string;
+    eligibility?: string;
+    batch_years?: number[];
+    ppo_available?: string;
     trust_status?: string;
     trust_score?: number;
     risk_score?: number;
@@ -456,9 +463,19 @@ export default function InternshipsJobsPage() {
         };
     };
 
+    const metadataChips = (opp: Opportunity) =>
+        [
+            opp.location ? `Location: ${opp.location}` : null,
+            opp.work_mode ? opp.work_mode : null,
+            opp.stipend ? `Stipend: ${opp.stipend}` : null,
+            opp.batch_years && opp.batch_years.length > 0 ? `Batch: ${opp.batch_years.join(", ")}` : null,
+            opp.ppo_available ? `PPO: ${opp.ppo_available}` : null,
+        ].filter(Boolean) as string[];
+
     const renderCompetitiveCard = (opp: Opportunity, idx: number) => {
         const imageUrl = imageFallbackMap[opp.id] ? FALLBACK_IMAGE : getCompetitionImage(opp);
         const trust = trustSummary(opp);
+        const details = metadataChips(opp);
         return (
             <motion.article
                 key={opp.id || idx}
@@ -609,6 +626,26 @@ export default function InternshipsJobsPage() {
                                 {trust.evidenceLabel}
                             </div>
                         </div>
+                        {details.length > 0 ? (
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem", marginTop: "0.7rem" }}>
+                                {details.map((chip) => (
+                                    <span
+                                        key={chip}
+                                        style={{
+                                            fontSize: "0.74rem",
+                                            padding: "0.22rem 0.55rem",
+                                            borderRadius: "999px",
+                                            background: "var(--bg-surface-hover)",
+                                            border: "1px solid var(--border-subtle)",
+                                            fontWeight: 700,
+                                            color: "var(--text-secondary)",
+                                        }}
+                                    >
+                                        {chip}
+                                    </span>
+                                ))}
+                            </div>
+                        ) : null}
                     </div>
 
                     <div
@@ -666,6 +703,7 @@ export default function InternshipsJobsPage() {
     const renderCareerCard = (opp: Opportunity, idx: number) => {
         const imageUrl = imageFallbackMap[opp.id] ? FALLBACK_IMAGE : getCompetitionImage(opp);
         const trust = trustSummary(opp);
+        const details = metadataChips(opp);
         return (
             <motion.article
                 key={opp.id || idx}
@@ -821,6 +859,26 @@ export default function InternshipsJobsPage() {
                             {trust.evidenceLabel}
                         </div>
                     </div>
+                    {details.length > 0 ? (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem" }}>
+                            {details.map((chip) => (
+                                <span
+                                    key={chip}
+                                    style={{
+                                        fontSize: "0.74rem",
+                                        padding: "0.22rem 0.55rem",
+                                        borderRadius: "999px",
+                                        background: "var(--bg-surface-hover)",
+                                        border: "1px solid var(--border-subtle)",
+                                        fontWeight: 700,
+                                        color: "var(--text-secondary)",
+                                    }}
+                                >
+                                    {chip}
+                                </span>
+                            ))}
+                        </div>
+                    ) : null}
 
                     <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap", marginTop: "auto" }}>
                         <button

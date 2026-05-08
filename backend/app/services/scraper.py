@@ -8,7 +8,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any, Iterable
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 import xml.etree.ElementTree as ET
 
 import numpy as np
@@ -362,6 +362,36 @@ GENERIC_NON_OPPORTUNITY_ANCHORS = {
     "learn more",
 }
 
+TRACKING_QUERY_KEYS = {
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_term",
+    "utm_content",
+    "ref",
+    "refs",
+    "source",
+    "src",
+    "trk",
+    "tracking",
+}
+
+WORK_MODE_PATTERNS: list[tuple[str, list[str]]] = [
+    ("Remote", [r"\bremote\b", r"\bwork from home\b", r"\bwfh\b"]),
+    ("Hybrid", [r"\bhybrid\b"]),
+    ("Onsite", [r"\bon[-\s]?site\b", r"\bin office\b"]),
+]
+
+STIPEND_PATTERNS = [
+    r"\b(?:stipend|salary|ctc|pay)\s*[:\-]?\s*((?:rs\.?|inr|₹)\s*[\d,]+(?:\s*-\s*(?:rs\.?|inr|₹)?\s*[\d,]+)?(?:\s*/\s*(?:month|week|year|annum))?)",
+    r"\b((?:rs\.?|inr|₹)\s*[\d,]+(?:\s*-\s*(?:rs\.?|inr|₹)?\s*[\d,]+)?(?:\s*/\s*(?:month|week|year|annum)))",
+]
+
+BATCH_PATTERNS = [
+    r"\b(20\d{2})\s*(?:,|/|or|and|-|to)\s*(20\d{2})\b",
+    r"\bbatch(?:es)?\s*(?:of)?\s*(20\d{2}(?:\s*(?:,|/|or|and)\s*20\d{2})*)\b",
+]
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -419,15 +449,148 @@ def _parse_datetime(value: str | None) -> datetime | None:
     return None
 
 
+def _canonicalize_url(value: str | None) -> str:
+    url = (value or "").strip()
+    if not url:
+        return ""
+    try:
+        parsed = urlparse(url)
+        scheme = parsed.scheme.lower() or "https"
+        host = (parsed.netloc or "").lower()
+        path = re.sub(r"/+", "/", parsed.path or "/").rstrip("/") or "/"
+        filtered_query = [
+            (key, item)
+            for key, item in parse_qsl(parsed.query, keep_blank_values=False)
+            if key.strip().lower() not in TRACKING_QUERY_KEYS
+        ]
+        query = urlencode(filtered_query, doseq=True)
+        return urlunparse((scheme, host, path, "", query, ""))
+    except Exception:
+        return url
+
+
+def _slugify_text(value: str | None) -> str:
+    text = _collapse_whitespace(value).lower()
+    text = re.sub(r"[^a-z0-9]+", "-", text)
+    return text.strip("-")
+
+
+def _canonical_key(record: dict[str, Any]) -> str:
+    title = _slugify_text(record.get("title"))
+    organization = _slugify_text(record.get("university"))
+    opportunity_type = _slugify_text(record.get("opportunity_type"))
+    work_mode = _slugify_text(record.get("work_mode"))
+    return "::".join(part for part in [organization, title, opportunity_type, work_mode] if part)
+
+
+def _extract_work_mode(text: str) -> str | None:
+    haystack = _collapse_whitespace(text).lower()
+    if not haystack:
+        return None
+    for label, patterns in WORK_MODE_PATTERNS:
+        if any(re.search(pattern, haystack, re.IGNORECASE) for pattern in patterns):
+            return label
+    return None
+
+
+def _extract_stipend(text: str) -> str | None:
+    haystack = _collapse_whitespace(text)
+    for pattern in STIPEND_PATTERNS:
+        match = re.search(pattern, haystack, re.IGNORECASE)
+        if match:
+            return _collapse_whitespace(match.group(1))[:80]
+    return None
+
+
+def _extract_batch_years(text: str) -> list[int]:
+    haystack = _collapse_whitespace(text)
+    years: set[int] = set()
+    for pattern in BATCH_PATTERNS:
+        for match in re.finditer(pattern, haystack, re.IGNORECASE):
+            for group in match.groups():
+                if not group:
+                    continue
+                for candidate in re.findall(r"20\d{2}", str(group)):
+                    years.add(int(candidate))
+    if not years and re.search(r"\bbatch(?:es)?\b", haystack, re.IGNORECASE):
+        for candidate in re.findall(r"20\d{2}", haystack):
+            years.add(int(candidate))
+    return sorted(year for year in years if 2020 <= year <= 2035)
+
+
+def _extract_eligibility(text: str) -> str | None:
+    haystack = _collapse_whitespace(text)
+    if not haystack:
+        return None
+    patterns = [
+        r"\b(?:eligibility|eligible|who can apply)\s*[:\-]?\s*([^.;]{12,160})",
+        r"\b(?:students?|candidates?)\s+(?:from|of)\s+([^.;]{12,140})",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, haystack, re.IGNORECASE)
+        if match:
+            return _collapse_whitespace(match.group(1))[:160]
+    return None
+
+
+def _extract_location(text: str) -> str | None:
+    haystack = _collapse_whitespace(text)
+    if not haystack:
+        return None
+    match = re.search(
+        r"\b(?:location|job location|based in)\s*[:\-]?\s*([A-Za-z][A-Za-z0-9 ,/&-]{2,80})",
+        haystack,
+        re.IGNORECASE,
+    )
+    if match:
+        return _collapse_whitespace(match.group(1))[:80]
+    return None
+
+
+def _extract_ppo_availability(text: str) -> str | None:
+    haystack = _collapse_whitespace(text).lower()
+    if "ppo" in haystack:
+        if re.search(r"\bppo\b.*\b(?:available|offered|opportunity)\b", haystack):
+            return "Available"
+        if re.search(r"\bno\b.*\bppo\b|\bppo\b.*\bnot\b", haystack):
+            return "Not Available"
+        return "Possible"
+    return None
+
+
+def _enrich_metadata(record: dict[str, Any]) -> dict[str, Any]:
+    description = _collapse_whitespace(record.get("description"))
+    title = _collapse_whitespace(record.get("title"))
+    university = _collapse_whitespace(record.get("university"))
+    metadata_text = " ".join(part for part in [title, description, university] if part)
+    enriched = dict(record)
+    enriched["url"] = _canonicalize_url(record.get("url"))
+    enriched["location"] = record.get("location") or _extract_location(metadata_text)
+    enriched["work_mode"] = record.get("work_mode") or _extract_work_mode(metadata_text)
+    enriched["stipend"] = record.get("stipend") or _extract_stipend(metadata_text)
+    enriched["eligibility"] = record.get("eligibility") or _extract_eligibility(metadata_text)
+    enriched["batch_years"] = list(record.get("batch_years") or _extract_batch_years(metadata_text))
+    enriched["ppo_available"] = record.get("ppo_available") or _extract_ppo_availability(metadata_text)
+    enriched["canonical_key"] = record.get("canonical_key") or _canonical_key(enriched)
+    return enriched
+
+
 def _dedupe_by_url(records: Iterable[dict]) -> list[dict]:
-    seen: set[str] = set()
+    seen_urls: set[str] = set()
+    seen_keys: set[str] = set()
     deduped: list[dict] = []
     for record in records:
-        url = (record.get("url") or "").strip()
-        if not url or url in seen:
+        enriched = _enrich_metadata(record)
+        url = (enriched.get("url") or "").strip()
+        canonical_key = str(enriched.get("canonical_key") or "").strip()
+        if not url:
             continue
-        seen.add(url)
-        deduped.append(record)
+        if url in seen_urls or (canonical_key and canonical_key in seen_keys):
+            continue
+        seen_urls.add(url)
+        if canonical_key:
+            seen_keys.add(canonical_key)
+        deduped.append(enriched)
     return deduped
 
 
@@ -1309,6 +1472,38 @@ class GenericOpportunityPortalScraper:
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
         }
+        self.source_card_profiles: dict[str, dict[str, Any]] = {
+            "wellfound": {
+                "card_selectors": ["div[data-testid='StartupResult']", "div[data-testid='JobListing']", "div.job-listing"],
+                "title_selectors": ["a[data-testid='startup-name']", "a[data-testid='job-title']", "a[href*='/jobs/']"],
+                "description_selectors": ["div[data-testid='job-description']", "div.details", "p"],
+            },
+            "instahyre": {
+                "card_selectors": ["div.job-card", "div[data-cy='job-card']", "section[class*='job']"],
+                "title_selectors": ["a[href*='/job/']", "h2", "h3"],
+                "description_selectors": ["div.job-description", "div[class*='description']", "p"],
+            },
+            "hirist": {
+                "card_selectors": ["div.job-card", "div[data-testid='job-card']", "div[class*='jobCard']"],
+                "title_selectors": ["a[href*='job']", "h2", "h3"],
+                "description_selectors": ["div.job-desc", "div[class*='desc']", "p"],
+            },
+            "cuvette": {
+                "card_selectors": ["div[data-testid='job-card']", "div.job-card", "article"],
+                "title_selectors": ["a[href*='/jobs/']", "h2", "h3"],
+                "description_selectors": ["div[class*='description']", "p"],
+            },
+            "major_league_hacking": {
+                "card_selectors": ["div.event", "article", "li"],
+                "title_selectors": ["a[href*='mlh.io']", "h2", "h3"],
+                "description_selectors": ["p", "div[class*='details']"],
+            },
+            "linkedin": {
+                "card_selectors": ["div.base-card", "li", "div.job-search-card"],
+                "title_selectors": ["a.base-card__full-link", "a[href*='/jobs/view/']", "h3"],
+                "description_selectors": ["h4", "span.job-search-card__snippet", "p"],
+            },
+        }
 
     def _walk_json(self, node: Any) -> Iterable[dict]:
         if isinstance(node, dict):
@@ -1463,6 +1658,73 @@ class GenericOpportunityPortalScraper:
 
         return opportunities
 
+    def _extract_from_source_cards(
+        self,
+        soup: BeautifulSoup,
+        listing_url: str,
+        source_name: str,
+        default_type: str,
+        default_university: str,
+    ) -> list[dict]:
+        profile = self.source_card_profiles.get(source_name)
+        if not profile:
+            return []
+
+        opportunities: list[dict] = []
+        seen_urls: set[str] = set()
+        card_selectors = profile.get("card_selectors") or []
+        title_selectors = profile.get("title_selectors") or []
+        description_selectors = profile.get("description_selectors") or []
+
+        cards: list[Any] = []
+        for selector in card_selectors:
+            cards.extend(soup.select(selector))
+        for card in cards:
+            title_node = None
+            for selector in title_selectors:
+                title_node = card.select_one(selector)
+                if title_node is not None:
+                    break
+            if title_node is None:
+                continue
+            title = _collapse_whitespace(title_node.get_text(" ", strip=True))
+            href = ""
+            if title_node.name == "a":
+                href = (title_node.get("href") or "").strip()
+            elif title_node.find("a", href=True):
+                href = (title_node.find("a", href=True).get("href") or "").strip()
+            url = href if href.startswith("http") else urljoin(listing_url, href)
+            url = _canonicalize_url(url)
+            if not title or not url or url in seen_urls:
+                continue
+
+            description = ""
+            for selector in description_selectors:
+                node = card.select_one(selector)
+                if node is not None:
+                    description = _collapse_whitespace(node.get_text(" ", strip=True))
+                    if description:
+                        break
+            if not description:
+                description = _collapse_whitespace(card.get_text(" ", strip=True))
+            if title and description.startswith(title):
+                description = description[len(title):].strip(" -:|")
+            if not self._looks_like_candidate(title, url):
+                continue
+            seen_urls.add(url)
+            opportunities.append(
+                {
+                    "title": title[:220],
+                    "description": (description or f"Opportunity indexed from {source_name.replace('_', ' ').title()}.")[:700],
+                    "url": url,
+                    "opportunity_type": default_type or _infer_opportunity_type(title, description),
+                    "university": default_university,
+                    "deadline": _extract_deadline_from_text(description),
+                    "source": source_name,
+                }
+            )
+        return opportunities
+
     def fetch_live_opportunities(self, source_name: str, max_items: int = 12) -> list[dict]:
         normalized_source = source_name.strip().lower()
         source_config = self.source_configs.get(normalized_source)
@@ -1485,12 +1747,21 @@ class GenericOpportunityPortalScraper:
                 response.raise_for_status()
                 soup = BeautifulSoup(response.text, "html.parser")
 
-                parsed = self._extract_from_ld_json(
+                parsed = self._extract_from_source_cards(
                     soup=soup,
                     listing_url=listing_url,
                     source_name=normalized_source,
                     default_type=default_type,
                     default_university=default_university,
+                )
+                parsed.extend(
+                    self._extract_from_ld_json(
+                        soup=soup,
+                        listing_url=listing_url,
+                        source_name=normalized_source,
+                        default_type=default_type,
+                        default_university=default_university,
+                    )
                 )
                 parsed.extend(
                     self._extract_from_anchors(
@@ -1615,8 +1886,8 @@ async def _insert_and_broadcast(
         classification = ai_system.classify_opportunity(
             f"{opp_data.get('title', '')} {opp_data.get('description', '')}"
         )
-        normalized_payload = dict(opp_data)
-        normalized_payload["url"] = url
+        normalized_payload = _enrich_metadata(dict(opp_data))
+        normalized_payload["url"] = normalized_payload.get("url") or url
         normalized_payload["deadline"] = _to_naive_utc(opp_data.get("deadline"))
         normalized_payload["domain"] = opp_data.get("domain") or classification["primary_domain"]
         normalized_payload["source"] = opp_data.get("source") or source_name.lower().replace(" ", "_")
@@ -1646,11 +1917,17 @@ async def _insert_and_broadcast(
         normalized_records = [normalized_records[idx] for idx in keep_indexes]
 
     existing_by_url: dict[str, Any] = {}
+    existing_by_key: dict[str, Any] = {}
     if normalized_records:
         existing_records = await Opportunity.find_many(
             In(Opportunity.url, [record["url"] for record in normalized_records])
         ).to_list()
         existing_by_url = {record.url: record for record in existing_records}
+        canonical_keys = [str(record.get("canonical_key") or "").strip() for record in normalized_records]
+        canonical_keys = [item for item in canonical_keys if item]
+        if canonical_keys:
+            key_records = await Opportunity.find_many(In(Opportunity.canonical_key, canonical_keys)).to_list()
+            existing_by_key = {str(record.canonical_key or "").strip(): record for record in key_records if str(record.canonical_key or "").strip()}
 
     from app.services.vector_service import opportunity_vector_service
 
@@ -1662,10 +1939,25 @@ async def _insert_and_broadcast(
 
         try:
             now_naive = _to_naive_utc(utc_now())
-            existing = existing_by_url.get(url)
+            existing = existing_by_url.get(url) or existing_by_key.get(str(normalized_payload.get("canonical_key") or "").strip())
             if existing:
                 changed = False
-                for field in ["title", "description", "opportunity_type", "university", "deadline", "source", "domain"]:
+                for field in [
+                    "title",
+                    "description",
+                    "opportunity_type",
+                    "university",
+                    "deadline",
+                    "source",
+                    "domain",
+                    "location",
+                    "work_mode",
+                    "stipend",
+                    "eligibility",
+                    "batch_years",
+                    "ppo_available",
+                    "canonical_key",
+                ]:
                     incoming = normalized_payload.get(field)
                     if incoming is None:
                         continue

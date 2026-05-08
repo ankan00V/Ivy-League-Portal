@@ -87,6 +87,32 @@ class TestOpportunitiesAPI(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["status"], "queued")
         self.assertEqual(payload["message"], "Scraper job enqueued.")
 
+    async def test_read_scraper_health_exposes_per_source_runtime(self) -> None:
+        runtime = {
+            "is_running": False,
+            "last_status": "partial_success",
+            "consecutive_failures": 0,
+            "last_started_at": "2026-05-08T05:00:00+00:00",
+            "last_finished_at": "2026-05-08T05:02:00+00:00",
+            "last_successful_at": "2026-05-08T05:02:00+00:00",
+            "auto_update": {"enabled": True},
+            "last_report": {
+                "sources": [
+                    {"source": "unstop", "fetched": 10, "inserted": 2, "updated": 3, "failed": 0, "errors": []},
+                    {"source": "linkedin", "fetched": 4, "inserted": 0, "updated": 0, "failed": 4, "errors": ["403"]},
+                ]
+            },
+        }
+
+        with patch("app.services.scraper.get_scraper_runtime_status", return_value=runtime):
+            payload = await opportunities_endpoint.read_scraper_health()
+
+        self.assertEqual(payload.last_status, "partial_success")
+        self.assertEqual(len(payload.sources), 2)
+        self.assertEqual(payload.sources[0].status, "ok")
+        self.assertEqual(payload.sources[1].status, "error")
+        self.assertEqual(payload.sources[1].errors, ["403"])
+
     async def test_ask_ai_shortlist_logs_telemetry(self) -> None:
         user = DummyUser()
         request = opportunities_endpoint.AskAIRequest(query="frontend internships", top_k=4)
@@ -216,6 +242,13 @@ class TestOpportunitiesAPI(unittest.IsolatedAsyncioTestCase):
                 "deadline": None,
                 "domain": "engineering",
                 "source": "devfolio",
+                "canonical_key": "devfolio::verified-opportunity::hackathon",
+                "location": "Remote",
+                "work_mode": "Remote",
+                "stipend": "INR 25000 / month",
+                "eligibility": "2026 batch students",
+                "batch_years": [2026],
+                "ppo_available": "Available",
                 "trust_status": "verified",
                 "trust_score": 88,
                 "risk_score": 12,
@@ -235,6 +268,8 @@ class TestOpportunitiesAPI(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(payload.trust_status, "verified")
         self.assertEqual(payload.trust_score, 88)
+        self.assertEqual(payload.location, "Remote")
+        self.assertEqual(payload.batch_years, [2026])
 
 
 if __name__ == "__main__":

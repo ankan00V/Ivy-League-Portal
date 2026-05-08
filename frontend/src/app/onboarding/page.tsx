@@ -93,6 +93,24 @@ type OnboardingUpdatePayload = {
 
 const DOMAIN_OPTIONS = ["Management", "Engineering", "Arts & Science", "Medicine", "Law"];
 const GOAL_OPTIONS = ["To find a Job", "Compete & Upskill", "To Host an Event", "To be a Mentor"];
+const QUICK_ROLE_OPTIONS = [
+  "Software Engineer",
+  "Data Scientist",
+  "Product Manager",
+  "Business Analyst",
+  "UI/UX Designer",
+  "AI/ML Engineer",
+];
+const INTEREST_GRAPH_OPTIONS = [
+  "AI/ML",
+  "Open Source",
+  "Web Development",
+  "Backend Systems",
+  "Cybersecurity",
+  "Product & Strategy",
+  "Analytics",
+  "Startup Roles",
+];
 const EXPERIENCE_OPTIONS = ["0-1 years", "1-3 years", "3-5 years", "5+ years"];
 const EMPLOYER_ROLE_OPTIONS = [
   "Recruiting Coordinator",
@@ -159,6 +177,22 @@ function deriveUniversitySelection(value: string): string {
     return "";
   }
   return UNIVERSITY_OPTION_VALUES.has(trimmed) ? trimmed : OTHER_UNIVERSITY_VALUE;
+}
+
+function splitCsv(value: string): string[] {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function mergeCsvValue(value: string, token: string): string {
+  const items = splitCsv(value);
+  const exists = items.some((item) => item.toLowerCase() === token.toLowerCase());
+  const next = exists
+    ? items.filter((item) => item.toLowerCase() !== token.toLowerCase())
+    : [...items, token];
+  return next.join(", ");
 }
 
 function getAccountTypeFromOnboardingProfile(profile: ProfilePayload): string {
@@ -752,11 +786,79 @@ export default function OnboardingPage() {
                     ))}
                   </PillGroup>
                 </FormSection>
+                <FormSection
+                  label="Career intent in 30 seconds"
+                  helper="Pick the roles and interest clusters you want VidyaVerse to optimize for immediately."
+                  labelSpaced
+                >
+                  <div style={{ display: "grid", gap: "0.85rem" }}>
+                    <div>
+                      <div className="vv-form-helper" style={{ marginBottom: "0.55rem" }}>Quick role picks</div>
+                      <PillGroup>
+                        {QUICK_ROLE_OPTIONS.map((role) => (
+                          <button
+                            key={role}
+                            type="button"
+                            className={pillButtonClass(splitCsv(profile.preferred_roles).some((item) => item.toLowerCase() === role.toLowerCase()))}
+                            onClick={() => updateProfile("preferred_roles", mergeCsvValue(profile.preferred_roles, role))}
+                          >
+                            {role}
+                          </button>
+                        ))}
+                      </PillGroup>
+                    </div>
+                    <div>
+                      <div className="vv-form-helper" style={{ marginBottom: "0.55rem" }}>Interest graph</div>
+                      <PillGroup>
+                        {INTEREST_GRAPH_OPTIONS.map((interest) => (
+                          <button
+                            key={interest}
+                            type="button"
+                            className={pillButtonClass(splitCsv(profile.interests).some((item) => item.toLowerCase() === interest.toLowerCase()))}
+                            onClick={() => updateProfile("interests", mergeCsvValue(profile.interests, interest))}
+                          >
+                            {interest}
+                          </button>
+                        ))}
+                      </PillGroup>
+                    </div>
+                  </div>
+                </FormSection>
                 <FormSection label="Interested Career Roles">
                   <input className="input-base" value={profile.preferred_roles} onChange={(e) => updateProfile("preferred_roles", e.target.value)} placeholder="Data Scientist, Backend Engineer, Analyst..." />
                 </FormSection>
                 <FormSection label="Preferred Work Location">
                   <input className="input-base" value={profile.preferred_locations} onChange={(e) => updateProfile("preferred_locations", e.target.value)} placeholder="Bangalore, Pune, Remote..." />
+                </FormSection>
+                <FormSection label="Work preference" labelSpaced>
+                  <PillGroup>
+                    {["Remote", "Hybrid", "Onsite", "Pan India"].map((item) => {
+                      const active =
+                        (item === "Remote" && profile.prefer_wfh) ||
+                        (item === "Pan India" && profile.pan_india) ||
+                        (item !== "Remote" && item !== "Pan India" && splitCsv(profile.preferred_locations).some((value) => value.toLowerCase() === item.toLowerCase()));
+                      return (
+                        <button
+                          key={item}
+                          type="button"
+                          className={pillButtonClass(active)}
+                          onClick={() => {
+                            if (item === "Remote") {
+                              updateProfile("prefer_wfh", !profile.prefer_wfh);
+                              return;
+                            }
+                            if (item === "Pan India") {
+                              updateProfile("pan_india", !profile.pan_india);
+                              return;
+                            }
+                            updateProfile("preferred_locations", mergeCsvValue(profile.preferred_locations, item));
+                          }}
+                        >
+                          {item}
+                        </button>
+                      );
+                    })}
+                  </PillGroup>
                 </FormSection>
                 <ToggleRow checked={profile.pan_india} onChange={(checked) => updateProfile("pan_india", checked)}>
                   Open to Pan India opportunities

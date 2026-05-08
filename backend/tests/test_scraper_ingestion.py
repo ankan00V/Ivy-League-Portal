@@ -7,7 +7,14 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from app.services.scraper import _dedupe_by_url, _extract_deadline_from_text, is_opportunity_active
+from app.services.scraper import (
+    _dedupe_by_url,
+    _extract_batch_years,
+    _extract_deadline_from_text,
+    _extract_stipend,
+    _extract_work_mode,
+    is_opportunity_active,
+)
 from app.core.time import utc_now
 from app.services.opportunity_trust import (
     TRUST_STATUS_BLOCKED,
@@ -32,6 +39,36 @@ class TestScraperIngestionHelpers(unittest.TestCase):
         deduped = _dedupe_by_url(rows)
         self.assertEqual(len(deduped), 2)
         self.assertEqual(deduped[0]["title"], "One")
+
+    def test_dedupe_by_url_normalizes_tracking_params_and_canonical_keys(self) -> None:
+        rows = [
+            {
+                "url": "https://example.com/jobs/123?utm_source=test",
+                "title": "Software Engineer Intern",
+                "university": "Acme",
+                "opportunity_type": "Internship",
+                "description": "Remote stipend INR 25000 / month for batch 2026",
+            },
+            {
+                "url": "https://example.com/jobs/123?ref=linkedin",
+                "title": "Software Engineer Intern",
+                "university": "Acme",
+                "opportunity_type": "Internship",
+                "description": "Remote stipend INR 25000 / month for batch 2026",
+            },
+        ]
+        deduped = _dedupe_by_url(rows)
+        self.assertEqual(len(deduped), 1)
+        self.assertEqual(deduped[0]["url"], "https://example.com/jobs/123")
+        self.assertEqual(deduped[0]["work_mode"], "Remote")
+        self.assertEqual(deduped[0]["stipend"], "INR 25000 / month")
+        self.assertEqual(deduped[0]["batch_years"], [2026])
+
+    def test_metadata_extractors_parse_recruiter_style_fields(self) -> None:
+        text = "Hybrid internship with stipend Rs. 30,000 / month open for batches 2025, 2026 and 2027."
+        self.assertEqual(_extract_work_mode(text), "Hybrid")
+        self.assertEqual(_extract_stipend(text), "Rs. 30,000 / month")
+        self.assertEqual(_extract_batch_years(text), [2025, 2026, 2027])
 
     def test_extract_deadline_from_text_parses_named_date(self) -> None:
         deadline = _extract_deadline_from_text("Applications close: March 14, 2026 for the program.")

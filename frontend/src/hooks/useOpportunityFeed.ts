@@ -14,6 +14,13 @@ export interface Opportunity {
   university: string;
   domain: string;
   source?: string;
+  canonical_key?: string;
+  location?: string;
+  work_mode?: string;
+  stipend?: string;
+  eligibility?: string;
+  batch_years?: number[];
+  ppo_available?: string;
   trust_status?: string;
   trust_score?: number;
   risk_score?: number;

@@ -7,7 +7,7 @@ from pydantic import Field
 from app.models.traffic import TrafficType
 from app.core.time import utc_now
 
-InteractionType = Literal["impression", "view", "click", "apply", "save"]
+InteractionType = Literal["impression", "view", "click", "apply", "save", "shortlisted", "interview", "rejected"]
 RankingMode = Literal["baseline", "semantic", "ml", "ab"]
 
 

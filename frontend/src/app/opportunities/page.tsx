@@ -122,6 +122,13 @@ export default function OpportunitiesPage() {
     const renderCompetitiveCard = (opp: Opportunity, idx: number) => {
         const imageUrl = imageFallbackMap[opp.id] ? FALLBACK_IMAGE : getCompetitionImage(opp);
         const trust = trustSummary(opp);
+        const metadataChips = [
+            opp.location ? `Location: ${opp.location}` : null,
+            opp.work_mode ? opp.work_mode : null,
+            opp.stipend ? `Stipend: ${opp.stipend}` : null,
+            opp.batch_years && opp.batch_years.length > 0 ? `Batch: ${opp.batch_years.join(", ")}` : null,
+            opp.ppo_available ? `PPO: ${opp.ppo_available}` : null,
+        ].filter(Boolean);
         return (
             <motion.article
                 key={opp.id || idx}
@@ -268,6 +275,26 @@ export default function OpportunitiesPage() {
                                 {trust.evidenceLabel}
                             </div>
                         </div>
+                        {metadataChips.length > 0 ? (
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem", marginTop: "0.7rem" }}>
+                                {metadataChips.map((chip) => (
+                                    <span
+                                        key={chip}
+                                        style={{
+                                            fontSize: "0.74rem",
+                                            padding: "0.22rem 0.55rem",
+                                            borderRadius: "999px",
+                                            background: "var(--bg-surface-hover)",
+                                            border: "1px solid var(--border-subtle)",
+                                            fontWeight: 700,
+                                            color: "var(--text-secondary)",
+                                        }}
+                                    >
+                                        {chip}
+                                    </span>
+                                ))}
+                            </div>
+                        ) : null}
                     </div>
 
                     <div
@@ -325,6 +352,13 @@ export default function OpportunitiesPage() {
     const renderCareerCard = (opp: Opportunity, idx: number) => {
         const imageUrl = imageFallbackMap[opp.id] ? FALLBACK_IMAGE : getCompetitionImage(opp);
         const trust = trustSummary(opp);
+        const metadataChips = [
+            opp.location ? `Location: ${opp.location}` : null,
+            opp.work_mode ? opp.work_mode : null,
+            opp.stipend ? `Stipend: ${opp.stipend}` : null,
+            opp.batch_years && opp.batch_years.length > 0 ? `Batch: ${opp.batch_years.join(", ")}` : null,
+            opp.ppo_available ? `PPO: ${opp.ppo_available}` : null,
+        ].filter(Boolean);
         return (
             <motion.article
                 key={opp.id || idx}
@@ -476,6 +510,26 @@ export default function OpportunitiesPage() {
                             {trust.evidenceLabel}
                         </div>
                     </div>
+                    {metadataChips.length > 0 ? (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem" }}>
+                            {metadataChips.map((chip) => (
+                                <span
+                                    key={chip}
+                                    style={{
+                                        fontSize: "0.74rem",
+                                        padding: "0.22rem 0.55rem",
+                                        borderRadius: "999px",
+                                        background: "var(--bg-surface-hover)",
+                                        border: "1px solid var(--border-subtle)",
+                                        fontWeight: 700,
+                                        color: "var(--text-secondary)",
+                                    }}
+                                >
+                                    {chip}
+                                </span>
+                            ))}
+                        </div>
+                    ) : null}
 
                     <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap", marginTop: "auto" }}>
                         <button

@@ -43,6 +43,12 @@ class OpportunityCreate(BaseModel):
     opportunity_type: str
     university: str
     portal_category: Optional[str] = None
+    location: Optional[str] = None
+    work_mode: Optional[str] = None
+    stipend: Optional[str] = None
+    eligibility: Optional[str] = None
+    batch_years: list[int] = Field(default_factory=list)
+    ppo_available: Optional[str] = None
     duration_start: Optional[datetime] = None
     duration_end: Optional[datetime] = None
     deadline: Optional[datetime] = None
@@ -54,6 +60,13 @@ class OpportunityResponse(OpportunityCreate):
     id: PydanticObjectId
     domain: Optional[str] = None
     source: Optional[str] = None
+    canonical_key: Optional[str] = None
+    location: Optional[str] = None
+    work_mode: Optional[str] = None
+    stipend: Optional[str] = None
+    eligibility: Optional[str] = None
+    batch_years: list[int] = Field(default_factory=list)
+    ppo_available: Optional[str] = None
     trust_status: str = "unreviewed"
     trust_score: int = 50
     risk_score: int = 50
@@ -150,6 +163,27 @@ class LLMEvaluationRequest(BaseModel):
     rubric: Optional[str] = None
 
 
+class ScraperSourceHealthResponse(BaseModel):
+    source: str
+    fetched: int = 0
+    inserted: int = 0
+    updated: int = 0
+    failed: int = 0
+    status: str = "unknown"
+    errors: list[str] = Field(default_factory=list)
+
+
+class ScraperHealthResponse(BaseModel):
+    is_running: bool
+    last_status: str
+    consecutive_failures: int
+    last_started_at: Optional[str] = None
+    last_finished_at: Optional[str] = None
+    last_successful_at: Optional[str] = None
+    auto_update: dict[str, Any] = Field(default_factory=dict)
+    sources: list[ScraperSourceHealthResponse] = Field(default_factory=list)
+
+
 def _resolve_experiment_context(*, effective_mode: str, meta: dict[str, Any]) -> tuple[str, str]:
     experiment_key = str(meta.get("experiment_key") or "ranking_mode").strip() or "ranking_mode"
     experiment_variant = str(meta.get("variant") or effective_mode).strip() or effective_mode
@@ -176,6 +210,13 @@ def _to_recommended_response(payload: dict[str, Any]) -> RecommendedOpportunityR
         deadline=opportunity.deadline,
         domain=opportunity.domain,
         source=opportunity.source,
+        canonical_key=getattr(opportunity, "canonical_key", None),
+        location=getattr(opportunity, "location", None),
+        work_mode=getattr(opportunity, "work_mode", None),
+        stipend=getattr(opportunity, "stipend", None),
+        eligibility=getattr(opportunity, "eligibility", None),
+        batch_years=list(getattr(opportunity, "batch_years", []) or []),
+        ppo_available=getattr(opportunity, "ppo_available", None),
         trust_status=getattr(opportunity, "trust_status", "unreviewed"),
         trust_score=int(getattr(opportunity, "trust_score", 50) or 50),
         risk_score=int(getattr(opportunity, "risk_score", 50) or 50),
@@ -390,6 +431,39 @@ async def read_opportunities(
     """
     await _ensure_live_feed_if_stale()
     return await _load_active_opportunities(domain=domain, portal=portal, skip=skip, limit=limit)
+
+
+@router.get("/scraper/health", response_model=ScraperHealthResponse)
+async def read_scraper_health() -> ScraperHealthResponse:
+    from app.services.scraper import get_scraper_runtime_status
+
+    runtime = get_scraper_runtime_status()
+    last_report = runtime.get("last_report") or {}
+    source_rows = []
+    for row in list(last_report.get("sources") or []):
+        errors = list(row.get("errors") or [])
+        source_rows.append(
+            ScraperSourceHealthResponse(
+                source=str(row.get("source") or "unknown"),
+                fetched=int(row.get("fetched") or 0),
+                inserted=int(row.get("inserted") or 0),
+                updated=int(row.get("updated") or 0),
+                failed=int(row.get("failed") or 0),
+                status="error" if errors else "ok",
+                errors=errors,
+            )
+        )
+
+    return ScraperHealthResponse(
+        is_running=bool(runtime.get("is_running")),
+        last_status=str(runtime.get("last_status") or "never_run"),
+        consecutive_failures=int(runtime.get("consecutive_failures") or 0),
+        last_started_at=runtime.get("last_started_at"),
+        last_finished_at=runtime.get("last_finished_at"),
+        last_successful_at=runtime.get("last_successful_at"),
+        auto_update=dict(runtime.get("auto_update") or {}),
+        sources=source_rows,
+    )
 
 
 @router.get("/recommended/me", response_model=list[RecommendedOpportunityResponse])

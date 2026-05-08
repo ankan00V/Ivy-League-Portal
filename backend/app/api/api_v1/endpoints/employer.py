@@ -17,6 +17,7 @@ from app.models.opportunity import Opportunity
 from app.models.profile import Profile
 from app.models.recruiter_audit_log import RecruiterAuditLog
 from app.models.user import User
+from app.services.interaction_service import interaction_service
 from app.services.opportunity_visibility import canonical_opportunity_type, resolve_opportunity_portal
 from app.core.time import utc_now
 
@@ -679,6 +680,26 @@ async def update_application_pipeline_state(
         application_id=application.id,
         metadata={"from": old_state, "to": target_state, "notes": bool(application.pipeline_notes)},
     )
+
+    if target_state in {"shortlisted", "interview", "rejected"}:
+        try:
+            await interaction_service.log_event(
+                user_id=application.user_id,
+                opportunity_id=application.opportunity_id,
+                interaction_type=target_state,
+                ranking_mode="semantic",
+                experiment_key="application_pipeline",
+                experiment_variant=target_state,
+                features={
+                    "old_state": old_state,
+                    "new_state": target_state,
+                    "opportunity_source": getattr(opportunity, "source", None),
+                    "opportunity_domain": getattr(opportunity, "domain", None),
+                },
+                traffic_type="real",
+            )
+        except Exception:
+            pass
 
     applicant = await User.get(application.user_id)
     user_map = {str(applicant.id): applicant} if applicant else {}

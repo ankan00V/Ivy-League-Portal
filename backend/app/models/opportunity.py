@@ -8,13 +8,17 @@ class Opportunity(Document):
     title: str = Field(json_schema_extra={"index": True})
     description: str
     url: str = Field(json_schema_extra={"unique": True})
+    canonical_key: Optional[str] = Field(default=None, json_schema_extra={"index": True})
     opportunity_type: Optional[str] = None
     portal_category: Optional[str] = Field(default=None, json_schema_extra={"index": True})
     domain: Optional[str] = None
     university: Optional[str] = None
     source: Optional[str] = None
     location: Optional[str] = None
+    work_mode: Optional[str] = None
+    stipend: Optional[str] = None
     eligibility: Optional[str] = None
+    batch_years: list[int] = Field(default_factory=list)
     ppo_available: Optional[str] = None
     trust_status: str = Field(default="unreviewed", json_schema_extra={"index": True})  # verified | unreviewed | needs_review | blocked
     trust_score: int = Field(default=50, ge=0, le=100)
@@ -43,8 +47,13 @@ class Opportunity(Document):
             "domain",
             "opportunity_type",
             "portal_category",
+            "canonical_key",
             "university",
             "source",
+            "location",
+            "work_mode",
+            "stipend",
+            "batch_years",
             "ppo_available",
             "trust_status",
             "risk_score",
