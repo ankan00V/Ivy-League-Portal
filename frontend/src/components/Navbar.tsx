@@ -53,8 +53,17 @@ export default function Navbar() {
                 padding: scrolled ? "1rem 2rem" : "1.5rem 2rem",
             }}
         >
-            <div style={{ maxWidth: 1200, margin: "0 auto", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "1rem" }}>
-                <BrandLogo size="sm" />
+            <div
+                style={{
+                    width: "min(1680px, calc(100vw - 3rem))",
+                    margin: "0 auto",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: "1rem",
+                }}
+            >
+                <BrandLogo size="lg" />
                 <div style={{ display: "flex", gap: "2rem", alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
                     <Link href="#features" style={{ fontSize: "0.95rem", color: "var(--text-secondary)" }}>Features</Link>
                     <Link href="#incoscore" style={{ fontSize: "0.95rem", color: "var(--text-secondary)" }}>InCoScore</Link>
