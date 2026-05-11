@@ -20,3 +20,8 @@ class User(Document):
     class Settings:
         name = "users"
         indexes = ["email", "username", "full_name", "account_type", "auth_provider"]
+
+    @property
+    def needs_password_setup(self) -> bool:
+        hashed = str(self.hashed_password or "").strip()
+        return not hashed or hashed in {"OTP_NO_PASSWORD", "OAUTH_GOOGLE_NO_PASSWORD"} or hashed.endswith("_NO_PASSWORD")

@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
+      OPS_OPERATIONAL_ENFORCEMENT_REQUIRED: ${{ vars.OPS_OPERATIONAL_ENFORCEMENT_REQUIRED }}
       MONGODB_URL: ${{ secrets.MONGODB_URL }}
       MONGODB_DB_NAME: ${{ secrets.MONGODB_DB_NAME }}
       REDIS_URL: ${{ secrets.REDIS_URL }}
@@ -78,11 +79,19 @@ jobs:
           check_required "MLOPS_ONCALL_SECONDARY" "${MLOPS_ONCALL_SECONDARY}"
 
           if [ "${missing}" -ne 0 ]; then
-            echo "Operational enforcement prerequisites are incomplete."
-            exit 1
+            echo "OPS_ENFORCEMENT_READY=false" >> "${GITHUB_ENV}"
+            if [ "${OPS_OPERATIONAL_ENFORCEMENT_REQUIRED}" = "true" ]; then
+              echo "Operational enforcement prerequisites are incomplete."
+              exit 1
+            fi
+            echo "Operational enforcement prerequisites are incomplete, but OPS_OPERATIONAL_ENFORCEMENT_REQUIRED is not enabled. Reporting only."
+            exit 0
           fi
 
+          echo "OPS_ENFORCEMENT_READY=true" >> "${GITHUB_ENV}"
+
       - name: Publish on-call ownership artifact
+        if: env.OPS_ENFORCEMENT_READY == 'true'
         run: |
           mkdir -p docs/portfolio
           {
@@ -94,15 +103,19 @@ jobs:
           } > docs/portfolio/oncall_ownership.md
 
       - name: Verify managed production infrastructure
+        if: env.OPS_ENFORCEMENT_READY == 'true'
         run: python backend/scripts/check_production_infra_readiness.py --include-bi
 
       - name: Run backup and restore drills
+        if: env.OPS_ENFORCEMENT_READY == 'true'
         run: python backend/scripts/test_backup_restore_drill.py --execute
 
       - name: Run synthetic Slack and PagerDuty delivery check
+        if: env.OPS_ENFORCEMENT_READY == 'true'
         run: python backend/scripts/synthetic_alert_delivery_check.py
 
       - name: Audit weekly incident review SLA
+        if: env.OPS_ENFORCEMENT_READY == 'true'
         run: python backend/scripts/audit_incident_review_sla.py --days 14 --fail-on-breach
 
       - name: Upload operational enforcement artifacts

@@ -28,6 +28,7 @@ type OAuthProviderStatus = {
 type PasswordLoginResponse = {
   access_token?: string;
   token_type?: string;
+  requires_password_setup?: boolean;
   requires_admin_verification?: boolean;
   admin_challenge_token?: string;
   admin_verification_path?: string;
@@ -45,7 +46,7 @@ type PasswordLoginResponse = {
 const LOGIN_VISUALS = {
   candidate: {
     title: "Compete, learn, and get hired.",
-    subtitle: "OTP-first secure sign-in plus OAuth options for faster access.",
+    subtitle: "Sign in with OTP or your password, whichever is faster for you.",
     image:
       "https://images.unsplash.com/photo-1529074963764-98f45c47344b?auto=format&fit=crop&w=1200&q=80",
   },
@@ -372,7 +373,7 @@ export default function LoginPage() {
         <div className="auth-right-pane" style={{ padding: "2rem", display: "flex", flexDirection: "column", gap: "1rem" }}>
           <div>
             <h1 style={{ fontSize: "2.2rem", marginBottom: "0.35rem" }}>Secure Sign In</h1>
-            <p style={{ color: "var(--text-secondary)" }}>OTP-first login with OAuth options and profile-aware onboarding.</p>
+            <p style={{ color: "var(--text-secondary)" }}>Choose OTP or password sign-in. Legacy OTP accounts can set a password after login.</p>
           </div>
 
           <div

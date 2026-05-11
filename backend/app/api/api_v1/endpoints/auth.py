@@ -15,7 +15,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from pydantic import BaseModel, EmailStr, field_validator
 
-from app.api.deps import get_current_admin_user
+from app.api.deps import get_current_admin_user, get_current_user
 from app.core.config import auth_cookie_only_mode_enabled, settings
 from app.core.email_policy import is_corporate_email
 from app.core.redis_client import delete_otp, get_otp_cooldown_remaining, set_otp, validate_otp
@@ -43,6 +43,8 @@ LOCAL_OAUTH_HOSTS = {"localhost", "127.0.0.1"}
 COOKIE_SESSION_SENTINEL = "__cookie_session__"
 ADMIN_CHALLENGE_SCOPE = "admin:challenge"
 ADMIN_TOTP_SCOPE = "admin:totp"
+PASSWORD_MIN_LENGTH = 8
+PASSWORDLESS_HASH_MARKERS = {"OTP_NO_PASSWORD", "OAUTH_GOOGLE_NO_PASSWORD"}
 
 
 def _scopes_for_user(user: User) -> list[str]:
@@ -65,6 +67,35 @@ def _ensure_employer_corporate_email(email: str) -> None:
             status_code=400,
             detail="Employer signup/login requires a corporate email (personal providers are not allowed).",
         )
+
+
+def _password_policy_issues(password: str) -> list[str]:
+    candidate = str(password or "")
+    issues: list[str] = []
+    if len(candidate) < PASSWORD_MIN_LENGTH:
+        issues.append(f"Use at least {PASSWORD_MIN_LENGTH} characters")
+    if not any(char.islower() for char in candidate):
+        issues.append("Add a lowercase letter")
+    if not any(char.isupper() for char in candidate):
+        issues.append("Add an uppercase letter")
+    if not any(char.isdigit() for char in candidate):
+        issues.append("Add a number")
+    return issues
+
+
+def _validate_password_policy(password: str) -> str:
+    candidate = str(password or "")
+    issues = _password_policy_issues(candidate)
+    if issues:
+        raise HTTPException(status_code=422, detail={"message": "Password is not strong enough", "issues": issues})
+    return candidate
+
+
+def _user_needs_password_setup(user: User | None) -> bool:
+    if user is None:
+        return False
+    hashed = str(getattr(user, "hashed_password", "") or "").strip()
+    return not hashed or hashed in PASSWORDLESS_HASH_MARKERS or hashed.endswith("_NO_PASSWORD")
 
 
 def _base64url_encode(payload: dict[str, Any]) -> str:
@@ -266,8 +297,12 @@ def _public_access_token(token: str) -> str:
     return token
 
 
-def _token_response_payload(token: str) -> dict[str, str]:
-    return {"access_token": _public_access_token(token), "token_type": "bearer"}
+def _token_response_payload(token: str, user: User | None = None) -> dict[str, Any]:
+    return {
+        "access_token": _public_access_token(token),
+        "token_type": "bearer",
+        "requires_password_setup": _user_needs_password_setup(user),
+    }
 
 
 def _clear_session_cookie(response: Optional[Response]) -> None:
@@ -286,6 +321,7 @@ def _clear_session_cookie(response: Optional[Response]) -> None:
 class PasswordLoginResponse(BaseModel):
     access_token: str = ""
     token_type: str = "bearer"
+    requires_password_setup: bool = False
     requires_admin_verification: bool = False
     admin_challenge_token: str | None = None
     admin_verification_path: str | None = None
@@ -298,6 +334,19 @@ class PasswordLoginResponse(BaseModel):
     totp_setup_uri: str | None = None
     totp_setup_issuer: str | None = None
     totp_setup_account_name: str | None = None
+
+
+class PasswordSetupRequest(BaseModel):
+    password: str
+    confirm_password: str
+    current_password: str | None = None
+
+    @field_validator("password", "confirm_password", "current_password", mode="before")
+    @classmethod
+    def normalize_password_fields(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return str(value)
 
 
 def _admin_totp_setup_payload(user: User) -> dict[str, Any]:
@@ -512,6 +561,7 @@ async def register_user(
             detail="The user with this email already exists in the system.",
         )
 
+    _validate_password_policy(user_in.password)
     user = User(
         email=normalized_email,
         full_name=user_in.full_name,
@@ -557,7 +607,8 @@ async def login_access_token(
 
     user = await User.find_one(User.email == normalized_email)
 
-    if not user or not verify_password(form_data.password, user.hashed_password):
+    passwordless_login_attempt = bool(user and _user_needs_password_setup(user))
+    if not user or passwordless_login_attempt or not verify_password(form_data.password, user.hashed_password):
         failure = await auth_security_service.record_failure(
             email=normalized_email,
             action="password_login",
@@ -568,13 +619,18 @@ async def login_access_token(
             email=normalized_email,
             purpose="signin",
             success=False,
-            reason="invalid_credentials",
+            reason="password_not_set" if passwordless_login_attempt else "invalid_credentials",
             ip_address=ip_address,
             user_agent=user_agent,
             lock_applied=failure.locked,
             lock_until=failure.lock_until,
         )
-        raise HTTPException(status_code=400, detail="Incorrect email or password")
+        detail = (
+            "Password is not set for this account yet. Sign in with OTP once to set a password."
+            if passwordless_login_attempt
+            else "Incorrect email or password"
+        )
+        raise HTTPException(status_code=400, detail=detail)
     if not user.is_active:
         await auth_security_service.audit_event(
             event_type="login.password",
@@ -661,7 +717,45 @@ async def login_access_token(
         scopes=_scopes_for_user(user),
     )
     _set_session_cookie(response, token)
-    return _token_response_payload(token)
+    return _token_response_payload(token, user)
+
+
+@router.post("/password/setup", response_model=UserResponse)
+async def setup_password(
+    payload: PasswordSetupRequest,
+    request: Request = None,  # type: ignore[assignment]
+    current_user: User = Depends(get_current_user),
+) -> Any:
+    password = str(payload.password or "")
+    confirm_password = str(payload.confirm_password or "")
+    if password != confirm_password:
+        raise HTTPException(status_code=422, detail="Password confirmation does not match")
+    _validate_password_policy(password)
+
+    password_setup_required = _user_needs_password_setup(current_user)
+    if not password_setup_required:
+        current_password = str(payload.current_password or "")
+        if not current_password or not verify_password(current_password, current_user.hashed_password):
+            raise HTTPException(status_code=400, detail="Current password is required to change your password")
+
+    current_user.hashed_password = get_password_hash(password)
+    if str(getattr(current_user, "auth_provider", "") or "").strip().lower() in {"", "otp", "google", "linkedin", "microsoft"}:
+        current_user.auth_provider = "password"
+    await current_user.save()
+
+    ip_address, user_agent = _request_context(request)
+    await auth_security_service.audit_event(
+        event_type="password.setup",
+        email=str(getattr(current_user, "email", "") or "").strip().lower(),
+        account_type=str(getattr(current_user, "account_type", "candidate") or "candidate"),
+        purpose="signin",
+        success=True,
+        reason="legacy_setup" if password_setup_required else "password_changed",
+        ip_address=ip_address,
+        user_agent=user_agent,
+        user_id=current_user.id,
+    )
+    return UserResponse.model_validate(current_user)
 
 
 class AdminLoginRequest(BaseModel):
@@ -811,7 +905,7 @@ async def verify_admin_access_token(
         scopes=_scopes_for_user(user),
     )
     _set_session_cookie(response, token)
-    return _token_response_payload(token)
+    return _token_response_payload(token, user)
 
 
 @router.post("/admin/resend-otp", response_model=AdminResendOtpResponse, include_in_schema=False)
@@ -1073,7 +1167,7 @@ async def verify_admin_totp(
         scopes=_scopes_for_user(user),
     )
     _set_session_cookie(response, token)
-    return _token_response_payload(token)
+    return _token_response_payload(token, user)
 
 
 @router.post("/admin/login", response_model=Token, include_in_schema=False)
@@ -1114,6 +1208,7 @@ class OTPVerifyRequest(BaseModel):
     purpose: Literal["signup", "signin"] = "signin"
     full_name: str | None = None
     account_type: Optional[Literal["candidate", "employer"]] = None
+    password: str | None = None
 
     @field_validator("purpose", mode="before")
     @classmethod
@@ -1135,6 +1230,14 @@ class OTPVerifyRequest(BaseModel):
             return None
         trimmed = str(value).strip()
         return trimmed or None
+
+    @field_validator("password", mode="before")
+    @classmethod
+    def normalize_password(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        candidate = str(value)
+        return candidate or None
 
 
 class OAuthProvidersResponse(BaseModel):
@@ -1675,13 +1778,14 @@ async def verify_otp(
 
     if request.purpose == "signup":
         account_type = _normalize_account_type(request.account_type, default="candidate")
+        password = _validate_password_policy(request.password or "")
         user = User(
             email=normalized_email,
             full_name=request.full_name or str(request.email).split("@")[0],
-            hashed_password="OTP_NO_PASSWORD",
+            hashed_password=get_password_hash(password),
             is_active=True,
             account_type=account_type,
-            auth_provider="otp",
+            auth_provider="password",
         )
         await user.insert()
         await ensure_system_username(user)
@@ -1726,7 +1830,7 @@ async def verify_otp(
         scopes=_scopes_for_user(user),
     )
     _set_session_cookie(response, token)
-    return _token_response_payload(token)
+    return _token_response_payload(token, user)
 
 
 @router.post("/logout", response_model=dict)

@@ -18,6 +18,7 @@ class UserResponse(UserBase):
     auth_provider: str
     is_active: bool
     is_admin: bool
+    needs_password_setup: bool = False
 
     @field_validator("id", mode="before")
     @classmethod
@@ -27,6 +28,7 @@ class UserResponse(UserBase):
 class Token(BaseModel):
     access_token: str
     token_type: str
+    requires_password_setup: bool = False
 
 class TokenData(BaseModel):
     id: Optional[str] = None
