@@ -24,13 +24,11 @@ type OAuthProviderStatus = {
 const REGISTER_VISUALS = {
   candidate: {
     heading: "Sign up as candidate",
-    image:
-      "https://images.unsplash.com/photo-1600880292203-757bb62b4baf?auto=format&fit=crop&w=1200&q=80",
+    image: "/auth/signup-candidate.jpg",
   },
   employer: {
     heading: "Sign up as employer",
-    image:
-      "https://images.unsplash.com/photo-1557804506-669a67965ba0?auto=format&fit=crop&w=1200&q=80",
+    image: "/auth/signup-employer.jpg",
   },
 };
 
@@ -250,6 +248,7 @@ export default function RegisterPage() {
         className="card-panel auth-shell"
         style={{
           width: "min(1100px, 100%)",
+          height: "min(740px, calc(100vh - 3rem))",
           minHeight: "740px",
           overflow: "hidden",
           padding: 0,

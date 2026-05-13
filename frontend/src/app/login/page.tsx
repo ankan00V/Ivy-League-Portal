@@ -47,14 +47,12 @@ const LOGIN_VISUALS = {
   candidate: {
     title: "Compete, learn, and get hired.",
     subtitle: "Sign in with OTP or your password, whichever is faster for you.",
-    image:
-      "https://images.unsplash.com/photo-1529074963764-98f45c47344b?auto=format&fit=crop&w=1200&q=80",
+    image: "/auth/login-candidate.jpg",
   },
   employer: {
     title: "Hire top campus talent faster.",
     subtitle: "Access recruiter workflows with secure authentication.",
-    image:
-      "https://images.unsplash.com/photo-1552664730-d307ca884978?auto=format&fit=crop&w=1200&q=80",
+    image: "/auth/login-employer.jpg",
   },
 };
 
@@ -329,6 +327,7 @@ export default function LoginPage() {
         className="card-panel auth-shell"
         style={{
           width: "min(1100px, 100%)",
+          height: "min(720px, calc(100vh - 3rem))",
           minHeight: "720px",
           overflow: "hidden",
           padding: 0,
