@@ -125,11 +125,17 @@ def validate_production_operational_config() -> None:
         raise RuntimeError("Production model artifact registry requires S3/MinIO access key.")
     if not (settings.MLOPS_MODEL_ARTIFACT_S3_SECRET_ACCESS_KEY or "").strip():
         raise RuntimeError("Production model artifact registry requires S3/MinIO secret key.")
-    if not ((settings.LLM_API_KEY or settings.OPENROUTER_API_KEY or "").strip()):
+    llm_provider = str(settings.LLM_PROVIDER or "openai_compatible").strip().lower()
+    llm_key_configured = bool((settings.LLM_API_KEY or settings.OPENROUTER_API_KEY or "").strip())
+    bedrock_key_configured = bool((settings.AWS_BEARER_TOKEN_BEDROCK or "").strip())
+    if llm_provider == "bedrock":
+        llm_key_configured = bedrock_key_configured
+    if not llm_key_configured:
         raise RuntimeError("Production assistant requires an LLM API key.")
-    if settings.LLM_JUDGE_ENABLED and not (
-        (settings.LLM_JUDGE_API_KEY or settings.LLM_API_KEY or settings.OPENROUTER_API_KEY or "").strip()
-    ):
+    judge_key_configured = bool((settings.LLM_JUDGE_API_KEY or settings.LLM_API_KEY or settings.OPENROUTER_API_KEY or "").strip())
+    if llm_provider == "bedrock":
+        judge_key_configured = bedrock_key_configured
+    if settings.LLM_JUDGE_ENABLED and not judge_key_configured:
         raise RuntimeError("LLM judge is enabled but no judge/LLM API key is configured.")
     if settings.SMTP_REQUIRE_AUTH and not ((settings.SMTP_USER or "").strip() and (settings.SMTP_PASSWORD or "").strip()):
         raise RuntimeError("Production SMTP auth requires SMTP_USER and SMTP_PASSWORD.")

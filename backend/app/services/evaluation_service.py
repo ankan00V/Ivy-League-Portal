@@ -9,6 +9,7 @@ from openai import AsyncOpenAI
 from app.core.config import settings
 from app.models.opportunity import Opportunity
 from app.models.profile import Profile
+from app.services.bedrock_llm_client import BedrockLLMClient, BedrockLLMConfig
 from app.services.embedding_service import embedding_service
 from app.services.recommendation_service import recommendation_service
 from app.services.ranking_metrics import (
@@ -22,12 +23,14 @@ from app.services.ranking_metrics import (
 
 class EvaluationService:
     def __init__(self) -> None:
+        self._provider = str(settings.LLM_PROVIDER or "openai_compatible").strip().lower()
         self._api_base_url = (
             (settings.LLM_API_BASE_URL or "").strip()
             or (settings.OPENROUTER_BASE_URL or "").strip()
             or "https://openrouter.ai/api/v1"
         )
         self._api_key = (settings.LLM_API_KEY or settings.OPENROUTER_API_KEY or "").strip() or None
+        self._bedrock_api_key = (settings.AWS_BEARER_TOKEN_BEDROCK or "").strip() or None
         self._default_model = (
             (settings.LLM_MODEL or "").strip()
             or (settings.OPENROUTER_MODEL or "").strip()
@@ -38,10 +41,33 @@ class EvaluationService:
             or self._api_base_url
         )
         self._judge_api_key = (settings.LLM_JUDGE_API_KEY or self._api_key or "").strip() or None
+        self._bedrock_model = (
+            (settings.RAG_JUDGE_MODEL or "").strip()
+            or (settings.LLM_JUDGE_MODEL or "").strip()
+            or (settings.LLM_MODEL or "").strip()
+            or (settings.BEDROCK_MODEL_ID or "").strip()
+            or "us.anthropic.claude-3-5-haiku-20241022-v1:0"
+        )
+        self._bedrock_client = BedrockLLMClient(
+            BedrockLLMConfig(
+                api_key=self._bedrock_api_key,
+                region=(
+                    (settings.AWS_REGION or "").strip()
+                    or (settings.AWS_DEFAULT_REGION or "").strip()
+                    or "us-east-1"
+                ),
+                model_id=self._bedrock_model,
+            )
+        )
         self._judge_client = AsyncOpenAI(
             base_url=self._judge_api_base_url,
             api_key=self._judge_api_key or "dummy_key_to_prevent_boot_crash",
         )
+
+    def _judge_configured(self) -> bool:
+        if self._provider == "bedrock":
+            return self._bedrock_client.is_configured
+        return bool(self._judge_api_key)
 
     def _judge_headers(self, *, title: str) -> dict[str, str] | None:
         if "openrouter.ai" not in self._judge_api_base_url.lower():
@@ -225,7 +251,7 @@ class EvaluationService:
         expected_keywords: list[str],
         rubric: Optional[str],
     ) -> Optional[dict[str, Any]]:
-        if not self._judge_api_key:
+        if not self._judge_configured():
             return None
 
         model = (
@@ -244,9 +270,7 @@ class EvaluationService:
             ),
         }
 
-        response = await self._judge_client.chat.completions.create(
-            model=model,
-            messages=[
+        messages = [
                 {
                     "role": "system",
                     "content": (
@@ -255,16 +279,27 @@ class EvaluationService:
                     ),
                 },
                 {"role": "user", "content": json.dumps(judge_prompt)},
-            ],
-            extra_headers=self._judge_headers(title="VidyaVerse LLM Judge"),
-            response_format={"type": "json_object"},
-            temperature=0,
-            max_tokens=220,
-        )
-
-        content = ""
-        if response.choices and response.choices[0].message:
-            content = response.choices[0].message.content or ""
+            ]
+        if self._provider == "bedrock":
+            content = await self._bedrock_client.complete(
+                model_id=self._bedrock_model,
+                messages=messages,
+                temperature=0,
+                max_tokens=220,
+            )
+            model = self._bedrock_model
+        else:
+            response = await self._judge_client.chat.completions.create(
+                model=model,
+                messages=messages,
+                extra_headers=self._judge_headers(title="VidyaVerse LLM Judge"),
+                response_format={"type": "json_object"},
+                temperature=0,
+                max_tokens=220,
+            )
+            content = ""
+            if response.choices and response.choices[0].message:
+                content = response.choices[0].message.content or ""
 
         parsed = self._extract_json(content)
         if not parsed:
@@ -295,7 +330,7 @@ class EvaluationService:
         Optional LLM-as-judge for RAG outputs.
         Returns {score:0..1, rationale, flags, model} or None if judge unavailable.
         """
-        if not self._judge_api_key:
+        if not self._judge_configured():
             return None
 
         model = (
@@ -325,9 +360,7 @@ class EvaluationService:
             ),
         }
 
-        response = await self._judge_client.chat.completions.create(
-            model=model,
-            messages=[
+        messages = [
                 {
                     "role": "system",
                     "content": (
@@ -336,16 +369,27 @@ class EvaluationService:
                     ),
                 },
                 {"role": "user", "content": json.dumps(judge_prompt)},
-            ],
-            extra_headers=self._judge_headers(title="VidyaVerse RAG Judge"),
-            response_format={"type": "json_object"},
-            temperature=0,
-            max_tokens=220,
-        )
-
-        content = ""
-        if response.choices and response.choices[0].message:
-            content = response.choices[0].message.content or ""
+            ]
+        if self._provider == "bedrock":
+            content = await self._bedrock_client.complete(
+                model_id=self._bedrock_model,
+                messages=messages,
+                temperature=0,
+                max_tokens=220,
+            )
+            model = self._bedrock_model
+        else:
+            response = await self._judge_client.chat.completions.create(
+                model=model,
+                messages=messages,
+                extra_headers=self._judge_headers(title="VidyaVerse RAG Judge"),
+                response_format={"type": "json_object"},
+                temperature=0,
+                max_tokens=220,
+            )
+            content = ""
+            if response.choices and response.choices[0].message:
+                content = response.choices[0].message.content or ""
 
         parsed = self._extract_json(content)
         if not parsed:

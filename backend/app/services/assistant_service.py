@@ -15,6 +15,7 @@ from app.models.assistant_memory_state import AssistantMemoryState
 from app.models.opportunity import Opportunity
 from app.models.profile import Profile
 from app.models.user import User
+from app.services.bedrock_llm_client import BedrockLLMClient, BedrockLLMConfig
 from app.services.rag_service import rag_service
 from app.services.ranking_model_service import ranking_model_service
 from app.services.ranking_request_telemetry_service import ranking_request_telemetry_service
@@ -44,21 +45,44 @@ def _looks_like_rag_query(text: str) -> bool:
 
 class AssistantService:
     def __init__(self) -> None:
+        self._provider = str(settings.LLM_PROVIDER or "openai_compatible").strip().lower()
         self._api_base_url = (
             (settings.LLM_API_BASE_URL or "").strip()
             or (settings.OPENROUTER_BASE_URL or "").strip()
             or "https://openrouter.ai/api/v1"
         )
         self._api_key = (settings.LLM_API_KEY or settings.OPENROUTER_API_KEY or "").strip() or None
+        self._bedrock_api_key = (settings.AWS_BEARER_TOKEN_BEDROCK or "").strip() or None
         self._model = (
             (settings.LLM_MODEL or "").strip()
             or (settings.OPENROUTER_MODEL or "").strip()
             or "meta-llama/llama-3-8b-instruct:free"
         )
+        self._bedrock_model = (
+            (settings.LLM_MODEL or "").strip()
+            or (settings.BEDROCK_MODEL_ID or "").strip()
+            or "us.anthropic.claude-3-5-haiku-20241022-v1:0"
+        )
+        self._bedrock_client = BedrockLLMClient(
+            BedrockLLMConfig(
+                api_key=self._bedrock_api_key,
+                region=(
+                    (settings.AWS_REGION or "").strip()
+                    or (settings.AWS_DEFAULT_REGION or "").strip()
+                    or "us-east-1"
+                ),
+                model_id=self._bedrock_model,
+            )
+        )
         self._client = AsyncOpenAI(
             base_url=self._api_base_url,
             api_key=self._api_key or "dummy_key_to_prevent_boot_crash",
         )
+
+    def _llm_configured(self) -> bool:
+        if self._provider == "bedrock":
+            return self._bedrock_client.is_configured
+        return bool(self._api_key)
 
     def _prompt_version(self) -> str:
         return str(settings.ASSISTANT_CHAT_PROMPT_VERSION or "assistant.v2").strip() or "assistant.v2"
@@ -468,7 +492,7 @@ class AssistantService:
                     "results": [],
                 }
 
-            if not self._api_key:
+            if not self._llm_configured():
                 raise RuntimeError("Underlying AI service is not configured (Missing API Key).")
 
             memory, summary_used = await self._load_memory(user_id=user.id, surface=surface)
@@ -504,12 +528,18 @@ class AssistantService:
                 if role in {"user", "assistant"} and content:
                     api_messages.append({"role": role, "content": content})
 
-            response = await self._client.chat.completions.create(
-                model=self._model,
-                messages=api_messages,
-                extra_headers=self._extra_headers(),
-            )
-            message = str(response.choices[0].message.content or "").strip()
+            if self._provider == "bedrock":
+                message = await self._bedrock_client.complete(
+                    model_id=self._bedrock_model,
+                    messages=api_messages,
+                )
+            else:
+                response = await self._client.chat.completions.create(
+                    model=self._model,
+                    messages=api_messages,
+                    extra_headers=self._extra_headers(),
+                )
+                message = str(response.choices[0].message.content or "").strip()
             if not message:
                 raise RuntimeError("Empty response received from AI Model")
 
