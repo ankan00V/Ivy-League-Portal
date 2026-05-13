@@ -9,7 +9,7 @@ from typing import Any, Literal, Optional
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import requests as http_requests
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Response
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from jose import JWTError, jwt
@@ -247,6 +247,47 @@ def _request_context(request: Optional[Request]) -> tuple[Optional[str], Optiona
     return ip_address, user_agent
 
 
+def _turnstile_enabled() -> bool:
+    return bool(settings.TURNSTILE_ENABLED)
+
+
+def _turnstile_is_verified(token: str, *, ip_address: Optional[str] = None) -> bool:
+    secret = str(settings.TURNSTILE_SECRET_KEY or "").strip()
+    if not secret:
+        raise HTTPException(status_code=503, detail="Turnstile verification is not configured")
+
+    data = {"secret": secret, "response": token}
+    if ip_address:
+        data["remoteip"] = ip_address
+
+    try:
+        verify_response = http_requests.post(settings.TURNSTILE_VERIFY_URL, data=data, timeout=8)
+        verify_response.raise_for_status()
+        payload = verify_response.json()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("Turnstile verification request failed: %s", exc)
+        raise HTTPException(status_code=503, detail="Unable to verify Turnstile. Please try again.") from exc
+
+    if not bool(payload.get("success")):
+        logger.info("Turnstile rejected request: %s", payload.get("error-codes"))
+        return False
+
+    return True
+
+
+def _verify_turnstile_or_raise(token: Optional[str], *, request: Optional[Request] = None) -> None:
+    if not _turnstile_enabled():
+        return
+    candidate = str(token or "").strip()
+    if not candidate:
+        raise HTTPException(status_code=400, detail="Turnstile verification is required")
+    ip_address, _user_agent = _request_context(request)
+    if not _turnstile_is_verified(candidate, ip_address=ip_address):
+        raise HTTPException(status_code=403, detail="Turnstile verification failed")
+
+
 def _reject_reserved_admin_identity_for_public_auth(email: str) -> None:
     if is_reserved_admin_email(email):
         raise HTTPException(
@@ -347,6 +388,37 @@ class PasswordSetupRequest(BaseModel):
         if value is None:
             return None
         return str(value)
+
+
+class ForgotPasswordSendRequest(BaseModel):
+    email: EmailStr
+    account_type: Optional[Literal["candidate", "employer"]] = None
+    turnstile_token: str | None = None
+
+
+class ForgotPasswordResetRequest(BaseModel):
+    email: EmailStr
+    otp: str
+    password: str
+    confirm_password: str
+    account_type: Optional[Literal["candidate", "employer"]] = None
+
+    @field_validator("otp", mode="before")
+    @classmethod
+    def normalize_otp(cls, value: str) -> str:
+        otp = str(value).strip()
+        if len(otp) != 6 or not otp.isdigit():
+            raise ValueError("OTP must be a 6-digit numeric code")
+        return otp
+
+    @field_validator("password", "confirm_password", mode="before")
+    @classmethod
+    def normalize_password_fields(cls, value: str) -> str:
+        return str(value or "")
+
+
+class PasswordResetResponse(BaseModel):
+    message: str
 
 
 def _admin_totp_setup_payload(user: User) -> dict[str, Any]:
@@ -577,6 +649,7 @@ async def register_user(
 @router.post("/login", response_model=PasswordLoginResponse)
 async def login_access_token(
     form_data: OAuth2PasswordRequestForm = Depends(),
+    turnstile_token: Optional[str] = Form(default=None),
     request: Request = None,  # type: ignore[assignment]
     response: Response = None,  # type: ignore[assignment]
 ) -> Any:
@@ -585,6 +658,8 @@ async def login_access_token(
     """
     normalized_email = str(form_data.username or "").strip().lower()
     ip_address, user_agent = _request_context(request)
+    if not is_reserved_admin_email(normalized_email):
+        _verify_turnstile_or_raise(turnstile_token, request=request)
 
     lock = await auth_security_service.check_lock(email=normalized_email, action="password_login", purpose="signin")
     if lock.locked:
@@ -1187,6 +1262,7 @@ class OTPSendRequest(BaseModel):
     email: EmailStr
     purpose: Literal["signup", "signin"] = "signin"
     account_type: Optional[Literal["candidate", "employer"]] = None
+    turnstile_token: str | None = None
 
     @field_validator("purpose", mode="before")
     @classmethod
@@ -1238,6 +1314,226 @@ class OTPVerifyRequest(BaseModel):
             return None
         candidate = str(value)
         return candidate or None
+
+
+@router.post("/password/forgot/send-otp", response_model=OTPSendResponse)
+async def send_password_reset_otp(
+    payload: ForgotPasswordSendRequest,
+    request: Request = None,  # type: ignore[assignment]
+) -> OTPSendResponse:
+    normalized_email = str(payload.email).strip().lower()
+    ip_address, user_agent = _request_context(request)
+    is_admin_identity = is_reserved_admin_email(normalized_email)
+    if not is_admin_identity:
+        _verify_turnstile_or_raise(payload.turnstile_token, request=request)
+
+    user = await User.find_one(User.email == normalized_email)
+    requested_account_type = _normalize_account_type(payload.account_type, default="candidate")
+
+    if user:
+        if is_admin_identity and not bool(getattr(user, "is_admin", False)):
+            raise HTTPException(status_code=403, detail="Admin identity is not provisioned")
+        existing_account_type = _normalize_account_type(
+            getattr(user, "account_type", "candidate"),
+            default="candidate",
+        )
+        if payload.account_type and requested_account_type != existing_account_type:
+            raise HTTPException(
+                status_code=400,
+                detail=f"This email is registered as {existing_account_type}. Please continue as {existing_account_type}.",
+            )
+        if existing_account_type == "employer":
+            _ensure_employer_corporate_email(normalized_email)
+
+    cooldown_seconds = max(1, int(settings.OTP_SEND_COOLDOWN_SECONDS))
+    remaining_cooldown = await get_otp_cooldown_remaining(
+        normalized_email,
+        purpose="password_reset",
+        cooldown_seconds=cooldown_seconds,
+    )
+    if remaining_cooldown > 0:
+        await auth_security_service.audit_event(
+            event_type="password.reset.otp.send",
+            email=normalized_email,
+            account_type=(
+                str(getattr(user, "account_type", requested_account_type) or requested_account_type)
+                if user
+                else requested_account_type
+            ),
+            purpose="password_reset",
+            success=False,
+            reason="cooldown_active",
+            ip_address=ip_address,
+            user_agent=user_agent,
+            user_id=user.id if user else None,
+        )
+        raise HTTPException(
+            status_code=429,
+            detail=f"Please wait {remaining_cooldown} seconds before requesting another OTP.",
+            headers={"Retry-After": str(remaining_cooldown)},
+        )
+
+    otp = f"{secrets.randbelow(1_000_000):06d}"
+    if user:
+        await set_otp(normalized_email, otp, expire_seconds=OTP_EXPIRY_SECONDS, purpose="password_reset")
+
+    delivery: Literal["email", "debug"] = "email"
+    debug_otp: str | None = None
+
+    if user:
+        try:
+            await send_email_otp(normalized_email, otp)
+        except Exception as exc:
+            environment = settings.ENVIRONMENT.strip().lower()
+            if settings.OTP_ALLOW_DEBUG_FALLBACK and environment in LOCAL_ENV_NAMES:
+                delivery = "debug"
+                debug_otp = otp
+                logger.warning(
+                    "Password reset OTP delivery unavailable in %s; using debug fallback for %s: %s (%s)",
+                    environment,
+                    normalized_email,
+                    otp,
+                    exc,
+                )
+            else:
+                await delete_otp(normalized_email, purpose="password_reset")
+                await auth_security_service.audit_event(
+                    event_type="password.reset.otp.send",
+                    email=normalized_email,
+                    account_type=str(getattr(user, "account_type", requested_account_type) or requested_account_type),
+                    purpose="password_reset",
+                    success=False,
+                    reason="delivery_failed",
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    user_id=user.id,
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail="Unable to send password reset OTP. Please verify SMTP settings and try again.",
+                ) from exc
+
+    await auth_security_service.audit_event(
+        event_type="password.reset.otp.send",
+        email=normalized_email,
+        account_type=(
+            str(getattr(user, "account_type", requested_account_type) or requested_account_type)
+            if user
+            else requested_account_type
+        ),
+        purpose="password_reset",
+        success=True,
+        reason="ok" if user else "account_not_found_noop",
+        ip_address=ip_address,
+        user_agent=user_agent,
+        user_id=user.id if user else None,
+    )
+
+    return OTPSendResponse(
+        message="If this account exists, a password reset OTP has been sent.",
+        delivery=delivery,
+        cooldown_seconds=cooldown_seconds,
+        debug_otp=debug_otp,
+    )
+
+
+@router.post("/password/forgot/reset", response_model=PasswordResetResponse)
+async def reset_forgotten_password(
+    payload: ForgotPasswordResetRequest,
+    request: Request = None,  # type: ignore[assignment]
+) -> PasswordResetResponse:
+    normalized_email = str(payload.email).strip().lower()
+    ip_address, user_agent = _request_context(request)
+    lock = await auth_security_service.check_lock(
+        email=normalized_email,
+        action="password_reset",
+        purpose="password_reset",
+    )
+    if lock.locked:
+        await auth_security_service.audit_event(
+            event_type="password.reset",
+            email=normalized_email,
+            purpose="password_reset",
+            success=False,
+            reason="account_locked",
+            ip_address=ip_address,
+            user_agent=user_agent,
+            lock_applied=True,
+            lock_until=lock.lock_until,
+        )
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many failed reset attempts. Try again in {lock.remaining_lock_seconds} seconds.",
+            headers={"Retry-After": str(max(1, lock.remaining_lock_seconds))},
+        )
+
+    user = await User.find_one(User.email == normalized_email)
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid or expired OTP")
+    if is_reserved_admin_email(normalized_email) and not bool(getattr(user, "is_admin", False)):
+        raise HTTPException(status_code=403, detail="Admin identity is not provisioned")
+
+    existing_account_type = _normalize_account_type(getattr(user, "account_type", "candidate"), default="candidate")
+    requested_account_type = _normalize_account_type(payload.account_type, default=existing_account_type)
+    if payload.account_type and requested_account_type != existing_account_type:
+        raise HTTPException(
+            status_code=400,
+            detail=f"This email is registered as {existing_account_type}. Please continue as {existing_account_type}.",
+        )
+    if existing_account_type == "employer":
+        _ensure_employer_corporate_email(normalized_email)
+
+    is_valid = await validate_otp(normalized_email, payload.otp, purpose="password_reset")
+    if not is_valid:
+        failure = await auth_security_service.record_failure(
+            email=normalized_email,
+            action="password_reset",
+            purpose="password_reset",
+        )
+        await auth_security_service.audit_event(
+            event_type="password.reset",
+            email=normalized_email,
+            account_type=existing_account_type,
+            purpose="password_reset",
+            success=False,
+            reason="invalid_or_expired_otp",
+            ip_address=ip_address,
+            user_agent=user_agent,
+            user_id=user.id,
+            lock_applied=failure.locked,
+            lock_until=failure.lock_until,
+        )
+        raise HTTPException(status_code=400, detail="Invalid or expired OTP")
+
+    password = str(payload.password or "")
+    confirm_password = str(payload.confirm_password or "")
+    if password != confirm_password:
+        raise HTTPException(status_code=422, detail="Password confirmation does not match")
+    _validate_password_policy(password)
+
+    await delete_otp(normalized_email, purpose="password_reset")
+    user.hashed_password = get_password_hash(password)
+    if str(getattr(user, "auth_provider", "") or "").strip().lower() in {"", "otp", "google", "linkedin", "microsoft"}:
+        user.auth_provider = "password"
+    await user.save()
+
+    await auth_security_service.record_success(
+        email=normalized_email,
+        action="password_reset",
+        purpose="password_reset",
+    )
+    await auth_security_service.audit_event(
+        event_type="password.reset",
+        email=normalized_email,
+        account_type=existing_account_type,
+        purpose="password_reset",
+        success=True,
+        reason="ok",
+        ip_address=ip_address,
+        user_agent=user_agent,
+        user_id=user.id,
+    )
+    return PasswordResetResponse(message="Password reset successfully. Sign in with your new password.")
 
 
 class OAuthProvidersResponse(BaseModel):
@@ -1574,6 +1870,8 @@ async def send_otp(request: OTPSendRequest, http_request: Request = None):  # ty
     """
     normalized_email = str(request.email).strip().lower()
     ip_address, user_agent = _request_context(http_request)
+    if request.purpose == "signin" and not is_reserved_admin_email(normalized_email):
+        _verify_turnstile_or_raise(request.turnstile_token, request=http_request)
     existing_user = await _validate_user_for_purpose(normalized_email, request.purpose)
     requested_account_type = _normalize_account_type(request.account_type, default="candidate")
 

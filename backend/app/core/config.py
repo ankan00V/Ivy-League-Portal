@@ -163,6 +163,9 @@ class Settings(BaseSettings):
     AUTH_ABUSE_MAX_FAILED_ATTEMPTS: int = 5
     AUTH_ABUSE_WINDOW_SECONDS: int = 15 * 60
     AUTH_ABUSE_LOCK_SECONDS: int = 30 * 60
+    TURNSTILE_ENABLED: bool = False
+    TURNSTILE_SECRET_KEY: Optional[str] = None
+    TURNSTILE_VERIFY_URL: str = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 
     # OAuth (Google implemented, other providers surfaced as config status)
     GOOGLE_OAUTH_CLIENT_ID: Optional[str] = None
