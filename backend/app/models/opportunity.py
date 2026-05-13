@@ -9,6 +9,9 @@ class Opportunity(Document):
     description: str
     url: str = Field(json_schema_extra={"unique": True})
     canonical_key: Optional[str] = Field(default=None, json_schema_extra={"index": True})
+    duplicate_cluster_key: Optional[str] = Field(default=None, json_schema_extra={"index": True})
+    normalized_title: Optional[str] = None
+    normalized_organization: Optional[str] = None
     opportunity_type: Optional[str] = None
     portal_category: Optional[str] = Field(default=None, json_schema_extra={"index": True})
     domain: Optional[str] = None
@@ -48,6 +51,7 @@ class Opportunity(Document):
             "opportunity_type",
             "portal_category",
             "canonical_key",
+            "duplicate_cluster_key",
             "university",
             "source",
             "location",

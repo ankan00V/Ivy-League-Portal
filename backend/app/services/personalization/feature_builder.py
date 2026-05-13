@@ -19,6 +19,16 @@ def _split_csv(value: Optional[str]) -> list[str]:
     return [item.strip() for item in re.split(r"[,;\n/]+", value) if item.strip()]
 
 
+def _split_list(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        return _split_csv(value)
+    return []
+
+
 def _tokens(text: str) -> set[str]:
     return {token.lower() for token in TOKEN_PATTERN.findall(text or "") if len(token) >= 2}
 
@@ -176,6 +186,7 @@ def build_ranker_features(
     behavior_score: float,
     behavior_domain_pref: float,
     behavior_type_pref: float,
+    behavior_source_pref: float = 0.0,
     user_recent_interactions_7d: float = 0.0,
     user_recent_interactions_30d: float = 0.0,
     user_recent_applies_30d: float = 0.0,
@@ -199,10 +210,16 @@ def build_ranker_features(
     opp_tokens = _tokens(opportunity_text)
 
     profile_skill_tokens = _tokens(" ".join(_split_csv(profile.skills)))
-    profile_interest_tokens = _tokens(" ".join(_split_csv(profile.interests)))
+    profile_interest_tokens = _tokens(
+        " ".join(_split_csv(profile.interests) + _split_list(getattr(profile, "interest_graph", [])))
+    )
+    profile_intent_tokens = _tokens(" ".join(_split_list(getattr(profile, "career_intent", []))))
+    profile_work_pref_tokens = _tokens(" ".join(_split_list(getattr(profile, "work_preferences", []))))
 
     skill_overlap_count = float(len(profile_skill_tokens.intersection(opp_tokens)))
     interest_overlap_count = float(len(profile_interest_tokens.intersection(opp_tokens)))
+    intent_overlap_count = float(len(profile_intent_tokens.intersection(opp_tokens)))
+    work_pref_overlap_count = float(len(profile_work_pref_tokens.intersection(opp_tokens)))
     skill_token_count = float(len(profile_skill_tokens))
     interest_token_count = float(len(profile_interest_tokens))
 
@@ -223,8 +240,12 @@ def build_ranker_features(
         # Token overlaps (explicit)
         "skill_overlap_count": float(skill_overlap_count),
         "interest_overlap_count": float(interest_overlap_count),
+        "intent_overlap_count": float(intent_overlap_count),
+        "work_pref_overlap_count": float(work_pref_overlap_count),
         "skill_overlap_ratio": float(skill_overlap_count / max(1.0, skill_token_count)),
         "interest_overlap_ratio": float(interest_overlap_count / max(1.0, interest_token_count)),
+        "intent_overlap_ratio": float(intent_overlap_count / max(1.0, float(len(profile_intent_tokens)))),
+        "work_pref_overlap_ratio": float(work_pref_overlap_count / max(1.0, float(len(profile_work_pref_tokens)))),
         # Recency / deadline
         "recency_hours": float(min(recency, 9999.0)),
         "recency_log1p": float(math.log1p(min(recency, 9999.0))),
@@ -239,8 +260,10 @@ def build_ranker_features(
         # Behavior preferences (normalized)
         "behavior_domain_pref": float(behavior_domain_pref),
         "behavior_type_pref": float(behavior_type_pref),
+        "behavior_source_pref": float(behavior_source_pref),
         "behavior_domain_pref_norm": float(behavior_domain_pref / 100.0),
         "behavior_type_pref_norm": float(behavior_type_pref / 100.0),
+        "behavior_source_pref_norm": float(behavior_source_pref / 100.0),
         # User sequence dynamics
         "user_recent_interactions_7d": float(max(0.0, user_recent_interactions_7d)),
         "user_recent_interactions_30d": float(max(0.0, user_recent_interactions_30d)),

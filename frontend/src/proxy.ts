@@ -16,8 +16,16 @@ function cspValue(nonce: string): string {
   const extraConnect = process.env.NEXT_PUBLIC_CSP_CONNECT_SRC_EXTRA?.trim();
   const reportUri = process.env.NEXT_PUBLIC_CSP_REPORT_URI?.trim() || "/api/v1/security/csp-report";
   const trustedTypesEnabled = process.env.NEXT_PUBLIC_CSP_ENABLE_TRUSTED_TYPES === "1";
+  const turnstileEnabled = Boolean(process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY?.trim());
   const connectParts = new Set<string>(["'self'", "https://prod.spline.design"]);
+  const scriptParts = new Set<string>(["'self'", `'nonce-${nonce}'`, "'strict-dynamic'"]);
+  const frameParts = new Set<string>(["'self'"]);
   if (apiOrigin) connectParts.add(apiOrigin);
+  if (turnstileEnabled) {
+    connectParts.add("https://challenges.cloudflare.com");
+    scriptParts.add("https://challenges.cloudflare.com");
+    frameParts.add("https://challenges.cloudflare.com");
+  }
   if (extraConnect) {
     for (const token of extraConnect.split(/\s+/)) {
       if (token) connectParts.add(token);
@@ -27,16 +35,19 @@ function cspValue(nonce: string): string {
     for (const token of ["https:", "http:", "ws:", "wss:"]) connectParts.add(token);
   }
   const connectSrc = Array.from(connectParts).join(" ");
+  const scriptSrc = Array.from(scriptParts).join(" ");
+  const frameSrc = Array.from(frameParts).join(" ");
   const directives = [
     "default-src 'self'",
     "base-uri 'self'",
     "object-src 'none'",
     "frame-ancestors 'none'",
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
+    `script-src ${scriptSrc}`,
     "style-src 'self' 'unsafe-inline' https:",
     "img-src 'self' data: blob: https:",
     "font-src 'self' data: https:",
     `connect-src ${connectSrc}`,
+    `frame-src ${frameSrc}`,
     "worker-src 'self' blob:",
     "manifest-src 'self'",
     "form-action 'self'",

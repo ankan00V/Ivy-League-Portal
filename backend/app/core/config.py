@@ -163,6 +163,9 @@ class Settings(BaseSettings):
     AUTH_ABUSE_MAX_FAILED_ATTEMPTS: int = 5
     AUTH_ABUSE_WINDOW_SECONDS: int = 15 * 60
     AUTH_ABUSE_LOCK_SECONDS: int = 30 * 60
+    TURNSTILE_ENABLED: bool = False
+    TURNSTILE_SECRET_KEY: Optional[str] = None
+    TURNSTILE_VERIFY_URL: str = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 
     # OAuth (Google implemented, other providers surfaced as config status)
     GOOGLE_OAUTH_CLIENT_ID: Optional[str] = None
@@ -176,6 +179,7 @@ class Settings(BaseSettings):
     FRONTEND_OAUTH_FAILURE_URL: str = "http://localhost:3000/login"
     
     # AI Chatbot / OpenRouter
+    LLM_PROVIDER: str = "openai_compatible"  # openai_compatible | bedrock
     OPENROUTER_API_KEY: Optional[str] = None
     OPENROUTER_MODEL: str = "meta-llama/llama-3-8b-instruct:free"
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
@@ -184,6 +188,10 @@ class Settings(BaseSettings):
     LLM_API_KEY: Optional[str] = None
     LLM_MODEL: Optional[str] = None
     LLM_API_BASE_URL: Optional[str] = None
+    AWS_BEARER_TOKEN_BEDROCK: Optional[str] = None
+    AWS_REGION: Optional[str] = None
+    AWS_DEFAULT_REGION: Optional[str] = None
+    BEDROCK_MODEL_ID: str = "us.anthropic.claude-3-5-haiku-20241022-v1:0"
 
     # Quality / safety evaluation (optional)
     LLM_JUDGE_ENABLED: bool = False

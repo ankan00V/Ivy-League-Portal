@@ -5,6 +5,7 @@ import copy
 import json
 import logging
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any, Iterable
@@ -376,6 +377,34 @@ TRACKING_QUERY_KEYS = {
     "tracking",
 }
 
+ORGANIZATION_SUFFIX_TOKENS = {
+    "inc",
+    "llc",
+    "ltd",
+    "limited",
+    "pvt",
+    "private",
+    "corp",
+    "corporation",
+    "company",
+    "co",
+    "technologies",
+    "technology",
+    "solutions",
+}
+
+TITLE_NOISE_TOKENS = {
+    "job",
+    "jobs",
+    "opening",
+    "openings",
+    "role",
+    "hiring",
+    "opportunity",
+    "internship",
+    "internships",
+}
+
 WORK_MODE_PATTERNS: list[tuple[str, list[str]]] = [
     ("Remote", [r"\bremote\b", r"\bwork from home\b", r"\bwfh\b"]),
     ("Hybrid", [r"\bhybrid\b"]),
@@ -475,9 +504,37 @@ def _slugify_text(value: str | None) -> str:
     return text.strip("-")
 
 
+def _normalize_organization_name(value: str | None) -> str:
+    text = _collapse_whitespace(value).lower()
+    if not text:
+        return ""
+    tokens = [token for token in re.split(r"[^a-z0-9]+", text) if token]
+    filtered = [token for token in tokens if token not in ORGANIZATION_SUFFIX_TOKENS]
+    return "-".join(filtered[:8]).strip("-")
+
+
+def _normalize_opportunity_title(value: str | None) -> str:
+    text = _collapse_whitespace(value).lower()
+    if not text:
+        return ""
+    text = re.sub(r"\((?:remote|hybrid|onsite|on-site)[^)]*\)", " ", text)
+    text = re.sub(r"\b(?:full[-\s]?time|part[-\s]?time|internship|intern|job)\b", " ", text)
+    tokens = [token for token in re.split(r"[^a-z0-9+#]+", text) if token]
+    filtered = [token for token in tokens if token not in TITLE_NOISE_TOKENS]
+    return "-".join(filtered[:12]).strip("-")
+
+
+def _duplicate_cluster_key(record: dict[str, Any]) -> str:
+    organization = str(record.get("normalized_organization") or "").strip()
+    title = str(record.get("normalized_title") or "").strip()
+    opportunity_type = _slugify_text(record.get("opportunity_type"))
+    location = _slugify_text(record.get("location"))
+    return "::".join(part for part in [organization, title, opportunity_type, location] if part)
+
+
 def _canonical_key(record: dict[str, Any]) -> str:
-    title = _slugify_text(record.get("title"))
-    organization = _slugify_text(record.get("university"))
+    title = str(record.get("normalized_title") or _normalize_opportunity_title(record.get("title")))
+    organization = str(record.get("normalized_organization") or _normalize_organization_name(record.get("university")))
     opportunity_type = _slugify_text(record.get("opportunity_type"))
     work_mode = _slugify_text(record.get("work_mode"))
     return "::".join(part for part in [organization, title, opportunity_type, work_mode] if part)
@@ -571,25 +628,34 @@ def _enrich_metadata(record: dict[str, Any]) -> dict[str, Any]:
     enriched["eligibility"] = record.get("eligibility") or _extract_eligibility(metadata_text)
     enriched["batch_years"] = list(record.get("batch_years") or _extract_batch_years(metadata_text))
     enriched["ppo_available"] = record.get("ppo_available") or _extract_ppo_availability(metadata_text)
+    enriched["normalized_title"] = record.get("normalized_title") or _normalize_opportunity_title(title)
+    enriched["normalized_organization"] = record.get("normalized_organization") or _normalize_organization_name(university)
     enriched["canonical_key"] = record.get("canonical_key") or _canonical_key(enriched)
+    enriched["duplicate_cluster_key"] = record.get("duplicate_cluster_key") or _duplicate_cluster_key(enriched)
     return enriched
 
 
 def _dedupe_by_url(records: Iterable[dict]) -> list[dict]:
     seen_urls: set[str] = set()
     seen_keys: set[str] = set()
+    seen_clusters: set[str] = set()
     deduped: list[dict] = []
     for record in records:
         enriched = _enrich_metadata(record)
         url = (enriched.get("url") or "").strip()
         canonical_key = str(enriched.get("canonical_key") or "").strip()
+        duplicate_cluster_key = str(enriched.get("duplicate_cluster_key") or "").strip()
         if not url:
             continue
-        if url in seen_urls or (canonical_key and canonical_key in seen_keys):
+        if url in seen_urls or (canonical_key and canonical_key in seen_keys) or (
+            duplicate_cluster_key and duplicate_cluster_key in seen_clusters
+        ):
             continue
         seen_urls.add(url)
         if canonical_key:
             seen_keys.add(canonical_key)
+        if duplicate_cluster_key:
+            seen_clusters.add(duplicate_cluster_key)
         deduped.append(enriched)
     return deduped
 
@@ -1477,31 +1543,77 @@ class GenericOpportunityPortalScraper:
                 "card_selectors": ["div[data-testid='StartupResult']", "div[data-testid='JobListing']", "div.job-listing"],
                 "title_selectors": ["a[data-testid='startup-name']", "a[data-testid='job-title']", "a[href*='/jobs/']"],
                 "description_selectors": ["div[data-testid='job-description']", "div.details", "p"],
+                "company_selectors": ["span[data-testid='startup-name']", "div[class*='company']", "a[data-testid='startup-name']"],
+                "location_selectors": ["span[data-testid='job-location']", "div[class*='location']", "span"],
+                "meta_selectors": ["div[class*='job-details']", "div.details", "ul"],
             },
             "instahyre": {
                 "card_selectors": ["div.job-card", "div[data-cy='job-card']", "section[class*='job']"],
                 "title_selectors": ["a[href*='/job/']", "h2", "h3"],
                 "description_selectors": ["div.job-description", "div[class*='description']", "p"],
+                "company_selectors": ["div.company-name", "span.company-name", "a[href*='/company/']"],
+                "location_selectors": ["div.location", "span.location", "div[class*='location']"],
+                "meta_selectors": ["div.job-info", "div[class*='metadata']", "ul"],
             },
             "hirist": {
                 "card_selectors": ["div.job-card", "div[data-testid='job-card']", "div[class*='jobCard']"],
                 "title_selectors": ["a[href*='job']", "h2", "h3"],
                 "description_selectors": ["div.job-desc", "div[class*='desc']", "p"],
+                "company_selectors": ["div.company", "span.company", "a[href*='/company/']"],
+                "location_selectors": ["div.location", "span.location", "div[class*='location']"],
+                "meta_selectors": ["div.job-meta", "div[class*='meta']", "ul"],
             },
             "cuvette": {
                 "card_selectors": ["div[data-testid='job-card']", "div.job-card", "article"],
                 "title_selectors": ["a[href*='/jobs/']", "h2", "h3"],
                 "description_selectors": ["div[class*='description']", "p"],
+                "company_selectors": ["div[class*='company']", "span[class*='company']", "h4"],
+                "location_selectors": ["div[class*='location']", "span[class*='location']", "p"],
+                "meta_selectors": ["div[class*='meta']", "div[class*='details']", "ul"],
             },
             "major_league_hacking": {
                 "card_selectors": ["div.event", "article", "li"],
                 "title_selectors": ["a[href*='mlh.io']", "h2", "h3"],
                 "description_selectors": ["p", "div[class*='details']"],
+                "company_selectors": ["span[class*='host']", "div[class*='host']", "span[class*='organizer']"],
+                "location_selectors": ["span[class*='location']", "div[class*='location']", "p"],
+                "meta_selectors": ["div[class*='details']", "ul", "p"],
             },
             "linkedin": {
                 "card_selectors": ["div.base-card", "li", "div.job-search-card"],
                 "title_selectors": ["a.base-card__full-link", "a[href*='/jobs/view/']", "h3"],
                 "description_selectors": ["h4", "span.job-search-card__snippet", "p"],
+                "company_selectors": ["h4.base-search-card__subtitle", "a.hidden-nested-link", "span.base-search-card__subtitle"],
+                "location_selectors": ["span.job-search-card__location", "span.base-search-card__metadata"],
+                "meta_selectors": ["div.base-card__metadata", "span.base-search-card__metadata", "ul"],
+            },
+            "devfolio": {
+                "card_selectors": ["a[href*='/hackathons/']", "div[class*='HackathonCard']", "article"],
+                "title_selectors": ["h3", "h2", "a[href*='/hackathons/']"],
+                "description_selectors": ["p", "div[class*='description']", "div[class*='details']"],
+                "company_selectors": ["span[class*='host']", "div[class*='host']", "span"],
+                "meta_selectors": ["div[class*='details']", "ul", "p"],
+            },
+            "devpost": {
+                "card_selectors": ["div.challenge-listing", "div.hackathon-tile", "article"],
+                "title_selectors": ["a[href*='/software/']", "h3", "h2"],
+                "description_selectors": ["p", "div[class*='description']", "div[class*='caption']"],
+                "company_selectors": ["span[class*='organization']", "div[class*='organization']", "span"],
+                "meta_selectors": ["div[class*='meta']", "ul", "p"],
+            },
+            "hackerearth": {
+                "card_selectors": ["div.challenge-card-modern", "div.challenge-card", "article"],
+                "title_selectors": ["a[href*='/challenges/']", "h3", "h2"],
+                "description_selectors": ["p", "div[class*='description']", "div[class*='challenge-content']"],
+                "company_selectors": ["div[class*='company']", "span[class*='company']", "span"],
+                "meta_selectors": ["div[class*='meta']", "ul", "p"],
+            },
+            "reskilll": {
+                "card_selectors": ["div[class*='hackathon']", "article", "a[href*='/event/']"],
+                "title_selectors": ["h3", "h2", "a[href*='/event/']"],
+                "description_selectors": ["p", "div[class*='description']", "div[class*='details']"],
+                "company_selectors": ["span[class*='host']", "div[class*='host']", "span"],
+                "meta_selectors": ["div[class*='details']", "ul", "p"],
             },
         }
 
@@ -1675,6 +1787,9 @@ class GenericOpportunityPortalScraper:
         card_selectors = profile.get("card_selectors") or []
         title_selectors = profile.get("title_selectors") or []
         description_selectors = profile.get("description_selectors") or []
+        company_selectors = profile.get("company_selectors") or []
+        location_selectors = profile.get("location_selectors") or []
+        meta_selectors = profile.get("meta_selectors") or []
 
         cards: list[Any] = []
         for selector in card_selectors:
@@ -1709,17 +1824,40 @@ class GenericOpportunityPortalScraper:
                 description = _collapse_whitespace(card.get_text(" ", strip=True))
             if title and description.startswith(title):
                 description = description[len(title):].strip(" -:|")
+            company = ""
+            for selector in company_selectors:
+                node = card.select_one(selector)
+                if node is not None:
+                    company = _collapse_whitespace(node.get_text(" ", strip=True))
+                    if company and company.lower() != title.lower():
+                        break
+            location = ""
+            for selector in location_selectors:
+                node = card.select_one(selector)
+                if node is not None:
+                    location = _collapse_whitespace(node.get_text(" ", strip=True))
+                    if location:
+                        break
+            meta_text = ""
+            for selector in meta_selectors:
+                node = card.select_one(selector)
+                if node is not None:
+                    meta_text = _collapse_whitespace(node.get_text(" ", strip=True))
+                    if meta_text:
+                        break
+            combined_description = " ".join(part for part in [description, meta_text, location] if part).strip()
             if not self._looks_like_candidate(title, url):
                 continue
             seen_urls.add(url)
             opportunities.append(
                 {
                     "title": title[:220],
-                    "description": (description or f"Opportunity indexed from {source_name.replace('_', ' ').title()}.")[:700],
+                    "description": (combined_description or description or f"Opportunity indexed from {source_name.replace('_', ' ').title()}.")[:700],
                     "url": url,
-                    "opportunity_type": default_type or _infer_opportunity_type(title, description),
-                    "university": default_university,
-                    "deadline": _extract_deadline_from_text(description),
+                    "opportunity_type": default_type or _infer_opportunity_type(title, combined_description or description),
+                    "university": company or default_university,
+                    "location": location or None,
+                    "deadline": _extract_deadline_from_text(combined_description or description),
                     "source": source_name,
                 }
             )
@@ -1825,6 +1963,8 @@ def _new_source_report(source: str) -> dict[str, Any]:
         "updated": 0,
         "failed": 0,
         "errors": [],
+        "fetch_duration_ms": 0,
+        "upsert_duration_ms": 0,
     }
 
 
@@ -1918,6 +2058,7 @@ async def _insert_and_broadcast(
 
     existing_by_url: dict[str, Any] = {}
     existing_by_key: dict[str, Any] = {}
+    existing_by_cluster: dict[str, Any] = {}
     if normalized_records:
         existing_records = await Opportunity.find_many(
             In(Opportunity.url, [record["url"] for record in normalized_records])
@@ -1927,7 +2068,22 @@ async def _insert_and_broadcast(
         canonical_keys = [item for item in canonical_keys if item]
         if canonical_keys:
             key_records = await Opportunity.find_many(In(Opportunity.canonical_key, canonical_keys)).to_list()
-            existing_by_key = {str(record.canonical_key or "").strip(): record for record in key_records if str(record.canonical_key or "").strip()}
+            existing_by_key = {
+                str(record.canonical_key or "").strip(): record
+                for record in key_records
+                if str(record.canonical_key or "").strip()
+            }
+        duplicate_cluster_keys = [str(record.get("duplicate_cluster_key") or "").strip() for record in normalized_records]
+        duplicate_cluster_keys = [item for item in duplicate_cluster_keys if item]
+        if duplicate_cluster_keys:
+            cluster_records = await Opportunity.find_many(
+                In(Opportunity.duplicate_cluster_key, duplicate_cluster_keys)
+            ).to_list()
+            existing_by_cluster = {
+                str(record.duplicate_cluster_key or "").strip(): record
+                for record in cluster_records
+                if str(record.duplicate_cluster_key or "").strip()
+            }
 
     from app.services.vector_service import opportunity_vector_service
 
@@ -1939,7 +2095,13 @@ async def _insert_and_broadcast(
 
         try:
             now_naive = _to_naive_utc(utc_now())
-            existing = existing_by_url.get(url) or existing_by_key.get(str(normalized_payload.get("canonical_key") or "").strip())
+            canonical_key = str(normalized_payload.get("canonical_key") or "").strip()
+            duplicate_cluster_key = str(normalized_payload.get("duplicate_cluster_key") or "").strip()
+            existing = (
+                existing_by_url.get(url)
+                or existing_by_key.get(canonical_key)
+                or existing_by_cluster.get(duplicate_cluster_key)
+            )
             if existing:
                 changed = False
                 for field in [
@@ -1957,6 +2119,9 @@ async def _insert_and_broadcast(
                     "batch_years",
                     "ppo_available",
                     "canonical_key",
+                    "duplicate_cluster_key",
+                    "normalized_title",
+                    "normalized_organization",
                 ]:
                     incoming = normalized_payload.get(field)
                     if incoming is None:
@@ -1979,6 +2144,11 @@ async def _insert_and_broadcast(
                     existing.updated_at = now_naive
                     updated_count += 1
                 await existing.save()
+                existing_by_url[existing.url] = existing
+                if canonical_key:
+                    existing_by_key[canonical_key] = existing
+                if duplicate_cluster_key:
+                    existing_by_cluster[duplicate_cluster_key] = existing
                 continue
 
             semantic_text = (
@@ -1993,10 +2163,38 @@ async def _insert_and_broadcast(
             )
             if semantic_duplicates:
                 duplicate_url = semantic_duplicates[0].get("url")
-                duplicate = await Opportunity.find_one(Opportunity.url == duplicate_url)
+                duplicate = await Opportunity.find_one({"url": duplicate_url})
                 if duplicate:
+                    changed = False
+                    for field in [
+                        "canonical_key",
+                        "duplicate_cluster_key",
+                        "normalized_title",
+                        "normalized_organization",
+                        "location",
+                        "work_mode",
+                        "stipend",
+                        "eligibility",
+                        "batch_years",
+                        "ppo_available",
+                    ]:
+                        incoming = normalized_payload.get(field)
+                        if incoming is None:
+                            continue
+                        if getattr(duplicate, field, None) != incoming:
+                            setattr(duplicate, field, incoming)
+                            changed = True
                     duplicate.last_seen_at = now_naive
+                    if changed:
+                        duplicate.updated_at = now_naive
                     await duplicate.save()
+                    duplicate_key = str(getattr(duplicate, "canonical_key", "") or "").strip()
+                    duplicate_cluster = str(getattr(duplicate, "duplicate_cluster_key", "") or "").strip()
+                    existing_by_url[duplicate.url] = duplicate
+                    if duplicate_key:
+                        existing_by_key[duplicate_key] = duplicate
+                    if duplicate_cluster:
+                        existing_by_cluster[duplicate_cluster] = duplicate
                     updated_count += 1
                     continue
 
@@ -2007,6 +2205,13 @@ async def _insert_and_broadcast(
             )
             await opportunity.insert()
             inserted_count += 1
+            existing_by_url[opportunity.url] = opportunity
+            opportunity_key = str(getattr(opportunity, "canonical_key", "") or "").strip()
+            opportunity_cluster = str(getattr(opportunity, "duplicate_cluster_key", "") or "").strip()
+            if opportunity_key:
+                existing_by_key[opportunity_key] = opportunity
+            if opportunity_cluster:
+                existing_by_cluster[opportunity_cluster] = opportunity
 
             if system_user_id:
                 post_content = (
@@ -2067,7 +2272,7 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
         totals = {"fetched": 0, "inserted": 0, "updated": 0, "failed": 0, "deleted": 0}
 
         try:
-            system_user = await User.find_one(User.is_admin == True)  # noqa: E712
+            system_user = await User.find_one({"is_admin": True})
             system_user_id = system_user.id if system_user else None
 
             print("[ScraperEngine] Running resilient live fetch for Ivy + core + extended opportunity platforms...")
@@ -2158,6 +2363,7 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
                 result_has_errors_tuple: bool = False,
             ) -> None:
                 source_report = _new_source_report(source_key)
+                fetch_started_at = time.perf_counter()
                 try:
                     if isinstance(result, Exception):
                         raise result
@@ -2172,6 +2378,8 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
                     if source_report["fetched"] == 0 and not source_report["errors"] and empty_message:
                         source_report["errors"].append(empty_message)
 
+                    source_report["fetch_duration_ms"] = round((time.perf_counter() - fetch_started_at) * 1000, 1)
+                    upsert_started_at = time.perf_counter()
                     insert_stats = await _insert_and_broadcast(
                         opportunities=opportunities,
                         source_name=source_label,
@@ -2181,7 +2389,9 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
                         Post=Post,
                     )
                     source_report.update(insert_stats)
+                    source_report["upsert_duration_ms"] = round((time.perf_counter() - upsert_started_at) * 1000, 1)
                 except Exception as exc:
+                    source_report["fetch_duration_ms"] = round((time.perf_counter() - fetch_started_at) * 1000, 1)
                     source_report["errors"].append(str(exc))
 
                 report_sources.append(source_report)

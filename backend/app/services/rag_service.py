@@ -18,6 +18,7 @@ from app.schemas.rag import (
     RAGSafetyReport,
     RAGTopOpportunity,
 )
+from app.services.bedrock_llm_client import BedrockLLMClient, BedrockLLMConfig
 from app.services.evaluation_service import evaluation_service
 from app.services.nlp_service import nlp_service
 from app.services.rag_template_registry_service import rag_template_registry_service
@@ -28,12 +29,14 @@ logger = logging.getLogger(__name__)
 
 class RAGService:
     def __init__(self) -> None:
+        self._provider = str(settings.LLM_PROVIDER or "openai_compatible").strip().lower()
         self._api_base_url = (
             (settings.LLM_API_BASE_URL or "").strip()
             or (settings.OPENROUTER_BASE_URL or "").strip()
             or "https://openrouter.ai/api/v1"
         )
         self._api_key = (settings.LLM_API_KEY or settings.OPENROUTER_API_KEY or "").strip() or None
+        self._bedrock_api_key = (settings.AWS_BEARER_TOKEN_BEDROCK or "").strip() or None
         self._model = (
             (settings.LLM_MODEL or "").strip()
             or (settings.OPENROUTER_MODEL or "").strip()
@@ -52,10 +55,32 @@ class RAGService:
             )
         else:
             self._rag_model = self._model
+        self._bedrock_model = (
+            configured_rag_model
+            or (settings.LLM_MODEL or "").strip()
+            or (settings.BEDROCK_MODEL_ID or "").strip()
+            or "us.anthropic.claude-3-5-haiku-20241022-v1:0"
+        )
+        self._bedrock_client = BedrockLLMClient(
+            BedrockLLMConfig(
+                api_key=self._bedrock_api_key,
+                region=(
+                    (settings.AWS_REGION or "").strip()
+                    or (settings.AWS_DEFAULT_REGION or "").strip()
+                    or "us-east-1"
+                ),
+                model_id=self._bedrock_model,
+            )
+        )
         self._client = AsyncOpenAI(
             base_url=self._api_base_url,
             api_key=self._api_key or "dummy_key_to_prevent_boot_crash",
         )
+
+    def _llm_configured(self) -> bool:
+        if self._provider == "bedrock":
+            return self._bedrock_client.is_configured
+        return bool(self._api_key)
 
     def _extra_headers(self, *, title: str) -> dict[str, str] | None:
         # OpenRouter supports optional ranking headers; other OpenAI-compatible hosts may ignore/reject them.
@@ -262,7 +287,7 @@ class RAGService:
         profile: Optional[Profile],
         system_prompt: Optional[str] = None,
     ) -> dict[str, Any]:
-        if not self._api_key:
+        if not self._llm_configured():
             return self._heuristic_insight(query, retrieval_payload.get("results", []))
 
         # If nothing was retrieved, skip expensive LLM invocation and return deterministic fallback.
@@ -317,27 +342,37 @@ class RAGService:
         ]
 
         try:
-            response = await asyncio.wait_for(
-                self._client.chat.completions.create(
-                    model=self._rag_model,
-                    messages=messages,
-                    extra_headers=self._extra_headers(title="VidyaVerse RAG"),
-                    response_format={"type": "json_object"},
-                    temperature=0,
-                    max_tokens=700,
-                ),
-                timeout=max(3.0, float(getattr(settings, "RAG_LLM_TIMEOUT_SECONDS", 15.0))),
-            )
+            if self._provider == "bedrock":
+                content = await asyncio.wait_for(
+                    self._bedrock_client.complete(
+                        model_id=self._bedrock_model,
+                        messages=messages,
+                        temperature=0,
+                        max_tokens=700,
+                    ),
+                    timeout=max(3.0, float(getattr(settings, "RAG_LLM_TIMEOUT_SECONDS", 15.0))),
+                )
+            else:
+                response = await asyncio.wait_for(
+                    self._client.chat.completions.create(
+                        model=self._rag_model,
+                        messages=messages,
+                        extra_headers=self._extra_headers(title="VidyaVerse RAG"),
+                        response_format={"type": "json_object"},
+                        temperature=0,
+                        max_tokens=700,
+                    ),
+                    timeout=max(3.0, float(getattr(settings, "RAG_LLM_TIMEOUT_SECONDS", 15.0))),
+                )
+                content = ""
+                if response.choices and response.choices[0].message:
+                    content = response.choices[0].message.content or ""
         except asyncio.TimeoutError:
             logger.warning("RAG LLM generation timed out; serving heuristic fallback.")
             return self._heuristic_insight(query, retrieval_payload.get("results", []))
         except Exception as exc:
             logger.warning("RAG LLM generation failed; serving heuristic fallback: %s", exc)
             return self._heuristic_insight(query, retrieval_payload.get("results", []))
-
-        content = ""
-        if response.choices and response.choices[0].message:
-            content = response.choices[0].message.content or ""
 
         parsed = self._extract_json(content)
         if parsed:
@@ -395,7 +430,7 @@ class RAGService:
         insights_model = self._apply_hallucination_checks(insights_model, results)
 
         # Optional LLM-as-judge quality gate (disabled by default).
-        if settings.LLM_JUDGE_ENABLED and self._api_key:
+        if settings.LLM_JUDGE_ENABLED and self._llm_configured():
             try:
                 judge = await asyncio.wait_for(
                     evaluation_service.judge_rag_response(

@@ -23,6 +23,7 @@ type OnboardingStatus = {
 
 type CurrentUser = {
   is_admin?: boolean;
+  needs_password_setup?: boolean;
 };
 
 type PendingAdminChallenge = {

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import React, { useEffect, useMemo, useState } from "react";
 
 import BrandLogo from "@/components/BrandLogo";
+import PasswordStrengthMeter from "@/components/PasswordStrengthMeter";
 import { apiUrl } from "@/lib/api";
 import {
   getAccessToken,
@@ -15,8 +16,10 @@ import {
   setPendingAdminChallenge,
 } from "@/lib/auth-session";
 import { getApiErrorMessage, getUnknownErrorMessage } from "@/lib/error-utils";
+import { evaluatePasswordStrength } from "@/lib/password-strength";
+import { getTurnstileToken } from "@/lib/turnstile";
 
-type AuthStep = "email" | "otp" | "password";
+type AuthStep = "email" | "otp" | "password" | "forgot-email" | "forgot-reset";
 type AccountType = "candidate" | "employer";
 
 type OAuthProviderStatus = {
@@ -28,6 +31,7 @@ type OAuthProviderStatus = {
 type PasswordLoginResponse = {
   access_token?: string;
   token_type?: string;
+  requires_password_setup?: boolean;
   requires_admin_verification?: boolean;
   admin_challenge_token?: string;
   admin_verification_path?: string;
@@ -45,15 +49,13 @@ type PasswordLoginResponse = {
 const LOGIN_VISUALS = {
   candidate: {
     title: "Compete, learn, and get hired.",
-    subtitle: "OTP-first secure sign-in plus OAuth options for faster access.",
-    image:
-      "https://images.unsplash.com/photo-1529074963764-98f45c47344b?auto=format&fit=crop&w=1200&q=80",
+    subtitle: "Sign in with OTP or your password, whichever is faster for you.",
+    image: "/auth/login-candidate.jpg",
   },
   employer: {
     title: "Hire top campus talent faster.",
     subtitle: "Access recruiter workflows with secure authentication.",
-    image:
-      "https://images.unsplash.com/photo-1552664730-d307ca884978?auto=format&fit=crop&w=1200&q=80",
+    image: "/auth/login-employer.jpg",
   },
 };
 
@@ -65,8 +67,14 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [otp, setOtp] = useState("");
   const [password, setPassword] = useState("");
+  const [resetEmail, setResetEmail] = useState("");
+  const [resetOtp, setResetOtp] = useState("");
+  const [resetPassword, setResetPassword] = useState("");
+  const [resetConfirmPassword, setResetConfirmPassword] = useState("");
   const [otpCooldownSeconds, setOtpCooldownSeconds] = useState(0);
   const [otpCooldownKey, setOtpCooldownKey] = useState<string | null>(null);
+  const [resetCooldownSeconds, setResetCooldownSeconds] = useState(0);
+  const [resetCooldownKey, setResetCooldownKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
@@ -78,7 +86,10 @@ export default function LoginPage() {
 
   const visual = useMemo(() => LOGIN_VISUALS[accountType], [accountType]);
   const normalizedEmail = useMemo(() => email.trim().toLowerCase(), [email]);
+  const normalizedResetEmail = useMemo(() => resetEmail.trim().toLowerCase(), [resetEmail]);
   const currentOtpKey = useMemo(() => `${accountType}:${normalizedEmail}`, [accountType, normalizedEmail]);
+  const currentResetKey = useMemo(() => `${accountType}:${normalizedResetEmail}`, [accountType, normalizedResetEmail]);
+  const resetPasswordStrength = useMemo(() => evaluatePasswordStrength(resetPassword), [resetPassword]);
 
   useEffect(() => {
     const token = getAccessToken();
@@ -115,6 +126,16 @@ export default function LoginPage() {
   }, [otpCooldownSeconds]);
 
   useEffect(() => {
+    if (resetCooldownSeconds <= 0) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setResetCooldownSeconds((current) => (current > 0 ? current - 1 : 0));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [resetCooldownSeconds]);
+
+  useEffect(() => {
     if (step !== "email") {
       return;
     }
@@ -127,6 +148,20 @@ export default function LoginPage() {
     }, 0);
     return () => window.clearTimeout(timeoutId);
   }, [currentOtpKey, otpCooldownKey, step]);
+
+  useEffect(() => {
+    if (step !== "forgot-email") {
+      return;
+    }
+    if (!resetCooldownKey || resetCooldownKey === currentResetKey) {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      setResetCooldownSeconds(0);
+      setResetCooldownKey(null);
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [currentResetKey, resetCooldownKey, step]);
 
   const resetMessages = () => {
     setError(null);
@@ -159,10 +194,16 @@ export default function LoginPage() {
     resetMessages();
 
     try {
+      const turnstileToken = await getTurnstileToken("login_otp");
       const res = await fetch(apiUrl("/api/v1/auth/send-otp"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: normalizedEmail, purpose: "signin", account_type: accountType }),
+        body: JSON.stringify({
+          email: normalizedEmail,
+          purpose: "signin",
+          account_type: accountType,
+          turnstile_token: turnstileToken,
+        }),
       });
       const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
       if (!res.ok) {
@@ -239,6 +280,10 @@ export default function LoginPage() {
       const body = new URLSearchParams();
       body.set("username", email);
       body.set("password", password);
+      const turnstileToken = await getTurnstileToken("login_password");
+      if (turnstileToken) {
+        body.set("turnstile_token", turnstileToken);
+      }
 
       const res = await fetch(apiUrl("/api/v1/auth/login"), {
         method: "POST",
@@ -291,6 +336,104 @@ export default function LoginPage() {
     }
   };
 
+  const requestPasswordResetOtp = async () => {
+    if (resetCooldownSeconds > 0 && resetCooldownKey === currentResetKey) {
+      throw new Error(`Please wait ${resetCooldownSeconds}s before requesting another OTP.`);
+    }
+
+    setLoading(true);
+    resetMessages();
+
+    try {
+      const turnstileToken = await getTurnstileToken("forgot_password");
+      const res = await fetch(apiUrl("/api/v1/auth/password/forgot/send-otp"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: normalizedResetEmail,
+          account_type: accountType,
+          turnstile_token: turnstileToken,
+        }),
+      });
+      const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      if (!res.ok) {
+        const detail = getApiErrorMessage(payload, "");
+        if (res.status === 429) {
+          const remaining = resolveCooldownSeconds(res, payload);
+          setResetCooldownSeconds(remaining);
+          setResetCooldownKey(currentResetKey);
+          setStep("forgot-reset");
+          setInfo(`Reset OTP already sent. Check inbox/spam and retry in ${remaining}s.`);
+          return;
+        }
+        throw new Error(detail || "Failed to send password reset OTP");
+      }
+
+      const cooldown = resolveCooldownSeconds(res, payload);
+      setResetCooldownSeconds(cooldown);
+      setResetCooldownKey(currentResetKey);
+      if (typeof payload.debug_otp === "string" && payload.debug_otp.length === 6) {
+        setResetOtp(payload.debug_otp);
+        setInfo(`Debug OTP: ${payload.debug_otp} (local fallback)`);
+      } else {
+        setResetOtp("");
+        setInfo("Reset OTP sent to your email. It expires in 5 minutes.");
+      }
+      setStep("forgot-reset");
+    } catch (err) {
+      setError(getUnknownErrorMessage(err, "Unable to send password reset OTP"));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleForgotPasswordStart = async (event: React.FormEvent) => {
+    event.preventDefault();
+    await requestPasswordResetOtp();
+  };
+
+  const handleForgotPasswordReset = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setLoading(true);
+    resetMessages();
+
+    try {
+      if (resetPassword !== resetConfirmPassword) {
+        throw new Error("Password confirmation does not match");
+      }
+      if (!resetPasswordStrength.acceptable) {
+        throw new Error("Password is not strong enough yet.");
+      }
+
+      const res = await fetch(apiUrl("/api/v1/auth/password/forgot/reset"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: normalizedResetEmail,
+          otp: resetOtp,
+          password: resetPassword,
+          confirm_password: resetConfirmPassword,
+          account_type: accountType,
+        }),
+      });
+      const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      if (!res.ok) {
+        throw new Error(getApiErrorMessage(payload, "Password reset failed"));
+      }
+      setEmail(normalizedResetEmail);
+      setPassword("");
+      setResetOtp("");
+      setResetPassword("");
+      setResetConfirmPassword("");
+      setStep("password");
+      setInfo(String(payload.message || "Password reset successfully. Sign in with your new password."));
+    } catch (err) {
+      setError(getUnknownErrorMessage(err, "Unable to reset password"));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const startGoogleOAuth = async () => {
     setLoading(true);
     resetMessages();
@@ -328,6 +471,7 @@ export default function LoginPage() {
         className="card-panel auth-shell"
         style={{
           width: "min(1100px, 100%)",
+          height: "min(720px, calc(100vh - 3rem))",
           minHeight: "720px",
           overflow: "hidden",
           padding: 0,
@@ -369,10 +513,13 @@ export default function LoginPage() {
           </div>
         </aside>
 
-        <div className="auth-right-pane" style={{ padding: "2rem", display: "flex", flexDirection: "column", gap: "1rem" }}>
+        <div
+          className="auth-right-pane"
+          style={{ padding: "2rem", display: "flex", flexDirection: "column", gap: "1rem", overflowY: "auto" }}
+        >
           <div>
             <h1 style={{ fontSize: "2.2rem", marginBottom: "0.35rem" }}>Secure Sign In</h1>
-            <p style={{ color: "var(--text-secondary)" }}>OTP-first login with OAuth options and profile-aware onboarding.</p>
+            <p style={{ color: "var(--text-secondary)" }}>Choose OTP or password sign-in. Legacy OTP accounts can set a password after login.</p>
           </div>
 
           <div
@@ -391,7 +538,7 @@ export default function LoginPage() {
               type="button"
               className={accountType === "candidate" ? "btn-primary" : "btn-secondary"}
               style={{ borderRadius: "999px", width: "100%" }}
-              disabled={loading || step === "otp"}
+              disabled={loading || step === "otp" || step === "forgot-reset"}
               onClick={() => setAccountType("candidate")}
             >
               Candidate
@@ -400,7 +547,7 @@ export default function LoginPage() {
               type="button"
               className={accountType === "employer" ? "btn-primary" : "btn-secondary"}
               style={{ borderRadius: "999px", width: "100%" }}
-              disabled={loading || step === "otp"}
+              disabled={loading || step === "otp" || step === "forgot-reset"}
               onClick={() => setAccountType("employer")}
             >
               Employer
@@ -528,6 +675,137 @@ export default function LoginPage() {
               <button type="submit" className="btn-primary" disabled={loading} style={{ width: "100%", justifyContent: "center", marginTop: "0.25rem" }}>
                 {loading ? "Signing in..." : "Sign In with Password"}
               </button>
+              <button
+                type="button"
+                style={{
+                  border: "none",
+                  background: "none",
+                  color: "var(--brand-primary)",
+                  fontWeight: 800,
+                  cursor: "pointer",
+                  justifySelf: "start",
+                  padding: 0,
+                }}
+                onClick={() => {
+                  resetMessages();
+                  setResetEmail(normalizedEmail);
+                  setResetOtp("");
+                  setResetPassword("");
+                  setResetConfirmPassword("");
+                  setStep("forgot-email");
+                }}
+              >
+                Forgot password?
+              </button>
+            </form>
+          )}
+
+          {step === "forgot-email" && (
+            <form onSubmit={handleForgotPasswordStart} style={{ display: "grid", gap: "0.85rem" }}>
+              <div>
+                <h2 style={{ fontSize: "1.45rem", marginBottom: "0.25rem" }}>Reset password</h2>
+                <p style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
+                  We will verify your account with an email OTP before setting a new password.
+                </p>
+              </div>
+              <label style={{ fontWeight: 700 }}>Email</label>
+              <input
+                type="email"
+                className="input-base"
+                value={resetEmail}
+                onChange={(event) => setResetEmail(event.target.value)}
+                placeholder={accountType === "employer" ? "name@company.com" : "Enter Email"}
+                required
+                disabled={loading}
+              />
+              <button
+                type="submit"
+                className="btn-primary"
+                disabled={loading || (resetCooldownSeconds > 0 && resetCooldownKey === currentResetKey)}
+                style={{ width: "100%", justifyContent: "center", marginTop: "0.25rem" }}
+              >
+                {loading
+                  ? "Please wait..."
+                  : resetCooldownSeconds > 0 && resetCooldownKey === currentResetKey
+                    ? `Send Reset OTP (${resetCooldownSeconds}s)`
+                    : "Send Reset OTP"}
+              </button>
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={loading}
+                onClick={() => {
+                  resetMessages();
+                  setStep("password");
+                }}
+                style={{ width: "100%", justifyContent: "center" }}
+              >
+                Back to Sign In
+              </button>
+            </form>
+          )}
+
+          {step === "forgot-reset" && (
+            <form onSubmit={handleForgotPasswordReset} style={{ display: "grid", gap: "0.85rem" }}>
+              <div>
+                <h2 style={{ fontSize: "1.45rem", marginBottom: "0.25rem" }}>Set new password</h2>
+                <p style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
+                  Enter the OTP and choose a password that meets the required strength parameters.
+                </p>
+              </div>
+              <label style={{ fontWeight: 700 }}>Email</label>
+              <input type="email" className="input-base" value={resetEmail} disabled />
+              <label style={{ fontWeight: 700 }}>OTP</label>
+              <input
+                type="text"
+                className="input-base"
+                value={resetOtp}
+                onChange={(event) => setResetOtp(event.target.value)}
+                placeholder="123456"
+                maxLength={6}
+                minLength={6}
+                required
+                disabled={loading}
+                style={{ letterSpacing: "0.25em", textAlign: "center", fontWeight: 800 }}
+              />
+              <label style={{ fontWeight: 700 }}>New Password</label>
+              <input
+                type="password"
+                className="input-base"
+                value={resetPassword}
+                onChange={(event) => setResetPassword(event.target.value)}
+                placeholder="Create a strong password"
+                required
+                disabled={loading}
+              />
+              <PasswordStrengthMeter strength={resetPasswordStrength} compact />
+              <label style={{ fontWeight: 700 }}>Confirm Password</label>
+              <input
+                type="password"
+                className="input-base"
+                value={resetConfirmPassword}
+                onChange={(event) => setResetConfirmPassword(event.target.value)}
+                placeholder="Confirm password"
+                required
+                disabled={loading}
+              />
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={loading || resetCooldownSeconds > 0}
+                onClick={() => void requestPasswordResetOtp()}
+                style={{ width: "100%", justifyContent: "center" }}
+              >
+                {resetCooldownSeconds > 0 ? `Resend OTP in ${resetCooldownSeconds}s` : "Resend OTP"}
+              </button>
+              <button
+                type="submit"
+                className="btn-primary"
+                disabled={loading || !resetPasswordStrength.acceptable || resetPassword !== resetConfirmPassword}
+                style={{ width: "100%", justifyContent: "center", marginTop: "0.25rem" }}
+              >
+                {loading ? "Resetting..." : "Reset Password"}
+              </button>
             </form>
           )}
 
@@ -537,7 +815,7 @@ export default function LoginPage() {
               style={{ border: "none", background: "none", color: "var(--brand-primary)", fontWeight: 700, cursor: "pointer" }}
               onClick={() => {
                 resetMessages();
-                if (step === "otp") {
+                if (step === "otp" || step === "forgot-email" || step === "forgot-reset") {
                   setStep("email");
                   return;
                 }

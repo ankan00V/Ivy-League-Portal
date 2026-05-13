@@ -35,6 +35,16 @@ def _split_csv(value: Optional[str]) -> list[str]:
     return [item.strip() for item in re.split(r"[,;\n/]+", value) if item.strip()]
 
 
+def _split_list(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        return _split_csv(value)
+    return []
+
+
 def _tokens(text: str) -> set[str]:
     return {token.lower() for token in TOKEN_PATTERN.findall(text) if len(token) >= 2}
 
@@ -43,6 +53,7 @@ def _core_profile_keywords(profile: Profile) -> set[str]:
     raw_parts = []
     raw_parts.extend(_split_csv(profile.skills))
     raw_parts.extend(_split_csv(profile.interests))
+    raw_parts.extend(_split_list(getattr(profile, "interest_graph", [])))
     raw_parts.extend(_split_csv(profile.education))
     raw_parts.extend(_split_csv(profile.achievements))
     return _tokens(" ".join(raw_parts))
@@ -63,6 +74,8 @@ def _seed_profile_keywords(profile: Profile) -> set[str]:
         ]
     )
     raw_parts.extend(getattr(profile, "goals", []) or [])
+    raw_parts.extend(_split_list(getattr(profile, "career_intent", [])))
+    raw_parts.extend(_split_list(getattr(profile, "work_preferences", [])))
     return _tokens(" ".join(raw_parts))
 
 
@@ -132,17 +145,35 @@ def _generic_discovery_score(opportunity: Opportunity) -> tuple[float, list[str]
 
 def calculate_incoscore(profile: Profile) -> float:
     skills = list({item.lower() for item in _split_csv(profile.skills)})
-    interests = list({item.lower() for item in _split_csv(profile.interests)})
+    interests = list(
+        {
+            item.lower()
+            for item in (_split_csv(profile.interests) + _split_list(getattr(profile, "interest_graph", [])))
+        }
+    )
     achievements = _split_csv(profile.achievements)
+    career_intent = list({item.lower() for item in _split_list(getattr(profile, "career_intent", []))})
+    work_preferences = list({item.lower() for item in _split_list(getattr(profile, "work_preferences", []))})
 
     base_score = 10.0
     skill_score = min(35.0, len(skills) * 4.0)
     interest_score = min(15.0, len(interests) * 3.0)
     achievement_score = min(20.0, len(achievements) * 5.0)
+    intent_score = min(10.0, len(career_intent) * 2.5)
+    preference_score = min(5.0, len(work_preferences) * 1.5)
     education_score = 10.0 if (profile.education and profile.education.strip()) else 0.0
     resume_score = 10.0 if (profile.resume_url and profile.resume_url.strip()) else 0.0
 
-    total = base_score + skill_score + interest_score + achievement_score + education_score + resume_score
+    total = (
+        base_score
+        + skill_score
+        + interest_score
+        + achievement_score
+        + intent_score
+        + preference_score
+        + education_score
+        + resume_score
+    )
     return round(min(100.0, total), 2)
 
 
@@ -168,9 +199,13 @@ def score_opportunity_match(profile: Profile, opportunity: Opportunity) -> tuple
             reasons.append("Matched from your onboarding profile signals.")
 
     domain_tokens = _tokens(opportunity.domain or "")
-    interest_tokens = _tokens(" ".join(_split_csv(profile.interests)))
+    interest_tokens = _tokens(
+        " ".join(_split_csv(profile.interests) + _split_list(getattr(profile, "interest_graph", [])))
+    )
     skill_tokens = _tokens(" ".join(_split_csv(profile.skills)))
     seed_tokens = _seed_profile_keywords(profile)
+    intent_tokens = _tokens(" ".join(_split_list(getattr(profile, "career_intent", []))))
+    work_pref_tokens = _tokens(" ".join(_split_list(getattr(profile, "work_preferences", []))))
 
     if domain_tokens and interest_tokens and domain_tokens.intersection(interest_tokens):
         score += 20.0
@@ -183,6 +218,14 @@ def score_opportunity_match(profile: Profile, opportunity: Opportunity) -> tuple
     if cold_start_mode and domain_tokens and seed_tokens and domain_tokens.intersection(seed_tokens):
         score += 12.0
         reasons.append("Domain aligns with your onboarding preferences.")
+
+    if intent_tokens and opp_kw.intersection(intent_tokens):
+        score += 12.0
+        reasons.append("Opportunity aligns with your declared career intent.")
+
+    if work_pref_tokens and opp_kw.intersection(work_pref_tokens):
+        score += 8.0
+        reasons.append("Opportunity matches your stated work preferences.")
 
     evergreen = _evergreen_labels(opportunity)
     if evergreen:

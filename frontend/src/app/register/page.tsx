@@ -6,9 +6,11 @@ import { useRouter } from "next/navigation";
 import React, { useMemo, useState } from "react";
 
 import BrandLogo from "@/components/BrandLogo";
+import PasswordStrengthMeter from "@/components/PasswordStrengthMeter";
 import { apiUrl } from "@/lib/api";
 import { setAccessToken } from "@/lib/auth-session";
 import { getApiErrorMessage, getUnknownErrorMessage } from "@/lib/error-utils";
+import { evaluatePasswordStrength } from "@/lib/password-strength";
 
 type RegisterStep = "details" | "otp";
 type AccountType = "candidate" | "employer";
@@ -22,13 +24,11 @@ type OAuthProviderStatus = {
 const REGISTER_VISUALS = {
   candidate: {
     heading: "Sign up as candidate",
-    image:
-      "https://images.unsplash.com/photo-1600880292203-757bb62b4baf?auto=format&fit=crop&w=1200&q=80",
+    image: "/auth/signup-candidate.jpg",
   },
   employer: {
     heading: "Sign up as employer",
-    image:
-      "https://images.unsplash.com/photo-1557804506-669a67965ba0?auto=format&fit=crop&w=1200&q=80",
+    image: "/auth/signup-employer.jpg",
   },
 };
 
@@ -40,6 +40,8 @@ export default function RegisterPage() {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [otp, setOtp] = useState("");
   const [otpCooldownSeconds, setOtpCooldownSeconds] = useState(0);
   const [otpCooldownKey, setOtpCooldownKey] = useState<string | null>(null);
@@ -51,6 +53,8 @@ export default function RegisterPage() {
   const visual = useMemo(() => REGISTER_VISUALS[accountType], [accountType]);
   const normalizedEmail = useMemo(() => email.trim().toLowerCase(), [email]);
   const currentOtpKey = useMemo(() => `${accountType}:${normalizedEmail}`, [accountType, normalizedEmail]);
+  const passwordStrength = useMemo(() => evaluatePasswordStrength(password), [password]);
+  const passwordsMatch = password.length > 0 && password === confirmPassword;
 
   React.useEffect(() => {
     const run = async () => {
@@ -117,14 +121,20 @@ export default function RegisterPage() {
   };
 
   const requestOtp = async () => {
-    if (otpCooldownSeconds > 0 && otpCooldownKey === currentOtpKey) {
-      throw new Error(`Please wait ${otpCooldownSeconds}s before requesting another OTP.`);
-    }
-
     setLoading(true);
     resetMessages();
 
     try {
+      if (!passwordStrength.acceptable) {
+        throw new Error("Use at least 8 characters with uppercase, lowercase, and a number.");
+      }
+      if (!passwordsMatch) {
+        throw new Error("Password confirmation does not match.");
+      }
+      if (otpCooldownSeconds > 0 && otpCooldownKey === currentOtpKey) {
+        throw new Error(`Please wait ${otpCooldownSeconds}s before requesting another OTP.`);
+      }
+
       const res = await fetch(apiUrl("/api/v1/auth/send-otp"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -182,6 +192,7 @@ export default function RegisterPage() {
           purpose: "signup",
           full_name: fullName,
           account_type: accountType,
+          password,
         }),
       });
       const payload = await res.json().catch(() => ({}));
@@ -237,6 +248,7 @@ export default function RegisterPage() {
         className="card-panel auth-shell"
         style={{
           width: "min(1100px, 100%)",
+          height: "min(740px, calc(100vh - 3rem))",
           minHeight: "740px",
           overflow: "hidden",
           padding: 0,
@@ -345,10 +357,36 @@ export default function RegisterPage() {
                 disabled={loading}
               />
 
+              <label style={{ fontWeight: 700 }}>Password</label>
+              <input
+                type="password"
+                className="input-base"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder="Create a password"
+                autoComplete="new-password"
+                required
+                disabled={loading}
+              />
+              <PasswordStrengthMeter strength={passwordStrength} />
+
+              <label style={{ fontWeight: 700 }}>Confirm Password</label>
+              <input
+                type="password"
+                className="input-base"
+                value={confirmPassword}
+                onChange={(event) => setConfirmPassword(event.target.value)}
+                placeholder="Re-enter password"
+                autoComplete="new-password"
+                required
+                disabled={loading}
+                style={{ borderColor: confirmPassword.length === 0 || passwordsMatch ? undefined : "#ef4444" }}
+              />
+
               <button
                 type="submit"
                 className="btn-primary"
-                disabled={loading || otpCooldownSeconds > 0}
+                disabled={loading || otpCooldownSeconds > 0 || !passwordStrength.acceptable || !passwordsMatch}
                 style={{ width: "100%", justifyContent: "center", marginTop: "0.25rem" }}
               >
                 {loading ? "Please wait..." : (otpCooldownSeconds > 0 ? `Send OTP (${otpCooldownSeconds}s)` : "Send OTP")}
