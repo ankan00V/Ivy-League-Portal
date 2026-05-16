@@ -15,10 +15,11 @@ const backendCandidates = Array.from(
       normalizedTarget(process.env.BACKEND_INTERNAL_URL),
       normalizedTarget(process.env.NEXT_PUBLIC_API_BASE_URL),
       "http://127.0.0.1:8000",
-      "http://localhost:8000",
     ].filter((value): value is string => Boolean(value)),
   ),
 );
+
+const UPSTREAM_FETCH_TIMEOUT_MS = Number(process.env.BACKEND_PROXY_TIMEOUT_MS || 1200);
 
 const slashSensitiveCollections = new Set([
   "v1/opportunities",
@@ -92,6 +93,19 @@ async function wait(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function fetchUpstreamWithTimeout(url: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), UPSTREAM_FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function proxy(request: NextRequest, context: { params: Promise<{ path: string[] }> }) {
   const { path } = await context.params;
   const method = request.method.toUpperCase();
@@ -116,13 +130,13 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
 
   const fallbackCandidates = safeCandidates.length > 0 ? safeCandidates : ["http://127.0.0.1:8000"];
   const failureDetails: Array<{ upstream: string; reason: string }> = [];
-  const maxAttemptsPerTarget = 3;
+  const maxAttemptsPerTarget = 1;
 
   for (const target of fallbackCandidates) {
     const upstreamUrl = buildBackendUrl(target, request, path);
     for (let attempt = 1; attempt <= maxAttemptsPerTarget; attempt += 1) {
       try {
-        const upstreamResponse = await fetch(upstreamUrl, requestInit);
+        const upstreamResponse = await fetchUpstreamWithTimeout(upstreamUrl, requestInit);
         // Retry only on gateway-like upstream failures.
         // Do NOT swallow application-level 4xx responses (e.g., OTP validation 404),
         // otherwise the client sees a fake "backend unavailable" message.
