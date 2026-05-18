@@ -45,6 +45,19 @@ type UseProfileDataResult = {
   downloadResume: () => Promise<void>;
 };
 
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, timeoutMs = 3500): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
 export function useProfileData<TProfile, TUpdatePayload>({
   profile,
   setProfile,
@@ -77,8 +90,8 @@ export function useProfileData<TProfile, TUpdatePayload>({
     const loadProfile = async (showFatalErrors: boolean) => {
       try {
         const [userResult, profileResult] = await Promise.allSettled([
-          fetch(apiUrl("/api/v1/users/me"), createAuthenticatedFetchInit({}, token)),
-          fetch(apiUrl("/api/v1/users/me/profile"), createAuthenticatedFetchInit({}, token)),
+          fetchWithTimeout(apiUrl("/api/v1/users/me"), createAuthenticatedFetchInit({}, token)),
+          fetchWithTimeout(apiUrl("/api/v1/users/me/profile"), createAuthenticatedFetchInit({}, token)),
         ]);
 
         let userError: string | null = null;

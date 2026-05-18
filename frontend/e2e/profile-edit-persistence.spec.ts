@@ -103,7 +103,8 @@ test("Profile editing and university selection persist", async ({ page }) => {
 
   const universitySelect = page.locator('.profile-field:has-text("College / University") select').first();
   await expect(universitySelect).toBeVisible();
-  const selectableUniversityValue = await universitySelect.evaluate((select) => {
+  const selectableUniversityValue = await universitySelect.evaluate((element) => {
+    const select = element as HTMLSelectElement;
     const options = Array.from(select.options);
     const candidate = options.find((option) => option.value && option.value !== "__other__");
     return candidate?.value ?? "";
