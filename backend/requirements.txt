@@ -29,3 +29,4 @@ python-docx>=1.1.2
 duckdb>=1.1.0
 clickhouse-connect>=0.8.12
 boto3>=1.35.0
+pytz>=2024.1
