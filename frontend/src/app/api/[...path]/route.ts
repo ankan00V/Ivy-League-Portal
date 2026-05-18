@@ -19,7 +19,7 @@ const backendCandidates = Array.from(
   ),
 );
 
-const UPSTREAM_FETCH_TIMEOUT_MS = Number(process.env.BACKEND_PROXY_TIMEOUT_MS || 1200);
+const UPSTREAM_FETCH_TIMEOUT_MS = Number(process.env.BACKEND_PROXY_TIMEOUT_MS || 2500);
 
 const slashSensitiveCollections = new Set([
   "v1/opportunities",
