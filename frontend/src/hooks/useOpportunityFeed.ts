@@ -45,6 +45,7 @@ type OpportunityInteraction = "impression" | "click" | "save" | "apply";
 const FEED_REFRESH_MS = 60 * 1000;
 const FEED_RETRY_MS = 15 * 1000;
 const PERSONALIZED_FETCH_TIMEOUT_MS = 2500;
+const DEFAULT_FETCH_TIMEOUT_MS = 3500;
 const COMPETITIVE_KEYWORDS = [
   "hackathon",
   "competition",
@@ -120,14 +121,15 @@ export function useOpportunityFeed() {
       return;
     }
     try {
-      await fetch(
-        apiUrl("/api/v1/opportunities/trigger-scraper"),
+      await fetchJsonWithTimeout<unknown>(
+        "/api/v1/opportunities/trigger-scraper",
         createAuthenticatedFetchInit(
           {
             method: "POST",
           },
           token,
         ),
+        DEFAULT_FETCH_TIMEOUT_MS,
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : "unknown error";
@@ -159,9 +161,12 @@ export function useOpportunityFeed() {
         }
       }
 
-      const res = await fetch(apiUrl("/api/v1/opportunities/?portal=competitive"), { credentials: "include" });
-      if (res.ok) {
-        const rawData = (await res.json()) as Opportunity[];
+      const rawData = await fetchJsonWithTimeout<Opportunity[]>(
+        "/api/v1/opportunities/?portal=competitive",
+        { credentials: "include" },
+        DEFAULT_FETCH_TIMEOUT_MS,
+      );
+      if (Array.isArray(rawData)) {
         const data = rawData.map((item, idx) => enrichOpportunity(item, idx));
         const nextSignature = buildOpportunitiesSignature(data);
         if (nextSignature !== opportunitiesSignatureRef.current) {
@@ -189,12 +194,7 @@ export function useOpportunityFeed() {
         return;
       }
 
-      const errorPayload = await res.json().catch(() => null);
-      const errorDetail = typeof errorPayload?.detail === "string" ? errorPayload.detail : "";
-      const nextNotice = errorDetail.includes("Upstream backend unavailable")
-        ? "Backend API is unavailable. Retrying..."
-        : "Live opportunities are temporarily unavailable. Retrying...";
-      setNotice(nextNotice);
+      setNotice("Backend API is unavailable. Retrying...");
       if (!scraperTriggerAttemptedRef.current) {
         scraperTriggerAttemptedRef.current = true;
         void triggerLiveRefresh();

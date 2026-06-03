@@ -93,37 +93,36 @@ flowchart LR
 <!-- DATASET_SNAPSHOT:START -->
 
 ## Dataset Size (Verified Snapshot)
-Snapshot date: **May 28, 2026**
+Snapshot date: **June 03, 2026**
 
-- Opportunities: **366**
-- Applications: **2**
-- Opportunity interactions: **1,146**
-- Experiments: **2**
-- Experiment assignments: **2**
-- Ranking model versions: **1**
-- Drift reports: **5**
-- Profiles: **4**
-- Users: **5**
+- Opportunities: **330**
+- Applications: **0**
+- Opportunity interactions: **15,706**
+- Experiments: **3**
+- Experiment assignments: **300**
+- Ranking model versions: **193**
+- Drift reports: **194**
+- Profiles: **319**
+- Users: **323**
 
 Source distribution for opportunities:
-- `linkedin`: 116
-- `internshala`: 39
-- `ycombinator_jobs`: 36
-- `freshersworld`: 34
-- `hackerearth`: 22
-- `unstop`: 22
-- `ivy_rss`: 13
-- `promilo`: 11
-- `wayup`: 10
-- `aicte_internship`: 9
-- `hirist`: 9
-- `makeintern`: 8
-- `devfolio`: 7
-- `devpost`: 7
-- `foundit`: 6
-- `instahyre`: 6
-- `major_league_hacking`: 5
-- `codeforces`: 4
+- `freshersworld`: 61
+- `internshala`: 58
+- `indeed_india`: 53
+- `unstop`: 32
+- `linkedin`: 19
+- `ivy_rss`: 15
+- `hackerearth`: 12
+- `ycombinator_jobs`: 12
+- `aicte_internship`: 10
+- `makeintern`: 9
+- `wayup`: 9
+- `devfolio`: 8
+- `devpost`: 8
+- `foundit`: 8
+- `promilo`: 7
+- `hack2skill`: 5
+- `codeforces`: 2
 - `handshake`: 1
 - `techgig`: 1
 

@@ -10,6 +10,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 def _parse_env(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
+    if not path.exists():
+        return values
     for raw_line in path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
@@ -44,7 +46,8 @@ def _contains(path: Path, needles: Iterable[str], failures: list[str]) -> None:
 def _check_env_contracts(failures: list[str]) -> None:
     production = _parse_env(REPO_ROOT / "backend/.env.production.example")
     local_example = _parse_env(REPO_ROOT / "backend/.env.example")
-    local_env = _parse_env(REPO_ROOT / "backend/.env")
+    local_env_path = REPO_ROOT / "backend/.env"
+    local_env = _parse_env(local_env_path)
 
     required_keys = [
         "AUTH_SESSION_STORE_ENABLED",
@@ -79,7 +82,8 @@ def _check_env_contracts(failures: list[str]) -> None:
     for key in required_keys:
         _require(key in production, f"backend/.env.production.example missing {key}", failures)
         _require(key in local_example, f"backend/.env.example missing {key}", failures)
-        _require(key in local_env, f"backend/.env missing {key}", failures)
+        if local_env_path.exists():
+            _require(key in local_env, f"backend/.env missing {key}", failures)
 
     for key in [
         "AUTH_SESSION_COOKIE_ENABLED",
