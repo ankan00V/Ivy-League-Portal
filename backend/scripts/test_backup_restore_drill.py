@@ -125,7 +125,7 @@ async def _mongo_drill(*, execute: bool, require_mongodump: bool) -> dict[str, A
 
 
 def _artifact_bucket() -> str | None:
-    explicit = (os.environ.get("MODEL_ARTIFACT_BUCKET") or "").strip()
+    explicit = (os.environ.get("MODEL_ARTIFACT_BUCKET") or settings.MODEL_ARTIFACT_BUCKET or "").strip()
     if explicit:
         return explicit
     parsed = urlparse(model_artifact_service.resolve_learned_ranker_uri())

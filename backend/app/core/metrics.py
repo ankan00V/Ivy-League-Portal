@@ -19,6 +19,7 @@ def metrics_available() -> bool:
 REQUEST_LATENCY_SECONDS: Optional["Histogram"] = None
 REQUESTS_TOTAL: Optional["Counter"] = None
 RESPONSES_TOTAL: Optional["Counter"] = None
+SLOW_REQUESTS_TOTAL: Optional["Counter"] = None
 
 CACHE_HITS_TOTAL: Optional["Counter"] = None
 CACHE_MISSES_TOTAL: Optional["Counter"] = None
@@ -30,10 +31,15 @@ JOBS_DEAD_TOTAL: Optional["Counter"] = None
 
 SCRAPER_RUNS_TOTAL: Optional["Counter"] = None
 SCRAPER_SOURCE_TOTAL: Optional["Counter"] = None
+SCRAPER_RED_SOURCES: Optional["Gauge"] = None
+SCRAPER_SILENT_FAILURES: Optional["Gauge"] = None
+OPPORTUNITY_COUNT: Optional["Gauge"] = None
 OPPORTUNITY_FRESHNESS_SECONDS: Optional["Gauge"] = None
 OPPORTUNITY_STALE: Optional["Gauge"] = None
+ACTIVE_EXPERIMENTS: Optional["Gauge"] = None
 RANKING_REQUESTS_TOTAL: Optional["Counter"] = None
 RANKING_REQUEST_LATENCY_MS: Optional["Histogram"] = None
+LEARNED_RANKER_MODEL_READY: Optional["Gauge"] = None
 INTERACTION_EVENTS_TOTAL: Optional["Counter"] = None
 WAREHOUSE_EXPORTS_TOTAL: Optional["Counter"] = None
 ONLINE_FEATURE_PUBLISH_TOTAL: Optional["Counter"] = None
@@ -44,12 +50,19 @@ RANKING_SLICE_RATE: Optional["Gauge"] = None
 ASSISTANT_QUALITY_VALUE: Optional["Gauge"] = None
 PARITY_SCORECARD_VALUE: Optional["Gauge"] = None
 MODEL_PROMOTION_INFO: Optional["Gauge"] = None
+DISCOVERY_SOURCES_DISCOVERED_TOTAL: Optional["Counter"] = None
+DISCOVERY_SOURCES_PROMOTED_TOTAL: Optional["Counter"] = None
+DISCOVERY_SOURCES_IN_PIPELINE: Optional["Gauge"] = None
+DISCOVERY_LLM_CALLS_TOTAL: Optional["Counter"] = None
+DISCOVERY_LLM_COST_USD_TOTAL: Optional["Counter"] = None
+DISCOVERY_PROBATION_SOURCES: Optional["Gauge"] = None
 
 
 def init_metrics() -> None:
     global REQUEST_LATENCY_SECONDS
     global REQUESTS_TOTAL
     global RESPONSES_TOTAL
+    global SLOW_REQUESTS_TOTAL
     global CACHE_HITS_TOTAL
     global CACHE_MISSES_TOTAL
     global JOBS_ENQUEUED_TOTAL
@@ -58,10 +71,15 @@ def init_metrics() -> None:
     global JOBS_DEAD_TOTAL
     global SCRAPER_RUNS_TOTAL
     global SCRAPER_SOURCE_TOTAL
+    global SCRAPER_RED_SOURCES
+    global SCRAPER_SILENT_FAILURES
+    global OPPORTUNITY_COUNT
     global OPPORTUNITY_FRESHNESS_SECONDS
     global OPPORTUNITY_STALE
+    global ACTIVE_EXPERIMENTS
     global RANKING_REQUESTS_TOTAL
     global RANKING_REQUEST_LATENCY_MS
+    global LEARNED_RANKER_MODEL_READY
     global INTERACTION_EVENTS_TOTAL
     global WAREHOUSE_EXPORTS_TOTAL
     global ONLINE_FEATURE_PUBLISH_TOTAL
@@ -72,6 +90,12 @@ def init_metrics() -> None:
     global ASSISTANT_QUALITY_VALUE
     global PARITY_SCORECARD_VALUE
     global MODEL_PROMOTION_INFO
+    global DISCOVERY_SOURCES_DISCOVERED_TOTAL
+    global DISCOVERY_SOURCES_PROMOTED_TOTAL
+    global DISCOVERY_SOURCES_IN_PIPELINE
+    global DISCOVERY_LLM_CALLS_TOTAL
+    global DISCOVERY_LLM_COST_USD_TOTAL
+    global DISCOVERY_PROBATION_SOURCES
 
     if not metrics_available() or Counter is None or Histogram is None or Gauge is None:
         return
@@ -94,6 +118,11 @@ def init_metrics() -> None:
         "http_responses_total",
         "Total HTTP responses completed.",
         labelnames=("method", "route", "status"),
+    )
+    SLOW_REQUESTS_TOTAL = Counter(
+        "http_slow_requests_total",
+        "HTTP requests exceeding the configured slow-request threshold.",
+        labelnames=("method", "route"),
     )
 
     CACHE_HITS_TOTAL = Counter(
@@ -138,7 +167,19 @@ def init_metrics() -> None:
         "Scraper per-source runs.",
         labelnames=("source", "status"),
     )
+    SCRAPER_RED_SOURCES = Gauge(
+        "scraper_red_sources",
+        "Current count of sources in RED scraper health.",
+    )
+    SCRAPER_SILENT_FAILURES = Gauge(
+        "scraper_silent_failures",
+        "Current count of scraper sources with silent failures in the health window.",
+    )
 
+    OPPORTUNITY_COUNT = Gauge(
+        "opportunity_count",
+        "Current opportunity document count.",
+    )
     OPPORTUNITY_FRESHNESS_SECONDS = Gauge(
         "opportunity_freshness_seconds",
         "Seconds since latest opportunity last_seen_at.",
@@ -146,6 +187,10 @@ def init_metrics() -> None:
     OPPORTUNITY_STALE = Gauge(
         "opportunity_freshness_sla_breached",
         "1 if freshness SLA is breached (stale), else 0.",
+    )
+    ACTIVE_EXPERIMENTS = Gauge(
+        "active_experiments",
+        "Current count of active/running experiments.",
     )
     RANKING_REQUESTS_TOTAL = Counter(
         "ranking_requests_total",
@@ -157,6 +202,11 @@ def init_metrics() -> None:
         "Ranking/ask-ai request latency in milliseconds.",
         labelnames=("request_kind", "ranking_mode", "experiment_key", "experiment_variant", "traffic_type"),
         buckets=(10, 25, 50, 75, 100, 150, 250, 500, 750, 1000, 2000, 5000),
+    )
+    LEARNED_RANKER_MODEL_READY = Gauge(
+        "learned_ranker_model_ready",
+        "1 when the learned ranker is disabled or loaded, 0 when enabled but unavailable.",
+        labelnames=("enabled",),
     )
     INTERACTION_EVENTS_TOTAL = Counter(
         "opportunity_interaction_events_total",
@@ -206,6 +256,31 @@ def init_metrics() -> None:
         "ds_model_promotion_info",
         "Model promotion history and active-state marker.",
         labelnames=("model_id", "model_name", "status", "reason"),
+    )
+    DISCOVERY_SOURCES_DISCOVERED_TOTAL = Counter(
+        "discovery_sources_discovered_total",
+        "New source URLs discovered.",
+    )
+    DISCOVERY_SOURCES_PROMOTED_TOTAL = Counter(
+        "discovery_sources_promoted_total",
+        "Sources promoted to production scraper rotation.",
+    )
+    DISCOVERY_SOURCES_IN_PIPELINE = Gauge(
+        "discovery_sources_in_pipeline",
+        "Current source count by discovery pipeline status.",
+        labelnames=("status",),
+    )
+    DISCOVERY_LLM_CALLS_TOTAL = Counter(
+        "discovery_llm_calls_total",
+        "LLM extraction calls made by discovery pipeline.",
+    )
+    DISCOVERY_LLM_COST_USD_TOTAL = Counter(
+        "discovery_llm_cost_usd_total",
+        "Estimated LLM extraction cost in USD.",
+    )
+    DISCOVERY_PROBATION_SOURCES = Gauge(
+        "discovery_probation_sources",
+        "Current number of sources in probation.",
     )
 
 

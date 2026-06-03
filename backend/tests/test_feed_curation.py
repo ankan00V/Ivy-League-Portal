@@ -8,7 +8,13 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from app.api.api_v1.endpoints.opportunities import _diversify_by_source, _feed_priority
+from app.api.api_v1.endpoints.opportunities import (
+    _decode_page_token,
+    _diversify_by_source,
+    _diversify_feed_page,
+    _encode_page_token,
+    _feed_priority,
+)
 from app.core.time import utc_now
 
 
@@ -52,6 +58,58 @@ class TestFeedCuration(unittest.TestCase):
         )
 
         self.assertGreater(_feed_priority(verified), _feed_priority(pending))
+
+    def test_feed_page_token_round_trips_offset(self) -> None:
+        token = _encode_page_token(40)
+
+        self.assertEqual(_decode_page_token(token), 40)
+        self.assertEqual(_decode_page_token(None), 0)
+
+    def test_diversify_feed_page_limits_source_and_domain_repetition(self) -> None:
+        now = utc_now()
+        ranked = [
+            {
+                "opportunity": SimpleNamespace(
+                    source="linkedin",
+                    domain="software",
+                    last_seen_at=now,
+                    updated_at=now,
+                    created_at=now,
+                ),
+                "match_score": 100 - idx,
+            }
+            for idx in range(5)
+        ]
+        ranked.extend(
+            [
+                {
+                    "opportunity": SimpleNamespace(
+                        source="devfolio",
+                        domain="design",
+                        last_seen_at=now,
+                        updated_at=now,
+                        created_at=now,
+                    ),
+                    "match_score": 90,
+                },
+                {
+                    "opportunity": SimpleNamespace(
+                        source="wellfound",
+                        domain="data",
+                        last_seen_at=now,
+                        updated_at=now,
+                        created_at=now,
+                    ),
+                    "match_score": 89,
+                },
+            ]
+        )
+
+        page = _diversify_feed_page(ranked, offset=0, limit=5)
+        sources = [item["opportunity"].source for item in page]
+
+        self.assertEqual(len(set(sources[:3])), 3)
+        self.assertEqual(len(page), 5)
 
 
 if __name__ == "__main__":

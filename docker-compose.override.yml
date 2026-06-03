@@ -1,0 +1,59 @@
+services:
+  mongo:
+    ports:
+      - "27017:27017"
+
+  redis:
+    ports:
+      - "6379:6379"
+
+  clickhouse:
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+
+  minio:
+    ports:
+      - "9002:9000"
+      - "9001:9001"
+
+  mongodb-exporter:
+    ports:
+      - "9216:9216"
+
+  redis-exporter:
+    ports:
+      - "9121:9121"
+
+  backend:
+    command: ["uvicorn", "app.main:app", "--reload", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      ENVIRONMENT: local
+      AUTH_COOKIE_ONLY_MODE: "false"
+      AUTH_SESSION_COOKIE_SECURE: "false"
+      METRICS_REQUIRE_AUTH: "false"
+      LEARNED_RANKER_REQUIRE_ARTIFACT_IN_PRODUCTION: "false"
+      LEARNED_RANKER_REQUIRE_LOADED_IN_PRODUCTION: "false"
+      MLOPS_ENFORCE_LIVE_ALERT_CHANNELS_IN_PRODUCTION: "false"
+      MLOPS_ENFORCE_OWNER_IN_PRODUCTION: "false"
+    volumes:
+      - ./backend:/home/app/web
+      - backend_storage:/home/app/web/storage
+      - backend_models:/home/app/web/models
+
+  worker:
+    environment:
+      ENVIRONMENT: local
+      LEARNED_RANKER_REQUIRE_ARTIFACT_IN_PRODUCTION: "false"
+      LEARNED_RANKER_REQUIRE_LOADED_IN_PRODUCTION: "false"
+      MLOPS_ENFORCE_LIVE_ALERT_CHANNELS_IN_PRODUCTION: "false"
+      MLOPS_ENFORCE_OWNER_IN_PRODUCTION: "false"
+    volumes:
+      - ./backend:/home/app/web
+      - backend_storage:/home/app/web/storage
+      - backend_models:/home/app/web/models
+
+  frontend:
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+      BACKEND_INTERNAL_URL: http://backend:8000

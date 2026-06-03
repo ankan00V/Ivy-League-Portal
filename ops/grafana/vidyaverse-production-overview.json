@@ -7,10 +7,95 @@
   "refresh": "30s",
   "panels": [
     {
+      "id": 12,
+      "type": "stat",
+      "title": "Opportunity Count",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "max(opportunity_count)",
+          "legendFormat": "opportunities",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "stat",
+      "title": "Requests / sec",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total[5m]))",
+          "legendFormat": "rps",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] }
+    },
+    {
+      "id": 14,
+      "type": "stat",
+      "title": "Active Experiments",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "max(active_experiments)",
+          "legendFormat": "active",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "type": "stat",
+      "title": "Learned Ranker Ready",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "targets": [
+        {
+          "expr": "max(learned_ranker_model_ready)",
+          "legendFormat": "ready",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "API Error Rate",
+      "gridPos": { "h": 4, "w": 12, "x": 0, "y": 4 },
+      "targets": [
+        {
+          "expr": "sum(rate(http_responses_total{status=~\"5..\"}[5m])) / clamp_min(sum(rate(http_responses_total[5m])), 1e-9)",
+          "legendFormat": "5xx",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] }
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "Scraper Health",
+      "gridPos": { "h": 4, "w": 12, "x": 12, "y": 4 },
+      "targets": [
+        {
+          "expr": "max(scraper_red_sources)",
+          "legendFormat": "red_sources",
+          "refId": "A"
+        },
+        {
+          "expr": "max(scraper_silent_failures)",
+          "legendFormat": "silent_failures",
+          "refId": "B"
+        }
+      ]
+    },
+    {
       "id": 1,
       "type": "timeseries",
       "title": "Feature Freshness (seconds)",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
       "targets": [
         {
           "expr": "max(ds_feature_freshness_seconds)",
@@ -23,7 +108,7 @@
       "id": 2,
       "type": "timeseries",
       "title": "Opportunity Freshness SLA",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
       "targets": [
         {
           "expr": "max(opportunity_freshness_sla_breached)",
@@ -36,7 +121,7 @@
       "id": 3,
       "type": "timeseries",
       "title": "Model Input Drift",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
       "targets": [
         {
           "expr": "max by (metric) (ds_model_input_drift_value{metric=~\"query_bucket_psi|max_feature_mean_z|alert\"})",
@@ -49,7 +134,7 @@
       "id": 4,
       "type": "timeseries",
       "title": "Parity CTR / Apply Rate",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
       "targets": [
         {
           "expr": "max by (mode, metric) (ds_parity_scorecard_value{metric=~\"ctr|apply_rate\"})",
@@ -63,7 +148,7 @@
       "id": 5,
       "type": "timeseries",
       "title": "Ranker Slice CTR",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
       "targets": [
         {
           "expr": "max by (slice_type, slice_name) (ds_ranking_slice_rate{metric=\"ctr\"})",
@@ -77,7 +162,7 @@
       "id": 6,
       "type": "timeseries",
       "title": "Ranker Slice Apply Rate",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
       "targets": [
         {
           "expr": "max by (slice_type, slice_name) (ds_ranking_slice_rate{metric=\"apply_rate\"})",
@@ -91,7 +176,7 @@
       "id": 7,
       "type": "timeseries",
       "title": "Assistant Failure / Hallucination / Citation Quality",
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 32 },
       "targets": [
         {
           "expr": "max by (metric, prompt_version, route) (ds_assistant_quality_value{metric=~\"failure_rate|hallucination_rate|citation_correctness\"})",
@@ -105,7 +190,7 @@
       "id": 8,
       "type": "timeseries",
       "title": "Assistant Route Counts",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 },
       "targets": [
         {
           "expr": "max by (route) (ds_assistant_quality_value{metric=\"route_count\"})",
@@ -118,7 +203,7 @@
       "id": 9,
       "type": "timeseries",
       "title": "Model Promotion State",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 40 },
       "targets": [
         {
           "expr": "max by (model_name, status, reason) (ds_model_promotion_info)",
@@ -131,7 +216,7 @@
       "id": 10,
       "type": "timeseries",
       "title": "Warehouse Export Errors",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 48 },
       "targets": [
         {
           "expr": "increase(warehouse_exports_total{status=\"error\"}[30m])",
@@ -143,13 +228,18 @@
     {
       "id": 11,
       "type": "timeseries",
-      "title": "Ranking Request Latency p95 (ms)",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 40 },
+      "title": "Ranking Request Latency p50 / p95 (ms)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 48 },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (le, request_kind) (rate(ranking_request_latency_ms_bucket{traffic_type=\"real\"}[5m])))",
-          "legendFormat": "{{request_kind}}",
+          "expr": "histogram_quantile(0.50, sum by (le, request_kind) (rate(ranking_request_latency_ms_bucket{traffic_type=\"real\"}[5m])))",
+          "legendFormat": "p50 {{request_kind}}",
           "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, request_kind) (rate(ranking_request_latency_ms_bucket{traffic_type=\"real\"}[5m])))",
+          "legendFormat": "p95 {{request_kind}}",
+          "refId": "B"
         }
       ],
       "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] }

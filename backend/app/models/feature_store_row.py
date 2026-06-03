@@ -39,4 +39,7 @@ class FeatureStoreRow(Document):
             "traffic_type",
             "source_event_id",
             "updated_at",
+            IndexModel([("traffic_type", 1), ("updated_at", -1)]),
+            IndexModel([("user_id", 1), ("opportunity_id", 1), ("updated_at", -1)]),
+            IndexModel([("experiment_key", 1), ("experiment_variant", 1), ("traffic_type", 1), ("updated_at", -1)]),
         ]

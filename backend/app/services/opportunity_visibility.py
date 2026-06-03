@@ -81,6 +81,9 @@ def is_opportunity_expired(opportunity: Any, *, now: datetime | None = None) -> 
 
 
 def is_student_visible_opportunity(opportunity: Any, *, now: datetime | None = None) -> bool:
+    status = str(getattr(opportunity, "opportunity_status", "active") or "active").strip().lower()
+    if status in {"expired", "filled", "removed"}:
+        return False
     lifecycle = str(getattr(opportunity, "lifecycle_status", "published") or "published").strip().lower()
     if lifecycle != "published":
         return False

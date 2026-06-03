@@ -6,6 +6,7 @@ from typing import Optional
 
 from beanie import Document, PydanticObjectId
 from pydantic import Field
+from pymongo import IndexModel
 
 
 class AuthAuditEvent(Document):
@@ -34,5 +35,5 @@ class AuthAuditEvent(Document):
             "user_id",
             "lock_applied",
             "lock_until",
-            "created_at",
+            IndexModel([("created_at", 1)], expireAfterSeconds=90 * 24 * 60 * 60),
         ]

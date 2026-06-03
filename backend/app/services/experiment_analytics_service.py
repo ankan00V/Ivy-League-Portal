@@ -9,6 +9,7 @@ from app.core.config import settings
 from app.models.experiment import Experiment
 from app.models.opportunity_interaction import OpportunityInteraction
 from app.core.time import utc_now
+from app.services.interaction_service import canonical_event_type, funnel_event_type
 
 
 def _get_collection(document_cls: type) -> Any:
@@ -232,6 +233,35 @@ class VariantCounts:
     conversions: int
 
 
+@dataclass(frozen=True)
+class VariantMetricCounts:
+    impressions: int = 0
+    clicks: int = 0
+    saves: int = 0
+    applies: int = 0
+    dwell_time_ms_total: float = 0.0
+    dwell_count: int = 0
+    event_count: int = 0
+    session_count: int = 0
+
+
+def _safe_ratio(numerator: float, denominator: float) -> float:
+    return float(numerator / denominator) if denominator > 0 else 0.0
+
+
+def _primary_metric_conversions(metric: str) -> tuple[str, ...]:
+    normalized = (metric or "ctr").strip().lower()
+    if normalized == "apply_rate":
+        return ("apply",)
+    if normalized == "save_rate":
+        return ("save",)
+    return ("click",)
+
+
+def _is_proportion_metric(metric: str) -> bool:
+    return (metric or "ctr").strip().lower() in {"ctr", "apply_rate", "save_rate"}
+
+
 class ExperimentAnalyticsService:
     def _traffic_match(self, *, experiment_key: str, traffic_type: str) -> dict[str, Any]:
         normalized = (traffic_type or "all").strip().lower()
@@ -276,7 +306,8 @@ class ExperimentAnalyticsService:
                 "$group": {
                     "_id": {
                         "variant": "$experiment_variant",
-                        "type": "$interaction_type",
+                        "interaction_type": "$interaction_type",
+                        "event_type": "$event_type",
                     },
                     "count": {"$sum": 1},
                 }
@@ -287,9 +318,15 @@ class ExperimentAnalyticsService:
         by_variant: dict[str, dict[str, int]] = {}
         for row in rows:
             variant = str(row["_id"]["variant"])
-            event_type = str(row["_id"]["type"])
             count = int(row["count"])
-            by_variant.setdefault(variant, {})[event_type] = count
+            interaction_type = str(row["_id"].get("interaction_type") or "")
+            event_type = str(row["_id"].get("event_type") or "")
+            canonical = canonical_event_type(event_type or interaction_type)
+            funnel = funnel_event_type(interaction_type=interaction_type, event_type=event_type)
+            counts = by_variant.setdefault(variant, {})
+            for key in {interaction_type, canonical, funnel}:
+                if key:
+                    counts[str(key)] = int(counts.get(str(key), 0)) + count
 
         result: dict[str, VariantCounts] = {}
         for variant, counts in by_variant.items():
@@ -298,6 +335,117 @@ class ExperimentAnalyticsService:
             result[variant] = VariantCounts(impressions=impressions, conversions=conversions)
 
         return result
+
+    async def _metrics_by_variant(
+        self,
+        *,
+        experiment_key: str,
+        since: datetime,
+        traffic_type: str = "all",
+    ) -> dict[str, VariantMetricCounts]:
+        collection = _get_collection(OpportunityInteraction)
+        traffic_match = self._traffic_match(experiment_key=experiment_key, traffic_type=traffic_type)
+        match_stage: dict[str, Any] = {
+            "created_at": {"$gte": since},
+            "experiment_key": experiment_key,
+            "experiment_variant": {"$ne": None},
+        }
+        if traffic_match:
+            match_stage.update(traffic_match)
+
+        event_pipeline: list[dict[str, Any]] = [
+            {"$match": match_stage},
+            {
+                "$group": {
+                    "_id": {
+                        "variant": "$experiment_variant",
+                        "interaction_type": "$interaction_type",
+                        "event_type": "$event_type",
+                    },
+                    "count": {"$sum": 1},
+                    "dwell_sum": {"$sum": {"$ifNull": ["$dwell_time_ms", 0]}},
+                    "dwell_count": {
+                        "$sum": {
+                            "$cond": [
+                                {"$gt": [{"$ifNull": ["$dwell_time_ms", 0]}, 0]},
+                                1,
+                                0,
+                            ]
+                        }
+                    },
+                }
+            },
+        ]
+        rows = await collection.aggregate(event_pipeline).to_list(length=None)
+
+        mutable: dict[str, dict[str, float]] = {}
+        for row in rows:
+            variant = str(row["_id"]["variant"])
+            interaction_type = str(row["_id"].get("interaction_type") or "")
+            event_type = str(row["_id"].get("event_type") or "")
+            action = funnel_event_type(interaction_type=interaction_type, event_type=event_type)
+            count = int(row.get("count") or 0)
+            values = mutable.setdefault(
+                variant,
+                {
+                    "impressions": 0.0,
+                    "clicks": 0.0,
+                    "saves": 0.0,
+                    "applies": 0.0,
+                    "dwell_time_ms_total": 0.0,
+                    "dwell_count": 0.0,
+                    "event_count": 0.0,
+                    "session_count": 0.0,
+                },
+            )
+            values["event_count"] += count
+            values["dwell_time_ms_total"] += float(row.get("dwell_sum") or 0.0)
+            values["dwell_count"] += float(row.get("dwell_count") or 0.0)
+            if action == "impression":
+                values["impressions"] += count
+            elif action == "click":
+                values["clicks"] += count
+            elif action == "save":
+                values["saves"] += count
+            elif action == "apply":
+                values["applies"] += count
+
+        session_pipeline: list[dict[str, Any]] = [
+            {"$match": {**match_stage, "session_id": {"$ne": None}}},
+            {"$group": {"_id": {"variant": "$experiment_variant", "session_id": "$session_id"}}},
+            {"$group": {"_id": "$_id.variant", "session_count": {"$sum": 1}}},
+        ]
+        session_rows = await collection.aggregate(session_pipeline).to_list(length=None)
+        for row in session_rows:
+            variant = str(row["_id"])
+            values = mutable.setdefault(
+                variant,
+                {
+                    "impressions": 0.0,
+                    "clicks": 0.0,
+                    "saves": 0.0,
+                    "applies": 0.0,
+                    "dwell_time_ms_total": 0.0,
+                    "dwell_count": 0.0,
+                    "event_count": 0.0,
+                    "session_count": 0.0,
+                },
+            )
+            values["session_count"] = float(row.get("session_count") or 0.0)
+
+        return {
+            variant: VariantMetricCounts(
+                impressions=int(values["impressions"]),
+                clicks=int(values["clicks"]),
+                saves=int(values["saves"]),
+                applies=int(values["applies"]),
+                dwell_time_ms_total=float(values["dwell_time_ms_total"]),
+                dwell_count=int(values["dwell_count"]),
+                event_count=int(values["event_count"]),
+                session_count=int(values["session_count"]),
+            )
+            for variant, values in mutable.items()
+        }
 
     async def report(
         self,
@@ -328,7 +476,9 @@ class ExperimentAnalyticsService:
             variants_payload.append(
                 {
                     "name": variant.name,
-                    "weight": float(variant.weight),
+                    "weight": float(variant.traffic_fraction)
+                    if variant.traffic_fraction is not None
+                    else float(variant.weight),
                     "is_control": bool(variant.is_control),
                     "impressions": int(c.impressions),
                     "conversions": int(c.conversions),
@@ -484,7 +634,7 @@ class ExperimentAnalyticsService:
 
         should_pause = (
             bool(settings.EXPERIMENT_AUTO_PAUSE_ON_GUARDRAIL_FAIL)
-            and experiment.status == "active"
+            and experiment.status in {"active", "running"}
             and bool(guardrail_reasons)
         )
         auto_paused = False
@@ -513,6 +663,228 @@ class ExperimentAnalyticsService:
                     "auto_paused": auto_paused,
                 },
             },
+        }
+
+    async def results(
+        self,
+        *,
+        experiment: Experiment,
+        days: int = 30,
+        traffic_type: str = "all",
+    ) -> dict[str, Any]:
+        safe_days = max(1, min(int(days), 365))
+        primary_metric = str(getattr(experiment, "primary_metric", "ctr") or "ctr")
+        conversion_types = _primary_metric_conversions(primary_metric)
+        base_report = await self.report(
+            experiment=experiment,
+            days=safe_days,
+            conversion_types=conversion_types,
+            traffic_type=traffic_type,
+        )
+
+        since = utc_now() - timedelta(days=safe_days)
+        metric_counts = await self._metrics_by_variant(
+            experiment_key=experiment.key,
+            since=since,
+            traffic_type=traffic_type,
+        )
+
+        total_impressions = sum(counts.impressions for counts in metric_counts.values())
+        variant_metrics: list[dict[str, Any]] = []
+        for variant in experiment.variants:
+            counts = metric_counts.get(variant.name, VariantMetricCounts())
+            impressions = int(counts.impressions)
+            avg_dwell = _safe_ratio(counts.dwell_time_ms_total, float(counts.dwell_count))
+            session_depth = _safe_ratio(float(counts.event_count), float(counts.session_count))
+            configured_fraction = (
+                float(variant.traffic_fraction)
+                if variant.traffic_fraction is not None
+                else float(variant.weight)
+            )
+            variant_metrics.append(
+                {
+                    "name": variant.name,
+                    "ranking_mode": variant.ranking_mode or variant.name,
+                    "is_control": bool(variant.is_control),
+                    "configured_traffic": configured_fraction,
+                    "observed_traffic_fraction": _safe_ratio(float(impressions), float(total_impressions)),
+                    "sample_size": impressions,
+                    "ctr": round(_safe_ratio(float(counts.clicks), float(impressions)), 8),
+                    "apply_rate": round(_safe_ratio(float(counts.applies), float(impressions)), 8),
+                    "save_rate": round(_safe_ratio(float(counts.saves), float(impressions)), 8),
+                    "avg_dwell_time_ms": round(float(avg_dwell), 3),
+                    "session_length": round(float(session_depth), 6),
+                    "events": int(counts.event_count),
+                    "sessions": int(counts.session_count),
+                }
+            )
+
+        recommendation = self._recommendation(
+            experiment=experiment,
+            report=base_report,
+            variant_metrics=variant_metrics,
+        )
+
+        return {
+            "experiment_id": experiment.key,
+            "name": experiment.name or experiment.key,
+            "description": experiment.description,
+            "status": base_report.get("status", experiment.status),
+            "primary_metric": primary_metric,
+            "guardrail_metrics": list(getattr(experiment, "guardrail_metrics", []) or []),
+            "days": safe_days,
+            "traffic_type": (traffic_type or "all").strip().lower() or "all",
+            "min_sample_size": int(getattr(experiment, "min_sample_size", 1) or 1),
+            "variants": variant_metrics,
+            "statistical_significance": base_report.get("comparisons", []),
+            "traffic_allocation": {
+                "total_impressions": int(total_impressions),
+                "variants": [
+                    {
+                        "name": item["name"],
+                        "configured": item["configured_traffic"],
+                        "observed": item["observed_traffic_fraction"],
+                    }
+                    for item in variant_metrics
+                ],
+            },
+            "recommendation": recommendation,
+            "diagnostics": base_report.get("diagnostics", {}),
+            "base_report": base_report,
+        }
+
+    def _recommendation(
+        self,
+        *,
+        experiment: Experiment,
+        report: dict[str, Any],
+        variant_metrics: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        min_sample_size = int(
+            max(
+                1,
+                getattr(experiment, "min_sample_size", None)
+                or settings.EXPERIMENT_GRADUATION_MIN_SAMPLE_SIZE,
+            )
+        )
+        guardrails = dict((report.get("diagnostics") or {}).get("guardrails") or {})
+        triggered_reasons = list(guardrails.get("triggered_reasons") or [])
+        if triggered_reasons:
+            return {
+                "code": "guardrail_regressed_pause_recommended",
+                "message": "Guardrail metric regressed - pause recommended",
+                "winning_variant": None,
+                "ready_for_graduation": False,
+                "reasons": triggered_reasons,
+            }
+
+        under_sampled = [
+            item["name"]
+            for item in variant_metrics
+            if int(item.get("sample_size") or 0) < min_sample_size
+        ]
+        if under_sampled:
+            return {
+                "code": "insufficient_data",
+                "message": "Insufficient data",
+                "winning_variant": None,
+                "ready_for_graduation": False,
+                "reasons": [f"sample_size_below_min:{','.join(under_sampled)}"],
+            }
+
+        p_threshold = float(settings.EXPERIMENT_GRADUATION_P_VALUE)
+        min_lift = float(settings.EXPERIMENT_GRADUATION_MIN_LIFT)
+        primary_metric = str(getattr(experiment, "primary_metric", "ctr") or "ctr")
+        if not _is_proportion_metric(primary_metric):
+            return {
+                "code": "manual_review_required_non_proportion_metric",
+                "message": "Primary metric requires manual review",
+                "winning_variant": None,
+                "ready_for_graduation": False,
+                "reasons": [f"non_proportion_metric:{primary_metric}"],
+            }
+
+        candidates: list[dict[str, Any]] = []
+        for comparison in report.get("comparisons", []) or []:
+            p_value = comparison.get("p_value")
+            lift = comparison.get("lift")
+            if p_value is None or lift is None:
+                continue
+            if float(p_value) < p_threshold and float(lift) >= min_lift:
+                candidates.append(comparison)
+
+        if candidates:
+            candidates.sort(key=lambda item: float(item.get("lift") or 0.0), reverse=True)
+            winner = str(candidates[0].get("variant") or "")
+            return {
+                "code": "significant_lift_consider_graduating",
+                "message": "Significant lift - consider graduating",
+                "winning_variant": winner,
+                "ready_for_graduation": True,
+                "reasons": [
+                    f"p_value<{p_threshold}",
+                    f"lift>={min_lift}",
+                    f"sample_size>={min_sample_size}",
+                ],
+            }
+
+        return {
+            "code": "no_significant_difference",
+            "message": "No significant difference",
+            "winning_variant": None,
+            "ready_for_graduation": False,
+            "reasons": [],
+        }
+
+    async def maybe_graduate(
+        self,
+        *,
+        experiment: Experiment,
+        days: int = 30,
+        traffic_type: str = "real",
+        force: bool = False,
+    ) -> dict[str, Any]:
+        results = await self.results(experiment=experiment, days=days, traffic_type=traffic_type)
+        recommendation = dict(results.get("recommendation") or {})
+        winning_variant = str(recommendation.get("winning_variant") or "").strip()
+        ready = bool(recommendation.get("ready_for_graduation"))
+        if not force and (not settings.EXPERIMENT_AUTO_GRADUATION_ENABLED or not ready or not winning_variant):
+            return {
+                "graduated": False,
+                "reason": recommendation.get("code") or "not_ready",
+                "results": results,
+            }
+
+        if not winning_variant:
+            return {
+                "graduated": False,
+                "reason": "winning_variant_missing",
+                "results": results,
+            }
+
+        event = {
+            "graduated_at": utc_now().isoformat(),
+            "winning_variant": winning_variant,
+            "primary_metric": results.get("primary_metric"),
+            "recommendation": recommendation,
+            "traffic_type": traffic_type,
+            "days": int(days),
+            "forced": bool(force),
+        }
+        history = list(getattr(experiment, "graduation_history", []) or [])
+        history.append(event)
+        experiment.winning_variant = winning_variant
+        experiment.default_variant = winning_variant
+        experiment.status = "concluded"  # type: ignore[assignment]
+        experiment.graduated_at = utc_now()
+        experiment.graduation_history = history[-20:]
+        experiment.updated_at = utc_now()
+        await experiment.save()
+        return {
+            "graduated": True,
+            "winning_variant": winning_variant,
+            "results": results,
+            "event": event,
         }
 
 

@@ -27,6 +27,7 @@ from app.schemas.user import Token, UserCreate, UserResponse
 from app.services.admin_identity_service import is_reserved_admin_email
 from app.services.auth_security_service import auth_security_service
 from app.services.email import send_email_otp
+from app.services.session_security_service import session_security_service
 from app.services.totp_service import decrypt_secret, provisioning_uri, verify_totp
 from app.services.username_service import ensure_system_username
 from app.core.time import utc_now
@@ -308,7 +309,7 @@ def _validate_admin_totp_or_raise(user: User, code: str) -> None:
         raise HTTPException(status_code=400, detail="Invalid TOTP code")
 
 
-def _set_session_cookie(response: Optional[Response], token: str) -> None:
+def _set_session_cookie(response: Optional[Response], token: str, *, max_age_seconds: Optional[int] = None) -> None:
     if response is None:
         return
     if not settings.AUTH_SESSION_COOKIE_ENABLED:
@@ -323,8 +324,31 @@ def _set_session_cookie(response: Optional[Response], token: str) -> None:
     response.set_cookie(
         key=cookie_name,
         value=token,
-        max_age=max(60, int(settings.AUTH_SESSION_COOKIE_MAX_AGE_SECONDS)),
+        max_age=max(60, int(max_age_seconds or settings.AUTH_SESSION_COOKIE_MAX_AGE_SECONDS)),
         httponly=True,
+        secure=bool(settings.AUTH_SESSION_COOKIE_SECURE),
+        samesite=same_site,
+        path=(settings.AUTH_SESSION_COOKIE_PATH or "/").strip() or "/",
+        domain=(settings.AUTH_SESSION_COOKIE_DOMAIN or "").strip() or None,
+    )
+
+
+def _set_csrf_cookie(response: Optional[Response], *, max_age_seconds: Optional[int] = None) -> None:
+    if response is None:
+        return
+    if not settings.AUTH_SESSION_COOKIE_ENABLED or not settings.CSRF_DOUBLE_SUBMIT_ENABLED:
+        return
+    cookie_name = (settings.CSRF_COOKIE_NAME or "").strip()
+    if not cookie_name:
+        return
+    same_site = str(settings.AUTH_SESSION_COOKIE_SAMESITE or "lax").strip().lower()
+    if same_site not in {"lax", "strict", "none"}:
+        same_site = "lax"
+    response.set_cookie(
+        key=cookie_name,
+        value=secrets.token_urlsafe(32),
+        max_age=max(60, int(max_age_seconds or settings.AUTH_SESSION_COOKIE_MAX_AGE_SECONDS)),
+        httponly=False,
         secure=bool(settings.AUTH_SESSION_COOKIE_SECURE),
         samesite=same_site,
         path=(settings.AUTH_SESSION_COOKIE_PATH or "/").strip() or "/",
@@ -357,6 +381,49 @@ def _clear_session_cookie(response: Optional[Response]) -> None:
         path=(settings.AUTH_SESSION_COOKIE_PATH or "/").strip() or "/",
         domain=(settings.AUTH_SESSION_COOKIE_DOMAIN or "").strip() or None,
     )
+    csrf_cookie_name = (settings.CSRF_COOKIE_NAME or "").strip()
+    if csrf_cookie_name:
+        response.delete_cookie(
+            key=csrf_cookie_name,
+            path=(settings.AUTH_SESSION_COOKIE_PATH or "/").strip() or "/",
+            domain=(settings.AUTH_SESSION_COOKIE_DOMAIN or "").strip() or None,
+        )
+
+
+async def _issue_user_session_token(
+    *,
+    user: User,
+    request: Optional[Request],
+    response: Optional[Response],
+    admin_session: bool = False,
+) -> str:
+    ttl_seconds = (
+        max(60, int(settings.ADMIN_SESSION_MAX_AGE_SECONDS))
+        if admin_session
+        else max(60, int(settings.AUTH_SESSION_COOKIE_MAX_AGE_SECONDS))
+    )
+    session_id = session_security_service.new_session_id()
+    scopes = _scopes_for_user(user)
+    token = create_access_token(
+        str(user.id),
+        expires_delta=timedelta(seconds=ttl_seconds),
+        scopes=scopes,
+        extra_claims={
+            "jti": session_id,
+            "typ": "admin_session" if admin_session else "user_session",
+        },
+    )
+    await session_security_service.create_session(
+        user=user,
+        session_id=session_id,
+        request=request,
+        ttl_seconds=ttl_seconds,
+        scopes=scopes,
+        session_type="admin" if admin_session else "user",
+    )
+    _set_session_cookie(response, token, max_age_seconds=ttl_seconds)
+    _set_csrf_cookie(response, max_age_seconds=ttl_seconds)
+    return token
 
 
 class PasswordLoginResponse(BaseModel):
@@ -785,13 +852,7 @@ async def login_access_token(
         user_id=user.id,
     )
 
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    token = create_access_token(
-        str(user.id),
-        expires_delta=access_token_expires,
-        scopes=_scopes_for_user(user),
-    )
-    _set_session_cookie(response, token)
+    token = await _issue_user_session_token(user=user, request=request, response=response)
     return _token_response_payload(token, user)
 
 
@@ -973,13 +1034,7 @@ async def verify_admin_access_token(
         user_id=user.id,
     )
 
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    token = create_access_token(
-        str(user.id),
-        expires_delta=access_token_expires,
-        scopes=_scopes_for_user(user),
-    )
-    _set_session_cookie(response, token)
+    token = await _issue_user_session_token(user=user, request=request, response=response, admin_session=True)
     return _token_response_payload(token, user)
 
 
@@ -1235,13 +1290,7 @@ async def verify_admin_totp(
         user_id=user.id,
     )
 
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    token = create_access_token(
-        str(user.id),
-        expires_delta=access_token_expires,
-        scopes=_scopes_for_user(user),
-    )
-    _set_session_cookie(response, token)
+    token = await _issue_user_session_token(user=user, request=request, response=response, admin_session=True)
     return _token_response_payload(token, user)
 
 
@@ -1808,12 +1857,6 @@ async def oauth_google_callback(
         if not user.is_active:
             raise ValueError("Inactive user account")
 
-        access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-        api_token = create_access_token(
-            str(user.id),
-            expires_delta=access_token_expires,
-            scopes=_scopes_for_user(user),
-        )
         await auth_security_service.audit_event(
             event_type="oauth.google",
             email=email,
@@ -1833,12 +1876,14 @@ async def oauth_google_callback(
         }
         if auth_cookie_only_mode_enabled():
             success_query["access_token"] = COOKIE_SESSION_SENTINEL
-        # Keep URL token fallback only when cookie sessions are disabled and bearer compatibility remains enabled.
-        elif not settings.AUTH_SESSION_COOKIE_ENABLED:
-            success_query["access_token"] = api_token
         target = _append_query(success_url, success_query)
         redirect = RedirectResponse(target, status_code=302)
-        _set_session_cookie(redirect, api_token)
+        api_token = await _issue_user_session_token(user=user, request=request, response=redirect)
+        # Keep URL token fallback only when cookie sessions are disabled and bearer compatibility remains enabled.
+        if not auth_cookie_only_mode_enabled() and not settings.AUTH_SESSION_COOKIE_ENABLED:
+            success_query["access_token"] = api_token
+            target = _append_query(success_url, success_query)
+            redirect = RedirectResponse(target, status_code=302)
         return redirect
 
     except Exception as exc:
@@ -2121,18 +2166,21 @@ async def verify_otp(
         user_id=user.id,
     )
 
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    token = create_access_token(
-        str(user.id),
-        expires_delta=access_token_expires,
-        scopes=_scopes_for_user(user),
-    )
-    _set_session_cookie(response, token)
+    token = await _issue_user_session_token(user=user, request=request, response=response)
     return _token_response_payload(token, user)
 
 
 @router.post("/logout", response_model=dict)
-async def logout(response: Response) -> Any:
+async def logout(request: Request, response: Response) -> Any:
+    token = None
+    cookie_name = (settings.AUTH_SESSION_COOKIE_NAME or "").strip()
+    if cookie_name:
+        token = request.cookies.get(cookie_name)
+    if not token:
+        authorization = str(request.headers.get("authorization") or "").strip()
+        if authorization.lower().startswith("bearer "):
+            token = authorization.split(" ", 1)[1].strip()
+    await session_security_service.invalidate_session(session_security_service.extract_session_id(token))
     _clear_session_cookie(response)
     return {"status": "ok"}
 

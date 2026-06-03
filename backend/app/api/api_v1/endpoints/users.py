@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.api.deps import get_current_active_user
+from app.core.cache import cache_manager
 from app.core.email_policy import is_corporate_email
 from app.models.profile import Profile
 from app.models.user import User
@@ -49,7 +50,13 @@ PROFILE_SIGNAL_METADATA: dict[str, tuple[str, str]] = {
     "skills": ("Skills", "Add your core skills."),
     "interests": ("Interests", "Add your interests."),
     "career_intent": ("Career Intent", "Select the role tracks or career outcomes you want."),
+    "domains_of_interest": ("Domains of Interest", "Select domains to personalize your feed."),
     "interest_graph": ("Interest Graph", "Choose a few interest areas to personalize recommendations."),
+    "opportunity_types": ("Opportunity Types", "Select the opportunity types you want to see."),
+    "preferred_work_mode": ("Preferred Work Mode", "Choose your preferred work setup."),
+    "preferred_locations": ("Preferred Locations", "Add preferred locations for matching."),
+    "expected_stipend_range": ("Expected Stipend", "Add your expected stipend range."),
+    "graduation_year": ("Graduation Year", "Add your graduation year."),
     "work_preferences": ("Work Preferences", "Set your preferred work style, location, or job setup."),
     "education": ("Education", "Add education details."),
     "certificates": ("Certificates", "Add relevant certifications."),
@@ -93,9 +100,16 @@ class ProfileUpdate(BaseModel):
     hiring_for: Optional[str] = None
     goals: Optional[list[str]] = None
     career_intent: Optional[list[str] | str] = None
+    domains_of_interest: Optional[list[str] | str] = None
     preferred_roles: Optional[str] = None
     preferred_locations: Optional[str] = None
+    preferred_work_mode: Optional[str] = None
     work_preferences: Optional[list[str] | str] = None
+    expected_stipend_range: Optional[str] = None
+    expected_stipend_min: Optional[int] = Field(default=None, ge=0)
+    expected_stipend_max: Optional[int] = Field(default=None, ge=0)
+    graduation_year: Optional[int] = Field(default=None, ge=1990, le=2100)
+    opportunity_types: Optional[list[str] | str] = None
     pan_india: Optional[bool] = None
     prefer_wfh: Optional[bool] = None
     consent_data_processing: Optional[bool] = None
@@ -183,7 +197,15 @@ class ProfileUpdate(BaseModel):
             raise ValueError("hiring_for must be myself or others")
         return candidate
 
-    @field_validator("goals", "career_intent", "work_preferences", "interest_graph", mode="before")
+    @field_validator(
+        "goals",
+        "career_intent",
+        "domains_of_interest",
+        "work_preferences",
+        "opportunity_types",
+        "interest_graph",
+        mode="before",
+    )
     @classmethod
     def normalize_goals(cls, value: Optional[list[str] | str]) -> Optional[list[str]]:
         if value is None:
@@ -264,9 +286,16 @@ class ProfileResponse(BaseModel):
     hiring_for: Optional[str] = None
     goals: list[str] = Field(default_factory=list)
     career_intent: list[str] = Field(default_factory=list)
+    domains_of_interest: list[str] = Field(default_factory=list)
     preferred_roles: Optional[str] = None
     preferred_locations: Optional[str] = None
+    preferred_work_mode: Optional[str] = None
     work_preferences: list[str] = Field(default_factory=list)
+    expected_stipend_range: Optional[str] = None
+    expected_stipend_min: Optional[int] = None
+    expected_stipend_max: Optional[int] = None
+    graduation_year: Optional[int] = None
+    opportunity_types: list[str] = Field(default_factory=list)
     pan_india: bool = False
     prefer_wfh: bool = False
     consent_data_processing: bool = False
@@ -302,6 +331,10 @@ class ProfileResponse(BaseModel):
     resume_filename: Optional[str] = None
     resume_content_type: Optional[str] = None
     resume_uploaded_at: Optional[datetime] = None
+    cold_start_quality_score: float = 0.0
+    cold_start_strategy: Optional[str] = None
+    persona_cluster_id: Optional[int] = None
+    taste_calibration_count: int = 0
     incoscore: float
 
 
@@ -653,8 +686,14 @@ def _profile_strength_checks(profile: Profile) -> list[tuple[str, bool]]:
                     ("passout_year", _value("passout_year") is not None),
                     ("college_name", _text_present("college_name")),
                     ("career_intent", len(_value("career_intent", []) or []) > 0),
+                    ("domains_of_interest", len(_value("domains_of_interest", []) or []) > 0),
+                    ("opportunity_types", len(_value("opportunity_types", []) or []) > 0),
                     ("interest_graph", len(_value("interest_graph", []) or []) > 0),
                     ("work_preferences", len(_value("work_preferences", []) or []) > 0),
+                    ("preferred_work_mode", _text_present("preferred_work_mode")),
+                    ("preferred_locations", _text_present("preferred_locations")),
+                    ("expected_stipend_range", _text_present("expected_stipend_range")),
+                    ("graduation_year", _value("graduation_year") is not None or _value("passout_year") is not None),
                 ]
             )
         elif user_type == "professional":
@@ -753,6 +792,11 @@ def _apply_profile_patch(*, profile: Profile, user: User, payload: ProfileUpdate
     for field, value in updates.items():
         setattr(profile, field, value)
 
+    if "graduation_year" in updates and updates.get("graduation_year") is not None and profile.passout_year is None:
+        profile.passout_year = int(updates["graduation_year"])
+    if "passout_year" in updates and updates.get("passout_year") is not None and profile.graduation_year is None:
+        profile.graduation_year = int(updates["passout_year"])
+
     # Keep account type mirrored between User and Profile when explicitly changed.
     if payload.account_type and payload.account_type in VALID_ACCOUNT_TYPES and user.account_type != payload.account_type:
         user.account_type = payload.account_type
@@ -764,6 +808,34 @@ def _apply_profile_patch(*, profile: Profile, user: User, payload: ProfileUpdate
             profile.college_name = (profile.company_name or "").strip()
 
     _sync_profile_identity(profile, user)
+    personalization_fields = {
+        "domain",
+        "course",
+        "course_specialization",
+        "goals",
+        "career_intent",
+        "domains_of_interest",
+        "preferred_roles",
+        "preferred_locations",
+        "preferred_work_mode",
+        "work_preferences",
+        "expected_stipend_range",
+        "expected_stipend_min",
+        "expected_stipend_max",
+        "graduation_year",
+        "passout_year",
+        "opportunity_types",
+        "bio",
+        "skills",
+        "interests",
+        "interest_graph",
+        "projects",
+        "education",
+    }
+    if personalization_fields.intersection(updates):
+        profile.preference_embedding = []
+        profile.preference_embedding_model_version = None
+        profile.preference_embedding_updated_at = None
     is_complete, _progress, _missing, next_step = _compute_onboarding_status(profile)
     profile.onboarding_completed = is_complete
     profile.onboarding_step = "complete" if is_complete else next_step
@@ -886,6 +958,7 @@ async def update_profile_me(
     _apply_profile_patch(profile=profile, user=current_user, payload=profile_in)
     await current_user.save()
     await profile.save()
+    await cache_manager.invalidate_after_profile_update(user_id=str(current_user.id))
     return profile
 
 
@@ -901,6 +974,7 @@ async def update_onboarding_me(
     _apply_profile_patch(profile=profile, user=current_user, payload=profile_in)
     await current_user.save()
     await profile.save()
+    await cache_manager.invalidate_after_profile_update(user_id=str(current_user.id))
     return profile
 
 
@@ -959,6 +1033,7 @@ async def upload_resume(
     profile.incoscore = calculate_incoscore(profile)
 
     await profile.save()
+    await cache_manager.invalidate_after_profile_update(user_id=str(current_user.id))
     return profile
 
 
@@ -1004,6 +1079,7 @@ async def delete_resume(
     profile.onboarding_completed_at = datetime.now(timezone.utc) if is_complete else None
     profile.incoscore = calculate_incoscore(profile)
     await profile.save()
+    await cache_manager.invalidate_after_profile_update(user_id=str(current_user.id))
     return profile
 
 

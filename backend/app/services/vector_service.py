@@ -12,6 +12,7 @@ from beanie.odm.operators.find.comparison import In
 from app.core.cache import cache_get_json, cache_key, cache_set_json
 from app.models.opportunity import Opportunity
 from app.models.vector_index_entry import VectorIndexEntry
+from app.services.embedding_pipeline import embedding_pipeline
 from app.services.embedding_service import embedding_service
 from app.core.config import settings
 from app.core.metrics import CACHE_HITS_TOTAL, CACHE_MISSES_TOTAL
@@ -24,15 +25,7 @@ except Exception:
 
 
 def _opportunity_to_text(opportunity: Opportunity) -> str:
-    return " ".join(
-        [
-            opportunity.title or "",
-            opportunity.description or "",
-            opportunity.domain or "",
-            opportunity.opportunity_type or "",
-            opportunity.university or "",
-        ]
-    ).strip()
+    return embedding_pipeline.opportunity_text(opportunity)
 
 
 def _text_hash(text: str) -> str:
@@ -47,7 +40,14 @@ class OpportunityVectorService:
         self._metas: list[dict[str, Any]] = []
         self._last_build_count = -1
         self._last_build_at: datetime | None = None
-        self._ttl = timedelta(minutes=5)
+        self._ttl = timedelta(hours=max(1, int(settings.VECTOR_INDEX_STALE_HOURS)))
+
+    def provider_name(self) -> str:
+        if settings.MONGODB_ATLAS_VECTOR_SEARCH:
+            return "atlas_vector_search"
+        if faiss is not None:
+            return "faiss"
+        return "numpy_flat"
 
     def _score_to_similarity(self, score: float) -> float:
         return float(max(-1.0, min(1.0, score)))
@@ -76,8 +76,20 @@ class OpportunityVectorService:
         for opportunity, text in zip(opportunities, texts):
             key = str(opportunity.id)
             text_hash = _text_hash(text)
+            if (
+                opportunity.embedding
+                and opportunity.embedding_text_hash == text_hash
+                and opportunity.embedding_model_version == embedding_pipeline.model_version
+            ):
+                embeddings_map[key] = list(opportunity.embedding)
+                continue
             row = existing_map.get(key)
-            if row and row.text_hash == text_hash and row.embedding:
+            if (
+                row
+                and row.text_hash == text_hash
+                and row.embedding
+                and row.metadata.get("embedding_model_version") == embedding_pipeline.model_version
+            ):
                 embeddings_map[key] = list(row.embedding)
                 continue
             to_embed_keys.append(key)
@@ -104,10 +116,20 @@ class OpportunityVectorService:
                     "domain": opportunity.domain,
                     "opportunity_type": opportunity.opportunity_type,
                     "source": opportunity.source,
+                    "embedding_model_version": embedding_pipeline.model_version,
                     "updated_at": opportunity.updated_at.isoformat() if opportunity.updated_at else None,
                 },
                 "updated_at": now,
             }
+            if (
+                opportunity.embedding_text_hash != payload["text_hash"]
+                or opportunity.embedding_model_version != embedding_pipeline.model_version
+            ):
+                opportunity.embedding = vector_values
+                opportunity.embedding_text_hash = payload["text_hash"]
+                opportunity.embedding_model_version = embedding_pipeline.model_version
+                opportunity.embedding_updated_at = now
+                await opportunity.save()
             if row:
                 row.text_hash = payload["text_hash"]
                 row.text = payload["text"]
@@ -127,7 +149,11 @@ class OpportunityVectorService:
 
         # Remove entries for opportunities that no longer exist.
         try:
-            collection = VectorIndexEntry.get_motor_collection()
+            collection_getter = getattr(VectorIndexEntry, "get_motor_collection", None) or getattr(
+                VectorIndexEntry,
+                "get_pymongo_collection",
+            )
+            collection = collection_getter()
             await collection.delete_many({"opportunity_id": {"$nin": opp_ids}})
         except Exception:
             pass
@@ -161,14 +187,58 @@ class OpportunityVectorService:
                 "scholarships": {"scholarship", "grant", "funding"},
                 "hackathons": {"hackathon", "competition", "challenge"},
             }
-            haystack = f"{meta.get('title', '')} {meta.get('description', '')} {meta.get('opportunity_type', '')}".lower()
+            haystack = (
+                f"{meta.get('title', '')} {meta.get('description', '')} "
+                f"{meta.get('opportunity_type', '')}"
+            ).lower()
             if not any(token in haystack for token in intent_tokens.get(intent, set())):
                 return False
 
         locations = [value.lower() for value in filters.get("locations", []) if value]
+        location = str(filters.get("location") or "").strip().lower()
+        if location:
+            locations.append(location)
         if locations:
-            haystack = f"{meta.get('title', '')} {meta.get('description', '')} {meta.get('university', '')}".lower()
+            haystack = (
+                f"{meta.get('title', '')} {meta.get('description', '')} "
+                f"{meta.get('university', '')} {meta.get('location', '')}"
+            ).lower()
             if not any(location in haystack for location in locations):
+                return False
+
+        work_mode = str(filters.get("work_mode") or "").strip().lower()
+        if work_mode and work_mode != str(meta.get("work_mode") or "").strip().lower():
+            return False
+
+        opportunity_types = [value.lower() for value in filters.get("opportunity_types", []) if value]
+        opportunity_type = str(filters.get("opportunity_type") or "").strip().lower()
+        if opportunity_type:
+            opportunity_types.append(opportunity_type)
+        if opportunity_types and str(meta.get("opportunity_type") or "").strip().lower() not in opportunity_types:
+            return False
+
+        stipend_min = filters.get("stipend_min")
+        if stipend_min is not None:
+            try:
+                required_stipend = int(stipend_min)
+            except Exception:
+                required_stipend = 0
+            if required_stipend > 0 and int(meta.get("stipend_min") or 0) < required_stipend:
+                return False
+
+        tags = [value.lower() for value in filters.get("tags", []) if value]
+        if tags:
+            meta_tags = [str(value).lower() for value in list(meta.get("tags") or [])]
+            if not any(tag in meta_tags for tag in tags):
+                return False
+
+        quality_min = filters.get("quality_min")
+        if quality_min is not None:
+            try:
+                min_score = float(quality_min)
+            except Exception:
+                min_score = 0.0
+            if min_score > 0 and float(meta.get("quality_score") or 0.0) < min_score:
                 return False
 
         companies = [value.lower() for value in filters.get("companies", []) if value]
@@ -229,6 +299,12 @@ class OpportunityVectorService:
                         "opportunity_type": opportunity.opportunity_type,
                         "university": opportunity.university,
                         "deadline": opportunity.deadline,
+                        "location": opportunity.location,
+                        "work_mode": opportunity.work_mode,
+                        "stipend_min": opportunity.stipend_min,
+                        "tags": list(opportunity.tags or []),
+                        "quality_score": opportunity.quality_score,
+                        "embedding_model_version": opportunity.embedding_model_version,
                         "source": opportunity.source,
                         "created_at": opportunity.created_at,
                         "updated_at": opportunity.updated_at,
@@ -247,6 +323,130 @@ class OpportunityVectorService:
             self._index = index
             self._last_build_count = len(opportunities)
             self._last_build_at = now
+
+    async def _atlas_search(
+        self,
+        query_vector: np.ndarray,
+        *,
+        top_k: int,
+        filters: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        collection_getter = getattr(Opportunity, "get_motor_collection", None) or getattr(
+            Opportunity,
+            "get_pymongo_collection",
+        )
+        collection = collection_getter()
+        pipeline = [
+            {
+                "$vectorSearch": {
+                    "index": settings.MONGODB_ATLAS_VECTOR_INDEX_NAME,
+                    "path": "embedding",
+                    "queryVector": [float(value) for value in query_vector.tolist()],
+                    "numCandidates": max(100, top_k * 10),
+                    "limit": max(top_k * 4, top_k),
+                }
+            },
+            {
+                "$project": {
+                    "_id": 1,
+                    "title": 1,
+                    "description": 1,
+                    "url": 1,
+                    "domain": 1,
+                    "opportunity_type": 1,
+                    "university": 1,
+                    "deadline": 1,
+                    "location": 1,
+                    "work_mode": 1,
+                    "stipend_min": 1,
+                    "tags": 1,
+                    "quality_score": 1,
+                    "source": 1,
+                    "created_at": 1,
+                    "updated_at": 1,
+                    "last_seen_at": 1,
+                    "similarity": {"$meta": "vectorSearchScore"},
+                }
+            },
+        ]
+        rows = await collection.aggregate(pipeline).to_list(length=max(top_k * 4, top_k))
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            meta = {
+                "id": str(row.get("_id")),
+                "title": row.get("title"),
+                "description": row.get("description"),
+                "url": row.get("url"),
+                "domain": row.get("domain"),
+                "opportunity_type": row.get("opportunity_type"),
+                "university": row.get("university"),
+                "deadline": row.get("deadline"),
+                "location": row.get("location"),
+                "work_mode": row.get("work_mode"),
+                "stipend_min": row.get("stipend_min"),
+                "tags": list(row.get("tags") or []),
+                "quality_score": row.get("quality_score"),
+                "source": row.get("source"),
+                "created_at": row.get("created_at"),
+                "updated_at": row.get("updated_at"),
+                "last_seen_at": row.get("last_seen_at"),
+                "similarity": round(self._score_to_similarity(float(row.get("similarity") or 0.0)), 6),
+            }
+            if not self._passes_filters(meta, filters):
+                continue
+            results.append(meta)
+            if len(results) >= top_k:
+                break
+        return results
+
+    async def search_by_vector(
+        self,
+        query_vector: np.ndarray,
+        *,
+        top_k: int = 10,
+        filters: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        await self.rebuild()
+
+        if not self._metas:
+            return []
+
+        safe_top_k = max(1, min(top_k, 200))
+        query_vector = np.asarray(query_vector, dtype=np.float32).reshape(-1)
+        norm = np.linalg.norm(query_vector)
+        if norm > 1e-12:
+            query_vector = query_vector / norm
+
+        if settings.MONGODB_ATLAS_VECTOR_SEARCH:
+            try:
+                return await self._atlas_search(query_vector, top_k=safe_top_k, filters=filters)
+            except Exception:
+                pass
+
+        shortlist = min(max(safe_top_k * 4, 25), len(self._metas))
+
+        if self._index is not None:
+            scores, indices = self._index.search(query_vector.reshape(1, -1), shortlist)
+            rank_items = list(zip(indices[0].tolist(), scores[0].tolist()))
+        else:
+            assert self._vectors is not None
+            raw_scores = np.dot(self._vectors, query_vector)
+            top_indices = np.argsort(-raw_scores)[:shortlist]
+            rank_items = [(int(idx), float(raw_scores[idx])) for idx in top_indices]
+
+        results: list[dict[str, Any]] = []
+        for idx, score in rank_items:
+            if idx < 0 or idx >= len(self._metas):
+                continue
+            meta = self._metas[idx]
+            if not self._passes_filters(meta, filters):
+                continue
+            payload = dict(meta)
+            payload["similarity"] = round(self._score_to_similarity(float(score)), 6)
+            results.append(payload)
+            if len(results) >= safe_top_k:
+                break
+        return results
 
     async def search(
         self,
@@ -289,31 +489,7 @@ class OpportunityVectorService:
                 CACHE_MISSES_TOTAL.labels(cache="vector_search").inc()
 
         query_vector = await embedding_service.embed_query(query)
-        query_vector = np.asarray(query_vector, dtype=np.float32).reshape(1, -1)
-
-        shortlist = min(max(safe_top_k * 4, 25), len(self._metas))
-
-        if self._index is not None:
-            scores, indices = self._index.search(query_vector, shortlist)
-            rank_items = list(zip(indices[0].tolist(), scores[0].tolist()))
-        else:
-            assert self._vectors is not None
-            raw_scores = np.dot(self._vectors, query_vector[0])
-            top_indices = np.argsort(-raw_scores)[:shortlist]
-            rank_items = [(int(idx), float(raw_scores[idx])) for idx in top_indices]
-
-        results: list[dict[str, Any]] = []
-        for idx, score in rank_items:
-            if idx < 0 or idx >= len(self._metas):
-                continue
-            meta = self._metas[idx]
-            if not self._passes_filters(meta, filters):
-                continue
-            payload = dict(meta)
-            payload["similarity"] = round(self._score_to_similarity(float(score)), 6)
-            results.append(payload)
-            if len(results) >= safe_top_k:
-                break
+        results = await self.search_by_vector(query_vector, top_k=safe_top_k, filters=filters)
 
         if cache_enabled:
             await cache_set_json(

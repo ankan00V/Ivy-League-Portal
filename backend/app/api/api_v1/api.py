@@ -13,6 +13,8 @@ from app.api.api_v1.endpoints import (
     rag_governance,
     security,
     social,
+    source_discovery_admin,
+    sources,
     users,
 )
 
@@ -31,3 +33,7 @@ api_router.include_router(employer.router, prefix="/employer", tags=["employer"]
 api_router.include_router(analytics.router, prefix="/analytics", tags=["analytics"])
 api_router.include_router(rag_governance.router, prefix="/rag-governance", tags=["rag-governance"])
 api_router.include_router(security.router, prefix="/security", tags=["security"])
+api_router.include_router(sources.router, prefix="/sources", tags=["sources"])
+api_router.include_router(source_discovery_admin.router, prefix="/admin/discovery", tags=["admin-discovery"])
+api_router.include_router(source_discovery_admin.seed_router, prefix="/admin/seeds", tags=["admin-seeds"])
+api_router.include_router(source_discovery_admin.review_router, prefix="/admin/sources", tags=["admin-source-review"])

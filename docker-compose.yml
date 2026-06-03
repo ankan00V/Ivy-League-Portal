@@ -1,78 +1,255 @@
-version: "3.8"
-
 services:
   mongo:
-    image: mongo:7
+    image: mongo:7.0
     restart: unless-stopped
-    ports:
-      - "27017:27017"
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--auth"]
     environment:
-      MONGO_INITDB_DATABASE: vidyaverse
+      MONGO_INITDB_DATABASE: ${MONGODB_DB_NAME:-vidyaverse}
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:-vidyaverse}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:-vidyaverse-dev-password}
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mongosh --quiet -u $$MONGO_INITDB_ROOT_USERNAME -p $$MONGO_INITDB_ROOT_PASSWORD --authenticationDatabase admin --eval 'try { rs.status().ok } catch (e) { rs.initiate({_id:\"rs0\",members:[{_id:0,host:\"mongo:27017\"}]}).ok }' | grep -q 1",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
     volumes:
       - mongo_data:/data/db
+      - mongo_config:/data/configdb
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.2-alpine
     restart: unless-stopped
-    command: redis-server --save 60 1 --loglevel warning
-    ports:
-      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "512mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
     volumes:
       - redis_data:/data
 
   clickhouse:
-    image: clickhouse/clickhouse-server:24.8
+    image: clickhouse/clickhouse-server:24.3
     restart: unless-stopped
-    ports:
-      - "8123:8123"
-      - "9000:9000"
     environment:
-      CLICKHOUSE_DB: vidyaverse
-      CLICKHOUSE_USER: vidyaverse
-      CLICKHOUSE_PASSWORD: vidyaverse
+      CLICKHOUSE_DB: ${ANALYTICS_WAREHOUSE_CLICKHOUSE_DATABASE:-vidyaverse}
+      CLICKHOUSE_USER: ${ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME:-vidyaverse}
+      CLICKHOUSE_PASSWORD: ${ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD:-vidyaverse-clickhouse-password}
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "clickhouse-client --user $$CLICKHOUSE_USER --password $$CLICKHOUSE_PASSWORD --query 'SELECT 1' | grep -q 1",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
     volumes:
       - clickhouse_data:/var/lib/clickhouse
+      - ./ops/clickhouse/config.d/low-memory.xml:/etc/clickhouse-server/config.d/low-memory.xml:ro
 
   minio:
-    image: minio/minio:RELEASE.2025-02-03T21-03-04Z
+    image: minio/minio:latest
     restart: unless-stopped
-    command: server /data --console-address ":9001"
+    command: ["server", "/data", "--console-address", ":9001"]
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    ports:
-      - "9001:9001"
-      - "9002:9000"
+      MINIO_ROOT_USER: ${MLOPS_MODEL_ARTIFACT_S3_ACCESS_KEY_ID:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MLOPS_MODEL_ARTIFACT_S3_SECRET_ACCESS_KEY:-minioadmin}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/minio/health/ready >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
     volumes:
       - minio_data:/data
 
-  prometheus:
-    image: prom/prometheus:v2.54.1
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MLOPS_MODEL_ARTIFACT_S3_ACCESS_KEY_ID:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MLOPS_MODEL_ARTIFACT_S3_SECRET_ACCESS_KEY:-minioadmin}
+      MODEL_ARTIFACT_BUCKET: ${MODEL_ARTIFACT_BUCKET:-vidyaverse-model-artifacts}
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD &&
+      mc mb --ignore-existing local/$$MODEL_ARTIFACT_BUCKET
+      "
+    restart: "no"
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: vidyaverse-backend:latest
     restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-local}
+      MONGODB_URL: ${MONGODB_URL:-mongodb://vidyaverse:vidyaverse-dev-password@mongo:27017/vidyaverse?authSource=admin&replicaSet=rs0}
+      MONGODB_DB_NAME: ${MONGODB_DB_NAME:-vidyaverse}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED: ${ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED:-true}
+      ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST: ${ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST:-clickhouse}
+      ANALYTICS_WAREHOUSE_CLICKHOUSE_PORT: ${ANALYTICS_WAREHOUSE_CLICKHOUSE_PORT:-8123}
+      ANALYTICS_WAREHOUSE_CLICKHOUSE_DATABASE: ${ANALYTICS_WAREHOUSE_CLICKHOUSE_DATABASE:-vidyaverse}
+      ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME: ${ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME:-vidyaverse}
+      ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD: ${ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD:-vidyaverse-clickhouse-password}
+      MLOPS_MODEL_ARTIFACT_S3_ENDPOINT_URL: ${MLOPS_MODEL_ARTIFACT_S3_ENDPOINT_URL:-http://minio:9000}
+      MLOPS_MODEL_ARTIFACT_S3_REGION: ${MLOPS_MODEL_ARTIFACT_S3_REGION:-us-east-1}
+      MLOPS_MODEL_ARTIFACT_S3_ACCESS_KEY_ID: ${MLOPS_MODEL_ARTIFACT_S3_ACCESS_KEY_ID:-minioadmin}
+      MLOPS_MODEL_ARTIFACT_S3_SECRET_ACCESS_KEY: ${MLOPS_MODEL_ARTIFACT_S3_SECRET_ACCESS_KEY:-minioadmin}
+      MODEL_ARTIFACT_BUCKET: ${MODEL_ARTIFACT_BUCKET:-vidyaverse-model-artifacts}
+      METRICS_ENABLED: ${METRICS_ENABLED:-true}
+      METRICS_REQUIRE_AUTH: ${METRICS_REQUIRE_AUTH:-false}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      REQUEST_ID_HEADER_NAME: ${REQUEST_ID_HEADER_NAME:-X-Request-ID}
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).read()\"",
+        ]
+      interval: 20s
+      timeout: 8s
+      retries: 12
+      start_period: 60s
     ports:
-      - "9090:9090"
+      - "8000:8000"
+    volumes:
+      - backend_storage:/home/app/web/storage
+      - backend_models:/home/app/web/models
+
+  worker:
+    image: vidyaverse-backend:latest
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    env_file:
+      - ./backend/.env
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-local}
+      MONGODB_URL: ${MONGODB_URL:-mongodb://vidyaverse:vidyaverse-dev-password@mongo:27017/vidyaverse?authSource=admin&replicaSet=rs0}
+      MONGODB_DB_NAME: ${MONGODB_DB_NAME:-vidyaverse}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED: ${ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED:-true}
+      ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST: ${ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST:-clickhouse}
+      ANALYTICS_WAREHOUSE_CLICKHOUSE_PORT: ${ANALYTICS_WAREHOUSE_CLICKHOUSE_PORT:-8123}
+      ANALYTICS_WAREHOUSE_CLICKHOUSE_DATABASE: ${ANALYTICS_WAREHOUSE_CLICKHOUSE_DATABASE:-vidyaverse}
+      ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME: ${ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME:-vidyaverse}
+      ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD: ${ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD:-vidyaverse-clickhouse-password}
+      MLOPS_MODEL_ARTIFACT_S3_ENDPOINT_URL: ${MLOPS_MODEL_ARTIFACT_S3_ENDPOINT_URL:-http://minio:9000}
+      MLOPS_MODEL_ARTIFACT_S3_REGION: ${MLOPS_MODEL_ARTIFACT_S3_REGION:-us-east-1}
+      MLOPS_MODEL_ARTIFACT_S3_ACCESS_KEY_ID: ${MLOPS_MODEL_ARTIFACT_S3_ACCESS_KEY_ID:-minioadmin}
+      MLOPS_MODEL_ARTIFACT_S3_SECRET_ACCESS_KEY: ${MLOPS_MODEL_ARTIFACT_S3_SECRET_ACCESS_KEY:-minioadmin}
+      MODEL_ARTIFACT_BUCKET: ${MODEL_ARTIFACT_BUCKET:-vidyaverse-model-artifacts}
+      METRICS_ENABLED: ${METRICS_ENABLED:-true}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      - backend_storage:/home/app/web/storage
+      - backend_models:/home/app/web/models
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: vidyaverse-frontend:latest
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
+      BACKEND_INTERNAL_URL: ${BACKEND_INTERNAL_URL:-http://backend:8000}
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+
+  mongodb-exporter:
+    image: percona/mongodb_exporter:0.40
+    restart: unless-stopped
+    command:
+      - "--mongodb.uri=mongodb://${MONGO_INITDB_ROOT_USERNAME:-vidyaverse}:${MONGO_INITDB_ROOT_PASSWORD:-vidyaverse-dev-password}@mongo:27017/admin?authSource=admin&replicaSet=rs0"
+      - "--collect-all"
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.62.0
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:v2.51.2
+    restart: unless-stopped
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=15d"
     volumes:
       - ./ops/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./ops/alerts/prometheus-rules.yml:/etc/prometheus/rules/prometheus-rules.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      backend:
+        condition: service_healthy
+      mongodb-exporter:
+        condition: service_started
+      redis-exporter:
+        condition: service_started
+    ports:
+      - "9090:9090"
 
   grafana:
-    image: grafana/grafana:11.2.0
+    image: grafana/grafana:10.4.7
     restart: unless-stopped
-    ports:
-      - "3001:3000"
     environment:
-      GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost:3001}
     volumes:
       - grafana_data:/var/lib/grafana
       - ./ops/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./ops/grafana:/var/lib/grafana/dashboards:ro
+    depends_on:
+      prometheus:
+        condition: service_started
+    ports:
+      - "3001:3000"
 
 volumes:
   mongo_data:
+  mongo_config:
   redis_data:
   clickhouse_data:
   minio_data:
+  backend_storage:
+  backend_models:
+  prometheus_data:
   grafana_data:

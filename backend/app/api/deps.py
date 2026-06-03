@@ -1,3 +1,5 @@
+import ipaddress
+
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
@@ -8,6 +10,8 @@ from app.core.email_policy import is_corporate_email
 from app.models.user import User
 from app.schemas.user import TokenData
 from app.services.admin_identity_service import is_reserved_admin_email
+from app.services.auth_security_service import auth_security_service
+from app.services.session_security_service import session_security_service
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/login", auto_error=False)
 
@@ -71,7 +75,7 @@ async def get_current_user(
                 scopes = [str(scope) for scope in raw_scopes if scope]
             else:
                 scopes = []
-            token_data = TokenData(id=user_id, scopes=scopes)
+            token_data = TokenData(id=user_id, scopes=scopes, session_id=str(payload.get("jti") or "").strip() or None)
             break
         except JWTError:
             continue
@@ -86,8 +90,20 @@ async def get_current_user(
     
     if user is None:
         raise credentials_exception
+    session_decision = await session_security_service.validate_session(
+        user=user,
+        session_id=token_data.session_id,
+        request=request,
+    )
+    if not session_decision.allowed:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session is invalid or expired",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     # Attach token scopes for downstream dependencies.
     setattr(user, "_token_scopes", list(token_data.scopes or []))
+    setattr(user, "_token_session_id", token_data.session_id)
     return user
 
 async def get_current_active_user(
@@ -97,14 +113,86 @@ async def get_current_active_user(
         raise HTTPException(status_code=400, detail="Inactive user")
     return current_user
 
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for") or ""
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    if request.client and request.client.host:
+        return str(request.client.host)
+    return "unknown"
+
+
+def _admin_ip_allowed(ip_address: str) -> bool:
+    configured = list(settings.ADMIN_ALLOWED_IPS or [])
+    if not configured:
+        return True
+    try:
+        client_ip = ipaddress.ip_address(ip_address)
+    except Exception:
+        return False
+    for entry in configured:
+        candidate = str(entry or "").strip()
+        if not candidate:
+            continue
+        try:
+            if "/" in candidate:
+                if client_ip in ipaddress.ip_network(candidate, strict=False):
+                    return True
+            elif client_ip == ipaddress.ip_address(candidate):
+                return True
+        except Exception:
+            continue
+    return False
+
+
 async def get_current_admin_user(
+    request: Request,
     current_user: User = Depends(get_current_user),
 ) -> User:
+    ip_address = _client_ip(request)
+    user_agent = request.headers.get("user-agent")
     scopes = set(getattr(current_user, "_token_scopes", []) or [])
-    if "admin" not in scopes and not current_user.is_admin:
+    authorized = "admin" in scopes or bool(current_user.is_admin)
+    reserved_identity = is_reserved_admin_email(getattr(current_user, "email", ""))
+    allowlisted = _admin_ip_allowed(ip_address)
+    if not authorized or not reserved_identity:
+        await auth_security_service.audit_event(
+            event_type="admin.access_denied",
+            email=getattr(current_user, "email", None),
+            account_type=getattr(current_user, "account_type", None),
+            purpose="admin",
+            success=False,
+            reason="not_enough_privileges",
+            ip_address=ip_address,
+            user_agent=user_agent,
+            user_id=current_user.id,
+        )
         raise HTTPException(status_code=403, detail="Not enough privileges")
-    if not is_reserved_admin_email(getattr(current_user, "email", "")):
-        raise HTTPException(status_code=403, detail="Not enough privileges")
+    if not allowlisted:
+        await auth_security_service.audit_event(
+            event_type="admin.access_denied",
+            email=getattr(current_user, "email", None),
+            account_type=getattr(current_user, "account_type", None),
+            purpose="admin",
+            success=False,
+            reason="ip_not_allowed",
+            ip_address=ip_address,
+            user_agent=user_agent,
+            user_id=current_user.id,
+        )
+        raise HTTPException(status_code=403, detail="Admin IP is not allowed")
+    await auth_security_service.audit_event(
+        event_type="admin.api_call",
+        email=getattr(current_user, "email", None),
+        account_type=getattr(current_user, "account_type", None),
+        purpose="admin",
+        success=True,
+        reason=request.url.path,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        user_id=current_user.id,
+    )
     return current_user
 
 

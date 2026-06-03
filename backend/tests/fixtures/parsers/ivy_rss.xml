@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <item>
+      <title>Applications open for summer research fellowship</title>
+      <link>https://news.example.edu/research-fellowship</link>
+      <description>
+        Students can apply for the summer research fellowship. Applications close: June 30, 2026.
+      </description>
+      <pubDate>Mon, 01 Jun 2026 10:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>

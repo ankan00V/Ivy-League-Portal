@@ -9,5 +9,17 @@ scrape_configs:
     metrics_path: /metrics
     static_configs:
       - targets:
-          - host.docker.internal:8000
           - backend:8000
+          - host.docker.internal:8000
+
+  - job_name: mongodb-exporter
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - mongodb-exporter:9216
+
+  - job_name: redis-exporter
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - redis-exporter:9121

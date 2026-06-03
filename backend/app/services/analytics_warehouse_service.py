@@ -13,6 +13,7 @@ from app.models.analytics_daily_aggregate import AnalyticsDailyAggregate
 from app.models.analytics_funnel_aggregate import AnalyticsFunnelAggregate
 from app.models.feature_store_row import FeatureStoreRow
 from app.models.opportunity_interaction import OpportunityInteraction
+from app.services.interaction_service import funnel_event_type
 from app.models.ranking_request_telemetry import RankingRequestTelemetry
 from app.services.online_feature_service import online_feature_service
 from app.services.warehouse_export_service import warehouse_export_service
@@ -138,6 +139,9 @@ class AnalyticsWarehouseService:
             }
         )
         for event in interactions:
+            action = funnel_event_type(interaction_type=event.interaction_type, event_type=event.event_type)
+            if action is None:
+                continue
             day = _day_key(event.created_at)
             key = (
                 day,
@@ -146,9 +150,6 @@ class AnalyticsWarehouseService:
                 (event.experiment_variant or "none").strip().lower(),
             )
             payload = grouped_interactions[key]
-            action = (event.interaction_type or "view").strip().lower()
-            if action not in {"impression", "view", "click", "apply", "save"}:
-                action = "view"
             payload[action] += 1
             payload["unique_users"].add(str(event.user_id))
 
@@ -253,13 +254,15 @@ class AnalyticsWarehouseService:
             lambda: {"impression": 0, "view": 0, "click": 0, "save": 0, "apply": 0}
         )
         for event in interactions:
+            action = funnel_event_type(interaction_type=event.interaction_type, event_type=event.event_type)
+            if action is None:
+                continue
             key = (
                 _day_key(event.created_at),
                 (event.ranking_mode or "unknown").strip().lower(),
                 (event.experiment_key or "none").strip().lower(),
                 (event.experiment_variant or "none").strip().lower(),
             )
-            action = (event.interaction_type or "view").strip().lower()
             if action in grouped[key]:
                 grouped[key][action] += 1
 
@@ -330,7 +333,7 @@ class AnalyticsWarehouseService:
                     continue
                 key = (first_day, int(delta))
                 activity_by_cohort_day[key].add(user_id)
-                if (row.interaction_type or "").strip().lower() == "apply":
+                if funnel_event_type(interaction_type=row.interaction_type, event_type=row.event_type) == "apply":
                     apply_by_cohort_day[key].add(user_id)
 
         docs: list[AnalyticsCohortAggregate] = []
@@ -381,14 +384,14 @@ class AnalyticsWarehouseService:
         now = utc_now()
         for (user_id, opportunity_id), rows in by_user_opp.items():
             for idx, event in enumerate(rows):
-                if (event.interaction_type or "").strip().lower() != "impression":
+                if funnel_event_type(interaction_type=event.interaction_type, event_type=event.event_type) != "impression":
                     continue
                 labels = {"clicked": 0, "saved": 0, "applied": 0}
                 cutoff = event.created_at + label_window
                 for later in rows[idx + 1 :]:
                     if later.created_at > cutoff:
                         break
-                    action = (later.interaction_type or "").strip().lower()
+                    action = funnel_event_type(interaction_type=later.interaction_type, event_type=later.event_type)
                     if action == "click":
                         labels["clicked"] = 1
                     elif action == "save":

@@ -2,7 +2,7 @@
 
 > AI-powered opportunity intelligence platform that helps students discover, prioritize, and act on internships, research roles, scholarships, and hackathons.
 
-**Last updated:** April 28, 2026  
+**Last updated:** June 3, 2026
 **Status:** Active build, production-readiness gates enabled
 
 ## 1) Executive Summary
@@ -24,14 +24,16 @@ VidyaVerse addresses this with:
 Compared with standard portal architectures, this system adds:
 - **Closed learning loop:** impressions -> clicks/saves/applies -> retrain -> gated promotion
 - **Evidence-driven ranking:** `baseline | semantic | ml | ab` modes with measurable lift
-- **Production security posture:** cookie sessions, CSRF, CSP/Trusted Types, abuse locks, audit logs
+- **Self-growing source network:** discovered sources pass qualification, extraction, probation, trust scoring, and admin review before production promotion
+- **Production security posture:** Redis-backed cookie sessions, CSRF double-submit, CSP/Trusted Types, abuse locks, audit logs
 - **Operational maturity:** CI release gates, incident artifacts, scheduled scorecards, synthetic checks
 - **Privileged governance:** hidden admin control plane with strict single-admin + TOTP
 
 ## 4) Architecture
 ```mermaid
 flowchart LR
-    A["External Sources"] --> B["Scraper Ingestion"]
+    A["External Sources"] --> A1["Source Discovery Trust Gate"]
+    A1 --> B["Scraper Ingestion"]
     B --> C["Dedup + Canonicalization"]
     C --> D[("MongoDB")]
 
@@ -58,7 +60,7 @@ flowchart LR
 | Data | MongoDB, Redis |
 | AI/ML | sentence-transformers, FAISS/NumPy retrieval, learned ranker |
 | Observability/Ops | GitHub Actions, Prometheus metrics, Slack/PagerDuty hooks |
-| Security | HttpOnly session cookies, CSRF middleware, CSP, Trusted Types, auth abuse controls |
+| Security | HttpOnly session cookies, Redis-backed sessions, CSRF double-submit, CSP, Trusted Types, auth abuse controls |
 
 ## 6) Implemented Scope
 ### Product
@@ -76,12 +78,13 @@ flowchart LR
 
 ### Platform
 - MongoDB-first backend architecture + Redis support.
-- Background jobs with retry and dead-letter behavior.
+- Background jobs with retry, dead-letter behavior, bounded concurrency, queue caps, and handler timeouts.
+- Source discovery pipeline with company seeds, user submissions, qualification queues, adaptive extraction, probation, dynamic scraper registration, and health quarantine.
 - Staging integrated E2E framework and release-blocking checks.
 
 ### Security and Governance
-- Cookie-first auth; localStorage token persistence removed.
-- CSRF protection for unsafe requests under cookie auth.
+- Cookie-first auth with Redis-backed server-side session state in production.
+- CSRF origin checks plus double-submit token validation for unsafe requests under cookie auth.
 - Security headers with strict CSP + Trusted Types controls.
 - Auth lockout/audit instrumentation.
 - Hidden admin control plane with TOTP and admin action auditing.
@@ -90,36 +93,37 @@ flowchart LR
 <!-- DATASET_SNAPSHOT:START -->
 
 ## Dataset Size (Verified Snapshot)
-Snapshot date: **May 18, 2026**
+Snapshot date: **May 28, 2026**
 
-- Opportunities: **330**
-- Applications: **0**
-- Opportunity interactions: **15,706**
-- Experiments: **3**
-- Experiment assignments: **300**
-- Ranking model versions: **130**
-- Drift reports: **131**
-- Profiles: **319**
-- Users: **323**
+- Opportunities: **366**
+- Applications: **2**
+- Opportunity interactions: **1,146**
+- Experiments: **2**
+- Experiment assignments: **2**
+- Ranking model versions: **1**
+- Drift reports: **5**
+- Profiles: **4**
+- Users: **5**
 
 Source distribution for opportunities:
-- `freshersworld`: 61
-- `internshala`: 58
-- `indeed_india`: 53
-- `unstop`: 32
-- `linkedin`: 19
-- `ivy_rss`: 15
-- `hackerearth`: 12
-- `ycombinator_jobs`: 12
-- `aicte_internship`: 10
-- `makeintern`: 9
-- `wayup`: 9
-- `devfolio`: 8
-- `devpost`: 8
-- `foundit`: 8
-- `promilo`: 7
-- `hack2skill`: 5
-- `codeforces`: 2
+- `linkedin`: 116
+- `internshala`: 39
+- `ycombinator_jobs`: 36
+- `freshersworld`: 34
+- `hackerearth`: 22
+- `unstop`: 22
+- `ivy_rss`: 13
+- `promilo`: 11
+- `wayup`: 10
+- `aicte_internship`: 9
+- `hirist`: 9
+- `makeintern`: 8
+- `devfolio`: 7
+- `devpost`: 7
+- `foundit`: 6
+- `instahyre`: 6
+- `major_league_hacking`: 5
+- `codeforces`: 4
 - `handshake`: 1
 - `techgig`: 1
 
@@ -169,14 +173,14 @@ Latest drift report: id=`69e32d07` alert=`False` psi=0.030294 max_z=0.069408 not
 <!-- MODEL_VERSION_METADATA:END -->
 
 ### Engineering quality signal
-- Backend test suite: **77 passing tests** (latest local run)
+- Backend test suite: **200 passing tests** (latest local run on June 3, 2026)
 - Frontend lint: **passing**
 - Frontend production build: **passing**
 - Security and release gates: **active in CI**
 
 ## 8) Reliability and Security Posture
 - Session architecture favors HttpOnly cookie trust boundaries.
-- CSRF origin/referer enforcement for unsafe methods.
+- CSRF origin/referer enforcement plus double-submit token validation for unsafe methods.
 - Strict CSP/Trusted Types controls integrated in security headers.
 - Auth abuse lock policy with structured audit events.
 - Production startup guardrails enforce secure host/CORS/CSP/cookie expectations.
@@ -219,9 +223,12 @@ npm run dev
 
 ## 12) Key Configuration Areas
 - Auth/Security: `AUTH_SESSION_COOKIE_*`, `AUTH_COOKIE_ONLY_MODE`, `CSRF_*`, `SECURITY_CSP_*`
+- Session store: `AUTH_SESSION_STORE_ENABLED`, `AUTH_SESSION_REQUIRE_SERVER_STATE`, `AUTH_SESSION_BIND_DEVICE`
+- Job scaling: `JOBS_MAX_CONCURRENCY`, `JOBS_HANDLER_TIMEOUT_SECONDS`, `JOBS_MAX_PENDING_PER_TYPE`
 - Admin bootstrap: `ADMIN_BOOTSTRAP_ENABLED`, `ADMIN_BOOTSTRAP_EMAIL`, `ADMIN_BOOTSTRAP_PASSWORD`, `ADMIN_TOTP_SECRET`
 - MLOps alerts/incidents: `MLOPS_ALERT_SLACK_WEBHOOK_URL`, `MLOPS_ALERT_PAGERDUTY_ROUTING_KEY`, `MLOPS_INCIDENT_DEFAULT_OWNER`
 - Parity gates: `MLOPS_PARITY_*`
+- Source discovery: `DISCOVERY_ENABLED`, `SERPAPI_KEY`, `CLAUDE_API_KEY`, `MAX_LLM_EXTRACTIONS_PER_HOUR`, `MONTHLY_LLM_BUDGET_USD`, `QUALIFICATION_MIN_SCORE`, `TRUST_MIN_SCORE_AUTO_PROMOTE`, `PROBATION_*`, `SOURCE_FETCH_RATE_LIMIT`
 
 Reference templates:
 - `backend/.env.example`
@@ -233,8 +240,22 @@ Reference templates:
 - CI/CD workflows: `.github/workflows`
 - Runbooks: `docs/runbooks`
 - Hidden admin security architecture: `docs/runbooks/hidden-admin-security-architecture.md`
+- Source discovery operations: `docs/runbooks/source-discovery-pipeline.md`
+- Source discovery: `backend/app/models/source_discovery.py`, `backend/app/services/source_discovery.py`, `backend/scripts/bootstrap_company_seeds.py`
+- Data bootstrap: `backend/scripts/bootstrap_opportunities.py`, `backend/scripts/seed_test_data.py`, `backend/scripts/validate_data_health.py`, `backend/scripts/export_dataset_snapshot.py`
 
-## 14) Recruiter / Reviewer Checklist
+## 14) Production Bootstrap Commands
+```bash
+make bootstrap-opportunities
+make seed-test-data
+make validate-data-health
+make dataset-snapshot
+make release-contracts
+```
+
+`bootstrap-opportunities` runs scheduled scrapers, quality scoring, dedup reporting, and embedding rebuild. `seed-test-data` creates staging-only synthetic users, employers, opportunities, experiments, and interaction signal for lower environments.
+
+## 15) Recruiter / Reviewer Checklist
 If you are evaluating engineering depth, inspect:
 - CI gate design and release policy workflows
 - ranking mode architecture and telemetry loop
@@ -242,7 +263,7 @@ If you are evaluating engineering depth, inspect:
 - hidden admin RBAC/TOTP implementation
 - benchmark artifacts and reproducibility scripts
 
-## 15) README Maintenance Policy
+## 16) README Maintenance Policy
 This README is release facing documentation. It should be updated whenever there is a major change to:
 - architecture
 - ML/ranking behavior

@@ -16,6 +16,10 @@ from app.core.metrics import (
     JOBS_SUCCEEDED_TOTAL,
     SCRAPER_RUNS_TOTAL,
     SCRAPER_SOURCE_TOTAL,
+    DISCOVERY_PROBATION_SOURCES,
+    DISCOVERY_SOURCES_DISCOVERED_TOTAL,
+    DISCOVERY_SOURCES_IN_PIPELINE,
+    DISCOVERY_SOURCES_PROMOTED_TOTAL,
 )
 from app.models.background_job import BackgroundJob
 from app.core.time import utc_now
@@ -38,6 +42,7 @@ class JobRunner:
     def __init__(self) -> None:
         self._worker_id = f"api:{random.randint(1000, 9999)}"
         self._task: Optional[asyncio.Task[None]] = None
+        self._inflight: set[asyncio.Task[None]] = set()
         self._stop_event = asyncio.Event()
         self._handlers: dict[str, JobHandler] = {}
 
@@ -55,6 +60,7 @@ class JobRunner:
     ) -> BackgroundJob:
         now = utc_now()
         run_after_value = run_after or now
+        max_pending = max(0, int(settings.JOBS_MAX_PENDING_PER_TYPE))
         if dedupe_key:
             existing = await BackgroundJob.find_one(
                 BackgroundJob.dedupe_key == dedupe_key,
@@ -62,6 +68,13 @@ class JobRunner:
             )
             if existing:
                 return existing
+        if max_pending > 0:
+            collection = _get_collection(BackgroundJob)
+            pending_count = await collection.count_documents(
+                {"job_type": job_type, "status": {"$in": ["pending", "running", "retry"]}}
+            )
+            if int(pending_count) >= max_pending:
+                raise RuntimeError(f"job_queue_full:{job_type}:{pending_count}/{max_pending}")
 
         job = BackgroundJob(
             job_type=job_type,
@@ -181,8 +194,11 @@ class JobRunner:
             return
 
         try:
-            result = await handler(job.payload or {})
+            timeout_seconds = max(0.1, float(settings.JOBS_HANDLER_TIMEOUT_SECONDS))
+            result = await asyncio.wait_for(handler(job.payload or {}), timeout=timeout_seconds)
             await self._mark_success(job, result=result)
+        except asyncio.TimeoutError:
+            await self._mark_failure(job, error=f"job_timeout:{settings.JOBS_HANDLER_TIMEOUT_SECONDS}s")
         except Exception as exc:
             await self._mark_failure(job, error=str(exc))
 
@@ -190,11 +206,17 @@ class JobRunner:
         poll = max(0.2, float(settings.JOBS_POLL_INTERVAL_SECONDS))
         while not self._stop_event.is_set():
             try:
+                max_concurrency = max(1, int(settings.JOBS_MAX_CONCURRENCY))
+                if len(self._inflight) >= max_concurrency:
+                    await asyncio.sleep(poll)
+                    continue
                 job = await self._claim_next()
                 if job is None:
                     await asyncio.sleep(poll)
                     continue
-                await self._run_job(job)
+                task = asyncio.create_task(self._run_job(job))
+                self._inflight.add(task)
+                task.add_done_callback(self._inflight.discard)
             except asyncio.CancelledError:
                 break
             except Exception:
@@ -218,6 +240,9 @@ class JobRunner:
         except Exception:
             pass
         self._task = None
+        if self._inflight:
+            await asyncio.gather(*list(self._inflight), return_exceptions=True)
+            self._inflight.clear()
 
 
 job_runner = JobRunner()
@@ -243,6 +268,118 @@ async def _job_scraper(_: dict[str, Any]) -> dict[str, Any]:
     if status == "failed":
         raise RuntimeError("scraper_failed")
     return report
+
+
+async def _job_scraper_recover_unhealthy(_: dict[str, Any]) -> dict[str, Any]:
+    from app.services.scraper import run_scheduled_scrapers
+    from app.services.scraper_health_service import scraper_health_service
+
+    unhealthy = await scraper_health_service.unhealthy_sources()
+    if not unhealthy:
+        return {"status": "skipped", "reason": "all_sources_green", "sources": []}
+
+    report = await run_scheduled_scrapers(force=True)
+    red_24h = await scraper_health_service.red_sources_for_24h()
+    alert_result: dict[str, Any] | None = None
+    if red_24h:
+        alert_result = await _send_scraper_health_alert(red_24h)
+    return {
+        "status": "ran",
+        "target_sources": [str(row.get("source") or "unknown") for row in unhealthy],
+        "red_sources_24h": [str(row.get("source") or "unknown") for row in red_24h],
+        "alert": alert_result,
+        "scraper_report": report,
+    }
+
+
+async def _send_scraper_health_alert(red_sources: list[dict[str, Any]]) -> dict[str, Any]:
+    import requests
+
+    payload = {
+        "event": "scraper.health.red_24h",
+        "reported_at": utc_now().isoformat(),
+        "sources": red_sources,
+    }
+    webhook_url = (settings.MLOPS_ALERT_WEBHOOK_URL or "").strip()
+    slack_url = (settings.MLOPS_ALERT_SLACK_WEBHOOK_URL or "").strip()
+    timeout = max(1.0, float(settings.MLOPS_ALERT_WEBHOOK_TIMEOUT_SECONDS))
+    sent_channels: list[str] = []
+    errors: dict[str, str] = {}
+
+    if webhook_url:
+        try:
+            response = await asyncio.to_thread(requests.post, webhook_url, json=payload, timeout=timeout)
+            response.raise_for_status()
+            sent_channels.append("webhook")
+        except Exception as exc:
+            errors["webhook"] = str(exc)
+
+    if slack_url:
+        try:
+            response = await asyncio.to_thread(
+                requests.post,
+                slack_url,
+                json={
+                    "text": "VidyaVerse scraper health alert",
+                    "blocks": [
+                        {
+                            "type": "header",
+                            "text": {"type": "plain_text", "text": "VidyaVerse scraper health alert"},
+                        },
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": "\n".join(
+                                    f"*{row.get('source')}* health={row.get('health_score')} "
+                                    f"stale={row.get('staleness_hours')}h"
+                                    for row in red_sources
+                                ),
+                            },
+                        },
+                    ],
+                },
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            sent_channels.append("slack")
+        except Exception as exc:
+            errors["slack"] = str(exc)
+
+    if not sent_channels:
+        print(f"[ScraperHealthAlert] {payload}")
+
+    return {
+        "status": "sent" if sent_channels else "logged",
+        "sent_channels": sent_channels,
+        "errors": errors,
+    }
+
+
+async def _job_opportunity_quality(payload: dict[str, Any]) -> dict[str, Any]:
+    from app.services.opportunity_quality_service import opportunity_quality_scorer
+
+    limit = payload.get("limit")
+    return await opportunity_quality_scorer.run_quality_pipeline(
+        stale_days=int(payload.get("stale_days") or 7),
+        limit=int(limit) if limit is not None else None,
+    )
+
+
+async def _job_opportunities_dedup_scan(payload: dict[str, Any]) -> dict[str, Any]:
+    from app.services.duplicate_detector import duplicate_detector
+
+    return await duplicate_detector.scan_existing(
+        limit=int(payload.get("limit") or 1000),
+        execute=bool(payload.get("execute") or False),
+        mark_duplicate_closed=bool(payload.get("mark_duplicate_closed") or False),
+    )
+
+
+async def _job_embeddings_rebuild(payload: dict[str, Any]) -> dict[str, Any]:
+    from app.services.embedding_pipeline import embedding_pipeline
+
+    return await embedding_pipeline.rebuild_vector_index_if_stale(force=bool(payload.get("force") or False))
 
 
 async def _job_mlops_retrain(payload: dict[str, Any]) -> dict[str, Any]:
@@ -360,6 +497,36 @@ async def _job_analytics_warehouse_rebuild(payload: dict[str, Any]) -> dict[str,
     )
 
 
+async def _job_experiment_graduation(payload: dict[str, Any]) -> dict[str, Any]:
+    from app.models.experiment import Experiment
+    from app.services.experiment_analytics_service import experiment_analytics_service
+
+    days = int(payload.get("days") or 30)
+    traffic_type = str(payload.get("traffic_type") or "real").strip().lower() or "real"
+    experiments = await Experiment.find_many().to_list()
+    eligible = [item for item in experiments if item.status in {"active", "running"}]
+    results: list[dict[str, Any]] = []
+    for experiment in eligible:
+        result = await experiment_analytics_service.maybe_graduate(
+            experiment=experiment,
+            days=days,
+            traffic_type=traffic_type,
+        )
+        results.append(
+            {
+                "experiment_key": experiment.key,
+                "graduated": bool(result.get("graduated")),
+                "reason": result.get("reason"),
+                "winning_variant": result.get("winning_variant"),
+            }
+        )
+    return {
+        "checked": len(eligible),
+        "graduated": len([item for item in results if item.get("graduated")]),
+        "results": results,
+    }
+
+
 async def _job_opportunity_trust_backfill(payload: dict[str, Any]) -> dict[str, Any]:
     from app.services.opportunity_trust_backfill import backfill_opportunity_trust
 
@@ -369,10 +536,120 @@ async def _job_opportunity_trust_backfill(payload: dict[str, Any]) -> dict[str, 
     )
 
 
+async def _refresh_discovery_metrics() -> None:
+    from app.models.source_discovery import DiscoveredSource, SourceStatus
+
+    if DISCOVERY_SOURCES_IN_PIPELINE is not None or DISCOVERY_PROBATION_SOURCES is not None:
+        rows = await DiscoveredSource.find_many().to_list()
+        for status in SourceStatus:
+            count = sum(1 for row in rows if row.status == status)
+            if DISCOVERY_SOURCES_IN_PIPELINE is not None:
+                DISCOVERY_SOURCES_IN_PIPELINE.labels(status=status.value).set(count)
+            if status == SourceStatus.probation and DISCOVERY_PROBATION_SOURCES is not None:
+                DISCOVERY_PROBATION_SOURCES.set(count)
+
+
+async def _job_source_discovery_run(payload: dict[str, Any]) -> dict[str, Any]:
+    from app.services.source_discovery import source_discovery_engine
+
+    summary = await source_discovery_engine.run_discovery(
+        triggered_by=str(payload.get("triggered_by") or "scheduler")
+    )
+    if DISCOVERY_SOURCES_DISCOVERED_TOTAL is not None and summary.urls_discovered:
+        DISCOVERY_SOURCES_DISCOVERED_TOTAL.inc(summary.urls_discovered)
+    await _refresh_discovery_metrics()
+    return summary.model_dump(mode="json")
+
+
+async def _job_source_qualification_batch(payload: dict[str, Any]) -> dict[str, Any]:
+    from app.services.source_discovery import source_qualification_service
+
+    result = await source_qualification_service.process_batch(max_items=int(payload.get("max_items") or 50))
+    await _refresh_discovery_metrics()
+    return result
+
+
+async def _job_source_extraction_batch(payload: dict[str, Any]) -> dict[str, Any]:
+    from app.services.source_discovery import adaptive_extraction_service
+
+    result = await adaptive_extraction_service.process_batch(max_items=int(payload.get("max_items") or 20))
+    await _refresh_discovery_metrics()
+    return result
+
+
+async def _job_probation_scrape_run(payload: dict[str, Any]) -> dict[str, Any]:
+    from app.models.source_discovery import DiscoveredSource, SourceStatus
+    from app.services.source_discovery import probation_manager
+
+    before = await DiscoveredSource.find_many(DiscoveredSource.status == SourceStatus.promoted).count()
+    result = await probation_manager.run_all_probation_sources(limit=int(payload.get("limit") or 100))
+    after = await DiscoveredSource.find_many(DiscoveredSource.status == SourceStatus.promoted).count()
+    promoted = max(0, after - before)
+    if DISCOVERY_SOURCES_PROMOTED_TOTAL is not None and promoted:
+        DISCOVERY_SOURCES_PROMOTED_TOTAL.inc(promoted)
+    await _refresh_discovery_metrics()
+    return {**result, "promoted": promoted}
+
+
+async def _job_source_health_monitor(_: dict[str, Any]) -> dict[str, Any]:
+    from app.services.source_discovery import source_health_monitor
+
+    result = await source_health_monitor.run()
+    await _refresh_discovery_metrics()
+    return result
+
+
+async def _job_company_seed_careers_finder(payload: dict[str, Any]) -> dict[str, Any]:
+    from app.services.source_discovery import source_discovery_engine
+
+    result = await source_discovery_engine.enqueue_known_seed_sources(limit=int(payload.get("limit") or 50))
+    if DISCOVERY_SOURCES_DISCOVERED_TOTAL is not None and result.get("queued"):
+        DISCOVERY_SOURCES_DISCOVERED_TOTAL.inc(int(result["queued"]))
+    await _refresh_discovery_metrics()
+    return result
+
+
+async def _job_trust_score_recompute(payload: dict[str, Any]) -> dict[str, Any]:
+    from app.models.source_discovery import DiscoveredSource, SourceStatus
+    from app.services.source_discovery import trust_scoring_engine
+
+    rows = await DiscoveredSource.find_many(
+        DiscoveredSource.status == SourceStatus.probation
+    ).limit(int(payload.get("limit") or 500)).to_list()
+    for row in rows:
+        await trust_scoring_engine.score_source(row.id)
+    await _refresh_discovery_metrics()
+    return {"processed": len(rows)}
+
+
+async def _job_opportunity_status_refresh(payload: dict[str, Any]) -> dict[str, Any]:
+    from app.services.opportunity_status_service import opportunity_status_service
+
+    result = await opportunity_status_service.refresh(
+        limit=int(payload.get("limit") or 2000),
+        check_liveness=bool(payload.get("check_liveness") or False),
+        liveness_limit=int(payload.get("liveness_limit") or 50),
+    )
+    return result.model_dump()
+
+
 def register_default_jobs() -> None:
     job_runner.register("scraper.run", _job_scraper)
+    job_runner.register("scraper.recover_unhealthy", _job_scraper_recover_unhealthy)
+    job_runner.register("opportunities.quality_pipeline", _job_opportunity_quality)
+    job_runner.register("opportunities.dedup_scan", _job_opportunities_dedup_scan)
+    job_runner.register("embeddings.rebuild", _job_embeddings_rebuild)
     job_runner.register("mlops.retrain", _job_mlops_retrain)
     job_runner.register("mlops.drift", _job_mlops_drift)
     job_runner.register("mlops.alert", _job_mlops_alert)
     job_runner.register("analytics.warehouse.rebuild", _job_analytics_warehouse_rebuild)
+    job_runner.register("experiments.graduation", _job_experiment_graduation)
     job_runner.register("opportunities.trust_backfill", _job_opportunity_trust_backfill)
+    job_runner.register("opportunities.status_refresh", _job_opportunity_status_refresh)
+    job_runner.register("source_discovery_run", _job_source_discovery_run)
+    job_runner.register("source_qualification_batch", _job_source_qualification_batch)
+    job_runner.register("source_extraction_batch", _job_source_extraction_batch)
+    job_runner.register("probation_scrape_run", _job_probation_scrape_run)
+    job_runner.register("source_health_monitor", _job_source_health_monitor)
+    job_runner.register("company_seed_careers_finder", _job_company_seed_careers_finder)
+    job_runner.register("trust_score_recompute", _job_trust_score_recompute)

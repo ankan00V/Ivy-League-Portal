@@ -71,6 +71,7 @@ TRUSTED_HOST_KEYWORDS = {
     "instahyre.com",
     "hirist.tech",
     "cuvette.tech",
+    "greenhouse.io",
 }
 
 SOURCE_HOST_ALLOWLISTS: dict[str, set[str]] = {
@@ -94,6 +95,7 @@ SOURCE_HOST_ALLOWLISTS: dict[str, set[str]] = {
     "cuvette": {"cuvette.tech"},
     "aicte_internship": {"aicte-india.org", "internship.aicte-india.org"},
     "handshake": {"joinhandshake.com", "handshake.com"},
+    "greenhouse": {"greenhouse.io", "boards.greenhouse.io", "job-boards.greenhouse.io"},
 }
 
 HIGH_RISK_SOURCE_KEYWORDS = {

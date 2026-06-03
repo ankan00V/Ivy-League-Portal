@@ -21,6 +21,7 @@ def create_access_token(
     *,
     expires_delta: Optional[timedelta] = None,
     scopes: Optional[list[str]] = None,
+    extra_claims: Optional[dict[str, Any]] = None,
 ) -> str:
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta
@@ -30,5 +31,10 @@ def create_access_token(
     to_encode: dict[str, Any] = {"exp": expire, "sub": str(subject)}
     if scopes:
         to_encode["scopes"] = list({str(scope) for scope in scopes if scope})
+    if extra_claims:
+        reserved = {"exp", "sub", "scopes"}
+        for key, value in extra_claims.items():
+            if key not in reserved:
+                to_encode[str(key)] = value
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return encoded_jwt
