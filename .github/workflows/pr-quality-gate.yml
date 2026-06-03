@@ -80,12 +80,13 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Install Playwright browser
-        run: npx playwright install --only-shell chromium
+      - name: Verify system Chrome
+        run: google-chrome --version
 
       - name: Run Playwright smoke tests
         env:
           CI: "true"
+          PLAYWRIGHT_USE_SYSTEM_CHROME: "1"
         run: npm run e2e -- --project=chromium
 
       - name: Upload Playwright report
