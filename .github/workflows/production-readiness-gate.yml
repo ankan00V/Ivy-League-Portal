@@ -165,7 +165,7 @@ jobs:
         run: npm run build
 
       - name: Install Playwright Chromium
-        run: npx playwright install chromium
+        run: npx playwright install --only-shell chromium
 
       - name: Validate browser security headers
         run: npm run e2e -- --project=chromium --grep "Browser security headers|Profile editing and university selection persist"
