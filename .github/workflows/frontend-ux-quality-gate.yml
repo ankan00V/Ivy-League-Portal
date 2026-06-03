@@ -29,10 +29,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install Playwright browser
-        run: npx playwright install --with-deps chromium
+      - name: Verify system Chrome
+        run: google-chrome --version
 
       - name: Run UX quality suite
         env:
           CI: "true"
+          PLAYWRIGHT_USE_SYSTEM_CHROME: "1"
         run: npm run e2e:ux -- --reporter=list

@@ -227,6 +227,40 @@ class TestOpportunitiesAPI(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(context.exception.status_code, 400)
         self.assertIn("traffic_type must be 'real'", str(context.exception.detail))
 
+    async def test_log_opportunity_interactions_batch_validates_before_writing(self) -> None:
+        user = DummyUser()
+        payload = opportunities_endpoint.InteractionBatchCreate(
+            events=[
+                opportunities_endpoint.InteractionEventCreate(
+                    opportunity_id=PydanticObjectId("64b64b64b64b64b64b64b650"),
+                    interaction_type="click",
+                    ranking_mode="semantic",
+                    experiment_key="ranking_mode",
+                    experiment_variant="semantic",
+                    rank_position=1,
+                ),
+                opportunities_endpoint.InteractionEventCreate(
+                    opportunity_id=PydanticObjectId("64b64b64b64b64b64b64b651"),
+                    interaction_type="shortlisted",
+                    ranking_mode="semantic",
+                    experiment_key="ranking_mode",
+                    experiment_variant="semantic",
+                    rank_position=2,
+                ),
+            ]
+        )
+
+        with (
+            patch.object(opportunities_endpoint.Opportunity, "get", new=AsyncMock(return_value=object())),
+            patch.object(opportunities_endpoint.interaction_service, "log_event", new=AsyncMock()) as log_event,
+        ):
+            with self.assertRaises(opportunities_endpoint.HTTPException) as context:
+                await opportunities_endpoint.log_opportunity_interactions_batch(payload=payload, current_user=user)
+
+        self.assertEqual(context.exception.status_code, 400)
+        self.assertEqual(context.exception.detail, "Invalid interaction_type")
+        log_event.assert_not_awaited()
+
     def test_recommended_response_includes_trust_metadata(self) -> None:
         opportunity = type(
             "OpportunityRow",

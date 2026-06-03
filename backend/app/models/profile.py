@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Optional
 from beanie import Document, PydanticObjectId
 from pydantic import Field, field_validator
+from pymongo import IndexModel
 
 class Profile(Document):
     user_id: PydanticObjectId = Field(json_schema_extra={"unique": True})
@@ -27,9 +28,16 @@ class Profile(Document):
     hiring_for: Optional[str] = None  # myself | others
     goals: list[str] = Field(default_factory=list)
     career_intent: list[str] = Field(default_factory=list)
+    domains_of_interest: list[str] = Field(default_factory=list)
     preferred_roles: Optional[str] = None
     preferred_locations: Optional[str] = None
+    preferred_work_mode: Optional[str] = None
     work_preferences: list[str] = Field(default_factory=list)
+    expected_stipend_range: Optional[str] = None
+    expected_stipend_min: Optional[int] = Field(default=None, ge=0)
+    expected_stipend_max: Optional[int] = Field(default=None, ge=0)
+    graduation_year: Optional[int] = None
+    opportunity_types: list[str] = Field(default_factory=list)
     pan_india: bool = False
     prefer_wfh: bool = False
     consent_data_processing: bool = False
@@ -66,9 +74,25 @@ class Profile(Document):
     resume_content_type: Optional[str] = None
     resume_storage_key: Optional[str] = None
     resume_uploaded_at: Optional[datetime] = None
+    cold_start_quality_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    cold_start_strategy: Optional[str] = None
+    preference_embedding: list[float] = Field(default_factory=list)
+    preference_embedding_model_version: Optional[str] = None
+    preference_embedding_updated_at: Optional[datetime] = None
+    persona_cluster_id: Optional[int] = Field(default=None, ge=0)
+    taste_calibration_count: int = Field(default=0, ge=0)
     incoscore: float = 0.0
 
-    @field_validator("goals", "career_intent", "work_preferences", "interest_graph", "hobbies", mode="before")
+    @field_validator(
+        "goals",
+        "career_intent",
+        "domains_of_interest",
+        "work_preferences",
+        "opportunity_types",
+        "interest_graph",
+        "hobbies",
+        mode="before",
+    )
     @classmethod
     def normalize_optional_string_list(cls, value):
         if value is None:
@@ -90,4 +114,12 @@ class Profile(Document):
 
     class Settings:
         name = "profiles"
-        indexes = ["user_id"]
+        indexes = [
+            "user_id",
+            "preferred_work_mode",
+            "graduation_year",
+            "persona_cluster_id",
+            "preference_embedding_model_version",
+            IndexModel([("account_type", 1), ("persona_cluster_id", 1)]),
+            IndexModel([("cold_start_strategy", 1), ("cold_start_quality_score", -1)]),
+        ]

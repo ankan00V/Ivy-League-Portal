@@ -119,7 +119,7 @@ def _check_clickhouse(*, require_managed: bool) -> dict[str, Any]:
 
 
 def _artifact_bucket_key() -> tuple[str | None, str | None]:
-    explicit_bucket = (os.environ.get("MODEL_ARTIFACT_BUCKET") or "").strip()
+    explicit_bucket = (os.environ.get("MODEL_ARTIFACT_BUCKET") or settings.MODEL_ARTIFACT_BUCKET or "").strip()
     if explicit_bucket:
         return explicit_bucket, None
     uri = model_artifact_service.resolve_learned_ranker_uri()

@@ -11,6 +11,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.api.api_v1.endpoints import auth as auth_endpoint
+from app.api import deps
 from app.services import totp_service
 
 
@@ -184,6 +185,57 @@ class TestAdminAuthControls(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.delivery, "debug")
         self.assertEqual(result.cooldown_seconds, 60)
         self.assertEqual(result.debug_otp, "123456")
+
+    async def test_admin_dependency_allows_configured_cidr_and_audits(self) -> None:
+        user = SimpleNamespace(
+            id="64b64b64b64b64b64b64b64b",
+            email="ghoshankan005@gmail.com",
+            account_type="candidate",
+            is_admin=True,
+            _token_scopes=["admin"],
+        )
+        request = SimpleNamespace(
+            headers={"user-agent": "test-agent"},
+            client=SimpleNamespace(host="10.10.2.4"),
+            url=SimpleNamespace(path="/api/v1/admin/overview"),
+        )
+
+        with (
+            patch.object(deps.settings, "ADMIN_BOOTSTRAP_EMAIL", "ghoshankan005@gmail.com"),
+            patch.object(deps.settings, "ADMIN_ALLOWED_IPS", ["10.10.2.0/24"]),
+            patch.object(deps.auth_security_service, "audit_event", new=AsyncMock()) as audit_event,
+        ):
+            resolved = await deps.get_current_admin_user(request=request, current_user=user)
+
+        self.assertIs(resolved, user)
+        audit_event.assert_awaited()
+        self.assertEqual(audit_event.await_args.kwargs["event_type"], "admin.api_call")
+
+    async def test_admin_dependency_blocks_unallowlisted_ip(self) -> None:
+        user = SimpleNamespace(
+            id="64b64b64b64b64b64b64b64b",
+            email="ghoshankan005@gmail.com",
+            account_type="candidate",
+            is_admin=True,
+            _token_scopes=["admin"],
+        )
+        request = SimpleNamespace(
+            headers={"user-agent": "test-agent"},
+            client=SimpleNamespace(host="192.168.1.5"),
+            url=SimpleNamespace(path="/api/v1/admin/overview"),
+        )
+
+        with (
+            patch.object(deps.settings, "ADMIN_BOOTSTRAP_EMAIL", "ghoshankan005@gmail.com"),
+            patch.object(deps.settings, "ADMIN_ALLOWED_IPS", ["10.10.2.0/24"]),
+            patch.object(deps.auth_security_service, "audit_event", new=AsyncMock()) as audit_event,
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                await deps.get_current_admin_user(request=request, current_user=user)
+
+        self.assertEqual(raised.exception.status_code, 403)
+        self.assertEqual(raised.exception.detail, "Admin IP is not allowed")
+        self.assertEqual(audit_event.await_args.kwargs["reason"], "ip_not_allowed")
 
 
 if __name__ == "__main__":

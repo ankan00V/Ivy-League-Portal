@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import json
 import logging
 import re
 import time
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
-from typing import Any, Iterable
+from typing import Any, Iterable, TypeAlias
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 import xml.etree.ElementTree as ET
 
@@ -25,6 +27,16 @@ from app.core.time import utc_now
 from app.services.opportunity_trust import apply_trust_assessment, apply_trust_assessment_preserving_review, assess_opportunity_trust
 
 logger = logging.getLogger(__name__)
+
+OpportunityDict: TypeAlias = dict[str, Any]
+
+
+@dataclass
+class ParseResult:
+    item: OpportunityDict | None
+    confidence: float
+    missing_fields: list[str] = field(default_factory=list)
+    parse_errors: list[str] = field(default_factory=list)
 
 
 IVY_LEAGUE_FEEDS: list[tuple[str, str]] = [
@@ -86,6 +98,8 @@ INDEED_INDIA_LISTINGS: list[tuple[str, str]] = [
         "Job",
     ),
 ]
+
+GREENHOUSE_DEFAULT_BOARD_TOKENS = ["databricks", "stripe", "airbnb"]
 
 GENERIC_PORTAL_LISTINGS: list[dict[str, Any]] = [
     {
@@ -364,6 +378,19 @@ GENERIC_NON_OPPORTUNITY_ANCHORS = {
 }
 
 TRACKING_QUERY_KEYS = {
+    "_hsenc",
+    "_hsmi",
+    "campaignid",
+    "clickid",
+    "fbclid",
+    "gclid",
+    "gh_jid",
+    "igshid",
+    "li_fat_id",
+    "mc_cid",
+    "mc_eid",
+    "mkt_tok",
+    "msclkid",
     "utm_source",
     "utm_medium",
     "utm_campaign",
@@ -374,7 +401,11 @@ TRACKING_QUERY_KEYS = {
     "source",
     "src",
     "trk",
+    "trkinfo",
     "tracking",
+    "trackingid",
+    "session",
+    "sessionid",
 }
 
 ORGANIZATION_SUFFIX_TOKENS = {
@@ -421,6 +452,29 @@ BATCH_PATTERNS = [
     r"\bbatch(?:es)?\s*(?:of)?\s*(20\d{2}(?:\s*(?:,|/|or|and)\s*20\d{2})*)\b",
 ]
 
+PARSE_COMPLETENESS_FIELDS = [
+    "title",
+    "company",
+    "location",
+    "work_mode",
+    "stipend",
+    "duration",
+    "eligibility",
+    "apply_url",
+    "deadline",
+    "posted_date",
+    "description",
+    "tags",
+    "source_id",
+]
+
+FIELD_ALIASES = {
+    "company": "university",
+    "apply_url": "url",
+    "posted_date": "created_at",
+    "duration": "duration_months",
+}
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -450,10 +504,14 @@ def _collapse_whitespace(value: str | None) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
-def _parse_datetime(value: str | None) -> datetime | None:
+def _parse_datetime(value: str | datetime | None) -> datetime | None:
     if not value:
         return None
-    value = value.strip()
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+    value = str(value).strip()
     if not value:
         return None
     try:
@@ -478,6 +536,23 @@ def _parse_datetime(value: str | None) -> datetime | None:
     return None
 
 
+def _hash_key(value: str | None) -> str:
+    normalized = _collapse_whitespace(value).lower()
+    if not normalized:
+        return ""
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _query_key_is_tracking(key: str) -> bool:
+    normalized = key.strip().lower()
+    return (
+        normalized in TRACKING_QUERY_KEYS
+        or normalized.startswith("utm_")
+        or normalized.endswith("_session_id")
+        or normalized.endswith("_tracking_id")
+    )
+
+
 def _canonicalize_url(value: str | None) -> str:
     url = (value or "").strip()
     if not url:
@@ -487,15 +562,101 @@ def _canonicalize_url(value: str | None) -> str:
         scheme = parsed.scheme.lower() or "https"
         host = (parsed.netloc or "").lower()
         path = re.sub(r"/+", "/", parsed.path or "/").rstrip("/") or "/"
+
+        if "linkedin.com" in host:
+            job_id = ""
+            patterns = [
+                r"/jobs/view/(\d+)",
+                r"/jobs/view/[^/?#]*?(\d{6,})(?:$|[/?#])",
+            ]
+            for pattern in patterns:
+                match = re.search(pattern, f"{path}/")
+                if match:
+                    job_id = match.group(1)
+                    break
+            if not job_id:
+                query_values = dict(parse_qsl(parsed.query, keep_blank_values=False))
+                job_id = query_values.get("currentJobId") or query_values.get("jobId") or ""
+            if job_id:
+                return f"https://www.linkedin.com/jobs/view/{job_id}"
+
+        if "internshala.com" in host:
+            normalized_path = path.strip("/")
+            slug = ""
+            detail_match = re.search(r"(?:internship/detail|internships?/detail)/([^/?#]+)", normalized_path)
+            internship_match = re.search(r"(?:internship|internships)/([^/?#]+)", normalized_path)
+            if detail_match:
+                slug = detail_match.group(1)
+            elif internship_match:
+                slug = internship_match.group(1)
+            if slug:
+                return f"https://internshala.com/internship/{slug.strip('/')}"
+
         filtered_query = [
             (key, item)
             for key, item in parse_qsl(parsed.query, keep_blank_values=False)
-            if key.strip().lower() not in TRACKING_QUERY_KEYS
+            if not _query_key_is_tracking(key)
         ]
         query = urlencode(filtered_query, doseq=True)
         return urlunparse((scheme, host, path, "", query, ""))
     except Exception:
         return url
+
+
+def canonicalize_apply_url(value: str | None) -> str:
+    return _canonicalize_url(value)
+
+
+def _record_value(record: dict[str, Any], field_name: str) -> Any:
+    if field_name in record:
+        return record.get(field_name)
+    alias = FIELD_ALIASES.get(field_name)
+    if alias:
+        return record.get(alias)
+    return None
+
+
+def _missing_parse_fields(record: dict[str, Any]) -> list[str]:
+    missing: list[str] = []
+    for field_name in PARSE_COMPLETENESS_FIELDS:
+        value = _record_value(record, field_name)
+        if value is None:
+            missing.append(field_name)
+            continue
+        if isinstance(value, str) and not _collapse_whitespace(value):
+            missing.append(field_name)
+            continue
+        if isinstance(value, list) and not value:
+            missing.append(field_name)
+    return missing
+
+
+def _parse_confidence(record: dict[str, Any], missing_fields: list[str]) -> float:
+    total = max(1, len(PARSE_COMPLETENESS_FIELDS))
+    completeness = (total - len(missing_fields)) / total
+    if not str(record.get("url") or "").startswith(("http://", "https://")):
+        completeness -= 0.15
+    if len(_collapse_whitespace(record.get("description"))) < 40:
+        completeness -= 0.10
+    return round(max(0.0, min(1.0, completeness)), 3)
+
+
+def parse_result_from_record(record: dict[str, Any] | None, parse_errors: list[str] | None = None) -> ParseResult:
+    errors = [str(item) for item in list(parse_errors or []) if str(item).strip()]
+    if not record:
+        return ParseResult(item=None, confidence=0.0, missing_fields=list(PARSE_COMPLETENESS_FIELDS), parse_errors=errors)
+    enriched = _enrich_metadata(dict(record))
+    missing_fields = _missing_parse_fields(enriched)
+    return ParseResult(
+        item=enriched,
+        confidence=_parse_confidence(enriched, missing_fields),
+        missing_fields=missing_fields,
+        parse_errors=errors,
+    )
+
+
+def parse_results_from_records(records: Iterable[dict[str, Any]]) -> list[ParseResult]:
+    return [parse_result_from_record(record) for record in _dedupe_by_url(records)]
 
 
 def _slugify_text(value: str | None) -> str:
@@ -631,6 +792,18 @@ def _enrich_metadata(record: dict[str, Any]) -> dict[str, Any]:
     enriched["normalized_title"] = record.get("normalized_title") or _normalize_opportunity_title(title)
     enriched["normalized_organization"] = record.get("normalized_organization") or _normalize_organization_name(university)
     enriched["canonical_key"] = record.get("canonical_key") or _canonical_key(enriched)
+    enriched["canonical_url_hash"] = record.get("canonical_url_hash") or _hash_key(enriched.get("url"))
+    source_name = _collapse_whitespace(record.get("source")).lower()
+    source_id_text = _collapse_whitespace(record.get("source_id")) or _collapse_whitespace(enriched.get("url"))
+    enriched["source_id"] = record.get("source_id") or _hash_key(f"{source_name}:{source_id_text}")[:24]
+    tcl_parts = [
+        _normalize_organization_name(university),
+        _normalize_opportunity_title(title),
+        _slugify_text(enriched.get("location")),
+    ]
+    enriched["title_company_location_hash"] = record.get("title_company_location_hash") or _hash_key(
+        "::".join(part for part in tcl_parts if part)
+    )
     enriched["duplicate_cluster_key"] = record.get("duplicate_cluster_key") or _duplicate_cluster_key(enriched)
     return enriched
 
@@ -1518,6 +1691,116 @@ class IndeedIndiaScraper:
         return _dedupe_by_url(opportunities)[:max_items]
 
 
+class GreenhouseScraper:
+    def __init__(self, session: requests.Session | None = None) -> None:
+        self.session = session or _build_retry_session()
+        self.headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/json,text/plain,*/*",
+        }
+
+    def _configured_board_tokens(self) -> list[str]:
+        raw_value = (settings.SCRAPER_GREENHOUSE_BOARD_TOKENS or "").strip()
+        if not raw_value:
+            return list(GREENHOUSE_DEFAULT_BOARD_TOKENS)
+        tokens: list[str] = []
+        for token in re.split(r"[\s,]+", raw_value):
+            normalized = token.strip().strip("/").lower()
+            if normalized and normalized not in tokens:
+                tokens.append(normalized)
+        return tokens or list(GREENHOUSE_DEFAULT_BOARD_TOKENS)
+
+    def _job_location(self, job: dict[str, Any]) -> str | None:
+        location = job.get("location")
+        if isinstance(location, dict):
+            value = _collapse_whitespace(str(location.get("name") or ""))
+            return value or None
+        if isinstance(location, str):
+            value = _collapse_whitespace(location)
+            return value or None
+        return None
+
+    def _job_department(self, job: dict[str, Any]) -> str | None:
+        departments = job.get("departments")
+        if not isinstance(departments, list):
+            return None
+        names = [
+            _collapse_whitespace(str(item.get("name") or ""))
+            for item in departments
+            if isinstance(item, dict) and _collapse_whitespace(str(item.get("name") or ""))
+        ]
+        return ", ".join(names[:2]) or None
+
+    def _parse_job(self, board_token: str, job: dict[str, Any]) -> dict[str, Any] | None:
+        title = _collapse_whitespace(str(job.get("title") or ""))
+        url = _canonicalize_url(str(job.get("absolute_url") or ""))
+        if not title or not url:
+            return None
+
+        content = _strip_html(str(job.get("content") or ""))
+        location = self._job_location(job)
+        department = self._job_department(job)
+        description_parts = [
+            content,
+            f"Department: {department}." if department else "",
+            f"Location: {location}." if location else "",
+        ]
+        description = _collapse_whitespace(" ".join(part for part in description_parts if part))
+        company_name = board_token.replace("-", " ").replace("_", " ").title()
+        updated_at = _parse_datetime(str(job.get("updated_at") or ""))
+
+        return {
+            "title": title[:220],
+            "description": (description or f"Greenhouse job listing from {company_name}.")[:700],
+            "url": url,
+            "opportunity_type": _infer_opportunity_type(title, description or "job"),
+            "university": company_name,
+            "location": location,
+            "deadline": updated_at + timedelta(days=45) if updated_at else None,
+            "source": "greenhouse",
+        }
+
+    def fetch_live_opportunities(self, max_items: int = 40) -> list[dict]:
+        opportunities: list[dict] = []
+        errors: list[str] = []
+        board_tokens = self._configured_board_tokens()
+        per_board_limit = max(1, max_items // max(1, len(board_tokens)) + 1)
+
+        for board_token in board_tokens:
+            try:
+                api_url = f"https://boards-api.greenhouse.io/v1/boards/{board_token}/jobs?content=true"
+                response = self.session.get(
+                    api_url,
+                    headers=self.headers,
+                    timeout=settings.SCRAPER_TIMEOUT_SECONDS,
+                )
+                response.raise_for_status()
+                payload = response.json()
+                jobs = payload.get("jobs") if isinstance(payload, dict) else None
+                if not isinstance(jobs, list):
+                    errors.append(f"{board_token}: unexpected Greenhouse response shape")
+                    continue
+                for job in jobs[:per_board_limit]:
+                    if not isinstance(job, dict):
+                        continue
+                    parsed = self._parse_job(board_token, job)
+                    if parsed:
+                        opportunities.append(parsed)
+                    if len(opportunities) >= max_items:
+                        break
+                if len(opportunities) >= max_items:
+                    break
+            except Exception as exc:
+                errors.append(f"{board_token}: {exc}")
+
+        if errors and not opportunities:
+            raise RuntimeError("; ".join(errors))
+        return _dedupe_by_url(opportunities)[:max_items]
+
+
 class GenericOpportunityPortalScraper:
     def __init__(
         self,
@@ -1570,6 +1853,22 @@ class GenericOpportunityPortalScraper:
                 "company_selectors": ["div[class*='company']", "span[class*='company']", "h4"],
                 "location_selectors": ["div[class*='location']", "span[class*='location']", "p"],
                 "meta_selectors": ["div[class*='meta']", "div[class*='details']", "ul"],
+            },
+            "ycombinator_jobs": {
+                "card_selectors": ["div.yc-job-card", "div[class*='job-card']", "article"],
+                "title_selectors": ["a[href*='/jobs/']", "h2", "h3"],
+                "description_selectors": ["div[class*='description']", "p"],
+                "company_selectors": ["span[class*='company']", "div[class*='company']", "h4"],
+                "location_selectors": ["span[class*='location']", "div[class*='location']", "p"],
+                "meta_selectors": ["div[class*='meta']", "span[class*='salary']", "ul", "p"],
+            },
+            "promilo": {
+                "card_selectors": ["div.promilo-job-card", "div[class*='job-card']", "article"],
+                "title_selectors": ["a[href*='/jobs/']", "h2", "h3"],
+                "description_selectors": ["div[class*='description']", "p"],
+                "company_selectors": ["span[class*='company']", "div[class*='company']", "h4"],
+                "location_selectors": ["span[class*='location']", "div[class*='location']", "p"],
+                "meta_selectors": ["div[class*='details']", "div[class*='meta']", "ul", "p"],
             },
             "major_league_hacking": {
                 "card_selectors": ["div.event", "article", "li"],
@@ -1929,6 +2228,7 @@ internshala_scraper = InternshalaScraper()
 hack2skill_scraper = Hack2SkillScraper()
 freshersworld_scraper = FreshersworldScraper()
 indeed_india_scraper = IndeedIndiaScraper()
+greenhouse_scraper = GreenhouseScraper()
 generic_portal_scraper = GenericOpportunityPortalScraper()
 
 _scraper_lock = asyncio.Lock()
@@ -1959,9 +2259,12 @@ def _new_source_report(source: str) -> dict[str, Any]:
     return {
         "source": source,
         "fetched": 0,
+        "parsed": 0,
         "inserted": 0,
         "updated": 0,
         "failed": 0,
+        "deduplicated": 0,
+        "avg_trust_score": None,
         "errors": [],
         "fetch_duration_ms": 0,
         "upsert_duration_ms": 0,
@@ -2010,15 +2313,19 @@ async def _insert_and_broadcast(
     Opportunity,
     Post,
 ) -> dict[str, int]:
+    opportunity_rows = list(opportunities)
     inserted_count = 0
     updated_count = 0
     failed_count = 0
+    trust_scores: list[float] = []
     semantic_threshold = max(0.0, min(1.0, float(settings.SEMANTIC_DEDUP_THRESHOLD)))
 
     normalized_records: list[dict[str, Any]] = []
     seen_urls: set[str] = set()
 
-    for opp_data in opportunities:
+    from app.services.opportunity_quality_service import opportunity_quality_scorer
+
+    for opp_data in opportunity_rows:
         url = (opp_data.get("url") or "").strip()
         if not url or url in seen_urls:
             continue
@@ -2031,8 +2338,19 @@ async def _insert_and_broadcast(
         normalized_payload["deadline"] = _to_naive_utc(opp_data.get("deadline"))
         normalized_payload["domain"] = opp_data.get("domain") or classification["primary_domain"]
         normalized_payload["source"] = opp_data.get("source") or source_name.lower().replace(" ", "_")
-        normalized_payload.update(assess_opportunity_trust(normalized_payload).as_update())
+        assessment = assess_opportunity_trust(normalized_payload)
+        normalized_payload.update(assessment.as_update())
+        trust_scores.append(float(assessment.trust_score))
+        synthetic = type("OpportunityPayload", (), normalized_payload)()
+        quality_updates = opportunity_quality_scorer.normalize_payload(synthetic)
+        normalized_payload.update({key: value for key, value in quality_updates.items() if value is not None})
+        quality_score, quality_missing_fields = opportunity_quality_scorer.score_payload(synthetic, quality_updates)
+        normalized_payload["quality_score"] = quality_score
+        normalized_payload["quality_missing_fields"] = quality_missing_fields
+        normalized_payload["last_quality_run_at"] = _to_naive_utc(utc_now())
         normalized_records.append(normalized_payload)
+
+    parsed_count = len(normalized_records)
 
     if len(normalized_records) > 1:
         from app.services.embedding_service import embedding_service
@@ -2111,17 +2429,29 @@ async def _insert_and_broadcast(
                     "university",
                     "deadline",
                     "source",
+                    "source_id",
                     "domain",
                     "location",
                     "work_mode",
                     "stipend",
+                    "stipend_min",
+                    "stipend_max",
+                    "stipend_currency",
+                    "stipend_period",
                     "eligibility",
                     "batch_years",
                     "ppo_available",
+                    "tags",
+                    "quality_score",
+                    "quality_missing_fields",
+                    "last_quality_run_at",
                     "canonical_key",
+                    "canonical_url_hash",
+                    "title_company_location_hash",
                     "duplicate_cluster_key",
                     "normalized_title",
                     "normalized_organization",
+                    "duration_months",
                 ]:
                     incoming = normalized_payload.get(field)
                     if incoming is None:
@@ -2168,15 +2498,26 @@ async def _insert_and_broadcast(
                     changed = False
                     for field in [
                         "canonical_key",
+                        "canonical_url_hash",
+                        "title_company_location_hash",
                         "duplicate_cluster_key",
                         "normalized_title",
                         "normalized_organization",
                         "location",
                         "work_mode",
                         "stipend",
+                        "stipend_min",
+                        "stipend_max",
+                        "stipend_currency",
+                        "stipend_period",
                         "eligibility",
                         "batch_years",
                         "ppo_available",
+                        "tags",
+                        "quality_score",
+                        "quality_missing_fields",
+                        "last_quality_run_at",
+                        "duration_months",
                     ]:
                         incoming = normalized_payload.get(field)
                         if incoming is None:
@@ -2232,7 +2573,14 @@ async def _insert_and_broadcast(
     if inserted_count or updated_count:
         await opportunity_vector_service.rebuild(force=True)
 
-    return {"inserted": inserted_count, "updated": updated_count, "failed": failed_count}
+    return {
+        "inserted": inserted_count,
+        "updated": updated_count,
+        "failed": failed_count,
+        "parsed": parsed_count,
+        "deduplicated": max(0, len(opportunity_rows) - len(normalized_records)),
+        "avg_trust_score": round(sum(trust_scores) / len(trust_scores), 2) if trust_scores else None,
+    }
 
 
 async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
@@ -2241,7 +2589,7 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
     1) Ivy League feeds
     2) Unstop opportunities
     3) Core Indian opportunity boards (Naukri, Internshala, Hack2Skill,
-       Freshersworld, and a best-effort Indeed India fetch)
+       Freshersworld, Indeed India, and Greenhouse company boards)
     4) Additional student opportunity platforms (jobs, internships, hackathons,
        coding challenges, and global boards).
 
@@ -2322,6 +2670,10 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
                     indeed_india_scraper.fetch_live_opportunities,
                     max(1, settings.SCRAPER_INDEED_MAX_ITEMS),
                 ),
+                asyncio.to_thread(
+                    greenhouse_scraper.fetch_live_opportunities,
+                    max(1, settings.SCRAPER_GREENHOUSE_MAX_ITEMS),
+                ),
                 return_exceptions=True,
             )
             portal_specs: list[tuple[str, str]] = [
@@ -2352,6 +2704,7 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
                 hack2skill_result,
                 freshersworld_result,
                 indeed_india_result,
+                greenhouse_result,
             ) = base_fetch_results
 
             async def _process_source_result(
@@ -2438,6 +2791,12 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
                 result=indeed_india_result,
                 empty_message="No opportunities parsed from Indeed India.",
             )
+            await _process_source_result(
+                source_key="greenhouse",
+                source_label="Greenhouse",
+                result=greenhouse_result,
+                empty_message="No opportunities parsed from Greenhouse.",
+            )
 
             for (source_name, source_label), source_result in zip(portal_specs, portal_fetch_results):
                 await _process_source_result(
@@ -2446,6 +2805,86 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
                     result=source_result,
                     empty_message=f"No opportunities parsed from {source_label}.",
                 )
+
+            try:
+                from app.services.source_discovery import TemplateDrivenScraper, scraper_registry
+
+                dynamic_registrations = await scraper_registry.all_active()
+                dynamic_scraper = TemplateDrivenScraper()
+                for registration in dynamic_registrations[:50]:
+                    source_report = _new_source_report(registration.scraper_key)
+                    fetch_started_at = time.perf_counter()
+                    try:
+                        scrape_result = await dynamic_scraper.scrape(registration)
+                        source_report["fetched"] = len(scrape_result.items)
+                        source_report["parsed"] = int(scrape_result.items_parsed)
+                        source_report["errors"].extend(scrape_result.errors)
+                        dynamic_opportunities = [
+                            {
+                                "title": row.get("title"),
+                                "description": row.get("description_preview")
+                                or row.get("description")
+                                or f"Opportunity indexed from {registration.source_name}.",
+                                "url": row.get("apply_url") or row.get("url"),
+                                "opportunity_type": str(row.get("opportunity_type") or "Opportunity").title(),
+                                "university": row.get("company") or registration.source_name,
+                                "source": registration.scraper_key,
+                                "source_id": registration.discovered_source_id,
+                                "domain": registration.domain,
+                                "location": row.get("location"),
+                                "work_mode": row.get("work_mode"),
+                                "stipend": row.get("stipend_text") or row.get("stipend"),
+                                "deadline": _parse_datetime(row.get("deadline_text") or row.get("deadline")),
+                            }
+                            for row in scrape_result.items
+                            if row.get("title") and (row.get("apply_url") or row.get("url"))
+                        ]
+                        source_report["fetch_duration_ms"] = round((time.perf_counter() - fetch_started_at) * 1000, 1)
+                        upsert_started_at = time.perf_counter()
+                        insert_stats = await _insert_and_broadcast(
+                            opportunities=dynamic_opportunities,
+                            source_name=registration.source_name,
+                            system_user_id=system_user_id,
+                            ai_system=ai_system,
+                            Opportunity=Opportunity,
+                            Post=Post,
+                        )
+                        source_report.update(insert_stats)
+                        source_report["upsert_duration_ms"] = round((time.perf_counter() - upsert_started_at) * 1000, 1)
+                        registration.last_scraped_at = utc_now()
+                        registration.total_yield += int(insert_stats.get("inserted", 0) or 0) + int(insert_stats.get("updated", 0) or 0)
+                        if scrape_result.errors or scrape_result.parse_success_rate < 0.6:
+                            registration.consecutive_failures += 1
+                            registration.stale_template_failures += 1
+                            registration.health_score = max(0.0, float(registration.health_score or 100.0) - 15.0)
+                        else:
+                            registration.consecutive_failures = 0
+                            registration.stale_template_failures = 0
+                            registration.health_score = min(100.0, float(registration.health_score or 100.0) + 5.0)
+                        if registration.consecutive_failures >= 3:
+                            registration.updated_at = utc_now()
+                            await registration.save()
+                            await scraper_registry.quarantine(registration.scraper_key, "dynamic_parse_failures")
+                        else:
+                            registration.updated_at = utc_now()
+                            await registration.save()
+                    except Exception as exc:
+                        source_report["fetch_duration_ms"] = round((time.perf_counter() - fetch_started_at) * 1000, 1)
+                        source_report["errors"].append(str(exc))
+                        registration.consecutive_failures += 1
+                        registration.health_score = max(0.0, float(registration.health_score or 100.0) - 20.0)
+                        if registration.consecutive_failures >= 3:
+                            registration.updated_at = utc_now()
+                            await registration.save()
+                            await scraper_registry.quarantine(registration.scraper_key, "dynamic_scrape_error")
+                        else:
+                            registration.updated_at = utc_now()
+                            await registration.save()
+                    report_sources.append(source_report)
+            except Exception as exc:
+                source_report = _new_source_report("dynamic_discovered_sources")
+                source_report["errors"].append(f"dynamic_source_registry_error:{exc}")
+                report_sources.append(source_report)
 
             cleanup_report = await _cleanup_inactive_opportunities(Opportunity)
 
@@ -2484,6 +2923,13 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
                 _scraper_runtime_state["consecutive_failures"] = 0
             else:
                 _scraper_runtime_state["consecutive_failures"] += 1
+
+            try:
+                from app.services.scraper_health_service import scraper_health_service
+
+                await scraper_health_service.persist_report(report)
+            except Exception as exc:
+                logger.warning("Failed to persist scraper run logs: %s", exc)
 
             print(
                 f"[ScraperEngine] Completed ({status}) | "

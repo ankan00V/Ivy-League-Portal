@@ -25,8 +25,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
 
-      - name: Run backend unit tests
-        run: python -m unittest discover -s backend/tests -v
+      - name: Run backend pytest suite
+        run: python -m pytest -q backend/tests
+
+      - name: Run release contract checks
+        run: python backend/scripts/check_release_contracts.py
 
   frontend-lint-build:
     name: Frontend Lint and Build
@@ -77,12 +80,13 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Install Playwright browser
-        run: npx playwright install --with-deps chromium
+      - name: Verify system Chrome
+        run: google-chrome --version
 
       - name: Run Playwright smoke tests
         env:
           CI: "true"
+          PLAYWRIGHT_USE_SYSTEM_CHROME: "1"
         run: npm run e2e -- --project=chromium
 
       - name: Upload Playwright report

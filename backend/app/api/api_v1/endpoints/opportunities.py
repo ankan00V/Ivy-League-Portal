@@ -1,29 +1,39 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
+import json
+import math
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal, Optional
 
 from beanie import PydanticObjectId
 from beanie.exceptions import CollectionWasNotInitialized
+from beanie.odm.operators.find.comparison import In
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.deps import get_current_active_user, get_current_admin_user
+from app.core.cache import cache_get_json, cache_key, cache_set_json
 from app.core.config import settings
 from app.models.application import Application
 from app.models.ask_ai_query_snapshot import AskAIQuerySnapshot
 from app.models.ask_ai_saved_query import AskAISavedQuery
 from app.models.opportunity import Opportunity
+from app.models.opportunity_interaction import OpportunityInteraction
 from app.models.profile import Profile
 from app.models.rag_feedback_event import RAGFeedbackEvent
 from app.models.traffic import TrafficType
 from app.models.user import User
 from app.schemas.rag import RAGAskResponse
 from app.services.ai_engine import ai_system
+from app.services.cold_start import ColdStartDecision, cold_start_profile_builder
 from app.services.evaluation_service import evaluation_service
-from app.services.interaction_service import interaction_service
+from app.services.embedding_pipeline import embedding_pipeline
+from app.services.intelligence import score_opportunity_match
+from app.services.interaction_service import VALID_RANKING_MODES, interaction_service
 from app.services.opportunity_visibility import (
     is_student_visible_opportunity,
     resolve_opportunity_portal,
@@ -31,6 +41,7 @@ from app.services.opportunity_visibility import (
 from app.services.rag_service import rag_service
 from app.services.recommendation_service import recommendation_service
 from app.services.ranking_request_telemetry_service import ranking_request_telemetry_service
+from app.services.vector_service import opportunity_vector_service
 from app.core.time import as_utc_aware, utc_now
 
 router = APIRouter()
@@ -46,6 +57,9 @@ class OpportunityCreate(BaseModel):
     location: Optional[str] = None
     work_mode: Optional[str] = None
     stipend: Optional[str] = None
+    tags: list[str] = Field(default_factory=list)
+    quality_score: Optional[float] = None
+    quality_missing_fields: list[str] = Field(default_factory=list)
     eligibility: Optional[str] = None
     batch_years: list[int] = Field(default_factory=list)
     ppo_available: Optional[str] = None
@@ -72,6 +86,10 @@ class OpportunityResponse(OpportunityCreate):
     risk_score: int = 50
     risk_reasons: list[str] = Field(default_factory=list)
     verification_evidence: list[str] = Field(default_factory=list)
+    opportunity_status: str = "active"
+    freshness_score: float = 1.0
+    url_liveness_status: str = "unknown"
+    url_last_checked_at: Optional[datetime] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
     last_seen_at: Optional[datetime] = None
@@ -101,6 +119,56 @@ class InteractionEventCreate(BaseModel):
     rank_position: Optional[int] = None
     match_score: Optional[float] = None
     features: Optional[dict[str, Any]] = None
+    dwell_time_ms: Optional[int] = Field(default=None, ge=0)
+    scroll_depth: Optional[float] = Field(default=None, ge=0.0, le=100.0)
+    session_id: Optional[str] = None
+    cold_start: bool = False
+
+
+class InteractionBatchCreate(BaseModel):
+    events: list[InteractionEventCreate] = Field(default_factory=list, max_length=100)
+
+
+class ApplicationOutcomeCreate(BaseModel):
+    opportunity_id: PydanticObjectId
+    application_id: Optional[PydanticObjectId] = None
+    interaction_id: Optional[PydanticObjectId] = None
+    prompt_type: Literal["match_quality", "heard_back"]
+    response: Literal["yes", "no", "somewhat", "still_waiting"]
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class FeedResponse(BaseModel):
+    opportunities: list[RecommendedOpportunityResponse]
+    next_page_token: Optional[str] = None
+    ranking_mode: str
+    personalization_level: Literal["low", "medium", "high"]
+    total_candidates: int
+    experiment_variant: Optional[str] = None
+    debug_info: dict[str, Any] = Field(default_factory=dict)
+
+
+class TasteCalibrationRequest(BaseModel):
+    opportunity_id: PydanticObjectId
+    feedback: Literal["up", "down", "skip"]
+    ranking_mode: Optional[str] = None
+    experiment_key: Optional[str] = None
+    experiment_variant: Optional[str] = None
+    rank_position: Optional[int] = Field(default=None, ge=1)
+    match_score: Optional[float] = None
+    session_id: Optional[str] = None
+
+
+class TasteCalibrationResponse(BaseModel):
+    status: str
+    feedback: str
+    interaction_type: str
+    reward: float
+    taste_calibration_count: int
+    embedding_status: str
+    cold_start_quality_score: float
+    cold_start_strategy: str
+    personalization_level: Literal["low", "medium", "high"]
 
 
 class AskAIRequest(BaseModel):
@@ -170,6 +238,14 @@ class ScraperSourceHealthResponse(BaseModel):
     updated: int = 0
     failed: int = 0
     status: str = "unknown"
+    health_score: Optional[float] = None
+    health_status: Optional[str] = None
+    last_run: Optional[str] = None
+    avg_daily_yield: Optional[float] = None
+    consecutive_failures: int = 0
+    silent_failures: int = 0
+    parse_error_rate: Optional[float] = None
+    avg_trust_score: Optional[float] = None
     errors: list[str] = Field(default_factory=list)
     latest_seen_at: Optional[str] = None
     freshness_minutes: Optional[int] = None
@@ -187,7 +263,15 @@ class ScraperHealthResponse(BaseModel):
     last_finished_at: Optional[str] = None
     last_successful_at: Optional[str] = None
     auto_update: dict[str, Any] = Field(default_factory=dict)
+    summary: dict[str, int] = Field(default_factory=dict)
     sources: list[ScraperSourceHealthResponse] = Field(default_factory=list)
+
+
+class DedupScanRequest(BaseModel):
+    limit: int = Field(default=1000, ge=1, le=10000)
+    execute: bool = False
+    mark_duplicate_closed: bool = False
+    enqueue: bool = True
 
 
 def _resolve_experiment_context(*, effective_mode: str, meta: dict[str, Any]) -> tuple[str, str]:
@@ -220,6 +304,9 @@ def _to_recommended_response(payload: dict[str, Any]) -> RecommendedOpportunityR
         location=getattr(opportunity, "location", None),
         work_mode=getattr(opportunity, "work_mode", None),
         stipend=getattr(opportunity, "stipend", None),
+        tags=list(getattr(opportunity, "tags", []) or []),
+        quality_score=getattr(opportunity, "quality_score", None),
+        quality_missing_fields=list(getattr(opportunity, "quality_missing_fields", []) or []),
         eligibility=getattr(opportunity, "eligibility", None),
         batch_years=list(getattr(opportunity, "batch_years", []) or []),
         ppo_available=getattr(opportunity, "ppo_available", None),
@@ -228,6 +315,10 @@ def _to_recommended_response(payload: dict[str, Any]) -> RecommendedOpportunityR
         risk_score=int(getattr(opportunity, "risk_score", 50) or 50),
         risk_reasons=list(getattr(opportunity, "risk_reasons", []) or []),
         verification_evidence=list(getattr(opportunity, "verification_evidence", []) or []),
+        opportunity_status=getattr(opportunity, "opportunity_status", "active") or "active",
+        freshness_score=float(getattr(opportunity, "freshness_score", 1.0) or 0.0),
+        url_liveness_status=getattr(opportunity, "url_liveness_status", "unknown") or "unknown",
+        url_last_checked_at=getattr(opportunity, "url_last_checked_at", None),
         created_at=opportunity.created_at,
         updated_at=opportunity.updated_at,
         last_seen_at=opportunity.last_seen_at,
@@ -260,14 +351,16 @@ def _filter_active_opportunities(opportunities: list[Opportunity]) -> list[Oppor
     return active
 
 
-def _feed_priority(opportunity: Opportunity) -> tuple[int, int, float, datetime, datetime]:
+def _feed_priority(opportunity: Opportunity) -> tuple[int, int, int, float, float, datetime, datetime]:
     trust_status = str(getattr(opportunity, "trust_status", "") or "").strip().lower()
     trust_tier = 2 if trust_status == "verified" else 1 if trust_status == "unreviewed" else 0
     trust_score = int(getattr(opportunity, "trust_score", 0) or 0)
     risk_score = int(getattr(opportunity, "risk_score", 100) or 100)
+    quality_score = float(getattr(opportunity, "quality_score", 50.0) or 50.0)
+    quality_tier = 0 if quality_score < 30.0 else 1
     latest_touch, created_at = _activity_sort_key(opportunity)
     freshness_bonus = max(0.0, 100.0 - min(float(risk_score), 100.0))
-    return trust_tier, trust_score, freshness_bonus, latest_touch, created_at
+    return quality_tier, trust_tier, trust_score, quality_score, freshness_bonus, latest_touch, created_at
 
 
 def _diversify_by_source(items: list[Any], *, source_getter, per_source_cap: int = 2) -> list[Any]:
@@ -424,6 +517,577 @@ async def _get_or_create_profile(user_id: PydanticObjectId) -> Profile:
     return profile
 
 
+def _safe_json_filters(value: Optional[str]) -> dict[str, Any]:
+    if value is None or not str(value).strip():
+        return {}
+    try:
+        parsed = json.loads(value)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="filters must be valid JSON") from exc
+    if not isinstance(parsed, dict):
+        raise HTTPException(status_code=400, detail="filters must be a JSON object")
+    return parsed
+
+
+def _filter_values(value: Any, *, limit: int = 20) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        parts = [str(item).strip() for item in value]
+    else:
+        raw = str(value)
+        for separator in (";", "\n", "/", "|"):
+            raw = raw.replace(separator, ",")
+        parts = [chunk.strip() for chunk in raw.split(",")]
+    output: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        key = part.lower()
+        if not part or key in seen:
+            continue
+        seen.add(key)
+        output.append(part)
+    return output[:limit]
+
+
+def _feed_filter_hash(filters: dict[str, Any]) -> str:
+    try:
+        raw = json.dumps(filters or {}, sort_keys=True, separators=(",", ":"))
+    except Exception:
+        raw = str(filters or {})
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _decode_page_token(page_token: Optional[str]) -> int:
+    if not page_token:
+        return 0
+    try:
+        padded = page_token + ("=" * (-len(page_token) % 4))
+        payload = json.loads(base64.urlsafe_b64decode(padded.encode("utf-8")).decode("utf-8"))
+        return max(0, int(payload.get("offset") or 0))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid page_token") from exc
+
+
+def _encode_page_token(offset: int) -> str:
+    payload = json.dumps({"offset": max(0, int(offset))}, separators=(",", ":")).encode("utf-8")
+    return base64.urlsafe_b64encode(payload).decode("utf-8").rstrip("=")
+
+
+def _feed_vector_filters(filters: dict[str, Any], preference_filters: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(preference_filters)
+    quality_min = filters.get("quality_min", merged.get("quality_min", 30.0))
+    try:
+        merged["quality_min"] = max(0.0, min(float(quality_min), 100.0))
+    except Exception:
+        merged["quality_min"] = 30.0
+
+    for key in ("location", "work_mode", "stipend_min", "opportunity_type", "max_deadline_days"):
+        if filters.get(key) is not None:
+            merged[key] = filters[key]
+    for key in ("locations", "tags", "opportunity_types", "companies"):
+        values = _filter_values(filters.get(key))
+        if values:
+            merged[key] = values
+    return merged
+
+
+def _matches_feed_filters(opportunity: Opportunity, filters: dict[str, Any]) -> bool:
+    quality_min = filters.get("quality_min", 30.0)
+    try:
+        if float(getattr(opportunity, "quality_score", None) if getattr(opportunity, "quality_score", None) is not None else 50.0) < float(quality_min):
+            return False
+    except Exception:
+        pass
+
+    portal = str(filters.get("portal") or "").strip().lower()
+    if portal in {"career", "competitive", "other"}:
+        resolved = resolve_opportunity_portal(
+            opportunity_type=opportunity.opportunity_type,
+            title=opportunity.title,
+            description=opportunity.description,
+            portal_category=getattr(opportunity, "portal_category", None),
+        )
+        if resolved != portal:
+            return False
+
+    work_mode = str(filters.get("work_mode") or "").strip().lower()
+    if work_mode and work_mode != str(getattr(opportunity, "work_mode", "") or "").strip().lower():
+        return False
+
+    locations = _filter_values(filters.get("locations"))
+    location = str(filters.get("location") or "").strip()
+    if location:
+        locations.append(location)
+    if locations:
+        haystack = (
+            f"{opportunity.title} {opportunity.description} "
+            f"{getattr(opportunity, 'location', '') or ''} {opportunity.university or ''}"
+        ).lower()
+        if not any(item.lower() in haystack for item in locations):
+            return False
+
+    opportunity_types = _filter_values(filters.get("opportunity_types") or filters.get("opportunity_type"))
+    if opportunity_types:
+        current_type = str(getattr(opportunity, "opportunity_type", "") or "").strip().lower()
+        if current_type not in {item.lower() for item in opportunity_types}:
+            return False
+
+    tags = _filter_values(filters.get("tags"))
+    if tags:
+        tag_haystack = " ".join(str(item).lower() for item in list(getattr(opportunity, "tags", []) or []))
+        text_haystack = f"{opportunity.title} {opportunity.description}".lower()
+        if not any(tag.lower() in tag_haystack or tag.lower() in text_haystack for tag in tags):
+            return False
+
+    stipend_min = filters.get("stipend_min")
+    if stipend_min is not None:
+        try:
+            required = int(stipend_min)
+        except Exception:
+            required = 0
+        if required > 0:
+            max_stipend = getattr(opportunity, "stipend_max", None)
+            min_stipend = getattr(opportunity, "stipend_min", None)
+            observed = max_stipend if max_stipend is not None else min_stipend
+            if observed is not None and int(observed) < required:
+                return False
+
+    max_deadline_days = filters.get("max_deadline_days")
+    if max_deadline_days is not None:
+        try:
+            days_limit = int(max_deadline_days)
+        except Exception:
+            days_limit = 0
+        deadline = as_utc_aware(getattr(opportunity, "deadline", None))
+        if days_limit > 0 and (deadline is None or (deadline - utc_now()).days > days_limit):
+            return False
+
+    return True
+
+
+async def _seen_opportunity_ids(user_id: PydanticObjectId, *, hours: int = 48) -> set[str]:
+    try:
+        rows = await OpportunityInteraction.find_many(
+            OpportunityInteraction.user_id == user_id,
+            OpportunityInteraction.created_at >= utc_now() - timedelta(hours=max(1, int(hours))),
+        ).limit(5000).to_list()
+    except Exception:
+        return set()
+    return {str(row.opportunity_id) for row in rows}
+
+
+async def _load_opportunities_by_ids(ids: list[str]) -> list[Opportunity]:
+    object_ids: list[PydanticObjectId] = []
+    for value in ids:
+        try:
+            object_ids.append(PydanticObjectId(str(value)))
+        except Exception:
+            continue
+    if not object_ids:
+        return []
+    rows = await Opportunity.find_many(In(Opportunity.id, object_ids)).to_list()
+    by_id = {str(row.id): row for row in rows}
+    return [by_id[str(object_id)] for object_id in object_ids if str(object_id) in by_id]
+
+
+async def _retrieve_feed_candidates(
+    *,
+    user_id: PydanticObjectId,
+    profile: Profile,
+    filters: dict[str, Any],
+    decision: ColdStartDecision,
+) -> tuple[list[Opportunity], dict[str, Any]]:
+    result, _ = await cold_start_profile_builder.refresh_profile(
+        profile,
+        interaction_count=decision.interaction_count,
+        save=True,
+    )
+    vector_filters = _feed_vector_filters(filters, result.preference_filter.vector_filters(quality_min=30.0))
+    filter_hash = _feed_filter_hash(vector_filters)
+    key = cache_key(
+        "feed_candidates",
+        str(user_id),
+        embedding_pipeline.model_version,
+        str(result.persona_cluster_id),
+        decision.strategy,
+        filter_hash,
+    )
+    cached = await cache_get_json(key)
+    ids: list[str] = []
+    similarity_by_id: dict[str, float] = {}
+    cache_hit = False
+    provider = "fallback"
+
+    if cached and isinstance(cached.get("ids"), list):
+        ids = [str(value) for value in cached.get("ids", [])]
+        similarity_by_id = {
+            str(item): float(score)
+            for item, score in dict(cached.get("similarity_by_id") or {}).items()
+        }
+        provider = str(cached.get("provider") or provider)
+        cache_hit = True
+
+    if not ids:
+        vector_results: list[dict[str, Any]] = []
+        try:
+            if result.embedding:
+                import numpy as np
+
+                vector_results = await opportunity_vector_service.search_by_vector(
+                    np.asarray(result.embedding, dtype=np.float32),
+                    top_k=200,
+                    filters=vector_filters,
+                )
+                provider = f"{opportunity_vector_service.provider_name()}:profile_vector"
+            elif result.preference_text:
+                vector_results = await opportunity_vector_service.search(
+                    result.preference_text,
+                    top_k=200,
+                    filters=vector_filters,
+                )
+                provider = f"{opportunity_vector_service.provider_name()}:profile_text"
+        except Exception as exc:
+            provider = f"fallback:{exc.__class__.__name__}"
+            vector_results = []
+
+        ids = [str(row.get("id")) for row in vector_results if row.get("id")]
+        similarity_by_id = {
+            str(row.get("id")): float(row.get("similarity") or 0.0)
+            for row in vector_results
+            if row.get("id")
+        }
+        if not ids:
+            fallback_rows = await _load_active_opportunities(limit=200)
+            ids = [str(row.id) for row in fallback_rows]
+            provider = "active_feed_fallback"
+
+        await cache_set_json(
+            key,
+            {
+                "ids": ids[:200],
+                "similarity_by_id": similarity_by_id,
+                "provider": provider,
+                "created_at": utc_now().isoformat(),
+            },
+            ttl_seconds=600,
+        )
+
+    rows = await _load_opportunities_by_ids(ids[:200])
+    if not rows and ids:
+        rows = await _load_active_opportunities(limit=200)
+
+    return rows, {
+        "cache_hit": cache_hit,
+        "candidate_provider": provider,
+        "candidate_cache_key": key,
+        "similarity_by_id": similarity_by_id,
+        "filter_hash": filter_hash,
+    }
+
+
+def _diversify_feed_page(
+    ranked: list[dict[str, Any]],
+    *,
+    offset: int,
+    limit: int,
+) -> list[dict[str, Any]]:
+    safe_limit = max(1, min(int(limit), 50))
+    source_cap = max(1, int(math.ceil(safe_limit * 0.20)))
+    domain_cap = max(1, int(math.ceil(safe_limit * 0.40)))
+    source_counts: dict[str, int] = {}
+    domain_counts: dict[str, int] = {}
+    selected: list[dict[str, Any]] = []
+    overflow: list[dict[str, Any]] = []
+
+    for item in ranked[max(0, int(offset)) :]:
+        opportunity = item.get("opportunity")
+        source = str(getattr(opportunity, "source", "") or "unknown").strip().lower()
+        domain = str(getattr(opportunity, "domain", "") or "unknown").strip().lower()
+        if source_counts.get(source, 0) < source_cap and domain_counts.get(domain, 0) < domain_cap:
+            selected.append(item)
+            source_counts[source] = source_counts.get(source, 0) + 1
+            domain_counts[domain] = domain_counts.get(domain, 0) + 1
+        else:
+            overflow.append(item)
+        if len(selected) >= safe_limit:
+            break
+
+    if len(selected) < safe_limit:
+        selected.extend(overflow[: safe_limit - len(selected)])
+    return selected[:safe_limit]
+
+
+def _diversity_rank(
+    *,
+    profile: Profile,
+    opportunities: list[Opportunity],
+    limit: int,
+) -> list[dict[str, Any]]:
+    ordered = sorted(opportunities, key=_feed_priority, reverse=True)
+    ordered = _diversify_by_source(
+        ordered,
+        source_getter=lambda item: getattr(item, "source", None),
+        per_source_cap=max(1, int(math.ceil(max(1, limit) * 0.20))),
+    )
+    ranked: list[dict[str, Any]] = []
+    for opportunity in ordered:
+        baseline_score, reasons = score_opportunity_match(profile, opportunity)
+        quality_score = float(getattr(opportunity, "quality_score", None) if getattr(opportunity, "quality_score", None) is not None else 50.0)
+        trust_score = float(getattr(opportunity, "trust_score", 50) or 50)
+        match_score = round((0.45 * quality_score) + (0.25 * trust_score) + (0.30 * float(baseline_score)), 3)
+        ranked.append(
+            {
+                "opportunity": opportunity,
+                "match_score": match_score,
+                "match_reasons": ["Diversity bootstrap for a low-signal profile.", *list(reasons or [])],
+                "baseline_score": round(float(baseline_score), 3),
+                "semantic_score": None,
+                "behavior_score": 0.0,
+                "ranking_mode": "diversity",
+                "feature_importance_top": [],
+            }
+        )
+    ranked.sort(key=lambda item: (float(item.get("match_score") or 0.0), *_activity_sort_key(item["opportunity"])), reverse=True)
+    return ranked
+
+
+@router.get("/feed", response_model=FeedResponse)
+async def get_unified_feed(
+    page_token: Optional[str] = None,
+    limit: int = 20,
+    filters: Optional[str] = None,
+    debug: bool = False,
+    current_user: User = Depends(get_current_active_user),
+) -> FeedResponse:
+    """
+    Unified personalized feed with cold-start strategy selection, cursor paging,
+    candidate retrieval caching, and per-request reranking.
+    """
+    started_at = time.perf_counter()
+    safe_limit = max(1, min(int(limit), 50))
+    offset = _decode_page_token(page_token)
+    filter_dict = _safe_json_filters(filters)
+    requested_mode = "feed"
+
+    try:
+        profile = await _get_or_create_profile(current_user.id)
+        interaction_count = await cold_start_profile_builder.interaction_count(current_user.id)
+        cold_start_result, decision = await cold_start_profile_builder.refresh_profile(
+            profile,
+            interaction_count=interaction_count,
+            save=True,
+        )
+        requested_mode = decision.ranking_mode
+
+        candidates, candidate_meta = await _retrieve_feed_candidates(
+            user_id=current_user.id,
+            profile=profile,
+            filters=filter_dict,
+            decision=decision,
+        )
+        seen_ids = await _seen_opportunity_ids(current_user.id, hours=48)
+        candidates = [
+            item
+            for item in _filter_active_opportunities(candidates)
+            if str(item.id) not in seen_ids and _matches_feed_filters(item, filter_dict)
+        ]
+
+        if decision.strategy == "diversity":
+            ranked = _diversity_rank(profile=profile, opportunities=candidates, limit=max(50, offset + safe_limit))
+            meta: dict[str, Any] = {
+                "mode": "diversity",
+                "requested_mode": "diversity",
+                "model_version_id": embedding_pipeline.model_version,
+                "feature_importance_top": [],
+            }
+            experiment_key = "feed_strategy"
+            experiment_variant = "diversity"
+            effective_mode = "diversity"
+        else:
+            rank_mode = "ml" if decision.strategy == "ml" else "semantic"
+            ranked, meta = await recommendation_service.rank(
+                user_id=current_user.id,
+                profile=profile,
+                opportunities=candidates,
+                limit=min(50, max(safe_limit, offset + safe_limit)),
+                ranking_mode=rank_mode,
+                query=cold_start_result.preference_text or None,
+            )
+            effective_mode = str(meta.get("mode") or rank_mode)
+            experiment_key, experiment_variant = _resolve_experiment_context(
+                effective_mode=effective_mode,
+                meta=meta,
+            )
+
+        for item in ranked:
+            item["experiment_key"] = experiment_key
+            item["experiment_variant"] = experiment_variant
+            item["ranking_mode"] = effective_mode
+
+        page_items = _diversify_feed_page(ranked, offset=offset, limit=safe_limit)
+        next_offset = offset + len(page_items)
+        next_page_token = _encode_page_token(next_offset) if next_offset < len(ranked) else None
+
+        if page_items:
+            await interaction_service.log_impressions(
+                user_id=current_user.id,
+                impressions=[
+                    {
+                        "opportunity_id": item["opportunity"].id,
+                        "ranking_mode": effective_mode,
+                        "experiment_key": experiment_key,
+                        "experiment_variant": experiment_variant,
+                        "query": cold_start_result.preference_text or None,
+                        "model_version_id": meta.get("model_version_id"),
+                        "rank_position": offset + idx + 1,
+                        "match_score": item.get("match_score"),
+                        "features": {
+                            "feed_strategy": decision.strategy,
+                            "personalization_level": decision.personalization_level,
+                            "cold_start_quality_score": decision.quality_score,
+                            "persona_cluster_id": decision.persona_cluster_id,
+                            "candidate_provider": candidate_meta.get("candidate_provider"),
+                            "candidate_cache_hit": candidate_meta.get("cache_hit"),
+                            "baseline_score": item.get("baseline_score"),
+                            "semantic_score": item.get("semantic_score"),
+                            "behavior_score": item.get("behavior_score"),
+                            "ranker_features": item.get("ranker_features"),
+                        },
+                        "cold_start": decision.interaction_count < 10,
+                    }
+                    for idx, item in enumerate(page_items)
+                ],
+                traffic_type="real",
+            )
+
+        await ranking_request_telemetry_service.log(
+            request_kind="feed",
+            surface="opportunities_feed",
+            latency_ms=(time.perf_counter() - started_at) * 1000.0,
+            success=True,
+            user_id=current_user.id,
+            requested_ranking_mode=str(meta.get("requested_mode") or requested_mode),
+            ranking_mode=effective_mode,
+            experiment_key=experiment_key,
+            experiment_variant=experiment_variant,
+            rollout_variant=(meta.get("rollout") or {}).get("variant"),
+            rollout_bucket=(meta.get("rollout") or {}).get("bucket"),
+            rollout_percent=(meta.get("rollout") or {}).get("percent"),
+            shadow_mode=(meta.get("shadow") or {}).get("mode"),
+            shadow_model_version_id=(meta.get("shadow") or {}).get("model_version_id"),
+            shadow_candidate_count=int((meta.get("shadow") or {}).get("candidate_count") or 0),
+            model_version_id=meta.get("model_version_id"),
+            results_count=len(page_items),
+            freshness_seconds=_freshness_seconds([item["opportunity"] for item in page_items]),
+            traffic_type="real",
+        )
+
+        debug_info = {}
+        if debug:
+            debug_info = {
+                "offset": offset,
+                "strategy": decision.strategy,
+                "interaction_count": decision.interaction_count,
+                "cold_start_quality_score": decision.quality_score,
+                "persona_cluster_id": decision.persona_cluster_id,
+                "candidate_provider": candidate_meta.get("candidate_provider"),
+                "candidate_cache_hit": candidate_meta.get("cache_hit"),
+                "candidate_filter_hash": candidate_meta.get("filter_hash"),
+                "seen_dedupe_window_hours": 48,
+                "ranked_count": len(ranked),
+            }
+
+        return FeedResponse(
+            opportunities=[_to_recommended_response(item) for item in page_items],
+            next_page_token=next_page_token,
+            ranking_mode=effective_mode,
+            personalization_level=decision.personalization_level,
+            total_candidates=len(candidates),
+            experiment_variant=experiment_variant,
+            debug_info=debug_info,
+        )
+    except Exception as exc:
+        await ranking_request_telemetry_service.log(
+            request_kind="feed",
+            surface="opportunities_feed",
+            latency_ms=(time.perf_counter() - started_at) * 1000.0,
+            success=False,
+            user_id=current_user.id,
+            requested_ranking_mode=requested_mode,
+            ranking_mode=requested_mode,
+            results_count=0,
+            error_code=exc.__class__.__name__,
+            traffic_type="real",
+        )
+        raise
+
+
+@router.post("/feed/calibration", response_model=TasteCalibrationResponse)
+async def calibrate_feed_taste(
+    payload: TasteCalibrationRequest,
+    current_user: User = Depends(get_current_active_user),
+) -> TasteCalibrationResponse:
+    opportunity = await Opportunity.get(payload.opportunity_id)
+    if opportunity is None:
+        raise HTTPException(status_code=404, detail="Opportunity not found")
+
+    profile = await _get_or_create_profile(current_user.id)
+    interaction_type, reward = cold_start_profile_builder.calibration_weight(payload.feedback)
+    ranking_mode = (payload.ranking_mode or profile.cold_start_strategy or "semantic").strip().lower()
+    if ranking_mode not in VALID_RANKING_MODES:
+        ranking_mode = "semantic"
+
+    event = await interaction_service.log_event(
+        user_id=current_user.id,
+        opportunity_id=payload.opportunity_id,
+        interaction_type=interaction_type,
+        ranking_mode=ranking_mode,
+        experiment_key=(payload.experiment_key or "taste_calibration"),
+        experiment_variant=(payload.experiment_variant or payload.feedback),
+        rank_position=payload.rank_position,
+        match_score=payload.match_score,
+        session_id=payload.session_id,
+        cold_start=True,
+        features={
+            "taste_calibration_feedback": payload.feedback,
+            "taste_calibration_reward": reward,
+        },
+        traffic_type="real",
+    )
+
+    profile.taste_calibration_count = int(profile.taste_calibration_count or 0) + 1
+    await profile.save()
+    embedding_status = "skipped"
+    try:
+        embedding_report = await embedding_pipeline.recompute_user_embedding(
+            user_id=current_user.id,
+            force=profile.taste_calibration_count >= 3,
+        )
+        embedding_status = str(embedding_report.get("status") or "unknown")
+    except Exception as exc:
+        embedding_status = f"failed:{exc.__class__.__name__}"
+
+    interaction_count = await cold_start_profile_builder.interaction_count(current_user.id)
+    _result, decision = await cold_start_profile_builder.refresh_profile(
+        profile,
+        interaction_count=interaction_count,
+        force=profile.taste_calibration_count >= 3,
+        save=True,
+    )
+    return TasteCalibrationResponse(
+        status="ok",
+        feedback=payload.feedback,
+        interaction_type=str(event.event_type or event.interaction_type),
+        reward=float(event.reward),
+        taste_calibration_count=int(profile.taste_calibration_count or 0),
+        embedding_status=embedding_status,
+        cold_start_quality_score=float(profile.cold_start_quality_score or 0.0),
+        cold_start_strategy=str(decision.strategy),
+        personalization_level=decision.personalization_level,
+    )
+
+
 @router.get("", response_model=list[OpportunityResponse], include_in_schema=False)
 @router.get("/", response_model=list[OpportunityResponse])
 async def read_opportunities(
@@ -442,17 +1106,31 @@ async def read_opportunities(
 @router.get("/scraper/health", response_model=ScraperHealthResponse)
 async def read_scraper_health() -> ScraperHealthResponse:
     from app.services.scraper import get_scraper_runtime_status
+    from app.services.scraper_health_service import scraper_health_service
 
     runtime = get_scraper_runtime_status()
     last_report = runtime.get("last_report") or {}
+    health_report = await scraper_health_service.source_health()
+    health_by_source = {
+        str(row.get("source") or "").strip().lower(): row
+        for row in list(health_report.get("sources") or [])
+    }
     source_rows = []
+    runtime_sources: set[str] = set()
     for row in list(last_report.get("sources") or []):
         errors = list(row.get("errors") or [])
         source_name = str(row.get("source") or "unknown")
+        runtime_sources.add(source_name.strip().lower())
+        source_health = health_by_source.get(source_name.strip().lower(), {})
         latest_seen = None
         coverage_count = 0
         try:
-            latest_items = await Opportunity.find_many({"source": source_name}).sort("-last_seen_at").limit(1).to_list()
+            latest_items = (
+                await Opportunity.find_many({"source": source_name})
+                .sort("-last_seen_at")
+                .limit(1)
+                .to_list()
+            )
             latest_item = latest_items[0] if latest_items else None
             latest_seen = as_utc_aware(
                 getattr(latest_item, "last_seen_at", None)
@@ -478,6 +1156,14 @@ async def read_scraper_health() -> ScraperHealthResponse:
                 updated=int(row.get("updated") or 0),
                 failed=int(row.get("failed") or 0),
                 status="error" if errors else "ok",
+                health_score=source_health.get("health_score"),
+                health_status=source_health.get("health_status"),
+                last_run=source_health.get("last_run"),
+                avg_daily_yield=source_health.get("avg_daily_yield"),
+                consecutive_failures=int(source_health.get("consecutive_failures") or 0),
+                silent_failures=int(source_health.get("silent_failures") or 0),
+                parse_error_rate=source_health.get("parse_error_rate"),
+                avg_trust_score=source_health.get("avg_trust_score"),
                 errors=errors,
                 latest_seen_at=latest_seen_at,
                 freshness_minutes=freshness_minutes,
@@ -485,6 +1171,28 @@ async def read_scraper_health() -> ScraperHealthResponse:
                 stale=stale,
                 fetch_duration_ms=float(row.get("fetch_duration_ms") or 0.0),
                 upsert_duration_ms=float(row.get("upsert_duration_ms") or 0.0),
+            )
+        )
+
+    for source_key, source_health in health_by_source.items():
+        if source_key in runtime_sources:
+            continue
+        source_rows.append(
+            ScraperSourceHealthResponse(
+                source=str(source_health.get("source") or source_key),
+                status=str(source_health.get("health_status") or "unknown").lower(),
+                health_score=source_health.get("health_score"),
+                health_status=source_health.get("health_status"),
+                last_run=source_health.get("last_run"),
+                avg_daily_yield=source_health.get("avg_daily_yield"),
+                consecutive_failures=int(source_health.get("consecutive_failures") or 0),
+                silent_failures=int(source_health.get("silent_failures") or 0),
+                parse_error_rate=source_health.get("parse_error_rate"),
+                avg_trust_score=source_health.get("avg_trust_score"),
+                errors=[
+                    str(item.get("message") or item)
+                    for item in list(source_health.get("latest_errors") or [])
+                ],
             )
         )
 
@@ -496,8 +1204,124 @@ async def read_scraper_health() -> ScraperHealthResponse:
         last_finished_at=runtime.get("last_finished_at"),
         last_successful_at=runtime.get("last_successful_at"),
         auto_update=dict(runtime.get("auto_update") or {}),
+        summary=dict(health_report.get("summary") or {}),
         sources=source_rows,
     )
+
+
+@router.get("/ops/dedup/report", response_model=dict)
+async def read_dedup_report(
+    days: int = 7,
+    limit: int = 500,
+    _: User = Depends(get_current_admin_user),
+) -> Any:
+    from app.services.duplicate_detector import duplicate_detector
+
+    return await duplicate_detector.report(days=days, limit=limit)
+
+
+@router.post("/ops/dedup/scan", response_model=dict)
+async def run_dedup_scan(
+    request: DedupScanRequest,
+    _: User = Depends(get_current_admin_user),
+) -> Any:
+    if request.enqueue and settings.JOBS_ENABLED:
+        from app.services.job_runner import job_runner
+
+        job = await job_runner.enqueue(
+            job_type="opportunities.dedup_scan",
+            payload=request.model_dump(),
+            dedupe_key=(
+                "opportunities.dedup_scan:"
+                f"{request.execute}:{request.limit}:{request.mark_duplicate_closed}"
+            ),
+        )
+        return {
+            "status": "queued",
+            "job_id": str(job.id),
+            "execute": request.execute,
+            "limit": request.limit,
+        }
+
+    from app.services.duplicate_detector import duplicate_detector
+
+    return await duplicate_detector.scan_existing(
+        limit=request.limit,
+        execute=request.execute,
+        mark_duplicate_closed=request.mark_duplicate_closed,
+    )
+
+
+def _csv_values(value: Optional[str]) -> list[str]:
+    if not value:
+        return []
+    return [part.strip() for part in value.split(",") if part.strip()]
+
+
+@router.get("/semantic-search", response_model=dict)
+async def semantic_search_opportunities(
+    query_text: Optional[str] = None,
+    user_id: Optional[PydanticObjectId] = None,
+    limit: int = 20,
+    location: Optional[str] = None,
+    work_mode: Optional[str] = None,
+    stipend_min: Optional[int] = None,
+    tags: Optional[str] = None,
+    opportunity_types: Optional[str] = None,
+    quality_min: float = 30.0,
+    current_user: User = Depends(get_current_active_user),
+) -> Any:
+    import numpy as np
+
+    from app.services.embedding_pipeline import embedding_pipeline
+    from app.services.vector_service import opportunity_vector_service
+
+    resolved_user_id = current_user.id
+    if user_id is not None:
+        if not current_user.is_admin and str(user_id) != str(current_user.id):
+            raise HTTPException(status_code=403, detail="Cannot search another user's profile embedding")
+        resolved_user_id = user_id
+
+    filters = {
+        "location": location,
+        "work_mode": work_mode,
+        "stipend_min": stipend_min,
+        "tags": _csv_values(tags),
+        "opportunity_types": _csv_values(opportunity_types),
+        "quality_min": quality_min,
+    }
+
+    safe_limit = max(1, min(int(limit), 50))
+    if query_text and query_text.strip():
+        results = await opportunity_vector_service.search(
+            query_text.strip(),
+            top_k=safe_limit,
+            filters=filters,
+        )
+        mode = "query_text"
+    else:
+        profile_user = await User.get(resolved_user_id)
+        if profile_user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        if not profile_user.profile_embedding:
+            await embedding_pipeline.recompute_user_embedding(user_id=resolved_user_id, force=True)
+            profile_user = await User.get(resolved_user_id)
+        if profile_user is None or not profile_user.profile_embedding:
+            raise HTTPException(status_code=400, detail="No query_text or profile embedding available")
+        results = await opportunity_vector_service.search_by_vector(
+            np.asarray(profile_user.profile_embedding, dtype=np.float32),
+            top_k=safe_limit,
+            filters=filters,
+        )
+        mode = "profile_embedding"
+
+    return {
+        "mode": mode,
+        "provider": opportunity_vector_service.provider_name(),
+        "model_version": embedding_pipeline.model_version,
+        "count": len(results),
+        "results": results,
+    }
 
 
 @router.get("/recommended/me", response_model=list[RecommendedOpportunityResponse])
@@ -744,17 +1568,32 @@ async def get_smart_shortlist(
         raise
 
 
-@router.post("/interactions", response_model=dict)
-async def log_opportunity_interaction(
+ALLOWED_INTERACTION_TYPES = {
+    "impression",
+    "view",
+    "click",
+    "expand",
+    "save",
+    "apply",
+    "apply_start",
+    "apply_complete",
+    "share",
+    "skip",
+    "dismiss",
+}
+TRACKING_REQUIRED_TYPES = ALLOWED_INTERACTION_TYPES - {"view"}
+
+
+async def _prepare_interaction_event(
     payload: InteractionEventCreate,
-    current_user: User = Depends(get_current_active_user),
-) -> Any:
+    current_user: User,
+) -> dict[str, Any]:
     opportunity = await Opportunity.get(payload.opportunity_id)
     if not opportunity:
         raise HTTPException(status_code=404, detail="Opportunity not found")
 
-    allowed_types = {"impression", "view", "click", "apply", "save"}
-    if payload.interaction_type not in allowed_types:
+    interaction_type = (payload.interaction_type or "").strip().lower()
+    if interaction_type not in ALLOWED_INTERACTION_TYPES:
         raise HTTPException(status_code=400, detail="Invalid interaction_type")
 
     tracking_mode = (payload.ranking_mode or "").strip().lower() or None
@@ -768,7 +1607,7 @@ async def log_opportunity_interaction(
         # Public client endpoint should not ingest simulated events.
         raise HTTPException(status_code=400, detail="traffic_type must be 'real' for live interactions")
 
-    if payload.interaction_type in {"impression", "click", "save", "apply"}:
+    if interaction_type in TRACKING_REQUIRED_TYPES:
         required_fields: dict[str, Any] = {
             "ranking_mode": tracking_mode,
             "experiment_key": tracking_experiment_key,
@@ -786,30 +1625,103 @@ async def log_opportunity_interaction(
                 detail=f"Missing required tracking metadata: {', '.join(missing)}",
             )
 
-        if tracking_mode not in {"baseline", "semantic", "ml", "ab"}:
+        if tracking_mode not in VALID_RANKING_MODES:
             raise HTTPException(status_code=400, detail="Invalid ranking_mode")
         if tracking_rank_position is None or int(tracking_rank_position) <= 0:
             raise HTTPException(status_code=400, detail="rank_position must be >= 1")
 
-    await interaction_service.log_event(
-        user_id=current_user.id,
-        opportunity_id=payload.opportunity_id,
-        interaction_type=payload.interaction_type,
-        ranking_mode=tracking_mode,
-        experiment_key=tracking_experiment_key,
-        experiment_variant=tracking_experiment_variant,
-        query=payload.query,
-        model_version_id=payload.model_version_id,
-        rank_position=tracking_rank_position,
-        match_score=payload.match_score,
-        features=payload.features,
-        traffic_type="real",
-    )
+    return {
+        "user_id": current_user.id,
+        "opportunity_id": payload.opportunity_id,
+        "interaction_type": interaction_type,
+        "ranking_mode": tracking_mode,
+        "experiment_key": tracking_experiment_key,
+        "experiment_variant": tracking_experiment_variant,
+        "query": payload.query,
+        "model_version_id": payload.model_version_id,
+        "rank_position": tracking_rank_position,
+        "match_score": payload.match_score,
+        "features": payload.features,
+        "dwell_time_ms": payload.dwell_time_ms,
+        "scroll_depth": payload.scroll_depth,
+        "session_id": payload.session_id,
+        "cold_start": payload.cold_start,
+        "traffic_type": "real",
+    }
+
+
+async def _log_prepared_interaction(prepared: dict[str, Any]) -> dict[str, Any]:
+    event = await interaction_service.log_event(**prepared)
 
     return {
         "status": "ok",
-        "opportunity_id": str(payload.opportunity_id),
-        "interaction_type": payload.interaction_type,
+        "opportunity_id": str(event.opportunity_id),
+        "interaction_type": event.interaction_type,
+        "event_type": event.event_type,
+        "interaction_id": str(event.id),
+    }
+
+
+async def _validate_and_log_interaction(
+    payload: InteractionEventCreate,
+    current_user: User,
+) -> dict[str, Any]:
+    return await _log_prepared_interaction(await _prepare_interaction_event(payload, current_user))
+
+
+@router.post("/interactions", response_model=dict)
+async def log_opportunity_interaction(
+    payload: InteractionEventCreate,
+    current_user: User = Depends(get_current_active_user),
+) -> Any:
+    return await _validate_and_log_interaction(payload, current_user)
+
+
+@router.post("/interactions/batch", response_model=dict)
+async def log_opportunity_interactions_batch(
+    payload: InteractionBatchCreate,
+    current_user: User = Depends(get_current_active_user),
+) -> Any:
+    prepared = [await _prepare_interaction_event(event, current_user) for event in payload.events]
+    inserted = [await _log_prepared_interaction(event) for event in prepared]
+    return {
+        "status": "ok",
+        "inserted": len(inserted),
+        "events": inserted,
+    }
+
+
+@router.post("/interactions/application-outcomes", response_model=dict)
+async def record_application_outcome(
+    payload: ApplicationOutcomeCreate,
+    current_user: User = Depends(get_current_active_user),
+) -> Any:
+    from app.models.application_outcome import ApplicationOutcome
+
+    opportunity = await Opportunity.get(payload.opportunity_id)
+    if not opportunity:
+        raise HTTPException(status_code=404, detail="Opportunity not found")
+
+    if payload.application_id is not None:
+        application = await Application.get(payload.application_id)
+        if not application or str(application.user_id) != str(current_user.id):
+            raise HTTPException(status_code=404, detail="Application not found")
+
+    outcome = ApplicationOutcome(
+        user_id=current_user.id,
+        opportunity_id=payload.opportunity_id,
+        application_id=payload.application_id,
+        interaction_id=payload.interaction_id,
+        prompt_type=payload.prompt_type,
+        response=payload.response,
+        metadata=payload.metadata,
+    )
+    await outcome.insert()
+    return {
+        "status": "ok",
+        "outcome_id": str(outcome.id),
+        "prompt_type": outcome.prompt_type,
+        "response": outcome.response,
     }
 
 

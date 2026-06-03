@@ -5,11 +5,12 @@ from typing import Literal, Optional
 
 from beanie import Document, PydanticObjectId
 from pydantic import Field
+from pymongo import IndexModel
 
 from app.models.traffic import TrafficType
 from app.core.time import utc_now
 
-RequestKind = Literal["recommended", "shortlist", "ask_ai", "assistant_chat"]
+RequestKind = Literal["feed", "recommended", "shortlist", "ask_ai", "assistant_chat"]
 
 
 class RankingRequestTelemetry(Document):
@@ -55,4 +56,9 @@ class RankingRequestTelemetry(Document):
             "success",
             "traffic_type",
             "created_at",
+            IndexModel([("traffic_type", 1), ("created_at", -1)]),
+            IndexModel([("request_kind", 1), ("traffic_type", 1), ("created_at", -1)]),
+            IndexModel([("experiment_key", 1), ("experiment_variant", 1), ("traffic_type", 1), ("created_at", -1)]),
+            IndexModel([("ranking_mode", 1), ("traffic_type", 1), ("created_at", -1)]),
+            IndexModel([("success", 1), ("created_at", -1)]),
         ]

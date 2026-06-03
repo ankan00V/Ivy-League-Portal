@@ -1,0 +1,14 @@
+{
+  "data": {
+    "data": [
+      {
+        "title": "AI Product Hackathon",
+        "public_url": "hackathons/ai-product-hackathon-1001",
+        "type": "hackathons",
+        "details": "<p>Build an AI product prototype with responsible evaluation and deployment checks.</p>",
+        "organization": {"name": "Unstop"},
+        "end_date": "2026-08-15T18:30:00Z"
+      }
+    ]
+  }
+}

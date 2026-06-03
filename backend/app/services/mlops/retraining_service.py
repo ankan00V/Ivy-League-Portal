@@ -8,16 +8,37 @@ from typing import Any, Optional
 
 import numpy as np
 from beanie.odm.operators.find.comparison import In
+from beanie.odm.operators.find.logical import Or
 
 from app.core.config import settings
 from app.core.time import utc_now
+from app.models.application_outcome import ApplicationOutcome
 from app.models.model_drift_report import ModelDriftReport
 from app.models.opportunity_interaction import OpportunityInteraction
 from app.models.ranking_model_version import RankingModelVersion
+from app.services.interaction_service import funnel_event_type
 from app.services.mlops.activation_policy import evaluate_activation_policy
 from app.services.mlops.rollout_guardrail_service import rollout_guardrail_service
 from app.services.model_artifact_service import model_artifact_service
+from app.services.personalization.feature_builder import (
+    DEFAULT_LEARNED_RANKER_FEATURES,
+    HEURISTIC_WEIGHT_FEATURES,
+    RANKER_FEATURE_SCHEMA_VERSION,
+)
 from app.services.ranking_model_service import DEFAULT_RANKING_WEIGHTS, ranking_model_service
+
+POSITIVE_INTERACTION_TYPES = [
+    "click",
+    "save",
+    "apply",
+    "apply_start",
+    "apply_complete",
+    "shortlisted",
+    "interview",
+]
+POSITIVE_EVENT_TYPES = ["click", "save", "apply_start", "apply_complete"]
+POSITIVE_FUNNEL_TYPES = {"click", "save", "apply"}
+POSITIVE_OUTCOME_RESPONSES = {"yes", "somewhat"}
 
 
 def _bucket_query(query: Optional[str], buckets: int) -> int:
@@ -94,6 +115,54 @@ class TrainingResult:
 
 
 class RetrainingService:
+    def _funnel_type(self, interaction: OpportunityInteraction) -> str | None:
+        return funnel_event_type(
+            interaction_type=interaction.interaction_type,
+            event_type=interaction.event_type,
+        )
+
+    async def _load_impression_candidates(
+        self,
+        *,
+        window_start: datetime,
+        window_end: datetime,
+    ) -> list[OpportunityInteraction]:
+        return await OpportunityInteraction.find_many(
+            Or(
+                OpportunityInteraction.interaction_type == "impression",
+                OpportunityInteraction.event_type == "impression",
+            ),
+            OpportunityInteraction.created_at >= window_start,
+            OpportunityInteraction.created_at <= window_end,
+        ).to_list()
+
+    async def _load_positive_candidates(
+        self,
+        *,
+        window_start: datetime,
+        window_end: datetime,
+    ) -> list[OpportunityInteraction]:
+        return await OpportunityInteraction.find_many(
+            Or(
+                In(OpportunityInteraction.interaction_type, POSITIVE_INTERACTION_TYPES),
+                In(OpportunityInteraction.event_type, POSITIVE_EVENT_TYPES),
+            ),
+            OpportunityInteraction.created_at >= window_start,
+            OpportunityInteraction.created_at <= window_end,
+        ).to_list()
+
+    async def _load_positive_outcomes(
+        self,
+        *,
+        window_start: datetime,
+        window_end: datetime,
+    ) -> list[ApplicationOutcome]:
+        return await ApplicationOutcome.find_many(
+            In(ApplicationOutcome.response, list(POSITIVE_OUTCOME_RESPONSES)),
+            ApplicationOutcome.created_at >= window_start,
+            ApplicationOutcome.created_at <= window_end,
+        ).to_list()
+
     async def build_training_examples(
         self,
         *,
@@ -104,23 +173,44 @@ class RetrainingService:
     ) -> tuple[list[TrainingExample], dict[str, Any]]:
         label_window = timedelta(hours=max(1, int(label_window_hours)))
 
-        impressions = await OpportunityInteraction.find_many(
-            OpportunityInteraction.interaction_type == "impression",
-            OpportunityInteraction.created_at >= window_start,
-            OpportunityInteraction.created_at <= window_end,
-        ).to_list()
-        impressions = [item for item in impressions if isinstance(item.features, dict)]
+        impressions = await self._load_impression_candidates(
+            window_start=window_start,
+            window_end=window_end,
+        )
+        impressions = [
+            item
+            for item in impressions
+            if isinstance(item.features, dict) and self._funnel_type(item) == "impression"
+        ]
 
-        positives = await OpportunityInteraction.find_many(
-            In(OpportunityInteraction.interaction_type, ["click", "save", "apply", "shortlisted", "interview"]),
-            OpportunityInteraction.created_at >= window_start,
-            OpportunityInteraction.created_at <= (window_end + label_window),
-        ).to_list()
+        positives = await self._load_positive_candidates(
+            window_start=window_start,
+            window_end=window_end + label_window,
+        )
+        positives = [
+            item
+            for item in positives
+            if self._funnel_type(item) in POSITIVE_FUNNEL_TYPES
+        ]
 
         positive_map: dict[tuple[str, str], list[datetime]] = {}
         for interaction in positives:
             key = (str(interaction.user_id), str(interaction.opportunity_id))
             positive_map.setdefault(key, []).append(interaction.created_at)
+
+        positive_outcome_count = 0
+        try:
+            outcomes = await self._load_positive_outcomes(
+                window_start=window_start,
+                window_end=window_end + label_window,
+            )
+        except Exception:
+            outcomes = []
+        for outcome in outcomes:
+            key = (str(outcome.user_id), str(outcome.opportunity_id))
+            positive_map.setdefault(key, []).append(outcome.created_at)
+            positive_outcome_count += 1
+
         for times in positive_map.values():
             times.sort()
 
@@ -170,6 +260,13 @@ class RetrainingService:
                 "semantic_score": _feature_stats(X[:, 0] if X.size else np.asarray([], dtype=np.float64)),
                 "baseline_score": _feature_stats(X[:, 1] if X.size else np.asarray([], dtype=np.float64)),
                 "behavior_score": _feature_stats(X[:, 2] if X.size else np.asarray([], dtype=np.float64)),
+            },
+            "labels": {
+                "positive_interactions": float(len(positives)),
+                "positive_outcomes": float(positive_outcome_count),
+                "positive_rate": float(
+                    sum(example.label for example in examples) / float(max(1, len(examples)))
+                ),
             },
         }
         return examples, baselines
@@ -411,15 +508,18 @@ class RetrainingService:
             "rows": int(rows),
             "split_strategy": splits.strategy,
             "split_summary": splits.summary,
-            "feature_names": ["semantic_score", "baseline_score", "behavior_score"],
+            "feature_names": list(HEURISTIC_WEIGHT_FEATURES),
+            "online_feature_schema_version": RANKER_FEATURE_SCHEMA_VERSION,
+            "online_feature_names": list(DEFAULT_LEARNED_RANKER_FEATURES),
             "selection_metric": "validation_auc_preferred",
             "feature_stats": dict(baselines.get("features") or {}),
+            "label_sources": dict(baselines.get("labels") or {}),
             "query_stats": {
                 "length": dict(baselines.get("query_length") or {}),
                 "buckets": dict(baselines.get("query_buckets") or {}),
             },
             "grid_step": float(grid_step),
-            "training_code": "ranking-weights-grid-search-v2",
+            "training_code": "ranking-weights-grid-search-v3",
         }
 
     def _build_model_card(
@@ -448,6 +548,7 @@ class RetrainingService:
                 "length": dict(baselines.get("query_length") or {}),
                 "buckets": dict(baselines.get("query_buckets") or {}),
             },
+            "label_sources": dict(baselines.get("labels") or {}),
             "auc": {
                 "train": {
                     "default": metrics.get("auc_default_train", 0.0),
@@ -568,7 +669,7 @@ class RetrainingService:
         artifact_checksum = model_artifact_service.expected_checksum()
         serving_ready = bool(model_artifact_service.learned_ranker_artifact_exists()) or bool(not settings.LEARNED_RANKER_ENABLED)
         version = RankingModelVersion(
-            name="ranking-weights-v2",
+            name="ranking-weights-v3",
             is_active=False,
             weights=learned,
             metrics=metrics,
@@ -576,7 +677,9 @@ class RetrainingService:
             artifact_provider=artifact_provider,
             artifact_checksum_sha256=(artifact_checksum or None),
             feature_schema={
-                "features": ["semantic_score", "baseline_score", "behavior_score"],
+                "features": list(HEURISTIC_WEIGHT_FEATURES),
+                "online_features": list(DEFAULT_LEARNED_RANKER_FEATURES),
+                "online_feature_schema_version": RANKER_FEATURE_SCHEMA_VERSION,
                 "label_window_hours": int(label_window_hours),
             },
             serving_ready=serving_ready,

@@ -12,14 +12,15 @@ from app.core.config import settings
 from app.models.opportunity import Opportunity
 from app.models.opportunity_interaction import OpportunityInteraction
 from app.models.profile import Profile
+from app.core.time import as_utc_aware, utc_now
 from app.services.experiment_service import experiment_service
 from app.services.intelligence import score_opportunity_match
+from app.services.interaction_service import funnel_event_type
 from app.services.mlops.learned_ranker_rollout_service import learned_ranker_rollout_service
 from app.services.personalization.feature_builder import build_ranker_features, skills_overlap_score
 from app.services.personalization.learned_ranker import learned_ranker
 from app.services.ranking_model_service import ranking_model_service
 from app.services.vector_service import opportunity_vector_service
-from app.core.time import as_utc_aware, utc_now
 
 
 def _activity_sort_key(opportunity: Opportunity) -> tuple[datetime, datetime]:
@@ -43,16 +44,27 @@ def _profile_query(profile: Profile) -> str:
         getattr(profile, "experience_summary", "") or "",
         getattr(profile, "preferred_roles", "") or "",
         getattr(profile, "preferred_locations", "") or "",
+        getattr(profile, "preferred_work_mode", "") or "",
+        getattr(profile, "expected_stipend_range", "") or "",
         getattr(profile, "user_type", "") or "",
     ]
+    values.extend(getattr(profile, "domains_of_interest", []) or [])
     values.extend(getattr(profile, "goals", []) or [])
     values.extend(getattr(profile, "career_intent", []) or [])
     values.extend(getattr(profile, "interest_graph", []) or [])
     values.extend(getattr(profile, "work_preferences", []) or [])
+    values.extend(getattr(profile, "opportunity_types", []) or [])
     return " ".join(value for value in values if value).strip()
 
 
 class RecommendationService:
+    def _source_key(self, opportunity: Opportunity) -> str:
+        return str(getattr(opportunity, "source", "") or "").strip().lower() or "unknown"
+
+    def _source_diversity_bonus(self, opportunity: Opportunity, source_counts: dict[str, int]) -> float:
+        count = max(1, int(source_counts.get(self._source_key(opportunity), 1)))
+        return float(1.0 / (count**0.5))
+
     def _diversify_ranked(self, items: list[dict[str, Any]], *, per_source_cap: int = 2) -> list[dict[str, Any]]:
         capped = max(1, per_source_cap)
         source_counts: dict[str, int] = {}
@@ -61,7 +73,7 @@ class RecommendationService:
 
         for item in items:
             opportunity = item.get("opportunity")
-            raw_source = str(getattr(opportunity, "source", "") or "").strip().lower() or "unknown"
+            raw_source = self._source_key(opportunity)
             count = source_counts.get(raw_source, 0)
             if count < capped:
                 primary.append(item)
@@ -200,6 +212,8 @@ class RecommendationService:
                 "domain": {},
                 "type": {},
                 "source": {},
+                "domain_ctr": {},
+                "source_ctr": {},
                 "stats": {
                     "recent_interactions_7d": 0.0,
                     "recent_interactions_30d": 0.0,
@@ -239,16 +253,23 @@ class RecommendationService:
         domain_score: dict[str, float] = defaultdict(float)
         type_score: dict[str, float] = defaultdict(float)
         source_score: dict[str, float] = defaultdict(float)
+        domain_impressions: dict[str, int] = defaultdict(int)
+        domain_clicks: dict[str, int] = defaultdict(int)
+        source_impressions: dict[str, int] = defaultdict(int)
+        source_clicks: dict[str, int] = defaultdict(int)
 
         for interaction in interactions:
             created_at = as_utc_aware(interaction.created_at)
             if created_at is None:
                 continue
+            action = funnel_event_type(
+                interaction_type=interaction.interaction_type,
+                event_type=interaction.event_type,
+            )
             if created_at >= window_7d:
                 recent_interactions_7d += 1
             if created_at >= window_30d:
                 recent_interactions_30d += 1
-                action = (interaction.interaction_type or "").strip().lower()
                 if action == "apply":
                     recent_applies_30d += 1
                 elif action == "click":
@@ -262,13 +283,27 @@ class RecommendationService:
             if not opportunity:
                 continue
 
-            weight = action_weights.get(interaction.interaction_type, 0.5)
+            weight = action_weights.get(action or "", 0.5)
+            domain_key = str(opportunity.domain or "").lower()
+            type_key = str(opportunity.opportunity_type or "").lower()
+            source_key = self._source_key(opportunity)
             if opportunity.domain:
-                domain_score[opportunity.domain.lower()] += weight
+                domain_score[domain_key] += weight
             if opportunity.opportunity_type:
-                type_score[opportunity.opportunity_type.lower()] += weight
+                type_score[type_key] += weight
             if getattr(opportunity, "source", None):
-                source_score[str(opportunity.source).lower()] += weight
+                source_score[source_key] += weight
+            if created_at >= window_30d:
+                if action == "impression":
+                    if domain_key:
+                        domain_impressions[domain_key] += 1
+                    if source_key:
+                        source_impressions[source_key] += 1
+                elif action == "click":
+                    if domain_key:
+                        domain_clicks[domain_key] += 1
+                    if source_key:
+                        source_clicks[source_key] += 1
 
         def _normalize(values: dict[str, float]) -> dict[str, float]:
             if not values:
@@ -283,10 +318,19 @@ class RecommendationService:
                 if score > 0
             }
 
+        def _ctr(clicks: dict[str, int], impressions: dict[str, int]) -> dict[str, float]:
+            return {
+                key: round(float(clicks.get(key, 0)) / float(count), 6)
+                for key, count in impressions.items()
+                if count > 0
+            }
+
         return {
             "domain": _normalize(domain_score),
             "type": _normalize(type_score),
             "source": _normalize(source_score),
+            "domain_ctr": _ctr(domain_clicks, domain_impressions),
+            "source_ctr": _ctr(source_clicks, source_impressions),
             "stats": {
                 "recent_interactions_7d": float(recent_interactions_7d),
                 "recent_interactions_30d": float(recent_interactions_30d),
@@ -332,6 +376,20 @@ class RecommendationService:
             float(domain_map.get(domain_key, 0.0)),
             float(type_map.get(type_key, 0.0)),
             float(source_map.get(source_key, 0.0)),
+        )
+
+    def _behavior_ctrs(
+        self, opportunity: Opportunity, behavior_map: dict[str, dict[str, float]]
+    ) -> tuple[float, float]:
+        domain_ctr_map = behavior_map.get("domain_ctr", {})
+        source_ctr_map = behavior_map.get("source_ctr", {})
+
+        domain_key = str(getattr(opportunity, "domain", "") or "").lower()
+        source_key = self._source_key(opportunity)
+
+        return (
+            float(domain_ctr_map.get(domain_key, 0.0)),
+            float(source_ctr_map.get(source_key, 0.0)),
         )
 
     async def rank(
@@ -415,6 +473,9 @@ class RecommendationService:
         behavior_map = await self._build_behavior_map(user_id)
         behavior_stats = dict(behavior_map.get("stats") or {})
         semantic_scores: dict[str, float] = {}
+        candidate_source_counts: dict[str, int] = defaultdict(int)
+        for opportunity in opportunities:
+            candidate_source_counts[self._source_key(opportunity)] += 1
 
         semantic_query = (query or "").strip() or _profile_query(profile)
         if semantic_query:
@@ -446,13 +507,19 @@ class RecommendationService:
             semantic_score = round(float(semantic_scores.get(str(opportunity.id), 0.0)), 3)
             behavior_score = self._behavior_score(opportunity, behavior_map)
             behavior_domain_pref, behavior_type_pref, behavior_source_pref = self._behavior_prefs(opportunity, behavior_map)
+            ctr_for_domain, ctr_for_source = self._behavior_ctrs(opportunity, behavior_map)
             overlap_score = skills_overlap_score(profile=profile, opportunity=opportunity)
+            raw_quality_score = getattr(opportunity, "quality_score", None)
+            quality_score = 50.0 if raw_quality_score is None else float(raw_quality_score)
             heuristic_blend_score = round(
                 (weights["semantic"] * semantic_score)
                 + (weights["baseline"] * baseline_score)
                 + (weights["behavior"] * behavior_score),
                 3,
             )
+            if quality_score < 30.0:
+                heuristic_blend_score = round(heuristic_blend_score * 0.65, 3)
+                baseline_score = round(float(baseline_score) * 0.75, 3)
             features = build_ranker_features(
                 profile=profile,
                 opportunity=opportunity,
@@ -470,6 +537,9 @@ class RecommendationService:
                 user_recent_impressions_30d=float(behavior_stats.get("recent_impressions_30d") or 0.0),
                 user_last_interaction_hours=float(behavior_stats.get("last_interaction_hours") or 9999.0),
                 sequence_ctr_30d=float(behavior_stats.get("sequence_ctr_30d") or 0.0),
+                source_diversity_bonus=self._source_diversity_bonus(opportunity, candidate_source_counts),
+                ctr_for_source=ctr_for_source,
+                ctr_for_domain=ctr_for_domain,
             )
 
             reasons = list(baseline_reasons)
@@ -505,11 +575,15 @@ class RecommendationService:
                     "behavior_type_pref": round(float(behavior_type_pref), 6),
                     "behavior_source_pref": round(float(behavior_source_pref), 6),
                     "heuristic_blend_score": heuristic_blend_score,
+                    "quality_score": round(quality_score, 3),
                     "ml_raw_score": ml_raw_score,
                     "shadow_ml_raw_score": None,
                     "geo_match_score": float(features.values.get("geo_match_score") or 0.0),
                     "source_trust": float(features.values.get("source_trust") or 0.0),
+                    "source_diversity_bonus": float(features.values.get("source_diversity_bonus") or 0.0),
                     "sequence_ctr_30d": float(features.values.get("sequence_ctr_30d") or 0.0),
+                    "ctr_for_source": float(features.values.get("ctr_for_source") or 0.0),
+                    "ctr_for_domain": float(features.values.get("ctr_for_domain") or 0.0),
                     "user_recent_interactions_30d": float(
                         features.values.get("user_recent_interactions_30d") or 0.0
                     ),
@@ -584,9 +658,13 @@ class RecommendationService:
                     "behavior_source_pref": candidate["behavior_source_pref"],
                     "geo_match_score": candidate["geo_match_score"],
                     "source_trust": candidate["source_trust"],
+                    "source_diversity_bonus": candidate["source_diversity_bonus"],
                     "sequence_ctr_30d": candidate["sequence_ctr_30d"],
+                    "ctr_for_source": candidate["ctr_for_source"],
+                    "ctr_for_domain": candidate["ctr_for_domain"],
                     "user_recent_interactions_30d": candidate["user_recent_interactions_30d"],
                     "ranker_features": candidate["ranker_features"],
+                    "quality_score": candidate["quality_score"],
                     "ranking_mode": final_mode,
                     "model_version_id": active_model.model_version_id,
                     "weights": dict(weights),

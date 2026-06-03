@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Optional
 
 from beanie import PydanticObjectId
@@ -11,13 +11,20 @@ from pydantic import BaseModel, EmailStr, Field
 from app.api.deps import get_current_admin_user
 from app.models.auth_audit_event import AuthAuditEvent
 from app.models.background_job import BackgroundJob
+from app.models.application import Application
 from app.models.opportunity import Opportunity
+from app.models.opportunity_interaction import OpportunityInteraction
+from app.models.ranking_model_version import RankingModelVersion
+from app.models.scraper_run_log import ScraperRunLog
+from app.models.source_discovery import ScraperRegistration, ScraperRegistrationStatus
 from app.models.post import Comment as SocialComment
 from app.models.post import Post
 from app.models.user import User
+from app.core.redis import get_redis
 from app.core.time import utc_now
 from app.services.auth_security_service import auth_security_service
 from app.services.job_runner import job_runner
+from app.services.ranking_model_service import ranking_model_service
 from app.services.opportunity_visibility import (
     canonical_opportunity_type,
     is_opportunity_expired,
@@ -94,6 +101,8 @@ class AdminOpportunityCreate(BaseModel):
     domain: Optional[str] = None
     source: Optional[str] = None
     location: Optional[str] = None
+    work_mode: Optional[str] = None
+    quality_score: Optional[float] = None
     eligibility: Optional[str] = None
     ppo_available: Optional[str] = None
     duration_start: datetime
@@ -142,6 +151,8 @@ class AdminOpportunityResponse(BaseModel):
     risk_reasons: list[str]
     verification_evidence: list[str]
     lifecycle_status: str
+    opportunity_status: str
+    freshness_score: float
     duration_start: Optional[datetime] = None
     duration_end: Optional[datetime] = None
     deadline: Optional[datetime] = None
@@ -185,11 +196,46 @@ class AdminUserStatusUpdate(BaseModel):
     is_active: bool
 
 
+class AdminUserRoleUpdate(BaseModel):
+    account_type: Optional[str] = Field(default=None, pattern="^(candidate|employer)$")
+    is_admin: Optional[bool] = None
+
+
 class AdminJobEnqueueRequest(BaseModel):
     job_type: str = Field(min_length=3)
     payload: dict[str, Any] = Field(default_factory=dict)
     max_attempts: int = Field(default=5, ge=1, le=50)
     dedupe_key: Optional[str] = None
+
+
+class AdminAuthUnlockRequest(BaseModel):
+    email: EmailStr
+    action: Optional[str] = None
+    purpose: Optional[str] = None
+
+
+class AdminOpportunityStatusUpdate(BaseModel):
+    status: str = Field(pattern="^(active|closing_soon|expired|filled|removed)$")
+
+
+class AdminQualityPipelineRequest(BaseModel):
+    stale_days: int = Field(default=7, ge=1, le=365)
+    limit: Optional[int] = Field(default=None, ge=1, le=100_000)
+    enqueue: bool = True
+
+
+class AdminDedupRunRequest(BaseModel):
+    limit: int = Field(default=1000, ge=1, le=100_000)
+    execute: bool = False
+    mark_duplicate_closed: bool = False
+    enqueue: bool = True
+
+
+class AdminTrainRankerRequest(BaseModel):
+    lookback_days: int = Field(default=120, ge=1, le=365)
+    min_rows: int = Field(default=100, ge=50, le=5_000_000)
+    auto_activate: bool = False
+    enqueue: bool = True
 
 
 def _opportunity_payload(row: Opportunity) -> AdminOpportunityResponse:
@@ -210,6 +256,8 @@ def _opportunity_payload(row: Opportunity) -> AdminOpportunityResponse:
         domain=row.domain,
         source=row.source,
         location=row.location,
+        work_mode=row.work_mode,
+        quality_score=row.quality_score,
         eligibility=row.eligibility,
         ppo_available=row.ppo_available,
         trust_status=row.trust_status or TRUST_STATUS_UNREVIEWED,
@@ -218,6 +266,8 @@ def _opportunity_payload(row: Opportunity) -> AdminOpportunityResponse:
         risk_reasons=list(row.risk_reasons or []),
         verification_evidence=list(row.verification_evidence or []),
         lifecycle_status=row.lifecycle_status or "published",
+        opportunity_status=getattr(row, "opportunity_status", "active") or "active",
+        freshness_score=float(getattr(row, "freshness_score", 1.0) or 0.0),
         duration_start=row.duration_start,
         duration_end=row.duration_end,
         deadline=row.deadline,
@@ -234,6 +284,13 @@ def _validate_lifecycle_status(value: str) -> str:
     if lifecycle_status not in {"draft", "published", "paused", "closed"}:
         raise HTTPException(status_code=400, detail="Invalid lifecycle_status")
     return lifecycle_status
+
+
+def _validate_opportunity_status(value: str) -> str:
+    status = str(value or "active").strip().lower()
+    if status not in {"active", "closing_soon", "expired", "filled", "removed"}:
+        raise HTTPException(status_code=400, detail="Invalid opportunity status")
+    return status
 
 
 def _validate_trust_status(value: str) -> str:
@@ -269,6 +326,76 @@ def _apply_lifecycle_status(row: Opportunity, lifecycle_status: str) -> None:
         row.paused_at = now
     elif lifecycle_status == "closed":
         row.closed_at = now
+
+
+def _admin_user_payload(row: User) -> AdminUserResponse:
+    return AdminUserResponse(
+        id=str(row.id),
+        email=row.email,
+        full_name=row.full_name,
+        username=row.username,
+        account_type=row.account_type,
+        auth_provider=row.auth_provider,
+        is_active=bool(row.is_active),
+        is_admin=bool(row.is_admin),
+        created_at=row.created_at,
+    )
+
+
+@router.get("/system/health", response_model=dict)
+async def admin_system_health(_: User = Depends(get_current_admin_user)) -> Any:
+    redis_status = "disabled"
+    try:
+        redis = get_redis()
+        if redis is not None:
+            await redis.ping()
+            redis_status = "up"
+    except Exception:
+        redis_status = "down"
+
+    opportunities_total = await Opportunity.find_many().count()
+    users_total = await User.find_many().count()
+    pending_jobs = await BackgroundJob.find_many(BackgroundJob.status == "pending").count()
+    dead_jobs = await BackgroundJob.find_many(BackgroundJob.status == "dead").count()
+    return {
+        "status": "healthy" if redis_status != "down" else "degraded",
+        "generated_at": utc_now().isoformat(),
+        "components": {
+            "mongodb": {"status": "up"},
+            "redis": {"status": redis_status},
+            "jobs": {"pending": int(pending_jobs), "dead": int(dead_jobs)},
+        },
+        "summary": {
+            "users_total": int(users_total),
+            "opportunities_total": int(opportunities_total),
+        },
+    }
+
+
+@router.post("/auth/unlock", response_model=dict)
+async def admin_unlock_auth_subject(
+    payload: AdminAuthUnlockRequest,
+    request: Request,
+    current_user: User = Depends(get_current_admin_user),
+) -> Any:
+    cleared = await auth_security_service.clear_locks(
+        email=str(payload.email),
+        action=payload.action,
+        purpose=payload.purpose,
+    )
+    await _audit_admin_action(
+        action="auth.unlock",
+        actor=current_user,
+        success=True,
+        request=request,
+        reason_payload={
+            "email": str(payload.email).lower(),
+            "action": payload.action,
+            "purpose": payload.purpose,
+            "cleared": cleared,
+        },
+    )
+    return {"status": "ok", "cleared": cleared}
 
 
 @router.get("/overview", response_model=AdminOverviewResponse)
@@ -311,13 +438,25 @@ async def admin_overview(
 async def admin_list_opportunities(
     limit: int = Query(default=100, ge=1, le=500),
     skip: int = Query(default=0, ge=0),
+    page: Optional[int] = Query(default=None, ge=1),
+    source: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+    quality_min: Optional[float] = Query(default=None, ge=0.0, le=100.0),
     trust_status: Optional[str] = Query(default=None),
     _: User = Depends(get_current_admin_user),
 ) -> Any:
-    query = Opportunity.find_many()
+    computed_skip = skip if page is None else (int(page) - 1) * int(limit)
+    filters: dict[str, Any] = {}
+    if source:
+        filters["source"] = source.strip()
+    if status:
+        filters["opportunity_status"] = _validate_opportunity_status(status)
+    if quality_min is not None:
+        filters["quality_score"] = {"$gte": float(quality_min)}
     if trust_status:
-        query = Opportunity.find_many(Opportunity.trust_status == _validate_trust_status(trust_status))
-    rows = await query.sort("-updated_at").skip(skip).limit(limit).to_list()
+        filters["trust_status"] = _validate_trust_status(trust_status)
+    query = Opportunity.find_many(filters) if filters else Opportunity.find_many()
+    rows = await query.sort("-updated_at").skip(computed_skip).limit(limit).to_list()
     return [_opportunity_payload(row) for row in rows]
 
 
@@ -458,6 +597,97 @@ async def admin_delete_opportunity(
     return {"status": "ok", "opportunity_id": str(opportunity_id)}
 
 
+@router.patch("/opportunities/{opportunity_id}/status", response_model=AdminOpportunityResponse)
+async def admin_update_opportunity_status(
+    opportunity_id: PydanticObjectId,
+    payload: AdminOpportunityStatusUpdate,
+    request: Request,
+    current_user: User = Depends(get_current_admin_user),
+) -> Any:
+    row = await Opportunity.get(opportunity_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Opportunity not found")
+    row.opportunity_status = _validate_opportunity_status(payload.status)
+    if row.opportunity_status in {"filled", "removed", "expired"}:
+        row.lifecycle_status = "closed" if row.opportunity_status in {"filled", "expired"} else "paused"
+        row.closed_at = utc_now() if row.opportunity_status in {"filled", "expired"} else row.closed_at
+    row.lifecycle_updated_at = utc_now()
+    row.updated_at = utc_now()
+    await row.save()
+    await _audit_admin_action(
+        action="opportunity.status.update",
+        actor=current_user,
+        success=True,
+        request=request,
+        reason_payload={"opportunity_id": str(opportunity_id), "status": row.opportunity_status},
+    )
+    return _opportunity_payload(row)
+
+
+@router.post("/opportunities/run-quality-pipeline", response_model=dict)
+async def admin_run_quality_pipeline(
+    payload: AdminQualityPipelineRequest,
+    request: Request,
+    current_user: User = Depends(get_current_admin_user),
+) -> Any:
+    if payload.enqueue:
+        job = await job_runner.enqueue(
+            job_type="opportunities.quality_pipeline",
+            payload={"stale_days": payload.stale_days, "limit": payload.limit},
+            max_attempts=2,
+            dedupe_key="admin:opportunities.quality_pipeline",
+        )
+        result = {"status": "queued", "job_id": str(job.id)}
+    else:
+        from app.services.opportunity_quality_service import opportunity_quality_scorer
+
+        result = await opportunity_quality_scorer.run_quality_pipeline(
+            stale_days=payload.stale_days,
+            limit=payload.limit,
+        )
+    await _audit_admin_action(
+        action="opportunity.quality_pipeline",
+        actor=current_user,
+        success=True,
+        request=request,
+        reason_payload={"enqueue": payload.enqueue, **dict(result or {})},
+    )
+    return result
+
+
+@router.post("/dedup/run", response_model=dict)
+async def admin_run_deduplication(
+    payload: AdminDedupRunRequest,
+    request: Request,
+    current_user: User = Depends(get_current_admin_user),
+) -> Any:
+    job_payload = {
+        "limit": payload.limit,
+        "execute": payload.execute,
+        "mark_duplicate_closed": payload.mark_duplicate_closed,
+    }
+    if payload.enqueue:
+        job = await job_runner.enqueue(
+            job_type="opportunities.dedup_scan",
+            payload=job_payload,
+            max_attempts=2,
+            dedupe_key=f"admin:opportunities.dedup_scan:{payload.execute}:{payload.mark_duplicate_closed}",
+        )
+        result = {"status": "queued", "job_id": str(job.id)}
+    else:
+        from app.services.duplicate_detector import duplicate_detector
+
+        result = await duplicate_detector.scan_existing(**job_payload)
+    await _audit_admin_action(
+        action="dedup.run",
+        actor=current_user,
+        success=True,
+        request=request,
+        reason_payload={"enqueue": payload.enqueue, **dict(result or {})},
+    )
+    return result
+
+
 @router.get("/social/posts", response_model=list[AdminPostResponse])
 async def admin_list_posts(
     limit: int = Query(default=100, ge=1, le=500),
@@ -545,20 +775,32 @@ async def admin_list_users(
     _: User = Depends(get_current_admin_user),
 ) -> Any:
     rows = await User.find_many().sort("-created_at").skip(skip).limit(limit).to_list()
-    return [
-        AdminUserResponse(
-            id=str(row.id),
-            email=row.email,
-            full_name=row.full_name,
-            username=row.username,
-            account_type=row.account_type,
-            auth_provider=row.auth_provider,
-            is_active=bool(row.is_active),
-            is_admin=bool(row.is_admin),
-            created_at=row.created_at,
-        )
-        for row in rows
-    ]
+    return [_admin_user_payload(row) for row in rows]
+
+
+@router.get("/users/{user_id}", response_model=dict)
+async def admin_get_user_detail(
+    user_id: PydanticObjectId,
+    _: User = Depends(get_current_admin_user),
+) -> Any:
+    row = await User.get(user_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    since = utc_now() - timedelta(days=30)
+    interactions = await OpportunityInteraction.find_many(
+        OpportunityInteraction.user_id == user_id,
+        OpportunityInteraction.created_at >= since,
+    ).to_list()
+    by_type: dict[str, int] = {}
+    for item in interactions:
+        event_type = str(item.event_type or item.interaction_type or "unknown")
+        by_type[event_type] = by_type.get(event_type, 0) + 1
+    payload = _admin_user_payload(row).model_dump(mode="json")
+    payload["interaction_summary_30d"] = {
+        "total": len(interactions),
+        "by_type": by_type,
+    }
+    return payload
 
 
 @router.patch("/users/{user_id}/status", response_model=AdminUserResponse)
@@ -582,17 +824,67 @@ async def admin_update_user_status(
         request=request,
         reason_payload={"target_user_id": str(user_id), "is_active": bool(payload.is_active)},
     )
-    return AdminUserResponse(
-        id=str(row.id),
-        email=row.email,
-        full_name=row.full_name,
-        username=row.username,
-        account_type=row.account_type,
-        auth_provider=row.auth_provider,
-        is_active=bool(row.is_active),
-        is_admin=bool(row.is_admin),
-        created_at=row.created_at,
+    return _admin_user_payload(row)
+
+
+@router.patch("/users/{user_id}/role", response_model=AdminUserResponse)
+async def admin_update_user_role(
+    user_id: PydanticObjectId,
+    payload: AdminUserRoleUpdate,
+    request: Request,
+    current_user: User = Depends(get_current_admin_user),
+) -> Any:
+    row = await User.get(user_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    if str(row.id) == str(current_user.id) and payload.is_admin is False:
+        raise HTTPException(status_code=400, detail="Cannot remove your own admin access")
+    changes: dict[str, Any] = {}
+    if payload.account_type is not None and row.account_type != payload.account_type:
+        row.account_type = payload.account_type
+        changes["account_type"] = payload.account_type
+    if payload.is_admin is not None and bool(row.is_admin) != bool(payload.is_admin):
+        row.is_admin = bool(payload.is_admin)
+        changes["is_admin"] = bool(payload.is_admin)
+    if changes:
+        await row.save()
+    await _audit_admin_action(
+        action="user.role.update",
+        actor=current_user,
+        success=True,
+        request=request,
+        reason_payload={"target_user_id": str(user_id), "changes": changes},
     )
+    return _admin_user_payload(row)
+
+
+@router.delete("/users/{user_id}", response_model=dict)
+async def admin_soft_delete_user(
+    user_id: PydanticObjectId,
+    request: Request,
+    current_user: User = Depends(get_current_admin_user),
+) -> Any:
+    row = await User.get(user_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    if bool(row.is_admin):
+        raise HTTPException(status_code=400, detail="Admin identities cannot be deleted here")
+    row.email = f"deleted-{str(row.id)}@deleted.local"
+    row.full_name = None
+    row.username = None
+    row.hashed_password = "DELETED_USER"
+    row.auth_provider = "deleted"
+    row.is_active = False
+    row.profile_embedding = []
+    await row.save()
+    await _audit_admin_action(
+        action="user.soft_delete",
+        actor=current_user,
+        success=True,
+        request=request,
+        reason_payload={"target_user_id": str(user_id)},
+    )
+    return {"status": "ok", "user_id": str(user_id)}
 
 
 @router.get("/jobs/recent", response_model=list[dict[str, Any]])
@@ -640,20 +932,380 @@ async def admin_enqueue_job(
     return {"status": "ok", "job_id": str(job.id)}
 
 
+@router.post("/jobs/{job_name}/trigger", response_model=dict)
+async def admin_trigger_named_job(
+    job_name: str,
+    payload: dict[str, Any],
+    request: Request,
+    current_user: User = Depends(get_current_admin_user),
+) -> Any:
+    normalized = job_name.strip()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="job_name is required")
+    job = await job_runner.enqueue(
+        job_type=normalized,
+        payload=payload or {},
+        max_attempts=2,
+        dedupe_key=f"admin:{normalized}:{utc_now().date().isoformat()}",
+    )
+    await _audit_admin_action(
+        action="job.trigger",
+        actor=current_user,
+        success=True,
+        request=request,
+        reason_payload={"job_name": normalized, "job_id": str(job.id)},
+    )
+    return {"status": "queued", "job_id": str(job.id), "job_name": normalized}
+
+
+@router.get("/jobs/{job_name}/status", response_model=dict)
+async def admin_named_job_status(
+    job_name: str,
+    _: User = Depends(get_current_admin_user),
+) -> Any:
+    normalized = job_name.strip()
+    rows = await BackgroundJob.find_many(BackgroundJob.job_type == normalized).sort("-created_at").limit(5).to_list()
+    return {
+        "job_name": normalized,
+        "recent": [
+            {
+                "id": str(row.id),
+                "status": row.status,
+                "attempts": int(row.attempts or 0),
+                "created_at": row.created_at.isoformat(),
+                "updated_at": row.updated_at.isoformat(),
+                "last_error": row.last_error,
+                "result": row.result,
+            }
+            for row in rows
+        ],
+    }
+
+
+@router.get("/jobs/history", response_model=list[dict[str, Any]])
+async def admin_jobs_history(
+    job: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    _: User = Depends(get_current_admin_user),
+) -> Any:
+    filters: dict[str, Any] = {}
+    if job:
+        filters["job_type"] = job.strip()
+    if status:
+        filters["status"] = status.strip().lower()
+    rows = await (BackgroundJob.find_many(filters) if filters else BackgroundJob.find_many()).sort("-created_at").limit(limit).to_list()
+    return [
+        {
+            "id": str(row.id),
+            "job_type": row.job_type,
+            "status": row.status,
+            "attempts": int(row.attempts or 0),
+            "created_at": row.created_at.isoformat(),
+            "updated_at": row.updated_at.isoformat(),
+            "last_error": row.last_error,
+            "result": row.result,
+        }
+        for row in rows
+    ]
+
+
+@router.post("/scrapers/{source}/trigger", response_model=dict)
+async def admin_trigger_scraper(
+    source: str,
+    request: Request,
+    current_user: User = Depends(get_current_admin_user),
+) -> Any:
+    source_key = source.strip().lower() or "all"
+    job = await job_runner.enqueue(
+        job_type="scraper.run",
+        payload={"requested_source": source_key, "triggered_by": "admin"},
+        max_attempts=2,
+        dedupe_key=f"admin:scraper.run:{source_key}",
+    )
+    await _audit_admin_action(
+        action="scraper.trigger",
+        actor=current_user,
+        success=True,
+        request=request,
+        reason_payload={"source": source_key, "job_id": str(job.id)},
+    )
+    return {"status": "queued", "source": source_key, "job_id": str(job.id)}
+
+
+@router.post("/scrapers/{source}/pause", response_model=dict)
+async def admin_pause_scraper(
+    source: str,
+    request: Request,
+    current_user: User = Depends(get_current_admin_user),
+) -> Any:
+    source_key = source.strip().lower()
+    row = await ScraperRegistration.find_one(
+        {
+            "$or": [
+                {"scraper_key": source_key},
+                {"source_name": source_key},
+                {"domain": source_key},
+            ]
+        }
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Scraper registration not found")
+    row.status = ScraperRegistrationStatus.paused
+    row.updated_at = utc_now()
+    await row.save()
+    await _audit_admin_action(
+        action="scraper.pause",
+        actor=current_user,
+        success=True,
+        request=request,
+        reason_payload={"source": source_key, "registration_id": str(row.id)},
+    )
+    return {"status": "paused", "source": source_key, "registration_id": str(row.id)}
+
+
+@router.get("/scrapers/runs", response_model=list[dict[str, Any]])
+async def admin_scraper_runs(
+    source: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    _: User = Depends(get_current_admin_user),
+) -> Any:
+    filters: dict[str, Any] = {}
+    if source:
+        filters["source_name"] = source.strip()
+    if status:
+        filters["status"] = status.strip().lower()
+    rows = await (ScraperRunLog.find_many(filters) if filters else ScraperRunLog.find_many()).sort("-run_end").limit(limit).to_list()
+    return [
+        {
+            "id": str(row.id),
+            "source_name": row.source_name,
+            "status": row.status,
+            "run_start": row.run_start.isoformat(),
+            "run_end": row.run_end.isoformat(),
+            "items_fetched": int(row.items_fetched or 0),
+            "items_inserted": int(row.items_inserted or 0),
+            "items_deduplicated": int(row.items_deduplicated or 0),
+            "parse_error_count": int(row.parse_error_count or 0),
+            "silent_failure": bool(row.silent_failure),
+            "avg_trust_score": row.avg_trust_score,
+        }
+        for row in rows
+    ]
+
+
+@router.post("/ranker/train", response_model=dict)
+async def admin_train_ranker(
+    payload: AdminTrainRankerRequest,
+    request: Request,
+    current_user: User = Depends(get_current_admin_user),
+) -> Any:
+    job_payload = {
+        "lookback_days": payload.lookback_days,
+        "min_rows": payload.min_rows,
+        "auto_activate": payload.auto_activate,
+        "notes": "admin_triggered",
+    }
+    if payload.enqueue:
+        job = await job_runner.enqueue(
+            job_type="mlops.retrain",
+            payload=job_payload,
+            max_attempts=1,
+            dedupe_key="admin:mlops.retrain",
+        )
+        result = {"status": "queued", "job_id": str(job.id)}
+    else:
+        from app.services.mlops.retraining_service import retraining_service
+
+        result_obj = await retraining_service.retrain_and_register(**job_payload)
+        result = {
+            "status": "completed",
+            "model_version_id": result_obj.model_version_id,
+            "auto_activated": bool(result_obj.auto_activated),
+            "metrics": result_obj.metrics,
+        }
+    await _audit_admin_action(
+        action="ranker.train",
+        actor=current_user,
+        success=True,
+        request=request,
+        reason_payload={"enqueue": payload.enqueue, **dict(result or {})},
+    )
+    return result
+
+
+@router.get("/ranker/versions", response_model=list[dict[str, Any]])
+async def admin_ranker_versions(
+    limit: int = Query(default=50, ge=1, le=200),
+    _: User = Depends(get_current_admin_user),
+) -> Any:
+    rows = await RankingModelVersion.find_many().sort("-created_at").limit(limit).to_list()
+    return [
+        {
+            "id": str(row.id),
+            "name": row.name,
+            "is_active": bool(row.is_active),
+            "metrics": row.metrics,
+            "training_rows": int(row.training_rows or 0),
+            "serving_ready": bool(row.serving_ready),
+            "artifact_uri": row.artifact_uri,
+            "created_at": row.created_at.isoformat(),
+        }
+        for row in rows
+    ]
+
+
+@router.post("/ranker/activate/{version}", response_model=dict)
+async def admin_activate_ranker_version(
+    version: str,
+    request: Request,
+    current_user: User = Depends(get_current_admin_user),
+) -> Any:
+    try:
+        model = await ranking_model_service.activate(model_id=version)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    await _audit_admin_action(
+        action="ranker.activate",
+        actor=current_user,
+        success=True,
+        request=request,
+        reason_payload={"model_version_id": str(model.id), "name": model.name},
+    )
+    return {"status": "ok", "model_version_id": str(model.id), "name": model.name}
+
+
+@router.get("/analytics/overview", response_model=dict)
+async def admin_analytics_overview(_: User = Depends(get_current_admin_user)) -> Any:
+    now = utc_now()
+    since_7d = now - timedelta(days=7)
+    since_30d = now - timedelta(days=30)
+    interactions_7d = await OpportunityInteraction.find_many(OpportunityInteraction.created_at >= since_7d).to_list()
+    interactions_30d = await OpportunityInteraction.find_many(OpportunityInteraction.created_at >= since_30d).to_list()
+    applications_30d = await Application.find_many(Application.created_at >= since_30d).count()
+
+    def _rates(rows: list[OpportunityInteraction]) -> dict[str, float | int]:
+        impressions = sum(1 for row in rows if str(row.event_type or row.interaction_type) == "impression")
+        clicks = sum(1 for row in rows if str(row.event_type or row.interaction_type) == "click")
+        applies = sum(1 for row in rows if str(row.event_type or row.interaction_type) in {"apply_start", "apply_complete"})
+        return {
+            "interactions": len(rows),
+            "impressions": impressions,
+            "clicks": clicks,
+            "applies": applies,
+            "ctr": round(clicks / max(1, impressions), 6),
+            "apply_rate": round(applies / max(1, impressions), 6),
+        }
+
+    return {
+        "generated_at": now.isoformat(),
+        "users_total": int(await User.find_many().count()),
+        "opportunities_total": int(await Opportunity.find_many().count()),
+        "applications_30d": int(applications_30d),
+        "last_7d": _rates(interactions_7d),
+        "last_30d": _rates(interactions_30d),
+    }
+
+
+@router.get("/analytics/sources", response_model=list[dict[str, Any]])
+async def admin_analytics_sources(
+    limit: int = Query(default=50, ge=1, le=200),
+    _: User = Depends(get_current_admin_user),
+) -> Any:
+    opportunities = await Opportunity.find_many().limit(20_000).to_list()
+    by_source: dict[str, dict[str, Any]] = {}
+    for row in opportunities:
+        source = str(row.source or "unknown").strip().lower() or "unknown"
+        bucket = by_source.setdefault(source, {"source": source, "opportunities": 0, "quality_sum": 0.0, "quality_count": 0})
+        bucket["opportunities"] += 1
+        if row.quality_score is not None:
+            bucket["quality_sum"] += float(row.quality_score)
+            bucket["quality_count"] += 1
+    rows = []
+    for bucket in by_source.values():
+        rows.append(
+            {
+                "source": bucket["source"],
+                "opportunities": int(bucket["opportunities"]),
+                "avg_quality_score": round(bucket["quality_sum"] / max(1, bucket["quality_count"]), 3),
+            }
+        )
+    rows.sort(key=lambda item: item["opportunities"], reverse=True)
+    return rows[:limit]
+
+
+@router.get("/analytics/ranking", response_model=list[dict[str, Any]])
+async def admin_analytics_ranking(
+    days: int = Query(default=30, ge=1, le=365),
+    _: User = Depends(get_current_admin_user),
+) -> Any:
+    since = utc_now() - timedelta(days=days)
+    rows = await OpportunityInteraction.find_many(OpportunityInteraction.created_at >= since).to_list()
+    by_mode: dict[str, dict[str, int]] = {}
+    for row in rows:
+        mode = str(row.ranking_mode or "unknown").strip().lower() or "unknown"
+        event_type = str(row.event_type or row.interaction_type or "unknown")
+        bucket = by_mode.setdefault(mode, {"impressions": 0, "clicks": 0, "saves": 0, "applies": 0})
+        if event_type == "impression":
+            bucket["impressions"] += 1
+        elif event_type == "click":
+            bucket["clicks"] += 1
+        elif event_type == "save":
+            bucket["saves"] += 1
+        elif event_type in {"apply_start", "apply_complete"}:
+            bucket["applies"] += 1
+    payload = []
+    for mode, bucket in by_mode.items():
+        impressions = max(1, bucket["impressions"])
+        payload.append(
+            {
+                "ranking_mode": mode,
+                **bucket,
+                "ctr": round(bucket["clicks"] / impressions, 6),
+                "save_rate": round(bucket["saves"] / impressions, 6),
+                "apply_rate": round(bucket["applies"] / impressions, 6),
+            }
+        )
+    payload.sort(key=lambda item: item["impressions"], reverse=True)
+    return payload
+
+
 @router.get("/audit-events", response_model=list[dict[str, Any]])
 async def admin_audit_events(
     limit: int = Query(default=200, ge=1, le=1000),
+    event_type: Optional[str] = Query(default=None),
+    email: Optional[str] = Query(default=None),
+    user_id: Optional[PydanticObjectId] = Query(default=None),
+    success: Optional[bool] = Query(default=None),
+    date_from: Optional[datetime] = Query(default=None),
+    date_to: Optional[datetime] = Query(default=None),
     _: User = Depends(get_current_admin_user),
 ) -> Any:
+    filters: dict[str, Any] = {
+        "$or": [
+            {"event_type": {"$regex": "^admin\\."}},
+            {"event_type": "login.admin"},
+        ]
+    }
+    if event_type:
+        filters["event_type"] = event_type.strip().lower()
+        filters.pop("$or", None)
+    if email:
+        filters["email"] = email.strip().lower()
+    if user_id is not None:
+        filters["user_id"] = user_id
+    if success is not None:
+        filters["success"] = bool(success)
+    if date_from is not None or date_to is not None:
+        created_filter: dict[str, datetime] = {}
+        if date_from is not None:
+            created_filter["$gte"] = date_from
+        if date_to is not None:
+            created_filter["$lte"] = date_to
+        filters["created_at"] = created_filter
     rows = (
-        await AuthAuditEvent.find_many(
-            {
-                "$or": [
-                    {"event_type": {"$regex": "^admin\\."}},
-                    {"event_type": "login.admin"},
-                ]
-            }
-        )
+        await AuthAuditEvent.find_many(filters)
         .sort("-created_at")
         .limit(limit)
         .to_list()

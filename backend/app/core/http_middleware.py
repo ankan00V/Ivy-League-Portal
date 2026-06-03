@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+import logging
 import time
+from uuid import uuid4
 from urllib.parse import urlsplit
 from typing import Callable
 
@@ -9,9 +12,11 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 from starlette.responses import Response
 
+from app.core import metrics as metrics_module
 from app.core.config import resolved_csp_value, settings
-from app.core.metrics import REQUEST_LATENCY_SECONDS, REQUESTS_TOTAL, RESPONSES_TOTAL, init_metrics, metrics_available
 from app.core.rate_limit import check_rate_limit
+
+logger = logging.getLogger("vidyaverse.http")
 
 
 def _client_ip(request: Request) -> str:
@@ -83,34 +88,91 @@ def _response_with_vary_origin(response: Response) -> Response:
 
 class ObservabilityMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: Callable):  # type: ignore[override]
-        if metrics_available():
-            init_metrics()
+        if metrics_module.metrics_available():
+            metrics_module.init_metrics()
 
         method = request.method.upper()
         route = _route_label(request)
+        request_id_header = str(settings.REQUEST_ID_HEADER_NAME or "X-Request-ID").strip() or "X-Request-ID"
+        request_id = (request.headers.get(request_id_header) or "").strip() or uuid4().hex
+        request.state.request_id = request_id
 
-        if REQUESTS_TOTAL is not None:
-            REQUESTS_TOTAL.labels(method=method, route=route).inc()
+        if metrics_module.REQUESTS_TOTAL is not None:
+            metrics_module.REQUESTS_TOTAL.labels(method=method, route=route).inc()
 
         start = time.perf_counter()
         try:
             response = await call_next(request)
         except Exception:
             elapsed = max(0.0, time.perf_counter() - start)
-            if REQUEST_LATENCY_SECONDS is not None:
-                REQUEST_LATENCY_SECONDS.labels(method=method, route=route).observe(elapsed)
-            if RESPONSES_TOTAL is not None:
-                RESPONSES_TOTAL.labels(method=method, route=route, status="500").inc()
+            elapsed_ms = elapsed * 1000.0
+            if metrics_module.REQUEST_LATENCY_SECONDS is not None:
+                metrics_module.REQUEST_LATENCY_SECONDS.labels(method=method, route=route).observe(elapsed)
+            if metrics_module.RESPONSES_TOTAL is not None:
+                metrics_module.RESPONSES_TOTAL.labels(method=method, route=route, status="500").inc()
+            self._log_request(
+                request=request,
+                request_id=request_id,
+                route=route,
+                status=500,
+                elapsed_ms=elapsed_ms,
+                level=logging.ERROR,
+                error="unhandled_exception",
+            )
             raise
 
         elapsed = max(0.0, time.perf_counter() - start)
-        if REQUEST_LATENCY_SECONDS is not None:
-            REQUEST_LATENCY_SECONDS.labels(method=method, route=route).observe(elapsed)
+        elapsed_ms = elapsed * 1000.0
+        if metrics_module.REQUEST_LATENCY_SECONDS is not None:
+            metrics_module.REQUEST_LATENCY_SECONDS.labels(method=method, route=route).observe(elapsed)
 
         status = str(int(getattr(response, "status_code", 0) or 0))
-        if RESPONSES_TOTAL is not None:
-            RESPONSES_TOTAL.labels(method=method, route=route, status=status).inc()
+        if metrics_module.RESPONSES_TOTAL is not None:
+            metrics_module.RESPONSES_TOTAL.labels(method=method, route=route, status=status).inc()
+        response.headers.setdefault(request_id_header, request_id)
+
+        slow_threshold_ms = max(0.0, float(settings.OBSERVABILITY_SLOW_REQUEST_MS))
+        is_slow = slow_threshold_ms > 0.0 and elapsed_ms >= slow_threshold_ms
+        if is_slow and metrics_module.SLOW_REQUESTS_TOTAL is not None:
+            metrics_module.SLOW_REQUESTS_TOTAL.labels(method=method, route=route).inc()
+
+        self._log_request(
+            request=request,
+            request_id=request_id,
+            route=route,
+            status=int(status),
+            elapsed_ms=elapsed_ms,
+            level=logging.WARNING if is_slow else logging.INFO,
+            slow=is_slow,
+        )
         return response
+
+    def _log_request(
+        self,
+        *,
+        request: Request,
+        request_id: str,
+        route: str,
+        status: int,
+        elapsed_ms: float,
+        level: int,
+        slow: bool = False,
+        error: str | None = None,
+    ) -> None:
+        payload = {
+            "event": "http_request_completed",
+            "request_id": request_id,
+            "method": request.method.upper(),
+            "path": request.url.path,
+            "route": route,
+            "status": int(status),
+            "elapsed_ms": round(float(elapsed_ms), 3),
+            "client_ip": _client_ip(request),
+            "slow": bool(slow),
+        }
+        if error:
+            payload["error"] = error
+        logger.log(level, json.dumps(payload, sort_keys=True))
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -127,6 +189,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         limit = int(settings.RATE_LIMIT_REQUESTS_PER_MINUTE)
         if path.startswith(f"{settings.API_V1_STR}/auth/"):
             limit = int(settings.RATE_LIMIT_AUTH_REQUESTS_PER_MINUTE)
+        elif path.startswith(f"{settings.API_V1_STR}/admin/"):
+            limit = int(settings.RATE_LIMIT_ADMIN_REQUESTS_PER_MINUTE)
+        elif path.startswith(f"{settings.API_V1_STR}/opportunities/feed"):
+            limit = int(settings.RATE_LIMIT_FEED_REQUESTS_PER_MINUTE)
 
         decision = await check_rate_limit(subject=ip, action=action, limit_per_minute=limit)
         if decision is not None and not decision.allowed:
@@ -182,6 +248,16 @@ class CSRFMiddleware(BaseHTTPMiddleware):
                     "origin": origin,
                 },
             )
+
+        if settings.CSRF_DOUBLE_SUBMIT_ENABLED:
+            csrf_cookie_name = str(settings.CSRF_COOKIE_NAME or "").strip()
+            csrf_header_name = str(settings.CSRF_HEADER_NAME or "X-CSRF-Token").strip() or "X-CSRF-Token"
+            csrf_cookie = str(request.cookies.get(csrf_cookie_name) or "").strip() if csrf_cookie_name else ""
+            csrf_header = str(request.headers.get(csrf_header_name) or "").strip()
+            if not csrf_cookie or not csrf_header:
+                return JSONResponse(status_code=403, content={"detail": "csrf_token_missing"})
+            if csrf_cookie != csrf_header:
+                return JSONResponse(status_code=403, content={"detail": "csrf_token_mismatch"})
 
         response = await call_next(request)
         return _response_with_vary_origin(response)

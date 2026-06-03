@@ -317,7 +317,27 @@ class WarehouseExportService:
             return "Float64"
         if isinstance(value, datetime):
             return "DateTime64(6, 'UTC')"
+        if isinstance(value, date):
+            return "Date"
         return "String"
+
+    def _clickhouse_order_by(self, *, table_name: str, columns: list[str]) -> str:
+        column_set = set(columns)
+        if {"date", "ranking_mode", "experiment_variant"}.issubset(column_set):
+            return "ORDER BY (`date`, `ranking_mode`, `experiment_variant`)"
+        if {"date", "traffic_type"}.issubset(column_set):
+            return "ORDER BY (`date`, `traffic_type`)"
+        if {"cohort_date", "days_since_cohort", "traffic_type"}.issubset(column_set):
+            return "ORDER BY (`cohort_date`, `days_since_cohort`, `traffic_type`)"
+        if {"row_key", "date"}.issubset(column_set):
+            return "ORDER BY (`date`, `row_key`)"
+        if "materialized_at" in column_set:
+            return "ORDER BY (`materialized_at`)"
+        if "updated_at" in column_set:
+            return "ORDER BY (`updated_at`)"
+        if "created_at" in column_set:
+            return "ORDER BY (`created_at`)"
+        return "ORDER BY tuple()"
 
     def _clickhouse_value(self, value: Any) -> Any:
         if value is None:
@@ -366,9 +386,10 @@ class WarehouseExportService:
                     f"`{column}` {self._clickhouse_type(sample[index])}"
                     for index, column in enumerate(columns)
                 ]
+                order_by = self._clickhouse_order_by(table_name=target_table, columns=columns)
                 client.command(
                     f"CREATE TABLE IF NOT EXISTS `{target_table}` ({', '.join(column_defs)}) "
-                    "ENGINE = MergeTree ORDER BY tuple()"
+                    f"ENGINE = MergeTree {order_by}"
                 )
                 client.command(f"TRUNCATE TABLE `{target_table}`")
                 if rows:

@@ -19,6 +19,7 @@ from app.models.recruiter_audit_log import RecruiterAuditLog
 from app.models.user import User
 from app.services.interaction_service import interaction_service
 from app.services.opportunity_visibility import canonical_opportunity_type, resolve_opportunity_portal
+from app.services.source_discovery import employer_claim_service
 from app.core.time import utc_now
 
 router = APIRouter()
@@ -57,6 +58,11 @@ class LifecycleUpdateRequest(BaseModel):
 class PipelineStateUpdateRequest(BaseModel):
     pipeline_state: Literal["applied", "shortlisted", "rejected", "interview"]
     notes: Optional[str] = Field(default=None, max_length=1000)
+
+
+class CareersPageClaimRequest(BaseModel):
+    careers_url: str = Field(min_length=8, max_length=1200)
+    company_name: str = Field(min_length=2, max_length=200)
 
 
 class EmployerOpportunityResponse(BaseModel):
@@ -783,3 +789,63 @@ async def employer_dashboard_summary(
         interview_applications=interview_count,
         recent_applications=recent_rows,
     )
+
+
+@router.post("/claim-careers-page", response_model=dict)
+async def claim_careers_page(
+    payload: CareersPageClaimRequest,
+    current_user: User = Depends(get_current_employer_user),
+) -> Any:
+    try:
+        claim = await employer_claim_service.create_claim(
+            user=current_user,
+            careers_url=payload.careers_url,
+            company_name=payload.company_name,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {
+        "status": "verification_required",
+        "claim_id": str(claim.id),
+        "careers_url": claim.careers_url,
+        "company_domain": claim.company_domain,
+        "verification_token": claim.verification_token,
+        "instructions": "Add this token to the careers page HTML as a meta tag or visible verification text, then call verify.",
+    }
+
+
+@router.post("/claim-careers-page/verify", response_model=dict)
+async def verify_careers_page_claim(
+    current_user: User = Depends(get_current_employer_user),
+) -> Any:
+    claim = await employer_claim_service.latest_for_user(current_user)
+    if claim is None:
+        raise HTTPException(status_code=404, detail="No careers page claim found")
+    try:
+        verified = await employer_claim_service.verify_claim(claim=claim)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {
+        "status": verified.verification_status,
+        "claim_id": str(verified.id),
+        "discovered_source_id": verified.discovered_source_id,
+    }
+
+
+@router.get("/careers-page-status", response_model=dict)
+async def careers_page_status(
+    current_user: User = Depends(get_current_employer_user),
+) -> Any:
+    claim = await employer_claim_service.latest_for_user(current_user)
+    if claim is None:
+        return {"status": "not_claimed"}
+    return {
+        "status": claim.verification_status,
+        "claim_id": str(claim.id),
+        "company_name": claim.company_name,
+        "company_domain": claim.company_domain,
+        "careers_url": claim.careers_url,
+        "discovered_source_id": claim.discovered_source_id,
+        "created_at": claim.created_at,
+        "verified_at": claim.verified_at,
+    }

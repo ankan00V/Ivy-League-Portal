@@ -1,10 +1,15 @@
-.PHONY: up down dev dev-api dev-web slim-up slim-down doctor warehouse-refresh ds-gates assistant-eval weekly-ds-scorecard infra-check backup-restore-drill
+service ?= backend
+
+.PHONY: up down logs dev dev-api dev-web slim-up slim-down doctor seed train test frontend-lint frontend-build startup-check warehouse-refresh ds-gates assistant-eval weekly-ds-scorecard infra-check backup-restore-drill release-contracts bootstrap-demo-data bootstrap-opportunities seed-test-data validate-data-health dataset-snapshot
 
 up:
-	docker compose up -d mongo redis
+	docker compose up -d --build
 
 down:
 	docker compose down
+
+logs:
+	docker compose logs -f $(service)
 
 dev:
 	slim up
@@ -24,6 +29,43 @@ slim-down:
 
 doctor:
 	slim doctor
+
+seed:
+	cd backend && python3 scripts/bootstrap_company_seeds.py
+	cd backend && python3 scripts/bootstrap_ranking_pipeline.py --min-users 20 --days 14
+
+bootstrap-demo-data:
+	python3 backend/scripts/bootstrap_demo_data.py --refresh-existing
+
+bootstrap-opportunities:
+	python3 backend/scripts/bootstrap_opportunities.py --sources=all --max-per-source=200
+
+seed-test-data:
+	python3 backend/scripts/seed_test_data.py --users 20 --employers 5
+
+validate-data-health:
+	python3 backend/scripts/validate_data_health.py
+
+dataset-snapshot:
+	python3 backend/scripts/export_dataset_snapshot.py
+
+train:
+	cd backend && python3 scripts/train_learned_ranker.py --output models/learned_ranker.lgb.txt
+
+test:
+	cd backend && python3 -m pytest -q tests
+
+release-contracts:
+	python3 backend/scripts/check_release_contracts.py
+
+frontend-lint:
+	cd frontend && npm run lint
+
+frontend-build:
+	cd frontend && npm run build
+
+startup-check:
+	./scripts/startup_check.sh
 
 warehouse-refresh:
 	cd backend && python3 scripts/rebuild_analytics_warehouse.py --lookback-days 30 --traffic-type real

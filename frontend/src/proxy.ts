@@ -18,8 +18,11 @@ function cspValue(nonce: string): string {
   const trustedTypesEnabled = process.env.NEXT_PUBLIC_CSP_ENABLE_TRUSTED_TYPES === "1";
   const turnstileEnabled = Boolean(process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY?.trim());
   const connectParts = new Set<string>(["'self'", "https://prod.spline.design"]);
-  const scriptParts = new Set<string>(["'self'", `'nonce-${nonce}'`, "'strict-dynamic'"]);
+  const scriptParts = new Set<string>(["'self'", `'nonce-${nonce}'`]);
   const frameParts = new Set<string>(["'self'"]);
+  if (isProduction || process.env.NEXT_PUBLIC_CSP_STRICT_DYNAMIC === "1") {
+    scriptParts.add("'strict-dynamic'");
+  }
   if (apiOrigin) connectParts.add(apiOrigin);
   if (turnstileEnabled) {
     connectParts.add("https://challenges.cloudflare.com");

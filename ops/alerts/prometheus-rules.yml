@@ -1,6 +1,43 @@
 groups:
   - name: vidyaverse-core
     rules:
+      - alert: APIHighErrorRate
+        expr: |
+          sum(rate(http_responses_total{status=~"5.."}[5m]))
+          /
+          clamp_min(sum(rate(http_responses_total[5m])), 1e-9)
+          > 0.02
+        for: 10m
+        labels:
+          severity: page
+          service: vidyaverse-api
+        annotations:
+          summary: "API 5xx error rate is above 2%"
+          description: "The FastAPI service is returning elevated 5xx responses for 10 minutes."
+          runbook: "docs/runbooks/incident-response.md#api-error-rate"
+
+      - alert: ScraperSilentFailure
+        expr: max(scraper_silent_failures) > 0
+        for: 15m
+        labels:
+          severity: page
+          service: vidyaverse-ingestion
+        annotations:
+          summary: "Scraper silent failure detected"
+          description: "One or more sources fetched data but produced no inserts or updates without surfacing parser errors."
+          runbook: "docs/runbooks/source-discovery-pipeline.md#silent-failures"
+
+      - alert: RankerModelMissing
+        expr: max(learned_ranker_model_ready{enabled="true"}) < 1
+        for: 10m
+        labels:
+          severity: page
+          service: vidyaverse-ranking
+        annotations:
+          summary: "Learned ranker is enabled but unavailable"
+          description: "The learned ranker artifact is missing, failed checksum validation, or could not be loaded."
+          runbook: "docs/runbooks/data-platform-and-mlops.md#model-artifacts"
+
       - alert: VidyaVerseRankingLatencyP95High
         expr: histogram_quantile(0.95, sum by (le) (rate(ranking_request_latency_ms_bucket{traffic_type="real"}[5m]))) > 400
         for: 10m

@@ -7,7 +7,7 @@ from typing import Optional
 from app.core.config import settings
 from app.services.model_artifact_service import model_artifact_service
 
-from app.services.personalization.feature_builder import RankerFeatures
+from app.services.personalization.feature_builder import DEFAULT_LEARNED_RANKER_FEATURES, RankerFeatures
 
 
 @dataclass
@@ -91,7 +91,9 @@ class LearnedRanker:
                 booster = xgb.Booster()
                 booster.load_model(path_str)
                 # XGBoost model may not store feature names reliably; assume training used fixed ordering.
-                feature_names = list(getattr(settings, "LEARNED_RANKER_FEATURES", []) or [])
+                feature_names = list(
+                    getattr(settings, "LEARNED_RANKER_FEATURES", []) or DEFAULT_LEARNED_RANKER_FEATURES
+                )
                 model_kind = "xgboost"
             except Exception:
                 booster = None

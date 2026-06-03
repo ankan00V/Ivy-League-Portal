@@ -125,6 +125,23 @@ class AuthSecurityService:
             return
         await state.delete()
 
+    async def clear_locks(self, *, email: str, action: str | None = None, purpose: str | None = None) -> int:
+        normalized_email = (email or "").strip().lower()
+        if not normalized_email:
+            return 0
+        query: dict[str, str] = {"email": normalized_email}
+        if action:
+            query["action"] = action.strip().lower()
+        if purpose:
+            query["purpose"] = purpose.strip().lower()
+        try:
+            rows = await AuthAbuseState.find_many(query).to_list()
+        except CollectionWasNotInitialized:
+            return 0
+        for row in rows:
+            await row.delete()
+        return len(rows)
+
     async def audit_event(
         self,
         *,

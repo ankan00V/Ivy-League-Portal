@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 from beanie import Document
 from pydantic import Field
+from pymongo import IndexModel
 
 
 class BackgroundJob(Document):
@@ -41,5 +42,7 @@ class BackgroundJob(Document):
             "job_type",
             "dedupe_key",
             "created_at",
+            IndexModel([("status", 1), ("run_after", 1), ("created_at", 1)]),
+            IndexModel([("dedupe_key", 1), ("status", 1)]),
+            IndexModel([("locked_by", 1), ("locked_at", 1)]),
         ]
-

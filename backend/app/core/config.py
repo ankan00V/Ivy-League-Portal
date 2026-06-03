@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     AUTH_SESSION_COOKIE_PATH: str = "/"
     AUTH_SESSION_COOKIE_DOMAIN: Optional[str] = None
     AUTH_SESSION_COOKIE_MAX_AGE_SECONDS: int = 60 * 60 * 24  # 24h
+    AUTH_SESSION_STORE_ENABLED: bool = True
+    AUTH_SESSION_REQUIRE_SERVER_STATE: bool = False
+    AUTH_SESSION_BIND_DEVICE: bool = True
+    AUTH_SESSION_REDIS_PREFIX: str = "vidyaverse:auth"
+    AUTH_SESSION_ACTIVITY_UPDATE_INTERVAL_SECONDS: int = 60
     AUTH_COOKIE_ONLY_MODE: bool = False
     ADMIN_BOOTSTRAP_ENABLED: bool = True
     ADMIN_BOOTSTRAP_EMAIL: str = "ghoshankan005@gmail.com"
@@ -45,8 +50,13 @@ class Settings(BaseSettings):
     ADMIN_TOTP_DIGITS: int = 6
     ADMIN_TOTP_PERIOD_SECONDS: int = 30
     ADMIN_TOTP_WINDOW_STEPS: int = 1
+    ADMIN_ALLOWED_IPS: list[str] = []
+    ADMIN_SESSION_MAX_AGE_SECONDS: int = 60 * 60 * 4
     CSRF_PROTECTION_ENABLED: bool = True
     CSRF_ENFORCE_ON_AUTH_COOKIE: bool = True
+    CSRF_DOUBLE_SUBMIT_ENABLED: bool = True
+    CSRF_COOKIE_NAME: str = "vidyaverse_csrf"
+    CSRF_HEADER_NAME: str = "X-CSRF-Token"
     CSRF_TRUSTED_ORIGINS: list[str] = []
     SECURITY_HEADERS_ENABLED: bool = True
     SECURITY_CSP_ENABLED: bool = True
@@ -69,6 +79,8 @@ class Settings(BaseSettings):
     SCRAPER_INTERVAL_MINUTES: int = 30
     SCRAPER_MAX_STALENESS_MINUTES: int = 30
     SCRAPER_ON_DEMAND_REFRESH_ENABLED: bool = True
+    OPPORTUNITY_STATUS_AUTORUN_ENABLED: bool = True
+    OPPORTUNITY_STATUS_REFRESH_INTERVAL_HOURS: int = 4
     SCRAPER_TIMEOUT_SECONDS: int = 20
     SCRAPER_HTTP_RETRIES: int = 4
     SCRAPER_RETRY_BACKOFF: float = 0.8
@@ -79,7 +91,28 @@ class Settings(BaseSettings):
     SCRAPER_HACK2SKILL_MAX_ITEMS: int = 24
     SCRAPER_FRESHERSWORLD_MAX_ITEMS: int = 30
     SCRAPER_INDEED_MAX_ITEMS: int = 20
+    SCRAPER_GREENHOUSE_MAX_ITEMS: int = 40
+    SCRAPER_GREENHOUSE_BOARD_TOKENS: str = "databricks,stripe,airbnb"
     SCRAPER_GENERIC_PORTAL_MAX_ITEMS: int = 12
+
+    # Source discovery pipeline
+    DISCOVERY_ENABLED: bool = True
+    SERPAPI_KEY: Optional[str] = None
+    GOOGLE_SEARCH_API_KEY: Optional[str] = None
+    CLAUDE_API_KEY: Optional[str] = None
+    CLAUDE_MODEL: str = "claude-3-5-sonnet-20241022"
+    MAX_LLM_EXTRACTIONS_PER_HOUR: int = 10
+    MONTHLY_LLM_BUDGET_USD: float = 20.0
+    ADMIN_WEBHOOK_URL: Optional[str] = None
+    QUALIFICATION_MIN_SCORE: float = 60.0
+    TRUST_MIN_SCORE_AUTO_PROMOTE: float = 70.0
+    TRUST_MIN_SCORE_REQUIRE_REVIEW: float = 55.0
+    PROBATION_MIN_RUNS: int = 3
+    PROBATION_MIN_PARSE_RATE: float = 0.70
+    PROBATION_DAYS: int = 7
+    SOURCE_FETCH_RATE_LIMIT: float = 1.0
+    SOURCE_DISCOVERY_MAX_CONCURRENT: int = 5
+    SOURCE_SUBMISSION_DAILY_LIMIT: int = 3
     
     # Celery & Redis
     REDIS_URL: str = "redis://localhost:6379/0"
@@ -98,18 +131,34 @@ class Settings(BaseSettings):
     # Observability / Metrics
     METRICS_ENABLED: bool = True
     METRICS_REQUIRE_AUTH: bool = True
+    LOG_LEVEL: str = "INFO"
+    LOG_FORMAT: str = "json"
+    REQUEST_ID_HEADER_NAME: str = "X-Request-ID"
+    OBSERVABILITY_SLOW_REQUEST_MS: float = 1000.0
+    HEALTH_CHECK_TIMEOUT_SECONDS: float = 2.0
+    MONGO_INITDB_ROOT_USERNAME: str = "vidyaverse"
+    MONGO_INITDB_ROOT_PASSWORD: str = "replace-with-mongo-root-password"
+    GRAFANA_ADMIN_USER: str = "admin"
+    GRAFANA_ADMIN_PASSWORD: str = "replace-with-grafana-admin-password"
+    NEXT_PUBLIC_API_BASE_URL: str = "http://localhost:8000"
+    BACKEND_INTERNAL_URL: str = "http://backend:8000"
 
     # Rate limiting (Redis-backed)
     RATE_LIMIT_ENABLED: bool = True
     RATE_LIMIT_REQUESTS_PER_MINUTE: int = 240
     RATE_LIMIT_AUTH_REQUESTS_PER_MINUTE: int = 30
+    RATE_LIMIT_ADMIN_REQUESTS_PER_MINUTE: int = 20
+    RATE_LIMIT_FEED_REQUESTS_PER_MINUTE: int = 100
 
     # Background jobs (Mongo-backed queue + retry + DLQ)
     JOBS_ENABLED: bool = True
     JOBS_POLL_INTERVAL_SECONDS: float = 0.8
+    JOBS_MAX_CONCURRENCY: int = 2
     JOBS_LOCK_TIMEOUT_SECONDS: int = 60 * 10
+    JOBS_HANDLER_TIMEOUT_SECONDS: float = 60 * 15
     JOBS_RETRY_BASE_SECONDS: float = 2.0
     JOBS_RETRY_MAX_SECONDS: float = 10 * 60.0
+    JOBS_MAX_PENDING_PER_TYPE: int = 500
 
     # Mongo TLS controls (keep local dev easy, prod strict)
     MONGODB_TLS_FORCE: bool = False
@@ -261,12 +310,21 @@ class Settings(BaseSettings):
     # Embeddings / semantic ranking
     EMBEDDING_PROVIDER: str = "sentence_transformers"  # sentence_transformers | openai | auto
     EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
+    EMBEDDING_MODEL_VERSION: str = "sentence-transformers/all-MiniLM-L6-v2@v1"
     OPENAI_API_KEY: Optional[str] = None
     OPENAI_API_BASE_URL: Optional[str] = None
     OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
     SEMANTIC_DEDUP_THRESHOLD: float = 0.9
     VECTOR_STORE_PROVIDER: str = "mongo"  # mongo | memory
     VECTOR_STORE_PERSISTENCE_ENABLED: bool = True
+    MONGODB_ATLAS_VECTOR_SEARCH: bool = False
+    MONGODB_ATLAS_VECTOR_INDEX_NAME: str = "opportunity_embedding_index"
+    VECTOR_INDEX_STALE_HOURS: int = 6
+    EMBEDDING_BATCH_SIZE: int = 64
+    EMBEDDING_AUTORUN_ENABLED: bool = True
+    EMBEDDING_REBUILD_INTERVAL_MINUTES: int = 60
+    USER_EMBEDDING_INTERACTION_THRESHOLD: int = 5
+    USER_EMBEDDING_HALF_LIFE_DAYS: int = 7
 
     # Learned ranker (LightGBM/XGBoost) for real personalization
     LEARNED_RANKER_ENABLED: bool = False
@@ -313,6 +371,7 @@ class Settings(BaseSettings):
     MLOPS_MODEL_ARTIFACT_S3_REGION: Optional[str] = None
     MLOPS_MODEL_ARTIFACT_S3_ACCESS_KEY_ID: Optional[str] = None
     MLOPS_MODEL_ARTIFACT_S3_SECRET_ACCESS_KEY: Optional[str] = None
+    MODEL_ARTIFACT_BUCKET: Optional[str] = None
 
     # Assistant orchestration
     ASSISTANT_CHAT_MEMORY_ENABLED: bool = True
@@ -364,6 +423,12 @@ class Settings(BaseSettings):
     EXPERIMENT_GUARDRAIL_MIN_IMPRESSIONS_PER_VARIANT: int = 50
     EXPERIMENT_MIN_IMPRESSIONS_PER_VARIANT_FOR_LIFT: int = 200
     EXPERIMENT_TARGET_POWER: float = 0.8
+    EXPERIMENT_EXCLUDE_COLD_START_FROM_ML: bool = True
+    EXPERIMENT_AUTO_GRADUATION_ENABLED: bool = True
+    EXPERIMENT_GRADUATION_P_VALUE: float = 0.05
+    EXPERIMENT_GRADUATION_MIN_LIFT: float = 0.05
+    EXPERIMENT_GRADUATION_MIN_SAMPLE_SIZE: int = 200
+    EXPERIMENT_GRADUATION_INTERVAL_HOURS: int = 6
     
     model_config = SettingsConfigDict(
         env_file=ENV_FILE,

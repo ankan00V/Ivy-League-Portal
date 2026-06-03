@@ -37,6 +37,8 @@
    - model artifact S3/MinIO credentials are absent
    - LLM, OAuth, SMTP, or alert delivery secrets are absent
 5. Before release, run:
+   - `python backend/scripts/check_release_contracts.py`
+   - `python backend/scripts/validate_data_health.py`
    - `LEARNED_RANKER_ENABLED=true python backend/scripts/check_learned_ranker_production_smoke.py`
    - `python backend/scripts/check_warehouse_release_gate.py --json`
    - `python backend/scripts/check_ds_release_gates.py --fail-on-not-ready`
@@ -113,6 +115,10 @@
 
 ## Release Gates
 
+- Release contracts:
+  - `python backend/scripts/check_release_contracts.py`
+- Data health:
+  - `python backend/scripts/validate_data_health.py`
 - DS operating loop:
   - `python backend/scripts/check_ds_release_gates.py --fail-on-not-ready`
 - Assistant quality:
@@ -134,6 +140,15 @@ These gates block stale features, drift alerts, parity regression, assistant fai
   - `python backend/scripts/synthetic_alert_delivery_check.py`
 - Weekly operational enforcement:
   - `.github/workflows/ops-operational-enforcement.yml`
+
+## Bootstrap and Snapshot
+
+- Run opportunity bootstrap:
+  - `python backend/scripts/bootstrap_opportunities.py --sources=all --max-per-source=200`
+- Seed lower-environment synthetic signal:
+  - `python backend/scripts/seed_test_data.py --users 20 --employers 5`
+- Export release snapshot:
+  - `python backend/scripts/export_dataset_snapshot.py`
 
 ## Dashboard Scorecards
 

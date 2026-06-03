@@ -2,6 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 const stagingBaseUrl = process.env.PLAYWRIGHT_STAGING_URL;
 const isStagingMode = Boolean(stagingBaseUrl);
+const useSystemChrome = process.env.PLAYWRIGHT_USE_SYSTEM_CHROME === "1";
 
 export default defineConfig({
   testDir: "./e2e",
@@ -29,7 +30,7 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
+      use: { ...devices["Desktop Chrome"], channel: useSystemChrome ? "chrome" : undefined },
     },
   ],
 });

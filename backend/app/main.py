@@ -1,9 +1,10 @@
 import asyncio
 import logging
+import os
 import time
-from typing import Any, Optional
+from typing import Any
 
-from fastapi import Depends, FastAPI, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -12,49 +13,9 @@ from app.core.config import analytics_bi_tool_url, auth_cookie_only_mode_enabled
 
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from motor.motor_asyncio import AsyncIOMotorClient
-from beanie import init_beanie
-import certifi
-
-# Import all Beanie Documents
-from app.models.user import User
-from app.models.post import Post, Comment
-from app.models.profile import Profile
-from app.models.opportunity import Opportunity
-from app.models.opportunity_interaction import OpportunityInteraction
-from app.models.application import Application
-from app.models.otp_code import OTPCode
-from app.models.knowledge_chunk import KnowledgeChunk
-from app.models.evaluation_run import EvaluationRun
-from app.models.impact_event import ImpactEvent
-from app.models.experiment import Experiment, ExperimentAssignment
-from app.models.model_drift_report import ModelDriftReport
-from app.models.nlp_model_version import NLPModelVersion
-from app.models.rag_feedback_event import RAGFeedbackEvent
-from app.models.ask_ai_query_snapshot import AskAIQuerySnapshot
-from app.models.ask_ai_saved_query import AskAISavedQuery
-from app.models.rag_template_version import RAGTemplateVersion
-from app.models.rag_template_evaluation_run import RAGTemplateEvaluationRun
-from app.models.ranking_model_version import RankingModelVersion
-from app.models.ranking_request_telemetry import RankingRequestTelemetry
-from app.models.vector_index_entry import VectorIndexEntry
-from app.models.background_job import BackgroundJob
-from app.models.recruiter_audit_log import RecruiterAuditLog
-from app.models.auth_audit_event import AuthAuditEvent
-from app.models.auth_abuse_state import AuthAbuseState
-from app.models.analytics_daily_aggregate import AnalyticsDailyAggregate
-from app.models.analytics_funnel_aggregate import AnalyticsFunnelAggregate
-from app.models.analytics_cohort_aggregate import AnalyticsCohortAggregate
-from app.models.feature_store_row import FeatureStoreRow
-from app.models.mlops_incident import MlopsIncident
-from app.models.assistant_conversation_turn import AssistantConversationTurn
-from app.models.assistant_memory_state import AssistantMemoryState
-from app.models.assistant_audit_event import AssistantAuditEvent
-from app.models.model_artifact_version import ModelArtifactVersion
-from app.models.warehouse_export_run import WarehouseExportRun
-from app.models.security_event import SecurityEvent
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from app.bootstrap import init_database
 from app.services.experiment_service import experiment_service
 from app.services.rag_template_registry_service import rag_template_registry_service
 from app.services.ranking_model_service import ranking_model_service
@@ -68,17 +29,31 @@ from app.services.model_artifact_service import model_artifact_service
 from app.services.personalization.learned_ranker import learned_ranker
 from app.services.warehouse_export_service import warehouse_export_service
 from app.services.vector_service import opportunity_vector_service
-from app.core.redis import close_redis
-from app.core.metrics import CONTENT_TYPE_LATEST, init_metrics, render_metrics
+from app.core.redis import close_redis, get_redis
+from app.core import metrics as metrics_module
+from app.core.metrics import (
+    CONTENT_TYPE_LATEST,
+    init_metrics,
+    render_metrics,
+)
 from app.core.http_middleware import (
     CSRFMiddleware,
     ObservabilityMiddleware,
     RateLimitMiddleware,
     SecurityHeadersMiddleware,
 )
-from app.api.deps import get_current_admin_user, require_scopes
+from app.api.deps import get_current_admin_user, get_current_user
 
 logger = logging.getLogger(__name__)
+
+
+def _configure_logging() -> None:
+    level_name = str(settings.LOG_LEVEL or "INFO").strip().upper()
+    level = getattr(logging, level_name, logging.INFO)
+    logging.basicConfig(level=level, format="%(message)s" if settings.LOG_FORMAT == "json" else None)
+
+
+_configure_logging()
 
 
 def _has_wildcard(values: list[str]) -> bool:
@@ -189,112 +164,9 @@ async def lifespan(app: FastAPI):
                 "SECURITY_CSP_VALUE includes unsafe-inline/unsafe-eval while strict CSP is enforced."
             )
 
-    # Initialize MongoDB connection using explicit cert verification parameters
-    mongo_kwargs = {}
-    url = (settings.MONGODB_URL or "").strip()
-    tls_needed = bool(
-        settings.MONGODB_TLS_FORCE
-        or settings.ENVIRONMENT.strip().lower() == "production"
-        or url.startswith("mongodb+srv://")
-        or "tls=true" in url.lower()
-    )
-    if tls_needed:
-        mongo_kwargs.update(
-            {
-                "tls": True,
-                "tlsCAFile": certifi.where(),
-                "tlsAllowInvalidCertificates": bool(settings.MONGODB_TLS_ALLOW_INVALID_CERTS),
-            }
-        )
-
-    mongo_kwargs.update(
-        {
-            "serverSelectionTimeoutMS": max(1000, int(settings.MONGODB_SERVER_SELECTION_TIMEOUT_MS)),
-            "connectTimeoutMS": max(1000, int(settings.MONGODB_CONNECT_TIMEOUT_MS)),
-            "socketTimeoutMS": max(1000, int(settings.MONGODB_SOCKET_TIMEOUT_MS)),
-        }
-    )
-
-    startup_retries = max(1, int(settings.MONGODB_STARTUP_MAX_RETRIES))
-    startup_backoff = max(0.25, float(settings.MONGODB_STARTUP_RETRY_BACKOFF_SECONDS))
-    ping_timeout_seconds = max(
-        3.0,
-        float(settings.MONGODB_SERVER_SELECTION_TIMEOUT_MS) / 1000.0 + 2.0,
-    )
-
-    client: Optional[AsyncIOMotorClient] = None
-    last_mongo_error: Exception | None = None
-    for attempt in range(1, startup_retries + 1):
-        client = AsyncIOMotorClient(settings.MONGODB_URL, **mongo_kwargs)
-        try:
-            await asyncio.wait_for(client.admin.command("ping"), timeout=ping_timeout_seconds)
-            logger.info("MongoDB ping succeeded on startup attempt %s/%s", attempt, startup_retries)
-            break
-        except Exception as exc:
-            last_mongo_error = exc
-            logger.error(
-                "MongoDB startup ping failed on attempt %s/%s: %s",
-                attempt,
-                startup_retries,
-                exc,
-            )
-            client.close()
-            client = None
-            if attempt >= startup_retries:
-                raise RuntimeError("MongoDB unavailable during startup; aborting API boot.") from exc
-            await asyncio.sleep(startup_backoff * attempt)
-    if client is None:
-        raise RuntimeError(
-            f"MongoDB client initialization failed after {startup_retries} attempts: {last_mongo_error}"
-        )
-    
-    # Initialize Beanie ODM with the database and document models
-    await asyncio.wait_for(
-        init_beanie(
-        database=client[settings.MONGODB_DB_NAME],
-        document_models=[
-            User,
-            Post,
-            Comment,
-            Profile,
-            Opportunity,
-            OpportunityInteraction,
-            Application,
-            OTPCode,
-            KnowledgeChunk,
-            EvaluationRun,
-            ImpactEvent,
-            Experiment,
-            ExperimentAssignment,
-            RankingModelVersion,
-            NLPModelVersion,
-            ModelDriftReport,
-            RankingRequestTelemetry,
-            RAGFeedbackEvent,
-            AskAIQuerySnapshot,
-            AskAISavedQuery,
-            RAGTemplateVersion,
-            RAGTemplateEvaluationRun,
-            VectorIndexEntry,
-            BackgroundJob,
-            RecruiterAuditLog,
-            AuthAuditEvent,
-            AuthAbuseState,
-            AnalyticsDailyAggregate,
-            AnalyticsFunnelAggregate,
-            AnalyticsCohortAggregate,
-            FeatureStoreRow,
-            MlopsIncident,
-            AssistantConversationTurn,
-            AssistantMemoryState,
-            AssistantAuditEvent,
-            ModelArtifactVersion,
-            WarehouseExportRun,
-            SecurityEvent,
-        ]
-        ),
-        timeout=max(10.0, ping_timeout_seconds * 2.0),
-    )
+    client = await init_database()
+    app.state.mongo_client = client
+    app.state.started_at = datetime.now(timezone.utc)
     try:
         await ensure_single_admin_identity()
     except Exception as exc:
@@ -330,7 +202,15 @@ async def lifespan(app: FastAPI):
 
     # Initialize and start background schedulers (enqueue scraper + MLOps).
     scheduler: AsyncIOScheduler | None = None
-    if settings.SCRAPER_AUTORUN_ENABLED or settings.MLOPS_AUTORUN_ENABLED or settings.ANALYTICS_WAREHOUSE_AUTORUN_ENABLED:
+    if (
+        settings.SCRAPER_AUTORUN_ENABLED
+        or settings.MLOPS_AUTORUN_ENABLED
+        or settings.ANALYTICS_WAREHOUSE_AUTORUN_ENABLED
+        or settings.EMBEDDING_AUTORUN_ENABLED
+        or settings.DISCOVERY_ENABLED
+        or settings.EXPERIMENT_AUTO_GRADUATION_ENABLED
+        or settings.OPPORTUNITY_STATUS_AUTORUN_ENABLED
+    ):
         scheduler = AsyncIOScheduler(
             timezone="UTC",
             job_defaults={
@@ -344,6 +224,13 @@ async def lifespan(app: FastAPI):
             async def _enqueue_scraper() -> None:
                 await job_runner.enqueue(job_type="scraper.run", dedupe_key="scraper.run")
 
+            async def _enqueue_scraper_recovery() -> None:
+                await job_runner.enqueue(
+                    job_type="scraper.recover_unhealthy",
+                    max_attempts=2,
+                    dedupe_key="scraper.recover_unhealthy",
+                )
+
             scheduler.add_job(
                 _enqueue_scraper,
                 "interval",
@@ -351,6 +238,13 @@ async def lifespan(app: FastAPI):
                 id="scraper_job",
                 replace_existing=True,
                 next_run_time=datetime.now(timezone.utc),
+            )
+            scheduler.add_job(
+                _enqueue_scraper_recovery,
+                "interval",
+                hours=6,
+                id="scraper_recovery_job",
+                replace_existing=True,
             )
 
         if settings.MLOPS_AUTORUN_ENABLED:
@@ -430,12 +324,193 @@ async def lifespan(app: FastAPI):
                 next_run_time=datetime.now(timezone.utc),
             )
 
+        if settings.EXPERIMENT_AUTO_GRADUATION_ENABLED:
+
+            async def _safe_experiment_graduation() -> None:
+                try:
+                    await job_runner.enqueue(
+                        job_type="experiments.graduation",
+                        payload={"days": settings.ANALYTICS_LOOKBACK_DAYS_DEFAULT, "traffic_type": "real"},
+                        max_attempts=2,
+                        dedupe_key="experiments.graduation",
+                    )
+                    print("[Lifecycle] Experiment graduation check enqueued.")
+                except Exception as exc:
+                    print(f"[Lifecycle] Experiment graduation enqueue failed: {exc}")
+
+            scheduler.add_job(
+                _safe_experiment_graduation,
+                "interval",
+                hours=max(1, int(settings.EXPERIMENT_GRADUATION_INTERVAL_HOURS)),
+                id="experiment_graduation_job",
+                replace_existing=True,
+            )
+
+        if settings.OPPORTUNITY_STATUS_AUTORUN_ENABLED:
+
+            async def _safe_opportunity_status_refresh() -> None:
+                try:
+                    await job_runner.enqueue(
+                        job_type="opportunities.status_refresh",
+                        payload={"limit": 5000, "check_liveness": False},
+                        max_attempts=2,
+                        dedupe_key="opportunities.status_refresh",
+                    )
+                    print("[Lifecycle] Opportunity status refresh enqueued.")
+                except Exception as exc:
+                    print(f"[Lifecycle] Opportunity status refresh enqueue failed: {exc}")
+
+            scheduler.add_job(
+                _safe_opportunity_status_refresh,
+                "interval",
+                hours=max(1, int(settings.OPPORTUNITY_STATUS_REFRESH_INTERVAL_HOURS)),
+                id="opportunity_status_refresh_job",
+                replace_existing=True,
+                next_run_time=datetime.now(timezone.utc),
+            )
+
+        if settings.EMBEDDING_AUTORUN_ENABLED:
+
+            async def _enqueue_embedding_rebuild() -> None:
+                await job_runner.enqueue(
+                    job_type="embeddings.rebuild",
+                    payload={"force": False},
+                    max_attempts=2,
+                    dedupe_key="embeddings.rebuild",
+                )
+
+            scheduler.add_job(
+                _enqueue_embedding_rebuild,
+                "interval",
+                minutes=max(5, int(settings.EMBEDDING_REBUILD_INTERVAL_MINUTES)),
+                id="embedding_rebuild_job",
+                replace_existing=True,
+                next_run_time=datetime.now(timezone.utc),
+            )
+
+        if settings.DISCOVERY_ENABLED:
+
+            async def _enqueue_company_seed_careers_finder() -> None:
+                await job_runner.enqueue(
+                    job_type="company_seed_careers_finder",
+                    payload={"limit": 50},
+                    max_attempts=1,
+                    dedupe_key="company_seed_careers_finder",
+                )
+
+            async def _enqueue_source_discovery_run() -> None:
+                await job_runner.enqueue(
+                    job_type="source_discovery_run",
+                    payload={"triggered_by": "scheduler"},
+                    max_attempts=1,
+                    dedupe_key="source_discovery_run",
+                )
+
+            async def _enqueue_source_qualification_batch() -> None:
+                await job_runner.enqueue(
+                    job_type="source_qualification_batch",
+                    payload={"max_items": 50},
+                    max_attempts=2,
+                    dedupe_key="source_qualification_batch",
+                )
+
+            async def _enqueue_source_extraction_batch() -> None:
+                await job_runner.enqueue(
+                    job_type="source_extraction_batch",
+                    payload={"max_items": 20},
+                    max_attempts=1,
+                    dedupe_key="source_extraction_batch",
+                )
+
+            async def _enqueue_probation_scrape_run() -> None:
+                await job_runner.enqueue(
+                    job_type="probation_scrape_run",
+                    payload={"limit": 100},
+                    max_attempts=1,
+                    dedupe_key="probation_scrape_run",
+                )
+
+            async def _enqueue_source_health_monitor() -> None:
+                await job_runner.enqueue(
+                    job_type="source_health_monitor",
+                    payload={},
+                    max_attempts=2,
+                    dedupe_key="source_health_monitor",
+                )
+
+            async def _enqueue_trust_score_recompute() -> None:
+                await job_runner.enqueue(
+                    job_type="trust_score_recompute",
+                    payload={"limit": 500},
+                    max_attempts=1,
+                    dedupe_key="trust_score_recompute",
+                )
+
+            scheduler.add_job(
+                _enqueue_company_seed_careers_finder,
+                "cron",
+                hour=16,
+                minute=30,
+                id="company_seed_careers_finder_job",
+                replace_existing=True,
+            )
+            scheduler.add_job(
+                _enqueue_source_discovery_run,
+                "cron",
+                hour=17,
+                minute=30,
+                id="source_discovery_run_job",
+                replace_existing=True,
+            )
+            scheduler.add_job(
+                _enqueue_source_qualification_batch,
+                "interval",
+                hours=2,
+                id="source_qualification_batch_job",
+                replace_existing=True,
+            )
+            scheduler.add_job(
+                _enqueue_source_extraction_batch,
+                "interval",
+                hours=4,
+                id="source_extraction_batch_job",
+                replace_existing=True,
+            )
+            scheduler.add_job(
+                _enqueue_probation_scrape_run,
+                "cron",
+                day_of_week="sun,tue,thu",
+                hour=20,
+                minute=30,
+                id="probation_scrape_run_job",
+                replace_existing=True,
+            )
+            scheduler.add_job(
+                _enqueue_source_health_monitor,
+                "cron",
+                hour=0,
+                minute=30,
+                id="source_health_monitor_job",
+                replace_existing=True,
+            )
+            scheduler.add_job(
+                _enqueue_trust_score_recompute,
+                "cron",
+                day_of_week="sat",
+                hour=22,
+                minute=30,
+                id="trust_score_recompute_job",
+                replace_existing=True,
+            )
+
         scheduler.start()
         print("[Lifecycle] Background Scheduler started.")
     else:
         print(
             "[Lifecycle] Background Scheduler disabled (SCRAPER_AUTORUN_ENABLED=false, "
-            "MLOPS_AUTORUN_ENABLED=false, ANALYTICS_WAREHOUSE_AUTORUN_ENABLED=false)."
+            "MLOPS_AUTORUN_ENABLED=false, ANALYTICS_WAREHOUSE_AUTORUN_ENABLED=false, "
+            "EMBEDDING_AUTORUN_ENABLED=false, DISCOVERY_ENABLED=false, "
+            "OPPORTUNITY_STATUS_AUTORUN_ENABLED=false)."
         )
 
     try:
@@ -516,12 +591,208 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/health", tags=["system"])
-async def health_check():
-    """Health check endpoint for load balancers."""
+
+async def _run_check(name: str, checker: Any, *, required: bool = True) -> dict[str, Any]:
+    timeout = max(0.25, float(settings.HEALTH_CHECK_TIMEOUT_SECONDS))
+    started = time.perf_counter()
+    try:
+        result = await asyncio.wait_for(checker(), timeout=timeout)
+        ok = bool(result.get("ok", True)) if isinstance(result, dict) else bool(result)
+        detail = str(result.get("detail") or "ok") if isinstance(result, dict) else "ok"
+        metadata = dict(result.get("metadata") or {}) if isinstance(result, dict) else {}
+        return {
+            "ok": ok,
+            "required": bool(required),
+            "detail": detail,
+            "latency_ms": round((time.perf_counter() - started) * 1000.0, 3),
+            **({"metadata": metadata} if metadata else {}),
+        }
+    except asyncio.TimeoutError:
+        return {
+            "ok": False,
+            "required": bool(required),
+            "detail": f"timeout_after_{timeout}s",
+            "latency_ms": round((time.perf_counter() - started) * 1000.0, 3),
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "required": bool(required),
+            "detail": f"{exc.__class__.__name__}: {exc}",
+            "latency_ms": round((time.perf_counter() - started) * 1000.0, 3),
+        }
+
+
+async def _mongo_health(request: Request) -> dict[str, Any]:
+    client = getattr(request.app.state, "mongo_client", None)
+    if client is None:
+        return {"ok": False, "detail": "mongo_client_missing"}
+    await client.admin.command("ping")
+    return {"ok": True, "detail": "ping ok", "metadata": {"database": settings.MONGODB_DB_NAME}}
+
+
+async def _redis_health() -> dict[str, Any]:
+    redis = get_redis()
+    if redis is None:
+        return {"ok": False, "detail": "redis_client_unavailable"}
+    pong = await redis.ping()
+    return {"ok": bool(pong), "detail": "ping ok" if pong else "ping returned false"}
+
+
+async def _clickhouse_health() -> dict[str, Any]:
+    if not settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED:
+        return {"ok": True, "detail": "disabled"}
+
+    def _query() -> int:
+        import clickhouse_connect  # type: ignore
+
+        client = clickhouse_connect.get_client(
+            host=(settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST or "").strip(),
+            port=int(settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_PORT),
+            username=settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME or "default",
+            password=settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD or "",
+            database=settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_DATABASE,
+            secure=bool(settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_SECURE),
+            connect_timeout=max(1, int(settings.HEALTH_CHECK_TIMEOUT_SECONDS)),
+            send_receive_timeout=max(1, int(settings.HEALTH_CHECK_TIMEOUT_SECONDS)),
+        )
+        return int(client.query("SELECT 1").first_row[0])
+
+    value = await asyncio.to_thread(_query)
     return {
-        "status": "healthy",
+        "ok": value == 1,
+        "detail": "SELECT 1 ok",
+        "metadata": {"database": settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_DATABASE},
+    }
+
+
+async def _artifact_store_health() -> dict[str, Any]:
+    bucket = (settings.MODEL_ARTIFACT_BUCKET or "").strip()
+    if not bucket:
+        uri = model_artifact_service.resolve_learned_ranker_uri()
+        if uri.startswith("s3://"):
+            from urllib.parse import urlparse
+
+            bucket = urlparse(uri).netloc
+    if not bucket:
+        return {"ok": True, "detail": "not_configured"}
+
+    def _head_bucket() -> None:
+        import boto3  # type: ignore
+
+        session = boto3.session.Session(
+            aws_access_key_id=settings.MLOPS_MODEL_ARTIFACT_S3_ACCESS_KEY_ID or None,
+            aws_secret_access_key=settings.MLOPS_MODEL_ARTIFACT_S3_SECRET_ACCESS_KEY or None,
+            region_name=settings.MLOPS_MODEL_ARTIFACT_S3_REGION or None,
+        )
+        client = session.client(
+            "s3",
+            endpoint_url=(settings.MLOPS_MODEL_ARTIFACT_S3_ENDPOINT_URL or None),
+        )
+        client.head_bucket(Bucket=bucket)
+
+    await asyncio.to_thread(_head_bucket)
+    return {"ok": True, "detail": "bucket head ok", "metadata": {"bucket": bucket}}
+
+
+async def _queue_health() -> dict[str, Any]:
+    from app.models.background_job import BackgroundJob
+
+    pending = await BackgroundJob.find_many({"status": {"$in": ["pending", "retry", "running"]}}).count()
+    dead = await BackgroundJob.find_many(BackgroundJob.status == "dead").count()
+    return {
+        "ok": True,
+        "detail": "queue readable",
+        "metadata": {"active_jobs": int(pending), "dead_jobs": int(dead)},
+    }
+
+
+async def _refresh_operational_metrics() -> dict[str, Any]:
+    from app.models.experiment import Experiment
+    from app.models.opportunity import Opportunity
+    from app.services.scraper_health_service import scraper_health_service
+
+    opportunity_count = int(await Opportunity.find_many().count())
+    active_experiments = int(await Experiment.find_many({"status": {"$in": ["active", "running"]}}).count())
+    scraper_health = await scraper_health_service.source_health()
+    scraper_summary = dict(scraper_health.get("summary") or {})
+    silent_failures = sum(int(row.get("silent_failures") or 0) for row in list(scraper_health.get("sources") or []))
+
+    if metrics_module.OPPORTUNITY_COUNT is not None:
+        metrics_module.OPPORTUNITY_COUNT.set(opportunity_count)
+    if metrics_module.ACTIVE_EXPERIMENTS is not None:
+        metrics_module.ACTIVE_EXPERIMENTS.set(active_experiments)
+    if metrics_module.SCRAPER_RED_SOURCES is not None:
+        metrics_module.SCRAPER_RED_SOURCES.set(float(scraper_summary.get("red_count") or 0))
+    if metrics_module.SCRAPER_SILENT_FAILURES is not None:
+        metrics_module.SCRAPER_SILENT_FAILURES.set(float(silent_failures))
+
+    learned_ready = (not settings.LEARNED_RANKER_ENABLED) or learned_ranker.is_loaded
+    if settings.LEARNED_RANKER_ENABLED and not learned_ranker.is_loaded:
+        try:
+            learned_ranker.reload_if_needed()
+            learned_ready = learned_ranker.is_loaded
+        except Exception:
+            learned_ready = False
+    if metrics_module.LEARNED_RANKER_MODEL_READY is not None:
+        metrics_module.LEARNED_RANKER_MODEL_READY.labels(enabled=str(bool(settings.LEARNED_RANKER_ENABLED)).lower()).set(
+            1.0 if learned_ready else 0.0
+        )
+
+    return {
+        "opportunity_count": opportunity_count,
+        "active_experiments": active_experiments,
+        "scraper_health": scraper_summary,
+        "scraper_silent_failures": silent_failures,
+        "learned_ranker_ready": bool(learned_ready),
+    }
+
+
+async def _metrics_dependency(request: Request) -> Any:
+    if not settings.METRICS_REQUIRE_AUTH:
+        return None
+    auth_header = (request.headers.get("authorization") or "").strip()
+    token = None
+    if auth_header.lower().startswith("bearer "):
+        token = auth_header.split(" ", 1)[1].strip() or None
+    current_user = await get_current_user(request=request, token=token)
+    scopes = set(getattr(current_user, "_token_scopes", []) or [])
+    if "metrics:read" not in scopes:
+        raise HTTPException(status_code=403, detail="Missing required scopes")
+    return current_user
+
+
+@app.get("/health", tags=["system"])
+async def health_check(request: Request):
+    """Health check endpoint for load balancers."""
+    init_metrics()
+    checks = {
+        "mongodb": await _run_check("mongodb", lambda: _mongo_health(request), required=True),
+        "redis": await _run_check("redis", _redis_health, required=bool(settings.REDIS_URL)),
+        "clickhouse": await _run_check(
+            "clickhouse",
+            _clickhouse_health,
+            required=bool(settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED),
+        ),
+        "artifact_store": await _run_check("artifact_store", _artifact_store_health, required=False),
+        "queue": await _run_check("queue", _queue_health, required=bool(settings.JOBS_ENABLED)),
+    }
+    operational = await _refresh_operational_metrics()
+    required_ok = all(bool(payload["ok"]) for payload in checks.values() if bool(payload.get("required")))
+    started_at = getattr(request.app.state, "started_at", None)
+    return {
+        "status": "healthy" if required_ok else "degraded",
         "environment": settings.ENVIRONMENT,
+        "service": settings.PROJECT_NAME,
+        "pid": os.getpid(),
+        "started_at": started_at.isoformat() if isinstance(started_at, datetime) else None,
+        "uptime_seconds": (
+            round((datetime.now(timezone.utc) - started_at).total_seconds(), 3)
+            if isinstance(started_at, datetime)
+            else None
+        ),
+        "checks": checks,
+        "operational": operational,
         "embedding": embedding_service.status(),
         "learned_ranker": {
             "enabled": bool(settings.LEARNED_RANKER_ENABLED),
@@ -542,7 +813,12 @@ async def health_check():
     }
 
 @app.get("/metrics", tags=["system"])
-async def metrics_endpoint(_: Any = Depends(require_scopes(["metrics:read"]))):  # type: ignore[name-defined]
+async def metrics_endpoint(_: Any = Depends(_metrics_dependency)):
+    init_metrics()
+    try:
+        await _refresh_operational_metrics()
+    except Exception:
+        logger.exception("Failed to refresh scrape-time operational metrics")
     payload = render_metrics()
     return Response(content=payload, media_type=CONTENT_TYPE_LATEST)
 

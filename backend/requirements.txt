@@ -18,7 +18,11 @@ python-jose[cryptography]>=3.3.0
 passlib[bcrypt]>=1.7.4
 bcrypt<4.1
 requests>=2.32.0
+httpx>=0.27.0
 beautifulsoup4>=4.12.0
+rapidfuzz>=3.9.0
+python-whois>=0.9.4
+langdetect>=1.0.9
 apscheduler>=3.10.0
 playwright>=1.46.0
 redis>=5.0.0
@@ -30,3 +34,4 @@ duckdb>=1.1.0
 clickhouse-connect>=0.8.12
 boto3>=1.35.0
 pytz>=2024.1
+pytest>=8.3.0

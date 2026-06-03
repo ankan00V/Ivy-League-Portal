@@ -1,170 +1,71 @@
-version: "3.8"
-
 services:
-  mongo:
-    image: mongo:7
-    restart: always
-    environment:
-      MONGO_INITDB_DATABASE: ${MONGODB_DB_NAME:-vidyaverse}
-    volumes:
-      - mongo_data:/data/db
-
-  redis:
-    image: redis:7-alpine
-    restart: always
-    command: redis-server --save 60 1 --loglevel warning
-    volumes:
-      - redis_data:/data
-
-  clickhouse:
-    image: clickhouse/clickhouse-server:24.8
-    restart: always
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8123/ping"]
-      interval: 15s
-      timeout: 5s
-      retries: 10
-    environment:
-      CLICKHOUSE_DB: ${ANALYTICS_WAREHOUSE_CLICKHOUSE_DATABASE:-vidyaverse}
-      CLICKHOUSE_USER: ${ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME:-vidyaverse}
-      CLICKHOUSE_PASSWORD: ${ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD}
-    volumes:
-      - clickhouse_data:/var/lib/clickhouse
-
-  minio:
-    image: minio/minio:RELEASE.2025-02-03T21-03-04Z
-    restart: always
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: ${MLOPS_MODEL_ARTIFACT_S3_ACCESS_KEY_ID}
-      MINIO_ROOT_PASSWORD: ${MLOPS_MODEL_ARTIFACT_S3_SECRET_ACCESS_KEY}
-    volumes:
-      - minio_data:/data
-
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    image: vidyaverse-backend:latest
-    ports:
-      - "8000:8000"
     environment:
-      - ENVIRONMENT=production
-      - SECRET_KEY=${SECRET_KEY}
-      - MONGODB_URL=${MONGODB_URL:-mongodb://mongo:27017}
-      - MONGODB_DB_NAME=${MONGODB_DB_NAME:-vidyaverse}
-      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
-      - ANALYTICS_WAREHOUSE_EXPORT_ENABLED=${ANALYTICS_WAREHOUSE_EXPORT_ENABLED:-true}
-      - ANALYTICS_WAREHOUSE_EXPORT_FORMAT=${ANALYTICS_WAREHOUSE_EXPORT_FORMAT:-duckdb_parquet}
-      - ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED=${ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED:-true}
-      - ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST=${ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST:-clickhouse}
-      - ANALYTICS_WAREHOUSE_CLICKHOUSE_PORT=${ANALYTICS_WAREHOUSE_CLICKHOUSE_PORT:-8123}
-      - ANALYTICS_WAREHOUSE_CLICKHOUSE_DATABASE=${ANALYTICS_WAREHOUSE_CLICKHOUSE_DATABASE:-vidyaverse}
-      - ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME=${ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME:-vidyaverse}
-      - ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD=${ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD}
-      - ANALYTICS_WAREHOUSE_CLICKHOUSE_SECURE=${ANALYTICS_WAREHOUSE_CLICKHOUSE_SECURE:-false}
-      - ANALYTICS_WAREHOUSE_REQUIRED_MARTS=${ANALYTICS_WAREHOUSE_REQUIRED_MARTS:-["mart_daily_metrics","mart_funnel_metrics","mart_cohort_metrics","mart_feature_freshness","mart_parity_scorecard","mart_training_dataset","mart_ranking_slice_metrics","mart_metadata"]}
-      - ANALYTICS_WAREHOUSE_MAX_STALENESS_MINUTES=${ANALYTICS_WAREHOUSE_MAX_STALENESS_MINUTES:-180}
-      - ANALYTICS_WAREHOUSE_ENFORCE_CLICKHOUSE_IN_PRODUCTION=${ANALYTICS_WAREHOUSE_ENFORCE_CLICKHOUSE_IN_PRODUCTION:-true}
-      - ANALYTICS_WAREHOUSE_BI_TOOL_URL=${ANALYTICS_WAREHOUSE_BI_TOOL_URL:-http://metabase:3000}
-      - ANALYTICS_BI_TOOL_URL=${ANALYTICS_BI_TOOL_URL:-http://metabase:3000}
-      - LEARNED_RANKER_ENABLED=${LEARNED_RANKER_ENABLED:-true}
-      - LEARNED_RANKER_ARTIFACT_URI=${LEARNED_RANKER_ARTIFACT_URI}
-      - LEARNED_RANKER_ARTIFACT_CHECKSUM_SHA256=${LEARNED_RANKER_ARTIFACT_CHECKSUM_SHA256}
-      - LEARNED_RANKER_REQUIRE_ARTIFACT_IN_PRODUCTION=${LEARNED_RANKER_REQUIRE_ARTIFACT_IN_PRODUCTION:-true}
-      - LEARNED_RANKER_REQUIRE_LOADED_IN_PRODUCTION=${LEARNED_RANKER_REQUIRE_LOADED_IN_PRODUCTION:-true}
-      - MODEL_REGISTRY_REQUIRE_APPROVED_FOR_ACTIVATION=${MODEL_REGISTRY_REQUIRE_APPROVED_FOR_ACTIVATION:-true}
-      - MLOPS_MODEL_ARTIFACT_S3_ENDPOINT_URL=${MLOPS_MODEL_ARTIFACT_S3_ENDPOINT_URL:-http://minio:9000}
-      - MLOPS_MODEL_ARTIFACT_S3_REGION=${MLOPS_MODEL_ARTIFACT_S3_REGION:-us-east-1}
-      - MLOPS_MODEL_ARTIFACT_S3_ACCESS_KEY_ID=${MLOPS_MODEL_ARTIFACT_S3_ACCESS_KEY_ID}
-      - MLOPS_MODEL_ARTIFACT_S3_SECRET_ACCESS_KEY=${MLOPS_MODEL_ARTIFACT_S3_SECRET_ACCESS_KEY}
-      - BACKEND_CORS_ORIGINS=${BACKEND_CORS_ORIGINS:-["https://web.test"]}
-      - ALLOWED_HOSTS=${ALLOWED_HOSTS:-["api.test"]}
-      - LLM_API_BASE_URL=${LLM_API_BASE_URL:-}
-      - LLM_API_KEY=${LLM_API_KEY:-}
-      - LLM_MODEL=${LLM_MODEL:-}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - OPENAI_API_BASE_URL=${OPENAI_API_BASE_URL:-}
-      - OPENAI_EMBEDDING_MODEL=${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
-      - GOOGLE_OAUTH_CLIENT_ID=${GOOGLE_OAUTH_CLIENT_ID:-}
-      - GOOGLE_OAUTH_CLIENT_SECRET=${GOOGLE_OAUTH_CLIENT_SECRET:-}
-      - GOOGLE_OAUTH_REDIRECT_URI=${GOOGLE_OAUTH_REDIRECT_URI:-}
-      - FRONTEND_OAUTH_SUCCESS_URL=${FRONTEND_OAUTH_SUCCESS_URL:-https://web.test/auth/callback}
-      - FRONTEND_OAUTH_FAILURE_URL=${FRONTEND_OAUTH_FAILURE_URL:-https://web.test/login}
-    depends_on:
-      - mongo
-      - redis
-      - clickhouse
-      - minio
-    restart: always
+      ENVIRONMENT: production
+      AUTH_COOKIE_ONLY_MODE: "true"
+      AUTH_SESSION_COOKIE_SECURE: "true"
+      METRICS_REQUIRE_AUTH: ${METRICS_REQUIRE_AUTH:-false}
+      ANALYTICS_WAREHOUSE_ENFORCE_CLICKHOUSE_IN_PRODUCTION: "true"
+      ANALYTICS_WAREHOUSE_ENFORCE_FRESHNESS_IN_PRODUCTION: "true"
+      LEARNED_RANKER_REQUIRE_ARTIFACT_IN_PRODUCTION: "true"
+      LEARNED_RANKER_REQUIRE_LOADED_IN_PRODUCTION: "true"
+      MODEL_REGISTRY_REQUIRE_APPROVED_FOR_ACTIVATION: "true"
+      MLOPS_ENFORCE_LIVE_ALERT_CHANNELS_IN_PRODUCTION: "true"
+      MLOPS_ENFORCE_OWNER_IN_PRODUCTION: "true"
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 3g
     logging:
-      driver: "json-file"
+      driver: json-file
       options:
-        max-size: "10m"
-        max-file: "3"
+        max-size: 10m
+        max-file: "5"
 
-  metabase:
-    image: metabase/metabase:v0.50.32
-    restart: always
-    ports:
-      - "3001:3000"
+  worker:
     environment:
-      MB_DB_FILE: /metabase-data/metabase.db
-      MB_SITE_URL: ${ANALYTICS_BI_PUBLIC_URL:-http://localhost:3001}
-    volumes:
-      - metabase_data:/metabase-data
-    depends_on:
-      clickhouse:
-        condition: service_healthy
-
-  prometheus:
-    image: prom/prometheus:v2.54.1
-    restart: always
-    ports:
-      - "9090:9090"
-    command:
-      - "--config.file=/etc/prometheus/prometheus.yml"
-    volumes:
-      - ./ops/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ./ops/alerts/prometheus-rules.yml:/etc/prometheus/rules/prometheus-rules.yml:ro
-    depends_on:
-      - backend
-
-  grafana:
-    image: grafana/grafana:11.2.0
-    restart: always
-    ports:
-      - "3002:3000"
-    environment:
-      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
-      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost:3002}
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./ops/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./ops/grafana:/var/lib/grafana/dashboards:ro
-    depends_on:
-      - prometheus
+      ENVIRONMENT: production
+      ANALYTICS_WAREHOUSE_ENFORCE_CLICKHOUSE_IN_PRODUCTION: "true"
+      LEARNED_RANKER_REQUIRE_ARTIFACT_IN_PRODUCTION: "true"
+      LEARNED_RANKER_REQUIRE_LOADED_IN_PRODUCTION: "true"
+      MODEL_REGISTRY_REQUIRE_APPROVED_FOR_ACTIVATION: "true"
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 3g
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
 
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    image: vidyaverse-frontend:latest
-    ports:
-      - "3000:3000"
     environment:
-      - NODE_ENV=production
-      - NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL:-https://api.test}
-      - BACKEND_INTERNAL_URL=${BACKEND_INTERNAL_URL:-http://backend:8000}
-    depends_on:
-      - backend
+      NODE_ENV: production
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL}
+      BACKEND_INTERNAL_URL: http://backend:8000
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+  mongo:
     restart: always
 
-volumes:
-  mongo_data:
-  redis_data:
-  clickhouse_data:
-  minio_data:
-  metabase_data:
-  grafana_data:
+  redis:
+    restart: always
+
+  clickhouse:
+    restart: always
+
+  minio:
+    restart: always
+
+  prometheus:
+    restart: always
+
+  grafana:
+    restart: always

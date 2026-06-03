@@ -23,6 +23,7 @@ from app.models.profile import Profile
 from app.models.ranking_model_version import RankingModelVersion
 from app.models.ranking_request_telemetry import RankingRequestTelemetry
 from app.models.feature_store_row import FeatureStoreRow
+from app.services.interaction_service import funnel_event_type
 
 
 def _seconds_since(timestamp: Any) -> float | None:
@@ -92,7 +93,7 @@ class DataScienceObservabilityService:
         buckets: dict[str, dict[str, float]] = defaultdict(lambda: {"impression": 0.0, "click": 0.0, "apply": 0.0})
         for row in interactions:
             mode = (row.ranking_mode or "unknown").strip().lower() or "unknown"
-            action = (row.interaction_type or "view").strip().lower()
+            action = funnel_event_type(interaction_type=row.interaction_type, event_type=row.event_type)
             if action in buckets[mode]:
                 buckets[mode][action] += 1.0
 
@@ -144,7 +145,7 @@ class DataScienceObservabilityService:
         segment_stats: dict[str, dict[str, float]] = defaultdict(new_bucket)
 
         for row in interactions:
-            action = (row.interaction_type or "").strip().lower()
+            action = funnel_event_type(interaction_type=row.interaction_type, event_type=row.event_type)
             opp = opportunity_map.get(str(row.opportunity_id))
             profile = profile_map.get(str(row.user_id))
             domain = _slice_label(getattr(opp, "domain", None))
