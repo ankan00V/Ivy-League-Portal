@@ -93,15 +93,15 @@ flowchart LR
 <!-- DATASET_SNAPSHOT:START -->
 
 ## Dataset Size (Verified Snapshot)
-Snapshot date: **June 05, 2026**
+Snapshot date: **June 06, 2026**
 
 - Opportunities: **330**
 - Applications: **0**
 - Opportunity interactions: **15,706**
 - Experiments: **3**
 - Experiment assignments: **300**
-- Ranking model versions: **201**
-- Drift reports: **202**
+- Ranking model versions: **205**
+- Drift reports: **206**
 - Profiles: **319**
 - Users: **323**
 
