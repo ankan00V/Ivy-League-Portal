@@ -21,6 +21,7 @@ from app.core.config import settings
 from app.models.opportunity import Opportunity
 from app.models.opportunity_interaction import OpportunityInteraction
 from app.models.user import User
+from app.services.opportunity_visibility import is_student_visible_opportunity
 
 
 def _client_kwargs() -> dict[str, Any]:
@@ -34,11 +35,8 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
     client = AsyncIOMotorClient(settings.MONGODB_URL, **_client_kwargs())
     await init_beanie(database=client[settings.MONGODB_DB_NAME], document_models=[Opportunity, OpportunityInteraction, User])
     try:
-        active_query = {
-            "lifecycle_status": "published",
-            "opportunity_status": {"$in": ["active", "closing_soon"]},
-        }
-        active = await Opportunity.find_many(active_query).to_list()
+        all_opportunities = await Opportunity.find_many().to_list()
+        active = [row for row in all_opportunities if is_student_visible_opportunity(row)]
         url_missing = [str(row.id) for row in active if not str(row.url or "").startswith(("http://", "https://"))]
         duplicate_hashes = [
             key for key, count in Counter(str(row.canonical_url_hash or row.url) for row in active).items() if key and count > 1

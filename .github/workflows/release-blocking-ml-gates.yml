@@ -50,6 +50,9 @@ jobs:
       - name: Run DS operating-loop gate
         run: python backend/scripts/check_ds_release_gates.py --lookback-days 14 --fail-on-not-ready
 
+      - name: Run recommendation quality gate
+        run: python backend/scripts/check_recommendation_quality_gate.py --ranking-mode semantic --fail-on-not-ready
+
       - name: Run assistant quality gate
         run: python backend/benchmarks/run_assistant_quality_eval.py --fail-on-regression
 
@@ -64,5 +67,6 @@ jobs:
             backend/benchmarks/champion_challenger_gate.json
             docs/portfolio/champion_challenger_gate.md
             backend/benchmarks/ds_release_gates.json
+            backend/benchmarks/recommendation_quality_gate.json
             backend/benchmarks/assistant_quality_eval.json
           if-no-files-found: ignore

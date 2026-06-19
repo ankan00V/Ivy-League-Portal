@@ -68,6 +68,9 @@ class DiscoveredSource(Document):
     domain: str
     name: Optional[str] = None
     source_type: Optional[str] = None
+    priority_score: float = Field(default=50.0, ge=0, le=100)
+    priority_reasons: list[str] = Field(default_factory=list)
+    priority_features: dict[str, Any] = Field(default_factory=dict)
 
     discovery_method: DiscoveryMethod
     discovery_query: Optional[str] = None
@@ -140,6 +143,7 @@ class DiscoveredSource(Document):
             IndexModel([("status", ASCENDING)]),
             IndexModel([("trust_score", DESCENDING)]),
             IndexModel([("discovered_at", DESCENDING)]),
+            IndexModel([("status", ASCENDING), ("priority_score", DESCENDING), ("discovered_at", ASCENDING)]),
             IndexModel([("source_type", ASCENDING), ("status", ASCENDING)]),
             IndexModel([("discovered_by", ASCENDING), ("discovered_at", DESCENDING)]),
         ]
@@ -153,6 +157,11 @@ class CompanySeed(Document):
     company_size: str
     india_presence: bool = True
     student_friendly: bool = True
+    priority_tier: Optional[str] = None
+    source_category: Optional[str] = None
+    check_cadence_hours: int = Field(default=168, ge=1, le=2160)
+    target_roles: list[str] = Field(default_factory=lambda: ["internship", "0-1 years", "early career"])
+    notes: Optional[str] = None
     added_by: str = "system"
     discovered_source_id: Optional[str] = None
     last_checked_at: Optional[datetime] = None
@@ -177,6 +186,8 @@ class CompanySeed(Document):
         indexes = [
             IndexModel([("domain", ASCENDING)], unique=True),
             IndexModel([("india_presence", ASCENDING), ("student_friendly", ASCENDING)]),
+            IndexModel([("priority_tier", ASCENDING), ("last_checked_at", ASCENDING)]),
+            IndexModel([("source_category", ASCENDING)]),
             IndexModel([("discovered_source_id", ASCENDING)]),
         ]
 

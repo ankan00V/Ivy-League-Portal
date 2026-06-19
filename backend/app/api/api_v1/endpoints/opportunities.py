@@ -1117,6 +1117,7 @@ async def read_scraper_health() -> ScraperHealthResponse:
     }
     source_rows = []
     runtime_sources: set[str] = set()
+    persisted_latest_run: Optional[str] = None
     for row in list(last_report.get("sources") or []):
         errors = list(row.get("errors") or [])
         source_name = str(row.get("source") or "unknown")
@@ -1177,6 +1178,9 @@ async def read_scraper_health() -> ScraperHealthResponse:
     for source_key, source_health in health_by_source.items():
         if source_key in runtime_sources:
             continue
+        source_last_run = source_health.get("last_run")
+        if source_last_run and (persisted_latest_run is None or str(source_last_run) > persisted_latest_run):
+            persisted_latest_run = str(source_last_run)
         source_rows.append(
             ScraperSourceHealthResponse(
                 source=str(source_health.get("source") or source_key),
@@ -1196,13 +1200,21 @@ async def read_scraper_health() -> ScraperHealthResponse:
             )
         )
 
+    last_status = str(runtime.get("last_status") or "never_run")
+    last_finished_at = runtime.get("last_finished_at")
+    last_successful_at = runtime.get("last_successful_at")
+    if last_status == "never_run" and persisted_latest_run:
+        last_status = "persisted_run_logs"
+        last_finished_at = last_finished_at or persisted_latest_run
+        last_successful_at = last_successful_at or persisted_latest_run
+
     return ScraperHealthResponse(
         is_running=bool(runtime.get("is_running")),
-        last_status=str(runtime.get("last_status") or "never_run"),
+        last_status=last_status,
         consecutive_failures=int(runtime.get("consecutive_failures") or 0),
         last_started_at=runtime.get("last_started_at"),
-        last_finished_at=runtime.get("last_finished_at"),
-        last_successful_at=runtime.get("last_successful_at"),
+        last_finished_at=last_finished_at,
+        last_successful_at=last_successful_at,
         auto_update=dict(runtime.get("auto_update") or {}),
         summary=dict(health_report.get("summary") or {}),
         sources=source_rows,

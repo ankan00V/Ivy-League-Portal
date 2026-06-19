@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import BrandLogo from "@/components/BrandLogo";
 import { CenteredPageSkeleton } from "@/components/LoadingSkeletons";
@@ -10,6 +10,12 @@ import FormSection from "@/components/ui/FormSection";
 import PillGroup from "@/components/ui/PillGroup";
 import ToggleRow from "@/components/ui/ToggleRow";
 import { useOnboardingFlow } from "@/hooks/useOnboardingFlow";
+import {
+  EDUCATION_PROGRAM_GROUPS,
+  EDUCATION_PROGRAM_OPTIONS,
+  getFieldOfStudyOptions,
+  getProgramValueFromLabel,
+} from "@/lib/education-taxonomy";
 import { INDIAN_INSTITUTION_OPTIONS, OTHER_INSTITUTION_LABEL } from "@/lib/indian-institutions";
 
 type AccountType = "candidate" | "employer";
@@ -24,6 +30,7 @@ type ProfilePayload = {
   user_type: UserType | "";
   domain: string;
   course: string;
+  course_specialization: string;
   passout_year: number | null;
   class_grade: number | null;
   current_job_role: string;
@@ -70,6 +77,7 @@ type OnboardingUpdatePayload = {
   user_type?: UserType;
   domain?: string;
   course?: string;
+  course_specialization?: string;
   passout_year?: number | null;
   class_grade?: number | null;
   current_job_role?: string;
@@ -139,8 +147,33 @@ const DEFAULT_YEARS = [2026, 2027, 2028, 2029, 2030, 2031];
 const SCHOOL_GRADES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 const RESUME_REQUIRED_USER_TYPES = new Set<UserType>(["college_student", "fresher", "professional"]);
 const OTHER_UNIVERSITY_VALUE = "__other__";
+const OTHER_DEGREE_VALUE = "__other_degree__";
+const OTHER_FIELD_OF_STUDY_VALUE = "Others";
 const UNIVERSITY_OPTION_VALUES = new Set<string>(INDIAN_INSTITUTION_OPTIONS.map((item) => item.label));
 const UNIVERSITY_OPTIONS = Array.from(UNIVERSITY_OPTION_VALUES);
+const UNIVERSITY_OPTION_BY_UPPERCASE = new Map<string, string>(
+  UNIVERSITY_OPTIONS.map((item) => [item.toLocaleUpperCase("en-IN"), item]),
+);
+
+const UPPERCASE_TEXT_FIELDS = new Set<keyof ProfilePayload>([
+  "first_name",
+  "last_name",
+  "domain",
+  "course",
+  "current_job_role",
+  "total_work_experience",
+  "college_name",
+  "company_name",
+  "company_size",
+  "company_description",
+  "preferred_roles",
+  "preferred_locations",
+  "bio",
+  "skills",
+  "interests",
+  "achievements",
+  "education",
+]);
 
 const ONBOARDING_VISUALS = [
   "https://images.unsplash.com/photo-1529074963764-98f45c47344b?auto=format&fit=crop&w=1200&q=80",
@@ -152,9 +185,29 @@ function pillButtonClass(active: boolean): string {
   return `vv-pill-button${active ? " active" : ""}`;
 }
 
+function uppercaseProfileText(value: string): string {
+  return value.toLocaleUpperCase("en-IN");
+}
+
+function normalizeProfileValue<K extends keyof ProfilePayload>(field: K, value: ProfilePayload[K]): ProfilePayload[K] {
+  if (typeof value === "string" && UPPERCASE_TEXT_FIELDS.has(field)) {
+    return uppercaseProfileText(value) as ProfilePayload[K];
+  }
+  return value;
+}
+
+function findKnownUniversityOption(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  return UNIVERSITY_OPTION_BY_UPPERCASE.get(trimmed.toLocaleUpperCase("en-IN")) ?? null;
+}
+
 type OptionalStringFieldKey =
   | "domain"
   | "course"
+  | "course_specialization"
   | "current_job_role"
   | "total_work_experience"
   | "college_name"
@@ -182,7 +235,7 @@ function deriveUniversitySelection(value: string): string {
   if (!trimmed) {
     return "";
   }
-  return UNIVERSITY_OPTION_VALUES.has(trimmed) ? trimmed : OTHER_UNIVERSITY_VALUE;
+  return findKnownUniversityOption(trimmed) ?? OTHER_UNIVERSITY_VALUE;
 }
 
 function splitCsv(value: string): string[] {
@@ -256,6 +309,7 @@ function buildOnboardingPayload(profile: ProfilePayload): OnboardingUpdatePayloa
 
   withOptionalString(payload, "domain", profile.domain);
   withOptionalString(payload, "course", profile.course);
+  withOptionalString(payload, "course_specialization", profile.course_specialization);
   withOptionalString(payload, "current_job_role", profile.current_job_role);
   withOptionalString(payload, "total_work_experience", profile.total_work_experience);
   withOptionalString(payload, "college_name", profile.college_name);
@@ -274,6 +328,114 @@ function buildOnboardingPayload(profile: ProfilePayload): OnboardingUpdatePayloa
   return payload;
 }
 
+type FieldOfStudySelectorProps = {
+  options: string[];
+  search: string;
+  selected: string;
+  otherLabel?: string;
+  onSearchChange: (value: string) => void;
+  onSelect: (value: string) => void;
+};
+
+function FieldOfStudySelector({
+  options,
+  search,
+  selected,
+  otherLabel = OTHER_FIELD_OF_STUDY_VALUE,
+  onSearchChange,
+  onSelect,
+}: FieldOfStudySelectorProps) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  const filteredOptions = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) {
+      return options;
+    }
+    return options.filter((option) => option.toLowerCase().includes(query));
+  }, [options, search]);
+  const visibleOptions = useMemo(() => {
+    const withoutOther = filteredOptions.filter((option) => option.toLowerCase() !== otherLabel.toLowerCase());
+    return [...withoutOther, otherLabel];
+  }, [filteredOptions, otherLabel]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+        onSearchChange("");
+      }
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [onSearchChange, open]);
+
+  useEffect(() => {
+    if (open) {
+      window.setTimeout(() => searchRef.current?.focus(), 0);
+    }
+  }, [open]);
+
+  return (
+    <div className={`education-field-selector${open ? " open" : ""}`} ref={rootRef}>
+      <button
+        type="button"
+        className="education-field-trigger"
+        onClick={() => setOpen((current) => !current)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+      >
+        <span className={selected ? "education-field-trigger-value" : "education-field-trigger-placeholder"}>
+          {selected || "Select field of study"}
+        </span>
+        <span className="education-field-caret" aria-hidden="true" />
+      </button>
+      {open ? (
+        <div className="education-field-menu">
+          <div className="education-field-search-wrap">
+            <input
+              ref={searchRef}
+              className="education-field-search-input"
+              value={search}
+              onChange={(event) => onSearchChange(event.target.value)}
+              placeholder="Search field of study"
+              aria-label="Search field of study"
+            />
+          </div>
+          <div className="education-field-options" role="listbox" aria-label="Field of study options">
+            {visibleOptions.map((option) => (
+              <button
+                key={option}
+                type="button"
+                className={`education-field-option${selected === option ? " active" : ""}`}
+                onClick={() => {
+                  onSelect(option);
+                  onSearchChange("");
+                  setOpen(false);
+                }}
+                role="option"
+                aria-selected={selected === option}
+              >
+                <span className="education-field-radio" aria-hidden="true" />
+                <span>{option}</span>
+              </button>
+            ))}
+            {filteredOptions.length === 0 ? (
+              <div className="education-field-empty">No matching field found. Try another keyword.</div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function hydrateOnboardingProfilePayload(payload: Record<string, unknown>, previous: ProfilePayload): ProfilePayload {
   const asText = (value: unknown, fallback: string): string => (typeof value === "string" ? value : fallback);
   const asNullableNumber = (value: unknown, fallback: number | null): number | null => (typeof value === "number" ? value : fallback);
@@ -290,6 +452,7 @@ function hydrateOnboardingProfilePayload(payload: Record<string, unknown>, previ
     user_type: (typeof payload.user_type === "string" ? payload.user_type : previous.user_type) as UserType | "",
     domain: asText(payload.domain, previous.domain),
     course: asText(payload.course, previous.course),
+    course_specialization: asText(payload.course_specialization, previous.course_specialization),
     passout_year: asNullableNumber(payload.passout_year, previous.passout_year),
     class_grade: asNullableNumber(payload.class_grade, previous.class_grade),
     current_job_role: asText(payload.current_job_role, previous.current_job_role),
@@ -322,6 +485,9 @@ function hydrateOnboardingProfilePayload(payload: Record<string, unknown>, previ
 }
 
 export default function OnboardingPage() {
+  const [fieldOfStudySearch, setFieldOfStudySearch] = useState("");
+  const [manualDegreeMode, setManualDegreeMode] = useState(false);
+  const [manualFieldOfStudyMode, setManualFieldOfStudyMode] = useState(false);
   const [profile, setProfile] = useState<ProfilePayload>({
     account_type: "candidate",
     first_name: "",
@@ -331,6 +497,7 @@ export default function OnboardingPage() {
     user_type: "",
     domain: "",
     course: "",
+    course_specialization: "",
     passout_year: null,
     class_grade: null,
     current_job_role: "",
@@ -366,6 +533,7 @@ export default function OnboardingPage() {
     step,
     setStep,
     error,
+    setError,
     resumeUploading,
     employerRoleSelection,
     setEmployerRoleSelection,
@@ -391,6 +559,21 @@ export default function OnboardingPage() {
 
   const totalSteps = profile.account_type === "employer" ? 2 : 3;
   const visual = useMemo(() => ONBOARDING_VISUALS[(step - 1) % ONBOARDING_VISUALS.length], [step]);
+  const fieldOfStudyOptions = useMemo(
+    () => getFieldOfStudyOptions(profile.course, profile.domain),
+    [profile.course, profile.domain],
+  );
+  const courseSelectValue = useMemo(() => {
+    if (manualDegreeMode) {
+      return OTHER_DEGREE_VALUE;
+    }
+    if (!profile.course.trim()) {
+      return "";
+    }
+    return getProgramValueFromLabel(profile.course) ? profile.course : OTHER_DEGREE_VALUE;
+  }, [manualDegreeMode, profile.course]);
+  const usingOtherDegree = manualDegreeMode || courseSelectValue === OTHER_DEGREE_VALUE;
+  const usingOtherFieldOfStudy = manualFieldOfStudyMode || profile.course_specialization === OTHER_FIELD_OF_STUDY_VALUE;
 
   useEffect(() => {
     if (step > totalSteps) {
@@ -424,6 +607,7 @@ export default function OnboardingPage() {
       return (
         profile.domain.trim().length > 0 &&
         profile.course.trim().length > 0 &&
+        profile.course_specialization.trim().length > 0 &&
         profile.passout_year !== null &&
         profile.college_name.trim().length > 0 &&
         (!resumeRequiredForUserType || hasResume)
@@ -439,8 +623,59 @@ export default function OnboardingPage() {
     return false;
   })();
 
+  const currentStepMissingFields = useMemo(() => {
+    const missing: string[] = [];
+    if (step === 1) {
+      if (profile.first_name.trim().length === 0) missing.push("first name");
+      if (profile.mobile.trim().length < 8) missing.push("mobile number");
+      if (requiresUserType && profile.user_type.length === 0) missing.push("user type");
+      if (missingConsent) missing.push("data processing consent");
+      return missing;
+    }
+
+    if (step === 2) {
+      if (profile.account_type === "employer") {
+        if (profile.company_name.trim().length === 0) missing.push("current organisation");
+        if (profile.current_job_role.trim().length === 0) missing.push("designation");
+        if (profile.hiring_for.length === 0) missing.push("hiring purpose");
+        return missing;
+      }
+      if (profile.user_type === "school_student") {
+        if (profile.class_grade === null) missing.push("class / grade");
+        return missing;
+      }
+      if (profile.user_type === "college_student" || profile.user_type === "fresher") {
+        if (profile.domain.trim().length === 0) missing.push("domain");
+        if (profile.course.trim().length === 0) missing.push("degree");
+        if (profile.course_specialization.trim().length === 0) missing.push("field of study");
+        if (profile.passout_year === null) missing.push("passout year");
+        if (profile.college_name.trim().length === 0) missing.push("college name");
+        if (resumeRequiredForUserType && !hasResume) missing.push("resume / CV");
+        return missing;
+      }
+      if (profile.user_type === "professional") {
+        if (profile.current_job_role.trim().length === 0) missing.push("current job role");
+        if (profile.total_work_experience.trim().length === 0) missing.push("total work experience");
+        if (resumeRequiredForUserType && !hasResume) missing.push("resume / CV");
+        return missing;
+      }
+      missing.push("profile details");
+    }
+    return missing;
+  }, [hasResume, missingConsent, profile, requiresUserType, resumeRequiredForUserType, step]);
+
+  const handleContinue = () => {
+    const canContinue = step === 1 ? canContinueStep1 : canContinueStep2;
+    if (!canContinue) {
+      const missing = currentStepMissingFields.join(", ") || "required details";
+      setError(`Please complete: ${missing}`);
+      return;
+    }
+    void handleSave(false, totalSteps);
+  };
+
   const updateProfile = <K extends keyof ProfilePayload>(field: K, value: ProfilePayload[K]) => {
-    setProfile((prev) => ({ ...prev, [field]: value }));
+    setProfile((prev) => ({ ...prev, [field]: normalizeProfileValue(field, value) }));
   };
 
   const toggleGoal = (goal: string) => {
@@ -568,15 +803,99 @@ export default function OnboardingPage() {
                     <FormSection label="Domain" labelSpaced>
                       <PillGroup>
                         {DOMAIN_OPTIONS.map((item) => (
-                          <button key={item} type="button" className={pillButtonClass(profile.domain === item)} onClick={() => updateProfile("domain", item)}>
+                          <button
+                            key={item}
+                            type="button"
+                            className={pillButtonClass(profile.domain.toLowerCase() === item.toLowerCase())}
+                            onClick={() => updateProfile("domain", item)}
+                          >
                             {item}
                           </button>
                         ))}
                       </PillGroup>
                     </FormSection>
-                    <FormSection label="Course">
-                      <input className="input-base" value={profile.course} onChange={(e) => updateProfile("course", e.target.value)} placeholder="B.Tech CSE / MBA / BBA ..." />
+                    <FormSection label="Degree" required>
+                      <select
+                        className="input-base"
+                        value={courseSelectValue}
+                        onChange={(event) => {
+                          const nextCourse = event.target.value;
+                          if (nextCourse === OTHER_DEGREE_VALUE) {
+                            setManualDegreeMode(true);
+                            setProfile((prev) => ({
+                              ...prev,
+                              course: getProgramValueFromLabel(prev.course) ? "" : prev.course,
+                              course_specialization: prev.course_specialization,
+                            }));
+                            setFieldOfStudySearch("");
+                            return;
+                          }
+                          const nextFieldOptions = getFieldOfStudyOptions(nextCourse, profile.domain);
+                          setManualDegreeMode(false);
+                          setManualFieldOfStudyMode(false);
+                          setProfile((prev) => ({
+                            ...prev,
+                            course: nextCourse,
+                            course_specialization: nextFieldOptions.includes(prev.course_specialization)
+                              ? prev.course_specialization
+                              : "",
+                          }));
+                          setFieldOfStudySearch("");
+                        }}
+                      >
+                        <option value="">Select one</option>
+                        {EDUCATION_PROGRAM_GROUPS.map((group) => (
+                          <optgroup key={group} label={group}>
+                            {EDUCATION_PROGRAM_OPTIONS.filter((option) => option.group === group).map((option) => (
+                              <option key={option.value} value={option.label}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </optgroup>
+                        ))}
+                        <option value={OTHER_DEGREE_VALUE}>Others</option>
+                      </select>
                     </FormSection>
+                    {usingOtherDegree && (
+                      <FormSection label="Enter Degree">
+                        <input
+                          className="input-base"
+                          value={profile.course}
+                          onChange={(event) => updateProfile("course", event.target.value)}
+                          placeholder="Type your degree or program name"
+                        />
+                      </FormSection>
+                    )}
+                    <FormSection
+                      label="Field of Study"
+                      required
+                    >
+                      <FieldOfStudySelector
+                        options={fieldOfStudyOptions}
+                        search={fieldOfStudySearch}
+                        selected={profile.course_specialization}
+                        onSearchChange={setFieldOfStudySearch}
+                        onSelect={(value) => {
+                          if (value === OTHER_FIELD_OF_STUDY_VALUE) {
+                            setManualFieldOfStudyMode(true);
+                            updateProfile("course_specialization", "");
+                            return;
+                          }
+                          setManualFieldOfStudyMode(false);
+                          updateProfile("course_specialization", value);
+                        }}
+                      />
+                    </FormSection>
+                    {usingOtherFieldOfStudy && (
+                      <FormSection label="Enter Field of Study">
+                        <input
+                          className="input-base"
+                          value={profile.course_specialization}
+                          onChange={(event) => updateProfile("course_specialization", event.target.value)}
+                          placeholder="Type your field, branch, or specialization"
+                        />
+                      </FormSection>
+                    )}
                     <FormSection label="Passout Year" labelSpaced>
                       <PillGroup>
                         {DEFAULT_YEARS.map((year) => (
@@ -599,7 +918,7 @@ export default function OnboardingPage() {
                           const selected = e.target.value;
                           setSelectedUniversity(selected);
                           if (selected === OTHER_UNIVERSITY_VALUE) {
-                            if (UNIVERSITY_OPTION_VALUES.has(profile.college_name)) {
+                            if (findKnownUniversityOption(profile.college_name)) {
                               updateProfile("college_name", "");
                             }
                             return;
@@ -626,7 +945,7 @@ export default function OnboardingPage() {
                         />
                       </FormSection>
                     )}
-                    {selectedUniversity !== OTHER_UNIVERSITY_VALUE && profile.college_name.trim().length > 0 && !UNIVERSITY_OPTION_VALUES.has(profile.college_name) && (
+                    {selectedUniversity !== OTHER_UNIVERSITY_VALUE && profile.college_name.trim().length > 0 && !findKnownUniversityOption(profile.college_name) && (
                       <div className="vv-form-helper">
                         Existing university not in the current list. Choose &quot;{OTHER_INSTITUTION_LABEL}&quot; to edit manually.
                       </div>
@@ -943,10 +1262,10 @@ export default function OnboardingPage() {
                 <button
                   type="button"
                   className="btn-primary"
-                  disabled={saving || (step === 1 ? !canContinueStep1 : !canContinueStep2)}
-                  onClick={() => void handleSave(false, totalSteps)}
+                  disabled={saving || resumeUploading}
+                  onClick={handleContinue}
                 >
-                  Continue
+                  {saving ? "Saving..." : "Continue"}
                 </button>
               ) : (
                 <button type="button" className="btn-primary" disabled={saving} onClick={() => void handleSave(true, totalSteps)}>

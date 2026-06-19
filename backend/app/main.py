@@ -398,6 +398,14 @@ async def lifespan(app: FastAPI):
                     dedupe_key="company_seed_careers_finder",
                 )
 
+            async def _enqueue_company_careers_ingest() -> None:
+                await job_runner.enqueue(
+                    job_type="company_careers_ingest",
+                    payload={"limit": 25},
+                    max_attempts=1,
+                    dedupe_key=f"company_careers_ingest:{datetime.now(timezone.utc).strftime('%Y%m%d%H%M')}",
+                )
+
             async def _enqueue_source_discovery_run() -> None:
                 await job_runner.enqueue(
                     job_type="source_discovery_run",
@@ -453,6 +461,14 @@ async def lifespan(app: FastAPI):
                 minute=30,
                 id="company_seed_careers_finder_job",
                 replace_existing=True,
+            )
+            scheduler.add_job(
+                _enqueue_company_careers_ingest,
+                "interval",
+                minutes=30,
+                id="company_careers_ingest_job",
+                replace_existing=True,
+                next_run_time=datetime.now(timezone.utc),
             )
             scheduler.add_job(
                 _enqueue_source_discovery_run,

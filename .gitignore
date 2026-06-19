@@ -8,6 +8,10 @@ backend/.env.*
 !backend/.env.example
 !backend/.env.*.example
 backend/benchmarks/results.json
+backend/benchmarks/bootstrap_opportunities_latest.json
+backend/benchmarks/production_infra_readiness.json
+backend/benchmarks/recommendation_quality_gate.json
+backend/benchmarks/synthetic_alert_delivery.json
 frontend/test-results/
 backend/storage/resumes/
 backend/storage/model_artifacts/
@@ -15,3 +19,7 @@ backend/storage/warehouse/
 backend/models/
 backend/backend/
 backend/uvicorn_local.log
+.local-runtime/
+impact.json
+ranker.json
+snapshot.json

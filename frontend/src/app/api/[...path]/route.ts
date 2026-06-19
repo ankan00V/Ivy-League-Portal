@@ -19,7 +19,10 @@ const backendCandidates = Array.from(
   ),
 );
 
-const UPSTREAM_FETCH_TIMEOUT_MS = Number(process.env.BACKEND_PROXY_TIMEOUT_MS || 2500);
+const DEFAULT_UPSTREAM_FETCH_TIMEOUT_MS = Number(process.env.BACKEND_PROXY_TIMEOUT_MS || 5000);
+const AUTH_UPSTREAM_FETCH_TIMEOUT_MS = Number(process.env.BACKEND_AUTH_PROXY_TIMEOUT_MS || 30000);
+const CSRF_COOKIE_NAME = process.env.CSRF_COOKIE_NAME || process.env.NEXT_PUBLIC_CSRF_COOKIE_NAME || "vidyaverse_csrf";
+const CSRF_HEADER_NAME = process.env.CSRF_HEADER_NAME || process.env.NEXT_PUBLIC_CSRF_HEADER_NAME || "X-CSRF-Token";
 
 const slashSensitiveCollections = new Set([
   "v1/opportunities",
@@ -35,7 +38,7 @@ function buildBackendUrl(target: string, request: NextRequest, path: string[]): 
   return upstream.toString();
 }
 
-function buildRequestHeaders(request: NextRequest): Headers {
+function buildRequestHeaders(request: NextRequest, method: string): Headers {
   // Forward only request headers that are meaningful for backend auth/session handling.
   // This avoids forwarding hop-by-hop/CDN-specific headers that can break undici fetch
   // in tunneled environments (for example Slim + Cloudflare).
@@ -57,6 +60,13 @@ function buildRequestHeaders(request: NextRequest): Headers {
     const value = request.headers.get(key);
     if (value) {
       headers.set(key, value);
+    }
+  }
+
+  if (!["GET", "HEAD", "OPTIONS", "TRACE"].includes(method) && !headers.has(CSRF_HEADER_NAME)) {
+    const csrfToken = request.cookies.get(CSRF_COOKIE_NAME)?.value;
+    if (csrfToken) {
+      headers.set(CSRF_HEADER_NAME, csrfToken);
     }
   }
 
@@ -93,9 +103,17 @@ async function wait(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function fetchUpstreamWithTimeout(url: string, init: RequestInit): Promise<Response> {
+function resolveUpstreamTimeoutMs(path: string[]): number {
+  const joinedPath = path.join("/");
+  if (joinedPath.startsWith("v1/auth/")) {
+    return AUTH_UPSTREAM_FETCH_TIMEOUT_MS;
+  }
+  return DEFAULT_UPSTREAM_FETCH_TIMEOUT_MS;
+}
+
+async function fetchUpstreamWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), UPSTREAM_FETCH_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(url, {
       ...init,
@@ -111,7 +129,7 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   const method = request.method.toUpperCase();
   const requestInit: RequestInit = {
     method,
-    headers: buildRequestHeaders(request),
+    headers: buildRequestHeaders(request, method),
     redirect: "manual",
   };
 
@@ -131,12 +149,13 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   const fallbackCandidates = safeCandidates.length > 0 ? safeCandidates : ["http://127.0.0.1:8000"];
   const failureDetails: Array<{ upstream: string; reason: string }> = [];
   const maxAttemptsPerTarget = 1;
+  const upstreamTimeoutMs = resolveUpstreamTimeoutMs(path);
 
   for (const target of fallbackCandidates) {
     const upstreamUrl = buildBackendUrl(target, request, path);
     for (let attempt = 1; attempt <= maxAttemptsPerTarget; attempt += 1) {
       try {
-        const upstreamResponse = await fetchUpstreamWithTimeout(upstreamUrl, requestInit);
+        const upstreamResponse = await fetchUpstreamWithTimeout(upstreamUrl, requestInit, upstreamTimeoutMs);
         // Retry only on gateway-like upstream failures.
         // Do NOT swallow application-level 4xx responses (e.g., OTP validation 404),
         // otherwise the client sees a fake "backend unavailable" message.

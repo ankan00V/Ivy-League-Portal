@@ -372,6 +372,11 @@ class Settings(BaseSettings):
     MLOPS_MODEL_ARTIFACT_S3_ACCESS_KEY_ID: Optional[str] = None
     MLOPS_MODEL_ARTIFACT_S3_SECRET_ACCESS_KEY: Optional[str] = None
     MODEL_ARTIFACT_BUCKET: Optional[str] = None
+    SUPABASE_URL: Optional[str] = None
+    SUPABASE_REST_URL: Optional[str] = None
+    SUPABASE_ANON_KEY: Optional[str] = None
+    SUPABASE_SERVICE_ROLE_KEY: Optional[str] = None
+    SUPABASE_BUCKET: Optional[str] = None
 
     # Assistant orchestration
     ASSISTANT_CHAT_MEMORY_ENABLED: bool = True

@@ -289,6 +289,8 @@ GENERIC_PORTAL_LISTINGS: list[dict[str, Any]] = [
         "label": "WayUp",
         "default_type": "Internship",
         "default_university": "WayUp Employers",
+        "enabled": False,
+        "disabled_reason": "Current public internship page exposes category navigation in bounded checks, not direct opportunity listings; requires a dedicated connector.",
         "listings": [
             "https://www.wayup.com/s/internships/",
         ],
@@ -298,8 +300,73 @@ GENERIC_PORTAL_LISTINGS: list[dict[str, Any]] = [
         "label": "Chegg Internships",
         "default_type": "Internship",
         "default_university": "Chegg",
+        "enabled": False,
+        "disabled_reason": "Chegg's official internships page says Internships.com and careermatch.com closed in December 2023.",
         "listings": [
-            "https://www.chegg.com/internships",
+            "https://www.chegg.com/skills/internships-announcement/",
+        ],
+    },
+    {
+        "source": "zintellect",
+        "label": "Zintellect",
+        "default_type": "Internship",
+        "default_university": "Zintellect",
+        "enabled": False,
+        "disabled_reason": "Current public catalog renders an app shell/catalog entry in bounded checks; requires a dedicated catalog API/browser connector.",
+        "listings": [
+            "https://www.zintellect.com/catalog",
+        ],
+    },
+    {
+        "source": "interstride",
+        "label": "Interstride",
+        "default_type": "Internship",
+        "default_university": "Interstride",
+        "enabled": False,
+        "disabled_reason": "Student/job portal access is institution/account gated; use an approved partner connector instead of anonymous scraping.",
+        "listings": [
+            "https://www.interstride.com/students/",
+        ],
+    },
+    {
+        "source": "untapped",
+        "label": "Untapped",
+        "default_type": "Internship",
+        "default_university": "Untapped",
+        "enabled": False,
+        "disabled_reason": "Current public page redirects to a career-program marketing page in bounded checks, not direct opportunity listings.",
+        "listings": [
+            "https://www.untapped.io/",
+        ],
+    },
+    {
+        "source": "parker_dewey",
+        "label": "Parker Dewey",
+        "default_type": "Internship",
+        "default_university": "Parker Dewey",
+        "enabled": False,
+        "disabled_reason": "Current public career-launchers page exposes marketing/navigation links in bounded checks; use an approved micro-internship connector.",
+        "listings": [
+            "https://www.parkerdewey.com/career-launchers",
+        ],
+    },
+    {
+        "source": "extern",
+        "label": "Extern",
+        "default_type": "Internship",
+        "default_university": "Extern",
+        "listings": [
+            "https://www.extern.com/externships",
+        ],
+    },
+    {
+        "source": "github_internship_lists",
+        "label": "GitHub Internship Lists",
+        "default_type": "Internship",
+        "default_university": "GitHub Curated Lists",
+        "listings": [
+            "https://github.com/SimplifyJobs/Summer2026-Internships",
+            "https://github.com/SimplifyJobs/New-Grad-Positions",
         ],
     },
     {
@@ -336,6 +403,298 @@ GENERIC_PORTAL_LISTINGS: list[dict[str, Any]] = [
         "default_university": "Promilo",
         "listings": [
             "https://promilo.com/",
+        ],
+    },
+    {
+        "source": "toptal",
+        "label": "Toptal",
+        "default_type": "Job",
+        "default_university": "Toptal",
+        "enabled": False,
+        "disabled_reason": "No stable public early-career job feed; homepage is marketing content.",
+        "listings": [
+            "https://www.toptal.com/",
+        ],
+    },
+    {
+        "source": "skip_the_drive",
+        "label": "Skip The Drive",
+        "default_type": "Job",
+        "default_university": "Skip The Drive",
+        "listings": [
+            "https://www.skipthedrive.com/",
+        ],
+    },
+    {
+        "source": "nodesk",
+        "label": "NoDesk",
+        "default_type": "Job",
+        "default_university": "NoDesk",
+        "listings": [
+            "https://nodesk.co/remote-jobs/",
+        ],
+    },
+    {
+        "source": "remote_habits",
+        "label": "RemoteHabits",
+        "default_type": "Job",
+        "default_university": "RemoteHabits",
+        "listings": [
+            "https://remotehabits.com/jobs/",
+        ],
+    },
+    {
+        "source": "remotive",
+        "label": "Remotive",
+        "default_type": "Job",
+        "default_university": "Remotive",
+        "listings": [
+            "https://remotive.com/api/remote-jobs",
+        ],
+    },
+    {
+        "source": "remote4me",
+        "label": "Remote4Me",
+        "default_type": "Job",
+        "default_university": "Remote4Me",
+        "listings": [
+            "https://remote4me.com/",
+        ],
+    },
+    {
+        "source": "pangian",
+        "label": "Pangian",
+        "default_type": "Job",
+        "default_university": "Pangian",
+        "enabled": False,
+        "disabled_reason": "Public job board is currently in transition and the previous listings URL returns 404.",
+        "listings": [
+            "https://pangian.com/job-travel-remote/",
+        ],
+    },
+    {
+        "source": "remotees",
+        "label": "Remotees",
+        "default_type": "Job",
+        "default_university": "Remotees",
+        "listings": [
+            "https://remotees.com/",
+        ],
+    },
+    {
+        "source": "justremote",
+        "label": "JustRemote",
+        "default_type": "Job",
+        "default_university": "JustRemote",
+        "listings": [
+            "https://justremote.co/remote-jobs",
+        ],
+    },
+    {
+        "source": "remotecrew",
+        "label": "Remotecrew",
+        "default_type": "Job",
+        "default_university": "Remotecrew",
+        "enabled": False,
+        "disabled_reason": "Homepage is a hiring-service marketing site, not a public student job feed.",
+        "listings": [
+            "https://remotecrew.io/",
+        ],
+    },
+    {
+        "source": "europe_remotely",
+        "label": "Europe Remotely",
+        "default_type": "Job",
+        "default_university": "Europe Remotely",
+        "enabled": False,
+        "disabled_reason": "Blocks anonymous scraper traffic with 403.",
+        "listings": [
+            "https://europeremotely.com/",
+        ],
+    },
+    {
+        "source": "remoteok_europe",
+        "label": "Remote OK Europe",
+        "default_type": "Job",
+        "default_university": "Remote OK",
+        "listings": [
+            "https://remoteok.com/api",
+        ],
+    },
+    {
+        "source": "remoteok_asia",
+        "label": "Remote OK Asia",
+        "default_type": "Job",
+        "default_university": "Remote OK",
+        "listings": [
+            "https://remoteok.com/api",
+        ],
+    },
+    {
+        "source": "flexjobs",
+        "label": "FlexJobs",
+        "default_type": "Job",
+        "default_university": "FlexJobs",
+        "enabled": False,
+        "disabled_reason": "Public site repeatedly times out/blocks anonymous scraping; requires a dedicated approved integration.",
+        "listings": [
+            "https://www.flexjobs.com/",
+        ],
+    },
+    {
+        "source": "remote_co",
+        "label": "Remote.co",
+        "default_type": "Job",
+        "default_university": "Remote.co",
+        "enabled": False,
+        "disabled_reason": "Public listings repeatedly time out during bounded health checks; requires a dedicated approved integration.",
+        "listings": [
+            "https://remote.co/remote-jobs/",
+        ],
+    },
+    {
+        "source": "we_work_remotely",
+        "label": "We Work Remotely",
+        "default_type": "Job",
+        "default_university": "We Work Remotely",
+        "listings": [
+            "https://weworkremotely.com/remote-jobs.rss",
+        ],
+    },
+    {
+        "source": "remoteok",
+        "label": "Remote OK",
+        "default_type": "Job",
+        "default_university": "Remote OK",
+        "listings": [
+            "https://remoteok.com/api",
+        ],
+    },
+    {
+        "source": "angellist",
+        "label": "AngelList",
+        "default_type": "Job",
+        "default_university": "AngelList Startups",
+        "enabled": False,
+        "disabled_reason": "AngelList jobs redirects to Wellfound and blocks anonymous scraping; Wellfound is already tracked separately.",
+        "listings": [
+            "https://angel.co/jobs",
+        ],
+    },
+    {
+        "source": "linkedin_remote",
+        "label": "LinkedIn Remote Jobs",
+        "default_type": "Job",
+        "default_university": "LinkedIn",
+        "listings": [
+            "https://www.linkedin.com/jobs/search/?keywords=remote&location=Worldwide",
+        ],
+    },
+    {
+        "source": "freelancer",
+        "label": "Freelancer",
+        "default_type": "Job",
+        "default_university": "Freelancer",
+        "listings": [
+            "https://www.freelancer.com/jobs",
+        ],
+    },
+    {
+        "source": "working_nomads",
+        "label": "Working Nomads",
+        "default_type": "Job",
+        "default_university": "Working Nomads",
+        "listings": [
+            "https://www.workingnomads.com/jobs",
+        ],
+    },
+    {
+        "source": "simplyhired",
+        "label": "SimplyHired",
+        "default_type": "Job",
+        "default_university": "SimplyHired",
+        "listings": [
+            "https://www.simplyhired.com/search?q=remote",
+        ],
+    },
+    {
+        "source": "jobspresso",
+        "label": "Jobspresso",
+        "default_type": "Job",
+        "default_university": "Jobspresso",
+        "listings": [
+            "https://jobspresso.co/remote-work/",
+        ],
+    },
+    {
+        "source": "virtual_vocations",
+        "label": "Virtual Vocations",
+        "default_type": "Job",
+        "default_university": "Virtual Vocations",
+        "listings": [
+            "https://www.virtualvocations.com/jobs",
+        ],
+    },
+    {
+        "source": "stackoverflow_jobs",
+        "label": "Stack Overflow Jobs",
+        "default_type": "Job",
+        "default_university": "Stack Overflow",
+        "enabled": False,
+        "disabled_reason": "Stack Overflow Jobs is not a stable globally available public listings source.",
+        "listings": [
+            "https://stackoverflow.com/jobs",
+        ],
+    },
+    {
+        "source": "glassdoor_remote",
+        "label": "Glassdoor Remote",
+        "default_type": "Job",
+        "default_university": "Glassdoor",
+        "enabled": False,
+        "disabled_reason": "Glassdoor blocks anonymous scraping with 403.",
+        "listings": [
+            "https://www.glassdoor.com/Job/remote-jobs-SRCH_KO0,6.htm",
+        ],
+    },
+    {
+        "source": "monster",
+        "label": "Monster",
+        "default_type": "Job",
+        "default_university": "Monster",
+        "listings": [
+            "https://www.monster.com/jobs/search?q=remote",
+        ],
+    },
+    {
+        "source": "careercloud",
+        "label": "Careercloud",
+        "default_type": "Job",
+        "default_university": "Careercloud",
+        "enabled": False,
+        "disabled_reason": "Career advice/aggregation site, not a stable direct opportunity feed.",
+        "listings": [
+            "https://www.careercloud.com/",
+        ],
+    },
+    {
+        "source": "careerbuilder",
+        "label": "CareerBuilder",
+        "default_type": "Job",
+        "default_university": "CareerBuilder",
+        "listings": [
+            "https://www.careerbuilder.com/jobs?keywords=remote",
+        ],
+    },
+    {
+        "source": "careeronestop",
+        "label": "CareerOneStop",
+        "default_type": "Job",
+        "default_university": "CareerOneStop",
+        "enabled": False,
+        "disabled_reason": "Blocks anonymous scraper traffic with 403 and is not student-specific.",
+        "listings": [
+            "https://www.careeronestop.org/",
         ],
     },
 ]
@@ -375,7 +734,51 @@ GENERIC_NON_OPPORTUNITY_ANCHORS = {
     "sign up",
     "home",
     "learn more",
+    "browse all jobs",
+    "career center",
+    "employers",
+    "employers / post job",
+    "get free job alerts",
+    "job alerts",
+    "job application tracking",
+    "post a job",
+    "resume review",
+    "student career center",
 }
+
+EARLY_CAREER_PATTERNS = [
+    r"\bintern(?:ship)?s?\b",
+    r"\bentry[-\s]?level\b",
+    r"\bjunior\b",
+    r"\bfreshers?\b",
+    r"\bnew\s+grads?\b",
+    r"\brecent\s+graduates?\b",
+    r"\bgraduate\s+(?:role|program|programme|scheme|trainee)\b",
+    r"\btrainees?\b",
+    r"\bapprentices?(?:hip)?\b",
+    r"\bno\s+(?:prior\s+)?experience\b",
+    r"\b0\s*(?:-|–|to)\s*1\s+years?\b",
+    r"\b(?:up\s+to|maximum|max\.?)\s+1\s+year\b",
+    r"\b(?:experience|exp)\s*[:\-]?\s*0\s*(?:-|–|to)\s*1\b",
+]
+
+EXPERIENCED_ROLE_PATTERNS = [
+    r"\bsenior\b",
+    r"\bsr\.?\b",
+    r"\blead\b",
+    r"\bprincipal\b",
+    r"\bstaff\b",
+    r"\bmanager\b",
+    r"\bdirector\b",
+    r"\bhead\s+of\b",
+    r"\barchitect\b",
+    r"\b[2-9]\+?\s+years?\b",
+    r"\b(?:minimum|min\.?|at\s+least)\s+[2-9]\s+years?\b",
+    r"\b[2-9]\s*(?:-|–|to)\s*\d+\s+years?\b",
+    r"\bbootcamp\b",
+    r"\bjob\s+guaranteed\b",
+    r"\bpaid\s+training\b",
+]
 
 TRACKING_QUERY_KEYS = {
     "_hsenc",
@@ -605,6 +1008,10 @@ def _canonicalize_url(value: str | None) -> str:
 
 def canonicalize_apply_url(value: str | None) -> str:
     return _canonicalize_url(value)
+
+
+def is_valid_apply_url(value: str | None) -> bool:
+    return str(value or "").strip().lower().startswith(("http://", "https://"))
 
 
 def _record_value(record: dict[str, Any], field_name: str) -> Any:
@@ -885,6 +1292,38 @@ def _infer_opportunity_type(title: str, description: str) -> str:
     if "job" in text or "hiring" in text:
         return "Job"
     return "Opportunity"
+
+
+def is_early_career_opportunity(record: dict[str, Any]) -> bool:
+    opportunity_type = _collapse_whitespace(record.get("opportunity_type")).lower()
+    if opportunity_type != "job":
+        return True
+
+    primary_signal_parts: list[str] = []
+    tags_signal_parts: list[str] = []
+    for field in ("title", "eligibility"):
+        value = record.get(field)
+        if isinstance(value, (list, tuple, set)):
+            primary_signal_parts.append(" ".join(str(item) for item in value))
+        else:
+            primary_signal_parts.append(str(value or ""))
+
+    value = record.get("tags")
+    if isinstance(value, (list, tuple, set)):
+        tags_signal_parts.append(" ".join(str(item) for item in value))
+    else:
+        tags_signal_parts.append(str(value or ""))
+
+    primary_text = _collapse_whitespace(" ".join(primary_signal_parts)).lower()
+    tags_text = _collapse_whitespace(" ".join(tags_signal_parts)).lower()
+    description_text = _collapse_whitespace(record.get("description")).lower()
+    text = _collapse_whitespace(f"{primary_text} {tags_text} {description_text}").lower()
+    if any(re.search(pattern, text, re.IGNORECASE) for pattern in EXPERIENCED_ROLE_PATTERNS):
+        return False
+    if any(re.search(pattern, primary_text, re.IGNORECASE) for pattern in EARLY_CAREER_PATTERNS):
+        return True
+    tags = {tag.strip().lower() for tag in re.split(r"[,|]", tags_text) if tag.strip()}
+    return bool(tags & {"intern", "internship", "entry level", "entry-level", "new grad", "graduate trainee"})
 
 
 class IvyLeagueRSSConnector:
@@ -1811,7 +2250,7 @@ class GenericOpportunityPortalScraper:
         self.source_configs = {
             str(config.get("source") or "").strip().lower(): config
             for config in (source_configs or GENERIC_PORTAL_LISTINGS)
-            if str(config.get("source") or "").strip()
+            if str(config.get("source") or "").strip() and config.get("enabled", True)
         }
         self.headers = {
             "User-Agent": (
@@ -1994,11 +2433,431 @@ class GenericOpportunityPortalScraper:
                 )
         return opportunities
 
+    def _extract_from_json_payload(
+        self,
+        payload: Any,
+        source_name: str,
+        default_type: str,
+        default_university: str,
+    ) -> list[dict]:
+        opportunities: list[dict] = []
+        if source_name == "remotive" and isinstance(payload, dict):
+            rows = payload.get("jobs") or []
+            for row in rows if isinstance(rows, list) else []:
+                if not isinstance(row, dict):
+                    continue
+                description = _strip_html(str(row.get("description") or ""))
+                opportunities.append(
+                    {
+                        "title": row.get("title"),
+                        "description": description,
+                        "url": row.get("url"),
+                        "opportunity_type": default_type,
+                        "university": row.get("company_name") or default_university,
+                        "location": row.get("candidate_required_location"),
+                        "stipend": row.get("salary"),
+                        "created_at": _parse_datetime(row.get("publication_date")),
+                        "tags": list(row.get("tags") or []),
+                        "source": source_name,
+                    }
+                )
+        elif source_name in {"remoteok", "remoteok_asia", "remoteok_europe"} and isinstance(payload, list):
+            for row in payload:
+                if not isinstance(row, dict) or not row.get("position"):
+                    continue
+                description = _strip_html(str(row.get("description") or ""))
+                location = _collapse_whitespace(str(row.get("location") or "Remote"))
+                region_text = f"{location} {description}".lower()
+                if source_name == "remoteok_asia" and not re.search(
+                    r"\basia\b|\bindia\b|\bsingapore\b|\bjapan\b|\bkorea\b|\bindonesia\b|\bphilippines\b",
+                    region_text,
+                ):
+                    continue
+                if source_name == "remoteok_europe" and not re.search(
+                    r"\beurope\b|\beu\b|\buk\b|\bgermany\b|\bfrance\b|\bspain\b|\bitaly\b|\bnetherlands\b",
+                    region_text,
+                ):
+                    continue
+                opportunities.append(
+                    {
+                        "title": row.get("position"),
+                        "description": description,
+                        "url": row.get("url") or (
+                            f"https://remoteok.com/remote-jobs/{row.get('id')}" if row.get("id") else None
+                        ),
+                        "opportunity_type": default_type,
+                        "university": row.get("company") or default_university,
+                        "location": location,
+                        "created_at": _parse_datetime(row.get("date")),
+                        "tags": list(row.get("tags") or []),
+                        "source": source_name,
+                    }
+                )
+        return [row for row in opportunities if row.get("title") and row.get("url")]
+
+    def _extract_from_rss(
+        self,
+        xml_text: str,
+        source_name: str,
+        default_type: str,
+        default_university: str,
+    ) -> list[dict]:
+        opportunities: list[dict] = []
+        root = ET.fromstring(xml_text)
+        channel = root.find("channel")
+        if channel is None:
+            return opportunities
+        for item in channel.findall("item"):
+            title = _collapse_whitespace(item.findtext("title"))
+            url = _collapse_whitespace(item.findtext("link"))
+            description = _strip_html(item.findtext("description") or "")
+            if not title or not url:
+                continue
+            company, separator, role = title.partition(":")
+            opportunities.append(
+                {
+                    "title": role.strip() if separator else title,
+                    "description": description,
+                    "url": url,
+                    "opportunity_type": default_type,
+                    "university": company.strip() if separator else default_university,
+                    "created_at": _parse_datetime(item.findtext("pubDate")),
+                    "source": source_name,
+                }
+            )
+        return opportunities
+
+    def _github_readme_candidates(self, listing_url: str) -> list[str]:
+        parsed = urlparse(listing_url)
+        host = (parsed.hostname or "").lower()
+        if host == "raw.githubusercontent.com":
+            return [listing_url]
+        if host != "github.com":
+            return [listing_url]
+
+        path_parts = [part for part in parsed.path.split("/") if part]
+        if len(path_parts) < 2:
+            return [listing_url]
+        owner, repo = path_parts[0], path_parts[1]
+        branches = ["dev", "master", "main"]
+        return [f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/README.md" for branch in branches]
+
+    def _github_source_permalink(self, listing_url: str, title: str, row_number: int) -> str:
+        parsed = urlparse(listing_url)
+        if (parsed.hostname or "").lower() != "github.com":
+            return listing_url
+        anchor = re.sub(r"[^a-z0-9 -]", "", _collapse_whitespace(title).lower())
+        anchor = re.sub(r"\s+", "-", anchor).strip("-")
+        row_key = anchor or f"row-{row_number}"
+        separator = "&" if parsed.query else "?"
+        return f"{listing_url.rstrip('/')}{separator}opportunity={row_key}"
+
+    def _clean_markdown_cell(self, value: str) -> str:
+        text = re.sub(r"!\[[^\]]*\]\([^)]+\)", " ", value or "")
+        text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+        text = re.sub(r"<br\s*/?>", " ", text, flags=re.IGNORECASE)
+        text = re.sub(r"<[^>]+>", " ", text)
+        return _collapse_whitespace(text).strip(" -*_`")
+
+    def _extract_github_markdown_links(self, value: str) -> list[tuple[str, str]]:
+        links: list[tuple[str, str]] = []
+        for match in re.finditer(r"\[([^\]]+)\]\(([^)]+)\)", value or ""):
+            label = self._clean_markdown_cell(match.group(1))
+            url = _collapse_whitespace(match.group(2)).strip()
+            if url.startswith(("http://", "https://")):
+                links.append((label, url))
+        return links
+
+    def _extract_github_html_links(self, node: Any) -> list[tuple[str, str]]:
+        links: list[tuple[str, str]] = []
+        for anchor in node.select("a[href]"):
+            href = _collapse_whitespace(anchor.get("href")).strip()
+            if not href.startswith(("http://", "https://")):
+                continue
+            label = _collapse_whitespace(anchor.get_text(" ", strip=True))
+            if not label:
+                image = anchor.find("img")
+                label = _collapse_whitespace(image.get("alt") if image else "")
+            links.append((label, href))
+        return links
+
+    def _select_github_application_url(self, links: list[tuple[str, str]]) -> str:
+        for label, candidate in links:
+            label_text = label.lower()
+            host = (urlparse(candidate).hostname or "").lower()
+            if "simplify.jobs" in host and "apply" not in label_text:
+                continue
+            if "github.com" in host and not any(
+                token in label_text for token in ("apply", "application", "job", "career", "posting")
+            ):
+                continue
+            return candidate
+        return ""
+
+    def _github_listing_row(
+        self,
+        *,
+        listing_url: str,
+        source_name: str,
+        default_type: str,
+        default_university: str,
+        row_number: int,
+        company: str,
+        title: str,
+        location: str | None,
+        application_url: str,
+    ) -> dict | None:
+        company = _collapse_whitespace(company)
+        title = _collapse_whitespace(title)
+        location = _collapse_whitespace(location)
+        if not title or title.lower() in {"role", "position", "title"}:
+            return None
+        if any(re.search(pattern, title, re.IGNORECASE) for pattern in EXPERIENCED_ROLE_PATTERNS):
+            return None
+
+        opportunity_type = default_type
+        if re.search(r"\bnew\s*grad|entry[-\s]?level|graduate\b", title, re.IGNORECASE):
+            opportunity_type = "Job"
+        elif re.search(r"\bintern|co[-\s]?op|apprentice\b", title, re.IGNORECASE):
+            opportunity_type = "Internship"
+        elif not re.search(r"\bintern|student|fellow|research|extern|new\s*grad|entry[-\s]?level|graduate\b", title, re.IGNORECASE):
+            return None
+
+        description_parts = [
+            f"Curated GitHub opportunity list entry from {default_university}.",
+            f"Company: {company or default_university}.",
+        ]
+        if location:
+            description_parts.append(f"Location: {location}.")
+        if application_url:
+            description_parts.append(f"Application link observed in source row: {application_url}.")
+        description = " ".join(description_parts)
+
+        row = {
+            "title": title[:220],
+            "description": description[:700],
+            "url": self._github_source_permalink(listing_url, f"{company} {title}", row_number),
+            "opportunity_type": opportunity_type,
+            "university": company or default_university,
+            "location": location or None,
+            "source": source_name,
+            "source_id": _hash_key(f"{listing_url}:{row_number}:{company}:{title}:{application_url}")[:24],
+            "tags": ["github-curated"],
+        }
+        if application_url:
+            row["external_apply_url"] = application_url
+        return row
+
+    def _parse_github_html_tables(
+        self,
+        markdown: str,
+        listing_url: str,
+        source_name: str,
+        default_type: str,
+        default_university: str,
+    ) -> list[dict]:
+        soup = BeautifulSoup(markdown, "html.parser")
+        opportunities: list[dict] = []
+        current_company = ""
+        for row_number, row_node in enumerate(soup.select("tr"), start=1):
+            cells = row_node.select("td")
+            if len(cells) < 4:
+                continue
+            company = _collapse_whitespace(cells[0].get_text(" ", strip=True))
+            if company == "↳" and current_company:
+                company = current_company
+            elif company and company != "↳":
+                current_company = company
+            title = _collapse_whitespace(cells[1].get_text(" ", strip=True))
+            location = _collapse_whitespace(cells[2].get_text(" ", strip=True))
+            links = self._extract_github_html_links(cells[3])
+            application_url = self._select_github_application_url(links)
+            parsed = self._github_listing_row(
+                listing_url=listing_url,
+                source_name=source_name,
+                default_type=default_type,
+                default_university=default_university,
+                row_number=row_number,
+                company=company,
+                title=title,
+                location=location,
+                application_url=application_url,
+            )
+            if parsed:
+                opportunities.append(parsed)
+        return opportunities
+
+    def _parse_github_markdown_listing(
+        self,
+        markdown: str,
+        listing_url: str,
+        source_name: str,
+        default_type: str,
+        default_university: str,
+    ) -> list[dict]:
+        html_rows = self._parse_github_html_tables(
+            markdown=markdown,
+            listing_url=listing_url,
+            source_name=source_name,
+            default_type=default_type,
+            default_university=default_university,
+        )
+        if html_rows:
+            return html_rows
+
+        opportunities: list[dict] = []
+        for row_number, raw_line in enumerate(markdown.splitlines(), start=1):
+            line = raw_line.strip()
+            if not line.startswith("|") or line.count("|") < 3:
+                continue
+            lowered = line.lower()
+            if re.search(r"\|\s*:?-{3,}:?\s*\|", lowered):
+                continue
+            if "company" in lowered and re.search(r"\b(role|position|title|location|application)\b", lowered):
+                continue
+
+            raw_cells = [cell.strip() for cell in line.strip("|").split("|")]
+            cells = [self._clean_markdown_cell(cell) for cell in raw_cells]
+            cells = [cell for cell in cells if cell and cell.lower() not in {"↳", "apply", "application"}]
+            if len(cells) < 2:
+                continue
+
+            company = cells[0]
+            title = cells[1] if len(cells) > 1 else cells[0]
+            location = cells[2] if len(cells) > 2 else None
+
+            application_links: list[tuple[str, str]] = []
+            for raw_cell in raw_cells:
+                application_links.extend(self._extract_github_markdown_links(raw_cell))
+            row = self._github_listing_row(
+                listing_url=listing_url,
+                source_name=source_name,
+                default_type=default_type,
+                default_university=default_university,
+                row_number=row_number,
+                company=company,
+                title=title,
+                location=location,
+                application_url=self._select_github_application_url(list(reversed(application_links))),
+            )
+            if row:
+                opportunities.append(row)
+
+        return opportunities
+
+    def _extract_extern_cards(self, soup: BeautifulSoup, listing_url: str) -> list[dict]:
+        opportunities: list[dict] = []
+        seen_urls: set[str] = set()
+        for card in soup.select(".externships_list .w-dyn-item, .externships-list_collection .w-dyn-item"):
+            title = _collapse_whitespace(
+                card.select_one(".externships_item-title").get_text(" ", strip=True)
+                if card.select_one(".externships_item-title")
+                else ""
+            )
+            link = card.select_one("a[href^='/externships/']")
+            href = (link.get("href") or "").strip() if link else ""
+            url = _canonicalize_url(urljoin(listing_url, href)) if href else ""
+            if not title or not url or url in seen_urls:
+                continue
+
+            company = _collapse_whitespace(
+                card.select_one(".externships_company-name-filter").get_text(" ", strip=True)
+                if card.select_one(".externships_company-name-filter")
+                else "Extern"
+            )
+            description = _collapse_whitespace(
+                card.select_one(".externships_short-description").get_text(" ", strip=True)
+                if card.select_one(".externships_short-description")
+                else ""
+            )
+            tags = [
+                _collapse_whitespace(node.get_text(" ", strip=True))
+                for node in card.select(".title_tag, .externship_title-tag")
+                if _collapse_whitespace(node.get_text(" ", strip=True))
+            ]
+            meta_text = " ".join(tags)
+            start_match = re.search(r"Live Session Starts:\s*([A-Za-z]+\s+\d{1,2},\s+\d{4})", meta_text)
+            posted_match = re.search(r"published:\s*([A-Za-z]+\s+\d{1,2},\s+\d{4})", meta_text, re.IGNORECASE)
+            duration_match = re.search(r"\b(\d+(?:\.\d+)?)\s*(?:weeks?|wks?)\b", meta_text, re.IGNORECASE)
+            duration_months = None
+            if duration_match:
+                duration_months = round(float(duration_match.group(1)) / 4.345, 2)
+            combined_description = " ".join(part for part in [description, meta_text] if part).strip()
+            seen_urls.add(url)
+            opportunities.append(
+                {
+                    "title": title[:220],
+                    "description": (combined_description or f"Externship indexed from Extern.")[:700],
+                    "url": url,
+                    "opportunity_type": "Internship",
+                    "university": company or "Extern",
+                    "deadline": _parse_datetime(start_match.group(1)) if start_match else None,
+                    "created_at": _parse_datetime(posted_match.group(1)) if posted_match else None,
+                    "duration_months": duration_months,
+                    "tags": [tag for tag in tags if len(tag) <= 80][:12],
+                    "source": "extern",
+                }
+            )
+        return opportunities
+
+    def _fetch_github_markdown_opportunities(
+        self,
+        listing_url: str,
+        source_name: str,
+        default_type: str,
+        default_university: str,
+    ) -> list[dict]:
+        last_error: Exception | None = None
+        for raw_url in self._github_readme_candidates(listing_url):
+            try:
+                response = self.session.get(
+                    raw_url,
+                    headers={**self.headers, "Accept": "text/plain,text/markdown,*/*"},
+                    timeout=settings.SCRAPER_TIMEOUT_SECONDS,
+                )
+                response.raise_for_status()
+                text = str(getattr(response, "text", "") or "")
+                parsed = self._parse_github_markdown_listing(
+                    markdown=text,
+                    listing_url=listing_url,
+                    source_name=source_name,
+                    default_type=default_type,
+                    default_university=default_university,
+                )
+                if parsed:
+                    return parsed
+            except Exception as exc:
+                last_error = exc
+                continue
+        if last_error:
+            raise last_error
+        return []
+
     def _looks_like_candidate(self, title: str, url: str) -> bool:
         if not title or not url:
             return False
         normalized_title = title.strip().lower()
         if normalized_title in GENERIC_NON_OPPORTUNITY_ANCHORS:
+            return False
+        if re.fullmatch(
+            r"(?:remote|blockchain|cryptocurrency)?\s*jobs?(?:\s+(?:anywhere|north america|latin america|europe|asia|middle east|africa|apac))?",
+            normalized_title,
+        ):
+            return False
+        if re.fullmatch(r"(?:remote\s+)?[a-z0-9 /&+-]+\s+jobs?", normalized_title):
+            return False
+        if any(
+            phrase in normalized_title
+            for phrase in (
+                "post a job",
+                "job alert",
+                "resume review",
+                "browse all jobs",
+                "career center",
+                "job application tracking",
+                "hidden remote jobs",
+            )
+        ):
             return False
         if len(normalized_title) < 8 or len(normalized_title) > 220:
             return False
@@ -2176,21 +3035,61 @@ class GenericOpportunityPortalScraper:
 
         for listing_url in listing_urls:
             try:
+                if normalized_source == "github_internship_lists":
+                    opportunities.extend(
+                        self._fetch_github_markdown_opportunities(
+                            listing_url=listing_url,
+                            source_name=normalized_source,
+                            default_type=default_type,
+                            default_university=default_university,
+                        )
+                    )
+                    if len(opportunities) >= max_items:
+                        break
+                    continue
+
                 response = self.session.get(
                     listing_url,
                     headers=self.headers,
                     timeout=settings.SCRAPER_TIMEOUT_SECONDS,
                 )
                 response.raise_for_status()
+                content_type = str(response.headers.get("content-type") or "").lower()
+                if "json" in content_type or listing_url.rstrip("/").endswith("/api"):
+                    parsed = self._extract_from_json_payload(
+                        payload=response.json(),
+                        source_name=normalized_source,
+                        default_type=default_type,
+                        default_university=default_university,
+                    )
+                    opportunities.extend(parsed)
+                    if len(opportunities) >= max_items:
+                        break
+                    continue
+                if "rss" in content_type or "xml" in content_type or listing_url.endswith(".rss"):
+                    parsed = self._extract_from_rss(
+                        xml_text=response.text,
+                        source_name=normalized_source,
+                        default_type=default_type,
+                        default_university=default_university,
+                    )
+                    opportunities.extend(parsed)
+                    if len(opportunities) >= max_items:
+                        break
+                    continue
+
                 soup = BeautifulSoup(response.text, "html.parser")
 
-                parsed = self._extract_from_source_cards(
-                    soup=soup,
-                    listing_url=listing_url,
-                    source_name=normalized_source,
-                    default_type=default_type,
-                    default_university=default_university,
-                )
+                if normalized_source == "extern":
+                    parsed = self._extract_extern_cards(soup=soup, listing_url=listing_url)
+                else:
+                    parsed = self._extract_from_source_cards(
+                        soup=soup,
+                        listing_url=listing_url,
+                        source_name=normalized_source,
+                        default_type=default_type,
+                        default_university=default_university,
+                    )
                 parsed.extend(
                     self._extract_from_ld_json(
                         soup=soup,
@@ -2215,7 +3114,10 @@ class GenericOpportunityPortalScraper:
             except Exception as exc:
                 errors.append(f"{listing_url}: {exc}")
 
-        opportunities = _dedupe_by_url(opportunities)[:max_items]
+        opportunities = [
+            row for row in _dedupe_by_url(opportunities)
+            if is_early_career_opportunity(row)
+        ][:max_items]
         if errors and not opportunities:
             raise RuntimeError("; ".join(errors))
         return opportunities
@@ -2322,12 +3224,16 @@ async def _insert_and_broadcast(
 
     normalized_records: list[dict[str, Any]] = []
     seen_urls: set[str] = set()
+    out_of_scope_count = 0
 
     from app.services.opportunity_quality_service import opportunity_quality_scorer
 
     for opp_data in opportunity_rows:
+        if not is_early_career_opportunity(opp_data):
+            out_of_scope_count += 1
+            continue
         url = (opp_data.get("url") or "").strip()
-        if not url or url in seen_urls:
+        if not is_valid_apply_url(url) or url in seen_urls:
             continue
         seen_urls.add(url)
         classification = ai_system.classify_opportunity(
@@ -2578,7 +3484,8 @@ async def _insert_and_broadcast(
         "updated": updated_count,
         "failed": failed_count,
         "parsed": parsed_count,
-        "deduplicated": max(0, len(opportunity_rows) - len(normalized_records)),
+        "out_of_scope": out_of_scope_count,
+        "deduplicated": max(0, len(opportunity_rows) - out_of_scope_count - len(normalized_records)),
         "avg_trust_score": round(sum(trust_scores) / len(trust_scores), 2) if trust_scores else None,
     }
 
@@ -2682,7 +3589,7 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
                     str(config.get("label") or config.get("source") or "Platform").strip(),
                 )
                 for config in GENERIC_PORTAL_LISTINGS
-                if str(config.get("source") or "").strip()
+                if str(config.get("source") or "").strip() and config.get("enabled", True)
             ]
             portal_fetch_results = await asyncio.gather(
                 *[

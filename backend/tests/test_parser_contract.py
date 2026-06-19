@@ -10,11 +10,13 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.services.scraper import (  # noqa: E402
+    GENERIC_PORTAL_LISTINGS,
     FreshersworldScraper,
     GenericOpportunityPortalScraper,
     InternshalaScraper,
     IvyLeagueRSSConnector,
     UnstopScraper,
+    is_early_career_opportunity,
     parse_result_from_record,
     parse_results_from_records,
 )
@@ -27,8 +29,10 @@ def _fixture_text(name: str) -> str:
 
 
 class DummyResponse:
-    def __init__(self, payload):
+    def __init__(self, payload, *, text: str = "", headers: dict | None = None):
         self.payload = payload
+        self.text = text
+        self.headers = headers or {}
 
     def raise_for_status(self) -> None:
         return None
@@ -45,6 +49,16 @@ class DummyJsonSession:
     def get(self, url, **_kwargs):
         self.urls.append(url)
         return DummyResponse(self.payload)
+
+
+class DummyTextSession:
+    def __init__(self, text: str):
+        self.text = text
+        self.urls: list[str] = []
+
+    def get(self, url, **_kwargs):
+        self.urls.append(url)
+        return DummyResponse({}, text=self.text, headers={"content-type": "text/plain"})
 
 
 class TestParserContract(unittest.TestCase):
@@ -191,6 +205,87 @@ class TestParserContract(unittest.TestCase):
         )
         self.assertNotIn("posted_date", rss_result.missing_fields)
         self.assertEqual(rss_result.item["source"], "ivy_rss")
+
+    def test_remote_job_structured_feeds_apply_early_career_scope(self) -> None:
+        scraper = GenericOpportunityPortalScraper()
+        remotive_rows = scraper._extract_from_json_payload(
+            {
+                "jobs": [
+                    {
+                        "title": "Junior Data Analyst",
+                        "description": "Entry-level role requiring 0-1 years of experience.",
+                        "url": "https://remotive.com/remote-jobs/data/junior-data-analyst-1",
+                        "company_name": "Acme",
+                        "candidate_required_location": "Worldwide",
+                        "publication_date": "2026-06-17T10:00:00",
+                        "tags": ["junior", "data"],
+                    },
+                    {
+                        "title": "Senior Data Architect",
+                        "description": "Requires 8 years of experience.",
+                        "url": "https://remotive.com/remote-jobs/data/senior-data-architect-2",
+                        "company_name": "Acme",
+                    },
+                ]
+            },
+            "remotive",
+            "Job",
+            "Remotive",
+        )
+        parsed_rows = [row for row in remotive_rows if is_early_career_opportunity(row)]
+        self.assertEqual([row["title"] for row in parsed_rows], ["Junior Data Analyst"])
+
+    def test_disabled_generic_sources_are_not_registered(self) -> None:
+        scraper = GenericOpportunityPortalScraper()
+        disabled = {
+            str(config["source"])
+            for config in GENERIC_PORTAL_LISTINGS
+            if config.get("enabled") is False
+        }
+        self.assertTrue({"toptal", "pangian", "stackoverflow_jobs", "chegg_internships", "interstride"}.issubset(disabled))
+        self.assertTrue(disabled.isdisjoint(scraper.source_configs))
+
+    def test_long_tail_third_party_platforms_are_registered(self) -> None:
+        sources = {str(config["source"]) for config in GENERIC_PORTAL_LISTINGS}
+        self.assertTrue(
+            {
+                "zintellect",
+                "interstride",
+                "untapped",
+                "parker_dewey",
+                "extern",
+                "github_internship_lists",
+                "wayup",
+                "chegg_internships",
+            }.issubset(sources)
+        )
+
+    def test_github_curated_markdown_lists_parse_early_career_rows(self) -> None:
+        scraper = GenericOpportunityPortalScraper(session=DummyTextSession(_fixture_text("github_internship_list.md")))
+
+        rows = scraper.fetch_live_opportunities("github_internship_lists", max_items=10)
+
+        self.assertEqual([row["title"] for row in rows], ["Software Engineering Intern", "New Grad Robotics Engineer"])
+        self.assertTrue(rows[0]["url"].startswith("https://github.com/SimplifyJobs/Summer2026-Internships?opportunity="))
+        self.assertIn("https://careers.acme.example/jobs/se-intern", rows[0]["description"])
+        self.assertEqual(rows[0]["source"], "github_internship_lists")
+        self.assertIn("raw.githubusercontent.com/SimplifyJobs/Summer2026-Internships/dev/README.md", scraper.session.urls[0])
+
+    def test_extern_cards_extract_direct_externship_rows(self) -> None:
+        scraper = GenericOpportunityPortalScraper()
+        rows = scraper._extract_extern_cards(
+            BeautifulSoup(_fixture_text("extern_cards.html"), "html.parser"),
+            "https://www.extern.com/externships",
+        )
+
+        self.assertEqual(len(rows), 1)
+        result = parse_result_from_record(rows[0])
+        self.assertEqual(result.item["title"], "Product Innovation with BeReal")
+        self.assertEqual(result.item["university"], "BeReal")
+        self.assertEqual(result.item["url"], "https://www.extern.com/externships/bereal-product-innovation-externship-jun-2026")
+        self.assertEqual(result.item["opportunity_type"], "Internship")
+        self.assertAlmostEqual(result.item["duration_months"], 1.84)
+        self.assertEqual(result.item["deadline"].year, 2026)
 
 
 if __name__ == "__main__":

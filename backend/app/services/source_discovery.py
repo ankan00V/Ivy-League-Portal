@@ -135,6 +135,83 @@ LEGITIMATE_EMPLOYER_TERMS = {
     "tifr",
 }
 
+HIGH_VALUE_DISCOVERY_TERMS = {
+    "intern",
+    "internship",
+    "student",
+    "students",
+    "new grad",
+    "new graduate",
+    "graduate engineer trainee",
+    "graduate trainee",
+    "early career",
+    "early careers",
+    "campus",
+    "fresher",
+    "0-1",
+    "entry level",
+    "apprentice",
+    "apprenticeship",
+}
+
+HIGH_VALUE_DOMAIN_TERMS = {
+    "software",
+    "engineering",
+    "machine learning",
+    "artificial intelligence",
+    "data science",
+    "analytics",
+    "product",
+    "design",
+    "finance",
+    "consulting",
+    "research",
+}
+
+THIRD_PARTY_PLATFORM_TERMS = {
+    "job board",
+    "jobs",
+    "internship platform",
+    "opportunity platform",
+    "hackathon",
+    "fellowship",
+    "research internship",
+    "scholarship",
+    "early careers",
+    "off campus",
+    "fresher",
+}
+
+LOW_VALUE_SOURCE_TERMS = {
+    "advice",
+    "blog",
+    "resume tips",
+    "interview questions",
+    "course",
+    "training institute",
+    "pay to apply",
+    "registration fee",
+    "earn money",
+    "referral income",
+}
+
+SOURCE_TYPE_PRIORITY = {
+    "company_careers": 18,
+    "job_board": 12,
+    "hackathon_platform": 12,
+    "research_portal": 10,
+    "university_portal": 8,
+    "scholarship_portal": 7,
+}
+
+PRIORITY_TIER_SCORE = {
+    "tier_1": 22,
+    "s_tier": 22,
+    "dream": 22,
+    "tier_2": 12,
+    "high": 10,
+}
+
 
 class DiscoveryRunSummary(BaseModel):
     run_id: str
@@ -159,6 +236,22 @@ class QualificationCheckResult(BaseModel):
     passed: bool
     notes: str = ""
     hard_reject: bool = False
+
+
+class DiscoveryQueryContext(BaseModel):
+    domains: list[str] = Field(default_factory=list)
+    cities: list[str] = Field(default_factory=list)
+    company_types: list[str] = Field(default_factory=list)
+    tech_stacks: list[str] = Field(default_factory=list)
+    profile_terms: list[str] = Field(default_factory=list)
+    opportunity_terms: list[str] = Field(default_factory=list)
+    platform_terms: list[str] = Field(default_factory=list)
+
+
+class SourcePriorityResult(BaseModel):
+    score: float = Field(ge=0, le=100)
+    reasons: list[str] = Field(default_factory=list)
+    features: dict[str, Any] = Field(default_factory=dict)
 
 
 @dataclass
@@ -373,6 +466,197 @@ class SourceHttpClient:
                 )
 
 
+def _dedupe_preserve_order(values: Iterable[str], *, limit: int = 20) -> list[str]:
+    seen: set[str] = set()
+    output: list[str] = []
+    for value in values:
+        normalized = re.sub(r"\s+", " ", str(value or "").strip().lower())
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        output.append(normalized)
+        if len(output) >= limit:
+            break
+    return output
+
+
+def _contains_any(haystack: str, terms: Iterable[str]) -> bool:
+    lowered = haystack.lower()
+    return any(term in lowered for term in terms)
+
+
+def _company_seed_due_sort_key(row: CompanySeed, now: datetime | None = None) -> tuple[int, int, int, datetime, str]:
+    current = now or utc_now()
+    last_checked = row.last_checked_at
+    cadence_hours = max(1, int(getattr(row, "check_cadence_hours", 168) or 168))
+    if last_checked is None:
+        due = True
+        stale_at = datetime.min.replace(tzinfo=current.tzinfo)
+    else:
+        due = current - last_checked >= timedelta(hours=cadence_hours)
+        stale_at = last_checked
+    tier = str(getattr(row, "priority_tier", "") or "").lower()
+    tier_rank = 0 if tier in {"tier_1", "s_tier", "dream"} else 1
+    cadence_rank = 0 if cadence_hours <= 24 else 1 if cadence_hours <= 72 else 2
+    return (0 if due else 1, tier_rank, cadence_rank, stale_at, str(row.company_name or "").lower())
+
+
+class SourcePriorityScorer:
+    def score_candidate(
+        self,
+        candidate: DiscoveryCandidate,
+        *,
+        normalized_url: str,
+        domain: str,
+        source_type: str | None = None,
+        company_seed: CompanySeed | None = None,
+        query_context: DiscoveryQueryContext | None = None,
+    ) -> SourcePriorityResult:
+        source_type = source_type or candidate.source_type or infer_source_type(normalized_url)
+        parsed = urlparse(normalized_url)
+        haystack = " ".join(
+            [
+                domain,
+                parsed.path,
+                candidate.name or "",
+                candidate.discovery_query or "",
+                candidate.source_type or "",
+                source_type or "",
+            ]
+        ).lower()
+        score = 40.0
+        reasons: list[str] = []
+        features: dict[str, Any] = {
+            "method": candidate.method.value if hasattr(candidate.method, "value") else str(candidate.method),
+            "source_type": source_type,
+            "domain": domain,
+        }
+
+        source_boost = SOURCE_TYPE_PRIORITY.get(str(source_type or "").lower(), 0)
+        if source_boost:
+            score += source_boost
+            reasons.append(f"source_type:{source_type}")
+
+        if candidate.method == DiscoveryMethod.company_seed:
+            score += 14
+            reasons.append("official_company_seed")
+        elif candidate.method == DiscoveryMethod.web_search:
+            score += 3
+            reasons.append("web_discovery")
+        elif candidate.method == DiscoveryMethod.similar_source_expansion:
+            score += 5
+            reasons.append("trusted_source_expansion")
+        elif candidate.method in {DiscoveryMethod.admin_manual, DiscoveryMethod.user_submission}:
+            score += 4
+            reasons.append("human_submitted")
+
+        if company_seed is not None:
+            tier = str(company_seed.priority_tier or "").lower()
+            category = str(company_seed.source_category or "").lower()
+            cadence = max(1, int(company_seed.check_cadence_hours or 168))
+            tier_boost = PRIORITY_TIER_SCORE.get(tier, 0)
+            if tier_boost:
+                score += tier_boost
+                reasons.append(f"seed_tier:{tier}")
+            if category:
+                score += 5
+                reasons.append(f"seed_category:{category}")
+            if cadence <= 24:
+                score += 4
+                reasons.append("daily_watchlist")
+            features.update(
+                {
+                    "company_seed_domain": company_seed.domain,
+                    "priority_tier": company_seed.priority_tier,
+                    "source_category": company_seed.source_category,
+                    "check_cadence_hours": cadence,
+                }
+            )
+
+        high_value_hits = sorted(term for term in HIGH_VALUE_DISCOVERY_TERMS if term in haystack)
+        if high_value_hits:
+            score += min(16, 4 + (2 * len(high_value_hits)))
+            reasons.append("early_career_match")
+            features["high_value_terms"] = high_value_hits[:8]
+
+        if _contains_any(haystack, HIGH_VALUE_DOMAIN_TERMS):
+            score += 6
+            reasons.append("target_domain_match")
+
+        platform_hits = sorted(term for term in THIRD_PARTY_PLATFORM_TERMS if term in haystack)
+        if platform_hits and source_type != "company_careers":
+            score += min(14, 4 + (2 * len(platform_hits)))
+            reasons.append("third_party_platform_candidate")
+            features["platform_terms"] = platform_hits[:8]
+
+        if _contains_any(haystack, INDIAN_CITY_TERMS):
+            score += 5
+            reasons.append("india_relevant")
+
+        if query_context is not None:
+            context_terms = set(query_context.profile_terms + query_context.opportunity_terms + query_context.tech_stacks)
+            matched_context = sorted(term for term in context_terms if term and term in haystack)
+            if matched_context:
+                score += min(10, 2 * len(matched_context))
+                reasons.append("data_demand_match")
+                features["matched_context_terms"] = matched_context[:8]
+
+        low_value_hits = sorted(term for term in LOW_VALUE_SOURCE_TERMS if term in haystack)
+        if low_value_hits:
+            score -= min(30, 10 + (3 * len(low_value_hits)))
+            reasons.append("low_value_content_penalty")
+            features["low_value_terms"] = low_value_hits[:8]
+
+        if any(domain.endswith(tld) for tld in [".xyz", ".tk", ".ml", ".ga", ".cf"]):
+            score -= 25
+            reasons.append("risky_tld_penalty")
+
+        final_score = round(max(0.0, min(100.0, score)), 2)
+        if not reasons:
+            reasons.append("baseline_candidate")
+        return SourcePriorityResult(score=final_score, reasons=reasons, features=features)
+
+    async def score(
+        self,
+        candidate: DiscoveryCandidate,
+        *,
+        normalized_url: str,
+        domain: str,
+        source_type: str | None = None,
+        query_context: DiscoveryQueryContext | None = None,
+    ) -> SourcePriorityResult:
+        seed = await self._matching_company_seed(domain, candidate)
+        return self.score_candidate(
+            candidate,
+            normalized_url=normalized_url,
+            domain=domain,
+            source_type=source_type,
+            company_seed=seed,
+            query_context=query_context,
+        )
+
+    async def _matching_company_seed(self, domain: str, candidate: DiscoveryCandidate) -> CompanySeed | None:
+        seed = await CompanySeed.find_one(CompanySeed.domain == domain)
+        if seed is not None:
+            return seed
+        if candidate.discovery_query:
+            seed = await CompanySeed.find_one(CompanySeed.company_name == candidate.discovery_query)
+            if seed is not None:
+                return seed
+        try:
+            rows = await CompanySeed.find_many(
+                CompanySeed.india_presence == True,  # noqa: E712
+                CompanySeed.student_friendly == True,  # noqa: E712
+            ).limit(500).to_list()
+        except Exception:
+            return None
+        for row in rows:
+            seed_domain = normalize_domain(row.domain)
+            if domain == seed_domain or domain.endswith(f".{seed_domain}") or seed_domain.endswith(f".{domain}"):
+                return row
+        return None
+
+
 class SearchQueryGenerator:
     templates = [
         "internship opportunities India 2026 site:careers.*",
@@ -400,6 +684,25 @@ class SearchQueryGenerator:
         "open roles interns India {tech_stack}",
         "research assistant internship India institute",
     ]
+    platform_templates = [
+        "student internship platform India apply {domain}",
+        "early career job board India {domain}",
+        "0-1 years jobs India {tech_stack} platform",
+        "fresher hiring platform India {tech_stack}",
+        "off campus hiring platform India {domain}",
+        "hackathon platform students India {domain}",
+        "research internship portal India {domain}",
+        "graduate trainee job board India {company_type}",
+        "official careers internship {domain} India",
+        "ATS greenhouse lever internship India {tech_stack}",
+    ]
+    data_driven_templates = [
+        "{term} internship India official careers",
+        "{term} fresher jobs India 0-1 years",
+        "{term} student program India apply",
+        "{term} early careers India job board",
+        "{term} off campus hiring India",
+    ]
     domains = [
         "software engineering",
         "data science",
@@ -418,20 +721,107 @@ class SearchQueryGenerator:
         self.queue = queue or RedisQueue()
 
     async def generate(self, limit: int = 10) -> list[str]:
+        context = await self._data_driven_context()
         queries: list[str] = []
-        for index, template in enumerate(self.templates * 4):
-            query = template.format(
-                domain=self.domains[index % len(self.domains)],
-                city=self.cities[index % len(self.cities)],
-                company_type=self.company_types[index % len(self.company_types)],
-                tech_stack=self.tech_stacks[index % len(self.tech_stacks)],
-            )
+        for query in self.candidate_queries(context):
             digest = hashlib.sha256(query.lower().encode("utf-8")).hexdigest()
             if await self.queue.set_once(f"source_discovery:query:{digest}", ttl_seconds=7 * 24 * 60 * 60):
                 queries.append(query)
             if len(queries) >= limit:
                 break
         return queries
+
+    def candidate_queries(self, context: DiscoveryQueryContext | None = None) -> list[str]:
+        context = context or DiscoveryQueryContext()
+        domains = _dedupe_preserve_order([*context.domains, *self.domains], limit=16)
+        cities = _dedupe_preserve_order([*context.cities, *self.cities], limit=12)
+        company_types = _dedupe_preserve_order([*context.company_types, *self.company_types], limit=12)
+        tech_stacks = _dedupe_preserve_order([*context.tech_stacks, *self.tech_stacks], limit=16)
+        queries: list[str] = []
+        base_templates = [*self.platform_templates, *self.templates]
+        for index, template in enumerate(base_templates * 4):
+            queries.append(
+                template.format(
+                    domain=domains[index % len(domains)],
+                    city=cities[index % len(cities)],
+                    company_type=company_types[index % len(company_types)],
+                    tech_stack=tech_stacks[index % len(tech_stacks)],
+                )
+            )
+
+        data_terms = _dedupe_preserve_order(
+            [
+                *context.profile_terms,
+                *context.opportunity_terms,
+                *context.platform_terms,
+                *tech_stacks,
+                *domains,
+            ],
+            limit=24,
+        )
+        for index, term in enumerate(data_terms):
+            for template in self.data_driven_templates:
+                queries.append(template.format(term=term))
+            if index >= 12:
+                break
+        return _dedupe_preserve_order(queries, limit=160)
+
+    async def _data_driven_context(self) -> DiscoveryQueryContext:
+        profile_terms: list[str] = []
+        opportunity_terms: list[str] = []
+        domains: list[str] = []
+        cities: list[str] = []
+        tech_stacks: list[str] = []
+        platform_terms = [
+            "internship platform",
+            "early career",
+            "fresher",
+            "hackathon",
+            "research internship",
+            "off campus",
+        ]
+
+        try:
+            profiles = await Profile.find_all().limit(200).to_list()
+            for profile in profiles:
+                profile_terms.extend(profile.career_intent or [])
+                profile_terms.extend(profile.domains_of_interest or [])
+                profile_terms.extend(profile.opportunity_types or [])
+                if profile.preferred_roles:
+                    profile_terms.extend(re.split(r"[,/|]", profile.preferred_roles))
+                if profile.preferred_locations:
+                    cities.extend(re.split(r"[,/|]", profile.preferred_locations))
+        except Exception:
+            pass
+
+        try:
+            opportunities = await Opportunity.find_all().sort("-last_seen_at").limit(300).to_list()
+            for opportunity in opportunities:
+                opportunity_terms.extend(opportunity.tags or [])
+                for value in [opportunity.domain, opportunity.portal_category, opportunity.opportunity_type, opportunity.source]:
+                    if value:
+                        opportunity_terms.append(str(value))
+                if opportunity.location:
+                    cities.extend(re.split(r"[,/|]", opportunity.location))
+        except Exception:
+            pass
+
+        for term in [*profile_terms, *opportunity_terms]:
+            lowered = str(term or "").lower()
+            if any(stack in lowered for stack in self.tech_stacks):
+                tech_stacks.append(lowered)
+            if any(domain in lowered for domain in self.domains):
+                domains.append(lowered)
+
+        return DiscoveryQueryContext(
+            domains=_dedupe_preserve_order([*domains, *self.domains], limit=16),
+            cities=_dedupe_preserve_order([*cities, *self.cities], limit=12),
+            company_types=list(self.company_types),
+            tech_stacks=_dedupe_preserve_order([*tech_stacks, *self.tech_stacks], limit=16),
+            profile_terms=_dedupe_preserve_order(profile_terms, limit=24),
+            opportunity_terms=_dedupe_preserve_order(opportunity_terms, limit=24),
+            platform_terms=platform_terms,
+        )
 
 
 class CareersPageFinder:
@@ -495,6 +885,9 @@ class SourceDiscoveryEngine:
         self.queue = queue or RedisQueue()
         self.query_generator = SearchQueryGenerator(queue=self.queue)
         self.careers_finder = CareersPageFinder(http_client=self.http_client)
+        self.priority_scorer = SourcePriorityScorer()
+        self._priority_context: DiscoveryQueryContext | None = None
+        self._priority_context_loaded_at: datetime | None = None
 
     async def run_discovery(self, *, triggered_by: str = "scheduler") -> DiscoveryRunSummary:
         run = SourceDiscoveryRun(run_id=str(uuid.uuid4()), triggered_by=triggered_by)
@@ -635,14 +1028,7 @@ class SourceDiscoveryEngine:
             CompanySeed.india_presence == True,  # noqa: E712
             CompanySeed.student_friendly == True,  # noqa: E712
         ).to_list()
-        rows.sort(
-            key=lambda row: (
-                0 if row.careers_url else 1,
-                0 if str(row.company_size).lower() == "startup" else 1,
-                row.last_checked_at or datetime.min.replace(tzinfo=utc_now().tzinfo),
-                row.company_name.lower(),
-            )
-        )
+        rows.sort(key=_company_seed_due_sort_key)
         return rows[: max(1, int(limit))]
 
     async def enqueue_known_seed_sources(self, *, limit: int = 50) -> dict[str, Any]:
@@ -686,12 +1072,23 @@ class SourceDiscoveryEngine:
             ).count()
             if today_count >= daily_limit:
                 raise ValueError("daily_submission_limit_exceeded")
+        source_type = candidate.source_type or infer_source_type(normalized)
+        priority = await self.priority_scorer.score(
+            candidate,
+            normalized_url=normalized,
+            domain=domain,
+            source_type=source_type,
+        )
         source = DiscoveredSource(
             url=normalized,
             domain=domain,
+            source_type=source_type,
             discovery_method=DiscoveryMethod.user_submission,
             discovery_query=candidate.discovery_query,
             discovered_by=str(user.id),
+            priority_score=priority.score,
+            priority_reasons=priority.reasons,
+            priority_features=priority.features,
             requires_admin_review=True,
             admin_notes=context,
         )
@@ -735,6 +1132,15 @@ class SourceDiscoveryEngine:
             "invalid_urls": invalid_urls,
         }
 
+    async def _priority_context_for_scoring(self) -> DiscoveryQueryContext:
+        loaded_at = self._priority_context_loaded_at
+        if self._priority_context is not None and loaded_at is not None:
+            if utc_now() - loaded_at < timedelta(minutes=10):
+                return self._priority_context
+        self._priority_context = await self.query_generator._data_driven_context()
+        self._priority_context_loaded_at = utc_now()
+        return self._priority_context
+
     async def _insert_discovered_source(self, candidate: DiscoveryCandidate) -> str:
         try:
             normalized = normalize_url(candidate.url)
@@ -753,11 +1159,22 @@ class SourceDiscoveryEngine:
             except DuplicateKeyError:
                 pass
             return "blocked"
+        source_type = candidate.source_type or infer_source_type(normalized)
+        priority = await self.priority_scorer.score(
+            candidate,
+            normalized_url=normalized,
+            domain=domain,
+            source_type=source_type,
+            query_context=await self._priority_context_for_scoring(),
+        )
         source = DiscoveredSource(
             url=normalized,
             domain=domain,
             name=candidate.name,
-            source_type=candidate.source_type or infer_source_type(normalized),
+            source_type=source_type,
+            priority_score=priority.score,
+            priority_reasons=priority.reasons,
+            priority_features=priority.features,
             discovery_method=candidate.method,
             discovery_query=candidate.discovery_query,
             discovered_by=candidate.discovered_by or "system",
@@ -1021,7 +1438,7 @@ class SourceQualificationService:
         if not ids:
             fallback_rows = await DiscoveredSource.find_many(
                 DiscoveredSource.status == SourceStatus.discovered,
-            ).sort("discovered_at").limit(max(1, int(max_items))).to_list()
+            ).sort("-priority_score", "discovered_at").limit(max(1, int(max_items))).to_list()
             ids = [str(row.id) for row in fallback_rows if row.id is not None]
         processed = 0
         qualified = 0
@@ -1166,6 +1583,7 @@ class AdaptiveExtractionService:
             ("ats_greenhouse", r"boards(?:-api)?\.greenhouse\.io/(?:v1/boards/)?([a-z0-9_-]+)"),
             ("ats_lever", r"jobs\.lever\.co/([a-z0-9_-]+)"),
             ("ats_ashby", r"jobs\.ashbyhq\.com/([a-z0-9_-]+)"),
+            ("ats_smartrecruiters", r"smartrecruiters\.com/(?:companies/)?([a-z0-9_-]+)"),
             ("ats_workday", r"myworkdayjobs\.com/([^/\"']+)"),
         ]
         for method, pattern in patterns:
@@ -1229,6 +1647,30 @@ class AdaptiveExtractionService:
                 }
                 for row in jobs[:20]
             ]
+        if method == "ats_smartrecruiters":
+            url = f"https://api.smartrecruiters.com/v1/companies/{slug}/postings?limit=100"
+            page = await self.http_client.fetch(url, timeout_seconds=10)
+            payload = json.loads(page.text)
+            jobs = payload.get("content") if isinstance(payload, dict) else []
+            return [
+                {
+                    "title": row.get("name"),
+                    "company": source.name,
+                    "location": (row.get("location") or {}).get("city") or (row.get("location") or {}).get("region"),
+                    "apply_url": row.get("ref") or row.get("url"),
+                    "description_preview": row.get("name"),
+                    "tags": [
+                        value
+                        for value in [
+                            (row.get("department") or {}).get("label") if isinstance(row.get("department"), dict) else None,
+                        ]
+                        if value
+                    ],
+                    "opportunity_type": "internship" if "intern" in str(row.get("name") or "").lower() else "job",
+                    "posted_date_text": row.get("releasedDate"),
+                }
+                for row in jobs[:20]
+            ]
         return []
 
     def _extract_with_heuristics(self, soup: BeautifulSoup, base_url: str, source: DiscoveredSource) -> list[dict[str, Any]]:
@@ -1259,8 +1701,21 @@ class AdaptiveExtractionService:
         return rows
 
     async def _extract_with_llm(self, source: DiscoveredSource, page: FetchedPage) -> ExtractionOutcome:
-        key = (getattr(settings, "CLAUDE_API_KEY", "") or "").strip()
-        model = (getattr(settings, "CLAUDE_MODEL", "") or "claude-3-5-sonnet-20241022").strip()
+        provider = str(getattr(settings, "LLM_PROVIDER", "") or "openai_compatible").strip().lower()
+        generic_key = (getattr(settings, "LLM_API_KEY", "") or getattr(settings, "OPENROUTER_API_KEY", "") or "").strip()
+        generic_base_url = (
+            (getattr(settings, "LLM_API_BASE_URL", "") or "").strip()
+            or (getattr(settings, "OPENROUTER_BASE_URL", "") or "").strip()
+        )
+        generic_model = (
+            (getattr(settings, "LLM_MODEL", "") or "").strip()
+            or (getattr(settings, "OPENROUTER_MODEL", "") or "").strip()
+        )
+        claude_key = (getattr(settings, "CLAUDE_API_KEY", "") or "").strip()
+        claude_model = (getattr(settings, "CLAUDE_MODEL", "") or "claude-3-5-sonnet-20241022").strip()
+        use_openai_compatible = bool(generic_key and generic_base_url and generic_model and provider != "anthropic")
+        key = generic_key if use_openai_compatible else claude_key
+        model = generic_model if use_openai_compatible else claude_model
         if not key or httpx is None:
             return ExtractionOutcome(method="llm_css", opportunities=[], confidence=0.0, parser_template={})
         calls_last_hour = await DiscoveryLLMCall.find_many(DiscoveryLLMCall.created_at >= utc_now() - timedelta(hours=1)).count()
@@ -1278,12 +1733,7 @@ class AdaptiveExtractionService:
             "Return only valid JSON with keys opportunities, extraction_confidence, source_type, "
             "listing_selector, pagination_pattern, notes."
         )
-        payload = {
-            "model": model,
-            "max_tokens": 1800,
-            "system": system_prompt,
-            "messages": [{"role": "user", "content": f"<html>{cleaned_html}</html>"}],
-        }
+        user_prompt = f"<html>{cleaned_html}</html>"
         success = False
         error: str | None = None
         cost = 0.0
@@ -1291,23 +1741,66 @@ class AdaptiveExtractionService:
         confidence = 0.0
         try:
             async with httpx.AsyncClient(timeout=30) as client:
-                response = await client.post(
-                    "https://api.anthropic.com/v1/messages",
-                    headers={
-                        "x-api-key": key,
-                        "anthropic-version": "2023-06-01",
-                        "content-type": "application/json",
-                    },
-                    json=payload,
-                )
+                if use_openai_compatible:
+                    endpoint = generic_base_url.rstrip("/")
+                    if not endpoint.endswith("/chat/completions"):
+                        endpoint = f"{endpoint}/chat/completions"
+                    payload: dict[str, Any] = {
+                        "model": model,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        "max_tokens": 1800,
+                        "temperature": 0.2,
+                        "top_p": 0.95,
+                        "stream": False,
+                    }
+                    if "integrate.api.nvidia.com" in endpoint:
+                        payload["chat_template_kwargs"] = {"enable_thinking": True}
+                    response = await client.post(
+                        endpoint,
+                        headers={
+                            "Authorization": f"Bearer {key}",
+                            "Accept": "application/json",
+                            "content-type": "application/json",
+                        },
+                        json=payload,
+                    )
+                else:
+                    payload = {
+                        "model": model,
+                        "max_tokens": 1800,
+                        "system": system_prompt,
+                        "messages": [{"role": "user", "content": user_prompt}],
+                    }
+                    response = await client.post(
+                        "https://api.anthropic.com/v1/messages",
+                        headers={
+                            "x-api-key": key,
+                            "anthropic-version": "2023-06-01",
+                            "content-type": "application/json",
+                        },
+                        json=payload,
+                    )
                 response.raise_for_status()
                 data = response.json()
-            text = "\n".join(block.get("text", "") for block in data.get("content", []) if block.get("type") == "text")
+            if use_openai_compatible:
+                choices = data.get("choices") or []
+                message = (choices[0].get("message") or {}) if choices else {}
+                content = message.get("content") or ""
+                text = content if isinstance(content, str) else json.dumps(content)
+            else:
+                text = "\n".join(block.get("text", "") for block in data.get("content", []) if block.get("type") == "text")
             parsed = _safe_json_loads(text) or _extract_json_object(text) or {}
             opportunities = list(parsed.get("opportunities") or parsed.get("listings") or [])
             confidence = float(parsed.get("extraction_confidence") or 0)
             usage = data.get("usage") or {}
-            tokens = int(usage.get("input_tokens") or 0) + int(usage.get("output_tokens") or 0)
+            tokens = int(
+                usage.get("total_tokens")
+                or (int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
+                    + int(usage.get("output_tokens") or usage.get("completion_tokens") or 0))
+            )
             cost = tokens * 0.000003
             success = True
             template = self._build_parser_template(
@@ -1428,7 +1921,7 @@ class AdaptiveExtractionService:
         if not ids:
             fallback_rows = await DiscoveredSource.find_many(
                 DiscoveredSource.status == SourceStatus.qualified,
-            ).sort("qualified_at", "discovered_at").limit(max(1, int(max_items))).to_list()
+            ).sort("-priority_score", "qualified_at", "discovered_at").limit(max(1, int(max_items))).to_list()
             ids = [str(row.id) for row in fallback_rows if row.id is not None]
         processed = 0
         probation = 0
@@ -1697,6 +2190,77 @@ class TemplateDrivenScraper:
             discovery_method=DiscoveryMethod.admin_manual,
         )
         extractor = AdaptiveExtractionService(http_client=self.http_client)
+        template = registration.parser_template or {}
+        endpoint_url = str(template.get("ats_endpoint_url") or "").strip()
+        if endpoint_url:
+            page = await self.http_client.fetch(endpoint_url, timeout_seconds=10)
+            payload = json.loads(page.text)
+            if method == "ats_greenhouse":
+                rows = [
+                    {
+                        "title": row.get("title"),
+                        "company": registration.source_name,
+                        "location": (row.get("location") or {}).get("name"),
+                        "apply_url": row.get("absolute_url"),
+                        "description_preview": BeautifulSoup(str(row.get("content") or ""), "html.parser").get_text(" ", strip=True)[:200],
+                        "tags": [dept.get("name") for dept in row.get("departments", []) if dept.get("name")],
+                        "opportunity_type": "internship" if "intern" in str(row.get("title") or "").lower() else "job",
+                        "posted_date_text": row.get("updated_at"),
+                    }
+                    for row in (payload.get("jobs") or [])[:20]
+                ]
+            elif method == "ats_lever":
+                rows = [
+                    {
+                        "title": row.get("text"),
+                        "company": registration.source_name,
+                        "location": row.get("categories", {}).get("location"),
+                        "work_mode": row.get("categories", {}).get("commitment"),
+                        "apply_url": row.get("hostedUrl"),
+                        "description_preview": BeautifulSoup(str(row.get("descriptionPlain") or row.get("description") or ""), "html.parser").get_text(" ", strip=True)[:200],
+                        "tags": [row.get("categories", {}).get("team"), row.get("categories", {}).get("commitment")],
+                        "opportunity_type": "internship" if "intern" in str(row.get("text") or "").lower() else "job",
+                        "posted_date_text": row.get("createdAt"),
+                    }
+                    for row in (payload if isinstance(payload, list) else [])[:20]
+                ]
+            elif method == "ats_ashby":
+                rows = [
+                    {
+                        "title": row.get("title"),
+                        "company": registration.source_name,
+                        "location": row.get("locationName"),
+                        "apply_url": row.get("jobUrl"),
+                        "description_preview": BeautifulSoup(str(row.get("descriptionHtml") or ""), "html.parser").get_text(" ", strip=True)[:200],
+                        "tags": row.get("departmentName") and [row.get("departmentName")] or [],
+                        "opportunity_type": "internship" if "intern" in str(row.get("title") or "").lower() else "job",
+                    }
+                    for row in list((payload.get("jobs") if isinstance(payload, dict) else []) or [])[:20]
+                ]
+            elif method == "ats_smartrecruiters":
+                rows = [
+                    {
+                        "title": row.get("name"),
+                        "company": registration.source_name,
+                        "location": (row.get("location") or {}).get("city") or (row.get("location") or {}).get("region"),
+                        "apply_url": row.get("ref") or row.get("url"),
+                        "description_preview": row.get("name"),
+                        "tags": [
+                            value
+                            for value in [
+                                (row.get("department") or {}).get("label") if isinstance(row.get("department"), dict) else None,
+                            ]
+                            if value
+                        ],
+                        "opportunity_type": "internship" if "intern" in str(row.get("name") or "").lower() else "job",
+                        "posted_date_text": row.get("releasedDate"),
+                    }
+                    for row in list((payload.get("content") if isinstance(payload, dict) else []) or [])[:20]
+                ]
+            else:
+                rows = []
+            valid = [row for row in rows if row.get("title") and row.get("apply_url")]
+            return ScraperRunResult(items=valid, items_parsed=len(valid), parse_success_rate=(len(valid) / max(1, len(rows))))
         rows = await extractor._extract_ats(
             {"method": method, "slug": str((registration.parser_template or {}).get("ats_slug") or registration.domain.split(".")[0])},
             source,

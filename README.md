@@ -2,7 +2,7 @@
 
 > AI-powered opportunity intelligence platform that helps students discover, prioritize, and act on internships, research roles, scholarships, and hackathons.
 
-**Last updated:** June 3, 2026
+**Last updated:** June 19, 2026
 **Status:** Active build, production-readiness gates enabled
 
 ## 1) Executive Summary
@@ -57,9 +57,10 @@ flowchart LR
 |---|---|
 | Frontend | Next.js 16, TypeScript, Playwright |
 | Backend | FastAPI, Pydantic, Beanie ODM |
-| Data | MongoDB, Redis |
-| AI/ML | sentence-transformers, FAISS/NumPy retrieval, learned ranker |
-| Observability/Ops | GitHub Actions, Prometheus metrics, Slack/PagerDuty hooks |
+| Data | Managed MongoDB, managed Redis, managed ClickHouse |
+| AI/ML | sentence-transformers, vector retrieval, learned ranker |
+| Storage | S3-compatible production artifact store |
+| Observability/Ops | GitHub Actions, Prometheus metrics, Grafana/BI, Slack/PagerDuty hooks |
 | Security | HttpOnly session cookies, Redis-backed sessions, CSRF double-submit, CSP, Trusted Types, auth abuse controls |
 
 ## 6) Implemented Scope
@@ -80,6 +81,10 @@ flowchart LR
 - MongoDB-first backend architecture + Redis support.
 - Background jobs with retry, dead-letter behavior, bounded concurrency, queue caps, and handler timeouts.
 - Source discovery pipeline with company seeds, user submissions, qualification queues, adaptive extraction, probation, dynamic scraper registration, and health quarantine.
+- Official company careers intelligence with a curated S-tier internship watchlist across global tech, quant/trading, Indian product, IT services, government/PSU, research, consulting, analytics, banking, manufacturing, aerospace, energy, FMCG, and hidden-gem employers.
+- The intelligent source-discovery loop continues expanding beyond the curated list through company seeds, careers-page crawling, web search, similar-source expansion, employer claims, and admin review.
+- Autonomous discovery now generates data-informed web queries from profile interests and opportunity history, searches for third-party opportunity platforms, and stores auditable priority scores/reasons so qualification and extraction spend budget on the highest-value internship and 0-1 year sources first.
+- Remote job ingestion is constrained to internships, entry-level, junior, fresher, new-grad, trainee, apprentice, no-experience, or explicit 0-1 year roles. Senior, lead, principal, staff, manager, director, architect, 2+ year, bootcamp, and paid-training posts are filtered out before persistence.
 - Staging integrated E2E framework and release-blocking checks.
 
 ### Security and Governance
@@ -135,9 +140,9 @@ Source distribution for opportunities:
 - MRR@5: **0.3333 -> 1.0000** (**+200%**)
 
 ### Real pilot lift (14-day window)
-- CTR lift (`ml` vs baseline): **+58.21%**
-- Apply-rate lift (`ml` vs baseline): **+153.11%**
-- Save-rate lift (`ml` vs baseline): **+138.67%**
+- CTR lift (`ml` vs baseline): **+58.21%** (p < 0.001)
+- Apply-rate lift (`ml` vs baseline): **+153.22%** (p < 0.01)
+- Save-rate lift (`ml` vs baseline): **+138.78%** (p < 0.001)
 
 ### Model lifecycle snapshot
 <!-- MODEL_VERSION_METADATA:START -->
@@ -172,7 +177,10 @@ Latest drift report: id=`69e32d07` alert=`False` psi=0.030294 max_z=0.069408 not
 <!-- MODEL_VERSION_METADATA:END -->
 
 ### Engineering quality signal
-- Backend test suite: **200 passing tests** (latest local run on June 3, 2026)
+- Focused scraper/source contract suite: **36 passing tests** (latest run on June 18, 2026)
+- Production infra readiness gate: managed MongoDB, Redis, ClickHouse, and S3-compatible artifact storage have been verified from the local runtime; the full strict gate still requires deployed frontend/backend domains and a production BI URL.
+- Local developer harness smoke: backend, MongoDB, Redis, queue, embedding model, learned ranker, artifact store, warehouse freshness, public opportunities, API docs, and frontend routes passed on June 19, 2026; this is not production deployment proof.
+- Backend full suite baseline: **200 passing tests** (latest recorded full run on June 3, 2026)
 - Frontend lint: **passing**
 - Frontend production build: **passing**
 - Security and release gates: **active in CI**
@@ -185,42 +193,68 @@ Latest drift report: id=`69e32d07` alert=`False` psi=0.030294 max_z=0.069408 not
 - Production startup guardrails enforce secure host/CORS/CSP/cookie expectations.
 - Privileged admin access segmented with dedicated auth path + TOTP + RBAC checks.
 
-## 9) What Is In Progress
+## 9) Current Production Readiness Boundary
+- The codebase contains production gates, env contracts, CI workflows, security guardrails, managed-infra checks, and operational runbooks.
+- Production runtime must use deployed services: managed MongoDB, managed Redis, managed ClickHouse, S3-compatible artifact storage, live frontend/backend domains, configured OAuth/Turnstile/SMTP, production BI, and real alert destinations.
+- Local Docker, localhost ports, MinIO, and local `.env` values are only a developer verification harness. They are not the production architecture and are rejected by the strict production infrastructure readiness gate.
+- Without the real production secrets and deployed service endpoints, production can be validated only up to contract/readiness checks, not proven live.
+
+## 10) What Is In Progress
 - Increase sustained real-user traffic volume for stronger statistical confidence.
 - Complete full staging secret and ownership wiring across environments.
 - Expand multi-role staging E2E matrix (success + failure + recovery paths).
 - Promote strict production enforcement toggles once ops readiness is consistently stable.
 
-## 10) Vision
+## 11) Vision
 Build VidyaVerse into a benchmark-grade Data Science + AI/ML + Full-Stack system where:
 - ranking decisions are measurable and auditable,
 - model promotion is policy-gated,
 - product changes are experiment-driven,
 - security and reliability remain first-class engineering constraints.
 
-## 11) Quick Start
-### Infrastructure
+## 12) Production Deployment Contract
+Production deployment is environment-first. Configure secrets in the hosting platform or secret manager, not in committed files.
+
+Required templates:
+- `backend/.env.production.example`
+- `frontend/.env.production.example`
+
+Required production checks:
 ```bash
-make up
+make validate-env
+make release-contracts
+make infra-check
+make warehouse-refresh
+make ds-gates
 ```
 
-### Backend
+`make infra-check` is strict by default. It fails when MongoDB, Redis, ClickHouse, artifact storage, or BI point at localhost, Docker service names, MinIO, or other local/dev infrastructure.
+
+Required external services:
+- MongoDB with TLS and production credentials.
+- Redis or Upstash-compatible Redis for sessions, queues, rate limits, and online features.
+- ClickHouse with TLS for analytics marts.
+- S3-compatible artifact storage for model artifacts.
+- Production domains for frontend and backend.
+- Production BI URL for analytics inspection.
+- SMTP, OAuth, Turnstile, and alerting secrets.
+
+## 13) Developer Verification Harness
+Use this only to reproduce checks before production deployment. It is not the production architecture.
+
 ```bash
-cd backend
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+make local-prod
+python3 scripts/smoke_test_local.py \
+  --backend-url http://127.0.0.1:8010 \
+  --frontend-url http://127.0.0.1:3002 \
+  --require-artifact-store \
+  --require-warehouse-fresh
 ```
 
-### Frontend
-```bash
-cd frontend
-npm install
-npm run dev
-```
+The local harness uses Docker dependencies and ignored `.env` placeholders only to prove code paths. Do not promote those values to production.
 
-## 12) Key Configuration Areas
+## 14) Key Configuration Areas
+- Production endpoints: `MONGODB_URL`, `REDIS_URL`, `ANALYTICS_WAREHOUSE_CLICKHOUSE_*`, `MLOPS_MODEL_ARTIFACT_S3_*`, `MODEL_ARTIFACT_BUCKET`
 - Auth/Security: `AUTH_SESSION_COOKIE_*`, `AUTH_COOKIE_ONLY_MODE`, `CSRF_*`, `SECURITY_CSP_*`
 - Session store: `AUTH_SESSION_STORE_ENABLED`, `AUTH_SESSION_REQUIRE_SERVER_STATE`, `AUTH_SESSION_BIND_DEVICE`
 - Job scaling: `JOBS_MAX_CONCURRENCY`, `JOBS_HANDLER_TIMEOUT_SECONDS`, `JOBS_MAX_PENDING_PER_TYPE`
@@ -229,32 +263,28 @@ npm run dev
 - Parity gates: `MLOPS_PARITY_*`
 - Source discovery: `DISCOVERY_ENABLED`, `SERPAPI_KEY`, `CLAUDE_API_KEY`, `MAX_LLM_EXTRACTIONS_PER_HOUR`, `MONTHLY_LLM_BUDGET_USD`, `QUALIFICATION_MIN_SCORE`, `TRUST_MIN_SCORE_AUTO_PROMOTE`, `PROBATION_*`, `SOURCE_FETCH_RATE_LIMIT`
 
-Reference templates:
-- `backend/.env.example`
-- `backend/.env.production.example`
-
-## 13) High-Value Code Paths
+## 15) High-Value Code Paths
 - Backend core: `backend/app`
 - Frontend core: `frontend/src`
 - CI/CD workflows: `.github/workflows`
 - Runbooks: `docs/runbooks`
 - Hidden admin security architecture: `docs/runbooks/hidden-admin-security-architecture.md`
 - Source discovery operations: `docs/runbooks/source-discovery-pipeline.md`
+- Production data/ML operations: `docs/runbooks/data-platform-and-mlops.md`
 - Source discovery: `backend/app/models/source_discovery.py`, `backend/app/services/source_discovery.py`, `backend/scripts/bootstrap_company_seeds.py`
 - Data bootstrap: `backend/scripts/bootstrap_opportunities.py`, `backend/scripts/seed_test_data.py`, `backend/scripts/validate_data_health.py`, `backend/scripts/export_dataset_snapshot.py`
 
-## 14) Production Bootstrap Commands
+## 16) Production Bootstrap Commands
 ```bash
 make bootstrap-opportunities
-make seed-test-data
 make validate-data-health
 make dataset-snapshot
 make release-contracts
 ```
 
-`bootstrap-opportunities` runs scheduled scrapers, quality scoring, dedup reporting, and embedding rebuild. `seed-test-data` creates staging-only synthetic users, employers, opportunities, experiments, and interaction signal for lower environments.
+`bootstrap-opportunities` runs scheduled scrapers, quality scoring, dedup reporting, and embedding rebuild. `seed-test-data` is intentionally excluded from the production bootstrap path; it is for local, CI, staging, or demo environments only.
 
-## 15) Recruiter / Reviewer Checklist
+## 17) Recruiter / Reviewer Checklist
 If you are evaluating engineering depth, inspect:
 - CI gate design and release policy workflows
 - ranking mode architecture and telemetry loop
@@ -262,7 +292,7 @@ If you are evaluating engineering depth, inspect:
 - hidden admin RBAC/TOTP implementation
 - benchmark artifacts and reproducibility scripts
 
-## 16) README Maintenance Policy
+## 18) README Maintenance Policy
 This README is release facing documentation. It should be updated whenever there is a major change to:
 - architecture
 - ML/ranking behavior

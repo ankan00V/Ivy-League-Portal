@@ -2036,7 +2036,7 @@ async def send_otp(request: OTPSendRequest, http_request: Request = None):  # ty
 
 @router.post("/verify-otp", response_model=Token)
 async def verify_otp(
-    request: OTPVerifyRequest,
+    payload: OTPVerifyRequest,
     http_request: Request = None,  # type: ignore[assignment]
     response: Response = None,  # type: ignore[assignment]
 ) -> Any:
@@ -2045,14 +2045,14 @@ async def verify_otp(
     For signup, creates an account after OTP success.
     For signin, requires an existing account.
     """
-    normalized_email = str(request.email).strip().lower()
+    normalized_email = str(payload.email).strip().lower()
     ip_address, user_agent = _request_context(http_request)
-    lock = await auth_security_service.check_lock(email=normalized_email, action="otp_verify", purpose=request.purpose)
+    lock = await auth_security_service.check_lock(email=normalized_email, action="otp_verify", purpose=payload.purpose)
     if lock.locked:
         await auth_security_service.audit_event(
             event_type="otp.verify",
             email=normalized_email,
-            purpose=request.purpose,
+            purpose=payload.purpose,
             success=False,
             reason="account_locked",
             ip_address=ip_address,
@@ -2065,10 +2065,10 @@ async def verify_otp(
             detail=f"Too many failed OTP attempts. Try again in {lock.remaining_lock_seconds} seconds.",
             headers={"Retry-After": str(max(1, lock.remaining_lock_seconds))},
         )
-    user = await _validate_user_for_purpose(normalized_email, request.purpose)
+    user = await _validate_user_for_purpose(normalized_email, payload.purpose)
 
-    if request.purpose == "signup":
-        signup_account_type = _normalize_account_type(request.account_type, default="candidate")
+    if payload.purpose == "signup":
+        signup_account_type = _normalize_account_type(payload.account_type, default="candidate")
         if signup_account_type == "employer":
             _ensure_employer_corporate_email(normalized_email)
     else:
@@ -2078,8 +2078,8 @@ async def verify_otp(
             getattr(user, "account_type", "candidate"),
             default="candidate",
         )
-        requested_account_type = _normalize_account_type(request.account_type, default=existing_account_type)
-        if request.account_type and requested_account_type != existing_account_type:
+        requested_account_type = _normalize_account_type(payload.account_type, default=existing_account_type)
+        if payload.account_type and requested_account_type != existing_account_type:
             raise HTTPException(
                 status_code=400,
                 detail=f"This email is registered as {existing_account_type}. Please continue as {existing_account_type}.",
@@ -2089,24 +2089,24 @@ async def verify_otp(
 
     is_valid = await validate_otp(
         normalized_email,
-        request.otp,
-        purpose=request.purpose,
+        payload.otp,
+        purpose=payload.purpose,
     )
     if not is_valid:
         failure = await auth_security_service.record_failure(
             email=normalized_email,
             action="otp_verify",
-            purpose=request.purpose,
+            purpose=payload.purpose,
         )
         await auth_security_service.audit_event(
             event_type="otp.verify",
             email=normalized_email,
-            account_type=_normalize_account_type(request.account_type, default="candidate")
-            if request.purpose == "signup"
+            account_type=_normalize_account_type(payload.account_type, default="candidate")
+            if payload.purpose == "signup"
             else _normalize_account_type(getattr(user, "account_type", "candidate"), default="candidate")
             if user
             else None,
-            purpose=request.purpose,
+            purpose=payload.purpose,
             success=False,
             reason="invalid_or_expired_otp",
             ip_address=ip_address,
@@ -2117,14 +2117,14 @@ async def verify_otp(
         )
         raise HTTPException(status_code=400, detail="Invalid or expired OTP")
 
-    await delete_otp(normalized_email, purpose=request.purpose)
+    await delete_otp(normalized_email, purpose=payload.purpose)
 
-    if request.purpose == "signup":
-        account_type = _normalize_account_type(request.account_type, default="candidate")
-        password = _validate_password_policy(request.password or "")
+    if payload.purpose == "signup":
+        account_type = _normalize_account_type(payload.account_type, default="candidate")
+        password = _validate_password_policy(payload.password or "")
         user = User(
             email=normalized_email,
-            full_name=request.full_name or str(request.email).split("@")[0],
+            full_name=payload.full_name or str(payload.email).split("@")[0],
             hashed_password=get_password_hash(password),
             is_active=True,
             account_type=account_type,
@@ -2144,7 +2144,7 @@ async def verify_otp(
             event_type="otp.verify",
             email=normalized_email,
             account_type=str(getattr(user, "account_type", "candidate") or "candidate"),
-            purpose=request.purpose,
+            purpose=payload.purpose,
             success=False,
             reason="inactive_user",
             ip_address=ip_address,
@@ -2153,12 +2153,12 @@ async def verify_otp(
         )
         raise HTTPException(status_code=400, detail="Inactive user account")
 
-    await auth_security_service.record_success(email=normalized_email, action="otp_verify", purpose=request.purpose)
+    await auth_security_service.record_success(email=normalized_email, action="otp_verify", purpose=payload.purpose)
     await auth_security_service.audit_event(
         event_type="otp.verify",
         email=normalized_email,
         account_type=str(getattr(user, "account_type", "candidate") or "candidate"),
-        purpose=request.purpose,
+        purpose=payload.purpose,
         success=True,
         reason="ok",
         ip_address=ip_address,
@@ -2166,7 +2166,7 @@ async def verify_otp(
         user_id=user.id,
     )
 
-    token = await _issue_user_session_token(user=user, request=request, response=response)
+    token = await _issue_user_session_token(user=user, request=http_request, response=response)
     return _token_response_payload(token, user)
 
 

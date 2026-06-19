@@ -609,6 +609,18 @@ async def _job_company_seed_careers_finder(payload: dict[str, Any]) -> dict[str,
     return result
 
 
+async def _job_company_careers_ingest(payload: dict[str, Any]) -> dict[str, Any]:
+    from app.services.company_careers_intelligence import company_careers_intelligence_service
+
+    result = await company_careers_intelligence_service.ingest_seeded_company_careers(
+        limit=int(payload.get("limit") or 25),
+        company_names=list(payload.get("company_names") or []),
+        dry_run=bool(payload.get("dry_run") or False),
+    )
+    await _refresh_discovery_metrics()
+    return result
+
+
 async def _job_trust_score_recompute(payload: dict[str, Any]) -> dict[str, Any]:
     from app.models.source_discovery import DiscoveredSource, SourceStatus
     from app.services.source_discovery import trust_scoring_engine
@@ -652,4 +664,5 @@ def register_default_jobs() -> None:
     job_runner.register("probation_scrape_run", _job_probation_scrape_run)
     job_runner.register("source_health_monitor", _job_source_health_monitor)
     job_runner.register("company_seed_careers_finder", _job_company_seed_careers_finder)
+    job_runner.register("company_careers_ingest", _job_company_careers_ingest)
     job_runner.register("trust_score_recompute", _job_trust_score_recompute)

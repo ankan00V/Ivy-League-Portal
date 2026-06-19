@@ -9,7 +9,22 @@ cd backend
 python scripts/bootstrap_company_seeds.py
 ```
 
-The script is idempotent and inserts up to 200 curated `CompanySeed` records. Existing domains are skipped.
+The script is idempotent and maintains the curated `CompanySeed` registry. Existing domains are updated with newer official careers URLs, priority tier, source category, target-role, and check-cadence metadata.
+
+The highest-priority seed group is the official internship watchlist. It contains S-tier technology, consulting, finance, government/PSU, research, automotive/manufacturing, aerospace, energy, analytics, banking, FMCG, Indian product, IT services, and hidden-gem company careers pages. These seeds are not trusted blindly: the company-careers intelligence job still filters for internships, student programs, graduate/new-grad roles, and 0-1 year opportunities before writing anything to `opportunities`.
+
+## Autonomous Discovery Intelligence
+
+The discovery loop is designed to grow beyond the curated source list:
+
+- Web-search discovery uses deterministic fallback templates plus data-informed queries built from recent profile interests, preferred roles, locations, opportunity tags, opportunity types, and active platform gaps.
+- Third-party opportunity platforms are searched explicitly with early-career, off-campus, hackathon, research-internship, fresher, and 0-1 year query families.
+- Each discovered URL receives an auditable `priority_score`, `priority_reasons`, and `priority_features` snapshot before it enters qualification.
+- Priority scoring boosts official company seeds, tier-1/daily watchlist companies, student/early-career terms, India relevance, target AI/ML/software/data/product/finance/consulting domains, and platform-discovery signals.
+- Priority scoring penalizes low-value advice/blog/training surfaces, pay-to-apply language, risky TLDs, and generic non-opportunity pages.
+- Qualification and extraction fallback batches process highest-priority sources first. Redis-backed explicit queues are still honored for deterministic job handoff.
+
+This is not blind auto-publishing. High-priority only means "spend scraper/LLM budget here first"; sources still need to pass qualification, extraction, probation, trust scoring, and promotion gates.
 
 ## Required Configuration
 
@@ -26,6 +41,7 @@ The script is idempotent and inserts up to 200 curated `CompanySeed` records. Ex
 The API scheduler enqueues these Mongo-backed jobs when `DISCOVERY_ENABLED=true`:
 
 - `company_seed_careers_finder`: daily 10 PM IST
+- `company_careers_ingest`: scheduled official careers-page ingestion for due high-priority company seeds
 - `source_discovery_run`: daily 11 PM IST
 - `source_qualification_batch`: every 2 hours
 - `source_extraction_batch`: every 4 hours
