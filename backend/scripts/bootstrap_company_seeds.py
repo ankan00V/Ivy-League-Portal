@@ -4,6 +4,7 @@ import asyncio
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from beanie import init_beanie
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -14,7 +15,32 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.core.config import settings  # noqa: E402
+from app.core.time import utc_now  # noqa: E402
 from app.models.source_discovery import CompanySeed  # noqa: E402
+
+TRACKING_QUERY_KEYS = {
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_term",
+    "utm_content",
+    "gclid",
+    "fbclid",
+    "msclkid",
+}
+
+
+def _clean_url(value: str | None) -> str | None:
+    if not value:
+        return None
+    parsed = urlparse(str(value).strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return str(value).strip()
+    query = urlencode(
+        [(key, val) for key, val in parse_qsl(parsed.query, keep_blank_values=True) if key.lower() not in TRACKING_QUERY_KEYS],
+        doseq=True,
+    )
+    return urlunparse((parsed.scheme, parsed.netloc.lower(), parsed.path or "/", "", query, ""))
 
 
 def _seed(
@@ -26,17 +52,164 @@ def _seed(
     careers_url: str | None = None,
     india_presence: bool = True,
     student_friendly: bool = True,
+    priority_tier: str | None = None,
+    source_category: str | None = None,
+    check_cadence_hours: int = 168,
+    target_roles: list[str] | None = None,
+    notes: str | None = None,
 ) -> dict[str, Any]:
     return {
         "company_name": company_name,
         "domain": domain,
-        "careers_url": careers_url,
+        "careers_url": _clean_url(careers_url),
         "industry": industry,
         "company_size": company_size,
         "india_presence": india_presence,
         "student_friendly": student_friendly,
+        "priority_tier": priority_tier,
+        "source_category": source_category,
+        "check_cadence_hours": check_cadence_hours,
+        "target_roles": target_roles or ["internship", "0-1 years", "early career"],
+        "notes": notes,
         "added_by": "bootstrap",
     }
+
+
+def _official(
+    company_name: str,
+    domain: str,
+    industry: str,
+    source_category: str,
+    careers_url: str,
+    *,
+    company_size: str = "enterprise",
+    priority_tier: str = "tier_1",
+    cadence_hours: int = 24,
+    india_presence: bool = True,
+) -> dict[str, Any]:
+    return _seed(
+        company_name,
+        domain,
+        industry,
+        company_size,
+        careers_url=careers_url,
+        india_presence=india_presence,
+        student_friendly=True,
+        priority_tier=priority_tier,
+        source_category=source_category,
+        check_cadence_hours=cadence_hours,
+        target_roles=["internship", "0-1 years", "student programs", "new grad", "graduate"],
+        notes="Curated official internship watchlist; ingest only internships and 0-1 year early-career roles.",
+    )
+
+
+OFFICIAL_INTERNSHIP_WATCHLIST: list[dict[str, Any]] = [
+    _official("Google", "google.com", "technology", "global_tech", "https://careers.google.com/"),
+    _official("Microsoft", "microsoft.com", "technology", "global_tech", "https://careers.microsoft.com/"),
+    _official("Amazon", "amazon.jobs", "technology", "global_tech", "https://www.amazon.jobs/"),
+    _official("Meta", "metacareers.com", "technology", "global_tech", "https://www.metacareers.com/"),
+    _official("Apple", "apple.com", "technology", "global_tech", "https://jobs.apple.com/"),
+    _official("NVIDIA", "nvidia.com", "ai", "global_tech", "https://www.nvidia.com/en-in/about-nvidia/careers/"),
+    _official("Adobe", "adobe.com", "technology", "global_tech", "https://careers.adobe.com/"),
+    _official("Salesforce", "salesforce.com", "saas", "global_tech", "https://careers.salesforce.com/"),
+    _official("Uber", "uber.com", "mobility", "global_tech", "https://www.uber.com/us/en/careers/"),
+    _official("Atlassian", "atlassian.com", "saas", "global_tech", "https://www.atlassian.com/company/careers"),
+    _official("Tower Research Capital", "tower-research.com", "quant trading", "quant_trading", "https://www.tower-research.com/open-positions/"),
+    _official("Jane Street", "janestreet.com", "quant trading", "quant_trading", "https://www.janestreet.com/join-jane-street/"),
+    _official("Hudson River Trading", "hudsonrivertrading.com", "quant trading", "quant_trading", "https://www.hudsonrivertrading.com/careers/"),
+    _official("Optiver", "optiver.com", "quant trading", "quant_trading", "https://optiver.com/working-at-optiver/"),
+    _official("IMC Trading", "imc.com", "quant trading", "quant_trading", "https://www.imc.com/us/careers/"),
+    _official("Flipkart", "flipkartcareers.com", "technology", "indian_product", "https://www.flipkartcareers.com/"),
+    _official("Meesho", "meesho.io", "commerce", "indian_product", "https://www.meesho.io/jobs"),
+    _official("PhonePe", "phonepe.com", "fintech", "indian_product", "https://www.phonepe.com/careers/"),
+    _official("Razorpay", "razorpay.com", "fintech", "indian_product", "https://razorpay.com/jobs/"),
+    _official("CRED", "cred.club", "fintech", "indian_product", "https://careers.cred.club/"),
+    _official("Swiggy", "swiggy.com", "consumer internet", "indian_product", "https://careers.swiggy.com/"),
+    _official("Zomato", "zomato.com", "consumer internet", "indian_product", "https://www.zomato.com/careers"),
+    _official("Groww", "groww.in", "fintech", "indian_product", "https://groww.in/careers"),
+    _official("Zerodha", "zerodha.com", "fintech", "indian_product", "https://careers.zerodha.com/"),
+    _official("Freshworks", "freshworks.com", "saas", "indian_product", "https://www.freshworks.com/company/careers/"),
+    _official("TCS", "tcs.com", "it services", "indian_it", "https://www.tcs.com/careers"),
+    _official("Infosys", "infosys.com", "it services", "indian_it", "https://www.infosys.com/careers.html"),
+    _official("Wipro", "wipro.com", "it services", "indian_it", "https://careers.wipro.com/"),
+    _official("HCLTech", "hcltech.com", "it services", "indian_it", "https://www.hcltech.com/careers"),
+    _official("Tech Mahindra", "techmahindra.com", "it services", "indian_it", "https://careers.techmahindra.com/"),
+    _official("Accenture", "accenture.com", "consulting", "indian_it", "https://www.accenture.com/in-en/careers"),
+    _official("Capgemini", "capgemini.com", "consulting", "indian_it", "https://www.capgemini.com/careers/"),
+    _official("Cognizant", "cognizant.com", "it services", "indian_it", "https://careers.cognizant.com/"),
+    _official("IBM", "ibm.com", "enterprise software", "indian_it", "https://www.ibm.com/careers"),
+    _official("Oracle", "oracle.com", "enterprise software", "indian_it", "https://careers.oracle.com/"),
+    _official("ISRO", "isro.gov.in", "research", "government_psu", "https://www.isro.gov.in/Careers.html"),
+    _official("DRDO", "drdo.gov.in", "research", "government_psu", "https://www.drdo.gov.in/careers"),
+    _official("BARC", "barc.gov.in", "research", "government_psu", "https://www.barc.gov.in/careers/"),
+    _official("BEL", "bel-india.in", "defence electronics", "government_psu", "https://bel-india.in/careers/"),
+    _official("BHEL", "bhel.com", "engineering", "government_psu", "https://www.bhel.com/careers"),
+    _official("HAL", "hal-india.co.in", "aerospace", "government_psu", "https://hal-india.co.in/careers"),
+    _official("NTPC", "ntpc.co.in", "energy", "government_psu", "https://careers.ntpc.co.in/"),
+    _official("ONGC", "ongcindia.com", "energy", "government_psu", "https://ongcindia.com/web/eng/career"),
+    _official("GAIL", "gailonline.com", "energy", "government_psu", "https://gailonline.com/CR-careers.html"),
+    _official("SAIL", "sail.co.in", "manufacturing", "government_psu", "https://www.sail.co.in/en/careers"),
+    _official("NALCO", "nalcoindia.com", "manufacturing", "government_psu", "https://nalcoindia.com/career/"),
+    _official("Power Grid Corporation of India", "powergrid.in", "energy", "government_psu", "https://www.powergrid.in/job-opportunities"),
+    _official("Indian Oil Corporation", "iocl.com", "energy", "government_psu", "https://iocl.com/latest-job-opening"),
+    _official("Coal India", "coalindia.in", "energy", "government_psu", "https://www.coalindia.in/career-cil/"),
+    _official("NPCIL", "npcilcareers.co.in", "energy", "government_psu", "https://www.npcilcareers.co.in/"),
+    _official("IIT Madras Research Park", "respark.iitm.ac.in", "research", "research_org", "https://respark.iitm.ac.in/careers"),
+    _official("C-DAC", "cdac.in", "research", "research_org", "https://www.cdac.in/index.aspx?id=ca_acts_Careers"),
+    _official("CSIR", "csir.res.in", "research", "research_org", "https://www.csir.res.in/career-opportunities"),
+    _official("TIFR", "tifr.res.in", "research", "research_org", "https://www.tifr.res.in/positions"),
+    _official("IISc Bangalore", "iisc.ac.in", "research", "research_org", "https://iisc.ac.in/careers/"),
+    _official("McKinsey", "mckinsey.com", "consulting", "consulting_analytics", "https://www.mckinsey.com/careers"),
+    _official("BCG", "bcg.com", "consulting", "consulting_analytics", "https://careers.bcg.com/"),
+    _official("Bain", "bain.com", "consulting", "consulting_analytics", "https://www.bain.com/careers/"),
+    _official("Goldman Sachs", "goldmansachs.com", "finance", "finance", "https://www.goldmansachs.com/careers/"),
+    _official("JPMorgan Chase", "jpmorganchase.com", "finance", "finance", "https://careers.jpmorgan.com/"),
+    _official("Morgan Stanley", "morganstanley.com", "finance", "finance", "https://www.morganstanley.com/careers"),
+    _official("American Express", "americanexpress.com", "finance", "finance", "https://www.americanexpress.com/en-us/careers/"),
+    _official("Deloitte", "deloitte.com", "consulting", "consulting_analytics", "https://www.deloitte.com/global/en/careers.html"),
+    _official("EY", "ey.com", "consulting", "consulting_analytics", "https://www.ey.com/en_in/careers"),
+    _official("PwC", "pwc.com", "consulting", "consulting_analytics", "https://www.pwc.com/gx/en/careers.html"),
+    _official("KPMG", "kpmg.com", "consulting", "consulting_analytics", "https://kpmg.com/xx/en/home/careers.html"),
+    _official("Mu Sigma", "mu-sigma.com", "analytics", "consulting_analytics", "https://www.mu-sigma.com/careers/"),
+    _official("Tata Motors", "tatamotors.com", "automotive", "automotive_manufacturing", "https://careers.tatamotors.com/"),
+    _official("Mahindra", "mahindra.com", "manufacturing", "automotive_manufacturing", "https://jobs.mahindracareers.com/"),
+    _official("Maruti Suzuki", "marutisuzuki.com", "automotive", "automotive_manufacturing", "https://www.marutisuzuki.com/corporate/careers"),
+    _official("Ashok Leyland", "ashokleyland.com", "automotive", "automotive_manufacturing", "https://www.ashokleyland.com/careers"),
+    _official("Mercedes-Benz", "mercedes-benz.com", "automotive", "automotive_manufacturing", "https://group.mercedes-benz.com/careers/"),
+    _official("Bosch India", "bosch.in", "automotive", "automotive_manufacturing", "https://www.bosch.in/careers/"),
+    _official("Siemens", "siemens.com", "engineering", "automotive_manufacturing", "https://www.siemens.com/global/en/company/jobs.html"),
+    _official("Schneider Electric", "se.com", "engineering", "automotive_manufacturing", "https://www.se.com/ww/en/about-us/careers/overview.jsp"),
+    _official("Airbus", "airbus.com", "aerospace", "aerospace_aviation", "https://www.airbus.com/en/careers"),
+    _official("Boeing", "boeing.com", "aerospace", "aerospace_aviation", "https://jobs.boeing.com/"),
+    _official("Rolls-Royce", "rolls-royce.com", "aerospace", "aerospace_aviation", "https://careers.rolls-royce.com/"),
+    _official("GE Aerospace", "gecareers.com", "aerospace", "aerospace_aviation", "https://jobs.gecareers.com/"),
+    _official("Reliance Industries", "ril.com", "energy", "energy_infrastructure", "https://careers.ril.com/"),
+    _official("Adani Group", "adani.com", "infrastructure", "energy_infrastructure", "https://careers.adani.com/"),
+    _official("Larsen & Toubro", "larsentoubro.com", "engineering", "energy_infrastructure", "https://careers.larsentoubro.com/"),
+    _official("Fractal Analytics", "fractal.ai", "analytics", "analytics_data_science", "https://fractal.ai/careers/"),
+    _official("Tiger Analytics", "tigeranalytics.com", "analytics", "analytics_data_science", "https://www.tigeranalytics.com/careers/"),
+    _official("EXL", "exlservice.com", "analytics", "analytics_data_science", "https://www.exlservice.com/careers"),
+    _official("ZS", "zs.com", "consulting analytics", "analytics_data_science", "https://www.zs.com/careers"),
+    _official("HSBC", "hsbc.com", "finance", "banking_financial_services", "https://www.hsbc.com/careers"),
+    _official("Citi", "citi.com", "finance", "banking_financial_services", "https://jobs.citi.com/"),
+    _official("Deutsche Bank", "db.com", "finance", "banking_financial_services", "https://careers.db.com/"),
+    _official("Wells Fargo", "wellsfargo.com", "finance", "banking_financial_services", "https://www.wellsfargojobs.com/"),
+    _official("Mastercard", "mastercard.com", "fintech", "banking_financial_services", "https://careers.mastercard.com/"),
+    _official("Visa", "visa.com", "fintech", "banking_financial_services", "https://corporate.visa.com/en/careers.html"),
+    _official("Hindustan Unilever", "unilever.com", "consumer goods", "fmcg", "https://careers.unilever.com/"),
+    _official("Procter & Gamble", "pgcareers.com", "consumer goods", "fmcg", "https://www.pgcareers.com/"),
+    _official("Nestle", "nestle.com", "consumer goods", "fmcg", "https://www.nestle.com/jobs"),
+    _official("ITC", "itcportal.com", "consumer goods", "fmcg", "https://www.itcportal.com/careers/"),
+    _official("Coca-Cola", "coca-colacompany.com", "consumer goods", "fmcg", "https://www.coca-colacompany.com/careers"),
+    _official("PepsiCo", "pepsicojobs.com", "consumer goods", "fmcg", "https://www.pepsicojobs.com/"),
+    _official("Juspay", "juspay.in", "fintech", "hidden_gems", "https://juspay.in/careers"),
+    _official("Zoho", "zoho.com", "saas", "hidden_gems", "https://www.zoho.com/careers/"),
+    _official("Postman", "postman.com", "saas", "hidden_gems", "https://www.postman.com/company/careers/"),
+    _official("BrowserStack", "browserstack.com", "saas", "hidden_gems", "https://www.browserstack.com/careers"),
+    _official("ShareChat", "sharechat.com", "consumer internet", "hidden_gems", "https://sharechat.com/careers"),
+    _official("Unacademy", "unacademy.com", "edtech", "hidden_gems", "https://careers.unacademy.com/"),
+    _official("Navi", "navi.com", "fintech", "hidden_gems", "https://navi.com/careers"),
+]
 
 
 RAW_SEEDS: list[dict[str, Any]] = [
@@ -95,6 +268,9 @@ RAW_SEEDS: list[dict[str, Any]] = [
     _seed("Amazon", "amazon.jobs", "technology", "enterprise", careers_url="https://www.amazon.jobs/en/"),
     _seed("Meta", "metacareers.com", "technology", "enterprise", careers_url="https://www.metacareers.com/"),
     _seed("Apple", "apple.com", "technology", "enterprise", careers_url="https://jobs.apple.com/"),
+    _seed("Cisco", "cisco.com", "networking", "enterprise", careers_url="https://jobs.cisco.com/"),
+    _seed("ServiceNow", "servicenow.com", "saas", "enterprise", careers_url="https://careers.servicenow.com/"),
+    _seed("NVIDIA", "nvidia.com", "ai", "enterprise", careers_url="https://www.nvidia.com/en-us/about-nvidia/careers/"),
     _seed("Adobe", "adobe.com", "technology", "enterprise", careers_url="https://careers.adobe.com/"),
     _seed("Salesforce", "salesforce.com", "saas", "enterprise", careers_url="https://www.salesforce.com/company/careers/"),
     _seed("SAP", "sap.com", "enterprise software", "enterprise", careers_url="https://jobs.sap.com/"),
@@ -250,15 +426,15 @@ RAW_SEEDS: list[dict[str, Any]] = [
 def initial_company_seeds() -> list[dict[str, Any]]:
     seen: set[str] = set()
     rows: list[dict[str, Any]] = []
-    for item in RAW_SEEDS:
-        domain = str(item["domain"]).lower().removeprefix("www.")
+    for item in [*OFFICIAL_INTERNSHIP_WATCHLIST, *RAW_SEEDS]:
+        domain = str(item["domain"]).strip().lower().removeprefix("www.")
         if domain in seen:
             continue
         seen.add(domain)
-        item["domain"] = domain
-        rows.append(item)
-        if len(rows) >= 200:
-            break
+        normalized = dict(item)
+        normalized["domain"] = domain
+        normalized["careers_url"] = _clean_url(normalized.get("careers_url"))
+        rows.append(normalized)
     return rows
 
 
@@ -266,10 +442,24 @@ async def bootstrap_company_seeds() -> dict[str, int]:
     client = AsyncIOMotorClient(settings.MONGODB_URL)
     await init_beanie(database=client[settings.MONGODB_DB_NAME], document_models=[CompanySeed])
     inserted = 0
+    updated = 0
     skipped = 0
     for payload in initial_company_seeds():
-        if await CompanySeed.find_one(CompanySeed.domain == payload["domain"]):
-            skipped += 1
+        existing = await CompanySeed.find_one(CompanySeed.domain == payload["domain"])
+        if existing:
+            changed = False
+            for key, value in payload.items():
+                if key == "added_by":
+                    continue
+                if getattr(existing, key, None) != value:
+                    setattr(existing, key, value)
+                    changed = True
+            if changed:
+                existing.updated_at = utc_now()
+                await existing.save()
+                updated += 1
+            else:
+                skipped += 1
             continue
         try:
             await CompanySeed(**payload).insert()
@@ -277,7 +467,7 @@ async def bootstrap_company_seeds() -> dict[str, int]:
         except DuplicateKeyError:
             skipped += 1
     client.close()
-    return {"inserted": inserted, "skipped": skipped, "total": inserted + skipped}
+    return {"inserted": inserted, "updated": updated, "skipped": skipped, "total": inserted + updated + skipped}
 
 
 if __name__ == "__main__":

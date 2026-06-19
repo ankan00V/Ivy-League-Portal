@@ -61,6 +61,11 @@ class SeedCreateRequest(BaseModel):
     company_size: str = "mid"
     india_presence: bool = True
     student_friendly: bool = True
+    priority_tier: Optional[str] = None
+    source_category: Optional[str] = None
+    check_cadence_hours: int = Field(default=168, ge=1, le=2160)
+    target_roles: list[str] = Field(default_factory=lambda: ["internship", "0-1 years", "early career"])
+    notes: Optional[str] = None
 
 
 def _json_doc(row: Any) -> dict[str, Any]:
@@ -495,6 +500,15 @@ async def bulk_seed_import(
                 company_size=str(row.get("company_size") or "mid"),
                 india_presence=str(row.get("india_presence") or "true").lower() != "false",
                 student_friendly=str(row.get("student_friendly") or "true").lower() != "false",
+                priority_tier=str(row.get("priority_tier") or "").strip() or None,
+                source_category=str(row.get("source_category") or "").strip() or None,
+                check_cadence_hours=int(row.get("check_cadence_hours") or 168),
+                target_roles=[
+                    item.strip()
+                    for item in str(row.get("target_roles") or "internship,0-1 years,early career").split(",")
+                    if item.strip()
+                ],
+                notes=str(row.get("notes") or "").strip() or None,
                 added_by=str(current_user.id),
             )
             await seed.insert()

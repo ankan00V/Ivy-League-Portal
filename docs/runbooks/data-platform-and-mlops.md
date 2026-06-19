@@ -6,7 +6,7 @@
    - MongoDB Atlas for OLTP (`MONGODB_URL` must not point at localhost).
    - Managed Redis or Upstash for cache, rate limits, and online features.
    - Managed ClickHouse or a production ClickHouse cluster for marts.
-   - S3 or MinIO with bucket versioning for model artifacts.
+   - S3-compatible managed object storage with bucket versioning for model artifacts.
    - Prometheus, Alertmanager, and Grafana with live delivery configured.
 2. Local compose remains for development only:
    - `mongo`
@@ -34,7 +34,7 @@
    - ClickHouse production settings are missing while warehouse export is enabled
    - embedding service is degraded and policy forbids fallback
    - MongoDB or Redis points at localhost
-   - model artifact S3/MinIO credentials are absent
+   - model artifact storage credentials are absent
    - LLM, OAuth, SMTP, or alert delivery secrets are absent
 5. Before release, run:
    - `python backend/scripts/check_release_contracts.py`
@@ -63,8 +63,7 @@
    - `GET /api/v1/analytics/warehouse/marts/{mart_name}`
 6. BI surfaces:
    - Grafana provisions `ops/grafana/vidyaverse-production-overview.json` with `ops/grafana/provisioning`
-   - Metabase is included in production compose for ClickHouse marts
-   - Managed Superset/Metabase can point at the same ClickHouse database and required `mart_*` tables
+   - Managed Superset, Metabase, or another BI surface can point at the same ClickHouse database and required `mart_*` tables
 
 ## Model Artifact Registry
 

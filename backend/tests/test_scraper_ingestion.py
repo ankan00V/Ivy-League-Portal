@@ -15,6 +15,8 @@ from app.services.scraper import (
     _extract_stipend,
     _extract_work_mode,
     _parse_datetime,
+    is_valid_apply_url,
+    is_early_career_opportunity,
     is_opportunity_active,
 )
 from app.core.time import utc_now
@@ -64,6 +66,13 @@ class TestScraperIngestionHelpers(unittest.TestCase):
         deduped = _dedupe_by_url(rows)
         self.assertEqual(len(deduped), 2)
         self.assertEqual(deduped[0]["title"], "One")
+
+    def test_valid_apply_url_rejects_non_http_destinations(self) -> None:
+        self.assertTrue(is_valid_apply_url("https://example.com/apply"))
+        self.assertTrue(is_valid_apply_url("http://example.com/apply"))
+        self.assertFalse(is_valid_apply_url("mailto:internship@example.com"))
+        self.assertFalse(is_valid_apply_url("javascript:alert(1)"))
+        self.assertFalse(is_valid_apply_url(""))
 
     def test_dedupe_by_url_normalizes_tracking_params_and_canonical_keys(self) -> None:
         rows = [
@@ -115,6 +124,46 @@ class TestScraperIngestionHelpers(unittest.TestCase):
         expired = is_opportunity_active(DummyOpportunity(deadline=now - timedelta(days=1)), now=now)
         self.assertTrue(active)
         self.assertFalse(expired)
+
+    def test_early_career_gate_allows_internships_and_zero_to_one_year_jobs(self) -> None:
+        self.assertTrue(
+            is_early_career_opportunity(
+                {
+                    "title": "Machine Learning Internship",
+                    "description": "Student internship building recommendation systems.",
+                    "opportunity_type": "Internship",
+                }
+            )
+        )
+        self.assertTrue(
+            is_early_career_opportunity(
+                {
+                    "title": "Junior Data Analyst",
+                    "description": "Entry-level opening for candidates with 0-1 years of experience.",
+                    "opportunity_type": "Job",
+                }
+            )
+        )
+
+    def test_early_career_gate_rejects_senior_and_two_plus_year_jobs(self) -> None:
+        self.assertFalse(
+            is_early_career_opportunity(
+                {
+                    "title": "Senior Backend Engineer",
+                    "description": "Requires 5+ years of production experience.",
+                    "opportunity_type": "Job",
+                }
+            )
+        )
+        self.assertFalse(
+            is_early_career_opportunity(
+                {
+                    "title": "Software Engineer",
+                    "description": "Minimum 2 years of experience required.",
+                    "opportunity_type": "Job",
+                }
+            )
+        )
 
     def test_greenhouse_scraper_parses_public_jobs_api(self) -> None:
         session = DummySession(
@@ -177,6 +226,19 @@ class TestScraperIngestionHelpers(unittest.TestCase):
             }
         )
         self.assertEqual(assessment.trust_status, TRUST_STATUS_VERIFIED)
+
+    def test_assess_opportunity_trust_verifies_long_tail_platform_source_match(self) -> None:
+        assessment = assess_opportunity_trust(
+            {
+                "title": "Research Internship",
+                "description": "Official research internship listing with eligibility, role details, and application instructions for students.",
+                "url": "https://www.zintellect.com/Opportunity/Details/example",
+                "source": "zintellect",
+                "university": "Zintellect",
+            }
+        )
+        self.assertEqual(assessment.trust_status, TRUST_STATUS_VERIFIED)
+        self.assertIn("allowlisted platform", " ".join(assessment.verification_evidence))
         self.assertLess(assessment.risk_score, 45)
 
     def test_assess_opportunity_trust_verifies_greenhouse_source(self) -> None:

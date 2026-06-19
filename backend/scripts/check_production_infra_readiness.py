@@ -5,6 +5,7 @@ import asyncio
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -62,14 +63,21 @@ async def _check_mongo(*, require_managed: bool) -> dict[str, Any]:
         return _status("mongo", False, "MONGODB_URL is empty")
     if require_managed and _is_local_url(url, schemes=("mongodb", "mongodb+srv")):
         return _status("mongo", False, "MONGODB_URL points at local/dev infrastructure")
-    client = AsyncIOMotorClient(url, serverSelectionTimeoutMS=8000, **_mongo_client_kwargs())
-    try:
-        await client.admin.command("ping")
-        return _status("mongo", True, "ping ok", {"db": settings.MONGODB_DB_NAME})
-    except Exception as exc:
-        return _status("mongo", False, f"ping failed: {exc.__class__.__name__}: {exc}")
-    finally:
-        client.close()
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        client = AsyncIOMotorClient(url, serverSelectionTimeoutMS=8000, **_mongo_client_kwargs())
+        try:
+            await client.admin.command("ping")
+            detail = "ping ok" if attempt == 0 else f"ping ok after retry {attempt}"
+            return _status("mongo", True, detail, {"db": settings.MONGODB_DB_NAME})
+        except Exception as exc:
+            last_exc = exc
+            if attempt < 2:
+                await asyncio.sleep(1.5 * (attempt + 1))
+        finally:
+            client.close()
+    assert last_exc is not None
+    return _status("mongo", False, f"ping failed: {last_exc.__class__.__name__}: {last_exc}")
 
 
 async def _check_redis(*, require_managed: bool) -> dict[str, Any]:
@@ -99,23 +107,30 @@ def _check_clickhouse(*, require_managed: bool) -> dict[str, Any]:
         return _status("clickhouse", False, "ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST is empty")
     if require_managed and host.lower() in {"localhost", "127.0.0.1", "::1", "clickhouse"}:
         return _status("clickhouse", False, "ClickHouse host points at local/dev infrastructure")
-    try:
+    last_exc: Exception | None = None
+    for attempt in range(3):
         import clickhouse_connect  # type: ignore
 
-        client = clickhouse_connect.get_client(
-            host=host,
-            port=int(settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_PORT),
-            username=settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME or "default",
-            password=settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD or "",
-            database=settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_DATABASE,
-            secure=bool(settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_SECURE),
-            connect_timeout=8,
-            send_receive_timeout=8,
-        )
-        value = client.query("SELECT 1").first_row[0]
-        return _status("clickhouse", value == 1, "SELECT 1 ok", {"database": settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_DATABASE})
-    except Exception as exc:
-        return _status("clickhouse", False, f"query failed: {exc.__class__.__name__}: {exc}")
+        try:
+            client = clickhouse_connect.get_client(
+                host=host,
+                port=int(settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_PORT),
+                username=settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME or "default",
+                password=settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD or "",
+                database=settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_DATABASE,
+                secure=bool(settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_SECURE),
+                connect_timeout=20,
+                send_receive_timeout=20,
+            )
+            value = client.query("SELECT 1").first_row[0]
+            detail = "SELECT 1 ok" if attempt == 0 else f"SELECT 1 ok after retry {attempt}"
+            return _status("clickhouse", value == 1, detail, {"database": settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_DATABASE})
+        except Exception as exc:
+            last_exc = exc
+            if attempt < 2:
+                time.sleep(1.5 * (attempt + 1))
+    assert last_exc is not None
+    return _status("clickhouse", False, f"query failed: {last_exc.__class__.__name__}: {last_exc}")
 
 
 def _artifact_bucket_key() -> tuple[str | None, str | None]:
@@ -158,10 +173,12 @@ def _check_artifact_store(*, require_managed: bool) -> dict[str, Any]:
         return _status("artifact_store", False, f"S3 check failed: {exc.__class__.__name__}: {exc}", {"bucket": bucket, "key": key})
 
 
-def _check_bi_tool() -> dict[str, Any]:
+def _check_bi_tool(*, require_managed: bool) -> dict[str, Any]:
     url = analytics_bi_tool_url()
     if not url:
         return _status("bi_tool", False, "ANALYTICS_BI_TOOL_URL is empty")
+    if require_managed and _is_local_url(url, schemes=("http", "https")):
+        return _status("bi_tool", False, "BI URL points at local/dev infrastructure")
     try:
         import urllib.request
 
@@ -181,7 +198,7 @@ async def _run(*, require_managed: bool, include_bi: bool) -> dict[str, Any]:
         _check_artifact_store(require_managed=require_managed),
     ]
     if include_bi:
-        checks.append(_check_bi_tool())
+        checks.append(_check_bi_tool(require_managed=require_managed))
     return {
         "generated_at": utc_now().isoformat(),
         "require_managed": bool(require_managed),

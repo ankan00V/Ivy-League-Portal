@@ -183,6 +183,42 @@ const GENDER_OPTIONS = ["Male", "Female", "Non-binary", "Prefer not to say"];
 const OTHER_UNIVERSITY_VALUE = "__other__";
 const UNIVERSITY_OPTION_VALUES = new Set<string>(INDIAN_INSTITUTION_OPTIONS.map((item) => item.label));
 const UNIVERSITY_OPTIONS = Array.from(UNIVERSITY_OPTION_VALUES);
+const UNIVERSITY_OPTION_BY_UPPERCASE = new Map<string, string>(
+  UNIVERSITY_OPTIONS.map((item) => [item.toLocaleUpperCase("en-IN"), item]),
+);
+
+const UPPERCASE_TEXT_FIELDS = new Set<keyof ProfilePayload>([
+  "first_name",
+  "last_name",
+  "domain",
+  "course",
+  "course_specialization",
+  "current_job_role",
+  "total_work_experience",
+  "experience_summary",
+  "college_name",
+  "company_name",
+  "company_size",
+  "company_description",
+  "preferred_roles",
+  "preferred_locations",
+  "bio",
+  "skills",
+  "interests",
+  "achievements",
+  "education",
+  "certificates",
+  "projects",
+  "responsibilities",
+  "gender",
+  "pronouns",
+  "current_address_line1",
+  "current_address_landmark",
+  "current_address_region",
+  "permanent_address_line1",
+  "permanent_address_landmark",
+  "permanent_address_region",
+]);
 
 const SOCIAL_LINK_FIELDS: Array<{ key: string; label: string; placeholder: string }> = [
   { key: "linkedin", label: "LinkedIn", placeholder: "https://linkedin.com/in/username" },
@@ -213,6 +249,25 @@ const SECTION_ITEMS: SectionMeta[] = [
 
 function toText(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function uppercaseProfileText(value: string): string {
+  return value.toLocaleUpperCase("en-IN");
+}
+
+function normalizeProfileValue<K extends keyof ProfilePayload>(field: K, value: ProfilePayload[K]): ProfilePayload[K] {
+  if (typeof value === "string" && UPPERCASE_TEXT_FIELDS.has(field)) {
+    return uppercaseProfileText(value) as ProfilePayload[K];
+  }
+  return value;
+}
+
+function findKnownUniversityOption(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  return UNIVERSITY_OPTION_BY_UPPERCASE.get(trimmed.toLocaleUpperCase("en-IN")) ?? null;
 }
 
 function toNullableNumber(value: unknown): number | null {
@@ -422,7 +477,7 @@ function deriveUniversitySelection(value: string): string {
   if (!trimmed) {
     return "";
   }
-  return UNIVERSITY_OPTION_VALUES.has(trimmed) ? trimmed : OTHER_UNIVERSITY_VALUE;
+  return findKnownUniversityOption(trimmed) ?? OTHER_UNIVERSITY_VALUE;
 }
 
 function getCollegeNameFromProfile(profile: ProfilePayload): string {
@@ -558,8 +613,9 @@ export default function ProfilePage() {
   });
 
   const updateProfile = <K extends keyof ProfilePayload>(field: K, value: ProfilePayload[K]) => {
+    const normalizedValue = normalizeProfileValue(field, value);
     setProfile((prev) => {
-      const nextProfile = { ...prev, [field]: value };
+      const nextProfile = { ...prev, [field]: normalizedValue };
       if (!copyCurrentAddress) {
         return nextProfile;
       }
@@ -571,7 +627,7 @@ export default function ProfilePage() {
 
       return {
         ...nextProfile,
-        [mirroredField]: value,
+        [mirroredField]: normalizeProfileValue(mirroredField, normalizedValue as ProfilePayload[typeof mirroredField]),
       };
     });
   };
@@ -602,9 +658,10 @@ export default function ProfilePage() {
     if (!cleaned) {
       return;
     }
-    const exists = profile.hobbies.some((item) => item.toLowerCase() === cleaned.toLowerCase());
+    const normalized = uppercaseProfileText(cleaned);
+    const exists = profile.hobbies.some((item) => item.toLowerCase() === normalized.toLowerCase());
     if (!exists) {
-      updateProfile("hobbies", [...profile.hobbies, cleaned]);
+      updateProfile("hobbies", [...profile.hobbies, normalized]);
     }
     setHobbyInput("");
   };
@@ -695,7 +752,7 @@ export default function ProfilePage() {
           const selected = event.target.value;
           setSelectedUniversity(selected);
           if (selected === OTHER_UNIVERSITY_VALUE) {
-            if (UNIVERSITY_OPTION_VALUES.has(profile.college_name)) {
+            if (findKnownUniversityOption(profile.college_name)) {
               updateProfile("college_name", "");
             }
             return;

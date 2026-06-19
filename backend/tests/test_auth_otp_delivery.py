@@ -1,6 +1,7 @@
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from fastapi import HTTPException
@@ -13,6 +14,43 @@ from app.api.api_v1.endpoints import auth
 
 
 class TestOtpDeliveryBehavior(unittest.IsolatedAsyncioTestCase):
+    async def test_verify_otp_issues_session_with_fastapi_request_context(self) -> None:
+        payload = auth.OTPVerifyRequest(
+            email="student@example.com",
+            otp="123456",
+            purpose="signin",
+            account_type="candidate",
+        )
+        http_request = SimpleNamespace(
+            client=SimpleNamespace(host="127.0.0.1"),
+            headers={"user-agent": "pytest"},
+        )
+        user = SimpleNamespace(
+            id="user-id",
+            email="student@example.com",
+            username="student",
+            account_type="candidate",
+            hashed_password="hashed-password",
+            is_active=True,
+            is_admin=False,
+        )
+        unlocked = SimpleNamespace(locked=False)
+
+        with (
+            patch.object(auth.auth_security_service, "check_lock", new=AsyncMock(return_value=unlocked)),
+            patch.object(auth.auth_security_service, "record_success", new=AsyncMock()),
+            patch.object(auth.auth_security_service, "audit_event", new=AsyncMock()),
+            patch.object(auth, "_validate_user_for_purpose", new=AsyncMock(return_value=user)),
+            patch.object(auth, "validate_otp", new=AsyncMock(return_value=True)),
+            patch.object(auth, "delete_otp", new=AsyncMock()),
+            patch.object(auth, "_issue_user_session_token", new=AsyncMock(return_value="session-token")) as issue_token,
+        ):
+            response = await auth.verify_otp(payload=payload, http_request=http_request)
+
+        self.assertEqual(response["access_token"], "session-token")
+        issue_token.assert_awaited_once()
+        self.assertIs(issue_token.await_args.kwargs["request"], http_request)
+
     async def test_local_smtp_failure_returns_debug_otp_when_fallback_enabled(self) -> None:
         request = auth.OTPSendRequest(
             email="student@example.com",

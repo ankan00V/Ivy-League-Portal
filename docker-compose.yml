@@ -2,7 +2,7 @@ services:
   mongo:
     image: mongo:7.0
     restart: unless-stopped
-    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--auth"]
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--auth", "--keyFile", "/etc/mongo-keyfile"]
     environment:
       MONGO_INITDB_DATABASE: ${MONGODB_DB_NAME:-vidyaverse}
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:-vidyaverse}
@@ -20,6 +20,9 @@ services:
     volumes:
       - mongo_data:/data/db
       - mongo_config:/data/configdb
+      - ./.local-runtime/mongo-keyfile:/etc/mongo-keyfile:ro
+    ports:
+      - "${MONGO_HOST_PORT:-27018}:27017"
 
   redis:
     image: redis:7.2-alpine

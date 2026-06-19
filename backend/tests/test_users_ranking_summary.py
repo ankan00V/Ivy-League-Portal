@@ -133,6 +133,23 @@ class TestUserRankingSummary(unittest.TestCase):
         payload = users_endpoint.ProfileUpdate(user_type="educator")
         self.assertEqual(payload.user_type, "professional")
 
+    def test_profile_update_uppercases_user_entered_text_except_urls(self) -> None:
+        payload = users_endpoint.ProfileUpdate(
+            first_name="ankan",
+            last_name="ghosh",
+            course="b.tech cse",
+            college_name="lovely professional university",
+            company_website="https://example.com/careers",
+            preferred_locations="bangalore, remote",
+        )
+
+        self.assertEqual(payload.first_name, "ANKAN")
+        self.assertEqual(payload.last_name, "GHOSH")
+        self.assertEqual(payload.course, "B.TECH CSE")
+        self.assertEqual(payload.college_name, "LOVELY PROFESSIONAL UNIVERSITY")
+        self.assertEqual(payload.preferred_locations, "BANGALORE, REMOTE")
+        self.assertEqual(payload.company_website, "https://example.com/careers")
+
     def test_profile_strength_includes_missing_signal_details(self) -> None:
         profile = SimpleNamespace(
             account_type="candidate",

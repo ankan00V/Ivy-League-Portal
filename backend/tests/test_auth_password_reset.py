@@ -98,6 +98,7 @@ class TestForgotPasswordFlow(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(auth_endpoint.settings, "TURNSTILE_ENABLED", True),
+            patch.object(auth_endpoint.settings, "OTP_ALLOW_DEBUG_FALLBACK", False),
             patch.object(auth_endpoint, "_turnstile_is_verified", return_value=True) as verify_turnstile,
             patch.object(auth_endpoint.settings, "OTP_SEND_COOLDOWN_SECONDS", 60),
             patch.object(auth_endpoint.secrets, "randbelow", return_value=123456),

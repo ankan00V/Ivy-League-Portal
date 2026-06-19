@@ -96,10 +96,10 @@ test("Profile editing and university selection persist", async ({ page }) => {
 
   const firstNameInput = page.getByPlaceholder("First name");
   await expect(firstNameInput).toBeVisible();
-  await firstNameInput.fill("Edited");
-  await expect(firstNameInput).toHaveValue("Edited");
+  await firstNameInput.fill("edited");
+  await expect(firstNameInput).toHaveValue("EDITED");
   await page.waitForTimeout(400);
-  await expect(firstNameInput).toHaveValue("Edited");
+  await expect(firstNameInput).toHaveValue("EDITED");
 
   const universitySelect = page.locator('.profile-field:has-text("College / University") select').first();
   await expect(universitySelect).toBeVisible();
@@ -119,7 +119,7 @@ test("Profile editing and university selection persist", async ({ page }) => {
 
   await page.getByRole("button", { name: /^Save$/ }).click();
 
-  await expect.poll(() => lastSavedPayload?.first_name).toBe("Edited");
-  await expect.poll(() => lastSavedPayload?.college_name).toBe(selectableUniversityValue);
+  await expect.poll(() => lastSavedPayload?.first_name).toBe("EDITED");
+  await expect.poll(() => lastSavedPayload?.college_name).toBe(selectableUniversityValue.toLocaleUpperCase("en-IN"));
   await expect(page.getByText("Profile updated successfully.")).toBeVisible();
 });

@@ -9,10 +9,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import certifi
-from beanie import init_beanie
-from motor.motor_asyncio import AsyncIOMotorClient
-
 os.environ.setdefault("EMBEDDING_PROVIDER", "hash")
 os.environ.setdefault("OPENAI_API_KEY", "")
 
@@ -21,30 +17,11 @@ REPO_ROOT = BACKEND_ROOT.parent
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from app.core.config import settings
-from app.models.duplicate_merge_event import DuplicateMergeEvent
-from app.models.opportunity import Opportunity
-from app.models.scraper_run_log import ScraperRunLog
+from app.bootstrap import init_database
 from app.services.duplicate_detector import duplicate_detector
 from app.services.embedding_pipeline import embedding_pipeline
 from app.services.opportunity_quality_service import opportunity_quality_scorer
 from app.services.scraper import run_scheduled_scrapers
-
-
-def _mongo_client_kwargs() -> dict[str, Any]:
-    url = (settings.MONGODB_URL or "").strip().lower()
-    if settings.MONGODB_TLS_FORCE or settings.ENVIRONMENT.strip().lower() == "production" or url.startswith("mongodb+srv://"):
-        return {"tls": True, "tlsCAFile": certifi.where(), "tlsAllowInvalidCertificates": bool(settings.MONGODB_TLS_ALLOW_INVALID_CERTS)}
-    return {}
-
-
-async def _init_db() -> AsyncIOMotorClient:
-    client = AsyncIOMotorClient(settings.MONGODB_URL, **_mongo_client_kwargs())
-    await init_beanie(
-        database=client[settings.MONGODB_DB_NAME],
-        document_models=[Opportunity, DuplicateMergeEvent, ScraperRunLog],
-    )
-    return client
 
 
 def _source_summary(report: dict[str, Any]) -> dict[str, int]:
@@ -57,7 +34,7 @@ def _source_summary(report: dict[str, Any]) -> dict[str, int]:
 
 
 async def _run(args: argparse.Namespace) -> dict[str, Any]:
-    client = await _init_db()
+    client = await init_database()
     try:
         scraper_report = await run_scheduled_scrapers(force=True)
         quality_report = await opportunity_quality_scorer.run_quality_pipeline(stale_days=0, limit=int(args.quality_limit or 10_000))

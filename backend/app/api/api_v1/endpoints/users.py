@@ -30,6 +30,40 @@ RESUME_REQUIRED_USER_TYPES = {"college_student", "fresher", "professional"}
 ALLOWED_RESUME_EXTENSIONS = {".txt", ".pdf", ".docx", ".doc"}
 RESUME_STORAGE_RELATIVE_DIR = Path("storage") / "resumes"
 RESUME_MAX_FILE_SIZE_MB = 8
+UPPERCASE_PROFILE_TEXT_FIELDS = {
+    "first_name",
+    "last_name",
+    "domain",
+    "course",
+    "course_specialization",
+    "current_job_role",
+    "total_work_experience",
+    "experience_summary",
+    "college_name",
+    "company_name",
+    "company_size",
+    "company_description",
+    "preferred_roles",
+    "preferred_locations",
+    "preferred_work_mode",
+    "expected_stipend_range",
+    "bio",
+    "skills",
+    "interests",
+    "achievements",
+    "education",
+    "certificates",
+    "projects",
+    "responsibilities",
+    "gender",
+    "pronouns",
+    "current_address_line1",
+    "current_address_landmark",
+    "current_address_region",
+    "permanent_address_line1",
+    "permanent_address_landmark",
+    "permanent_address_region",
+}
 
 PROFILE_SIGNAL_METADATA: dict[str, tuple[str, str]] = {
     "first_name": ("First Name", "Add your first name."),
@@ -141,6 +175,14 @@ class ProfileUpdate(BaseModel):
     resume_filename: Optional[str] = None
     resume_content_type: Optional[str] = None
     resume_uploaded_at: Optional[datetime] = None
+
+    @field_validator(*UPPERCASE_PROFILE_TEXT_FIELDS, mode="before", check_fields=False)
+    @classmethod
+    def normalize_uppercase_profile_text(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text.upper() or None
 
     @field_validator("resume_url", "resume_filename", "resume_content_type", mode="before")
     @classmethod

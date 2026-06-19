@@ -33,7 +33,7 @@ def _post_json(*, url: str, payload: dict[str, Any], timeout: float) -> dict[str
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Send a synthetic Slack + PagerDuty alert and acknowledge it.")
+    parser = argparse.ArgumentParser(description="Send a synthetic Slack alert delivery check.")
     parser.add_argument(
         "--json-out",
         type=str,
@@ -42,12 +42,9 @@ def main() -> int:
     args = parser.parse_args()
 
     slack_webhook_url = str(settings.MLOPS_ALERT_SLACK_WEBHOOK_URL or "").strip()
-    pagerduty_routing_key = str(settings.MLOPS_ALERT_PAGERDUTY_ROUTING_KEY or "").strip()
     timeout = max(1.0, float(settings.MLOPS_ALERT_WEBHOOK_TIMEOUT_SECONDS))
     if not slack_webhook_url:
         raise RuntimeError("MLOPS_ALERT_SLACK_WEBHOOK_URL is required for synthetic alert delivery checks.")
-    if not pagerduty_routing_key:
-        raise RuntimeError("MLOPS_ALERT_PAGERDUTY_ROUTING_KEY is required for synthetic alert delivery checks.")
 
     test_id = f"synthetic-{uuid.uuid4().hex[:12]}"
     occurred_at = utc_now().isoformat()
@@ -64,46 +61,10 @@ def main() -> int:
             }
         ],
     }
-    pagerduty_base = {
-        "routing_key": pagerduty_routing_key,
-        "dedup_key": test_id,
-        "payload": {
-            "summary": f"VidyaVerse synthetic alert delivery check {test_id}",
-            "source": "vidyaverse-ops-synthetic",
-            "severity": "info",
-            "timestamp": occurred_at,
-            "component": "ops",
-            "group": "synthetic",
-            "class": "alert_delivery_check",
-            "custom_details": {
-                "check": "synthetic_alert_delivery",
-                "test_id": test_id,
-                "occurred_at": occurred_at,
-            },
-        },
-    }
-
     result = {
         "generated_at": occurred_at,
         "test_id": test_id,
         "slack": _post_json(url=slack_webhook_url, payload=slack_payload, timeout=timeout),
-        "pagerduty": {
-            "trigger": _post_json(
-                url="https://events.pagerduty.com/v2/enqueue",
-                payload={**pagerduty_base, "event_action": "trigger"},
-                timeout=timeout,
-            ),
-            "acknowledge": _post_json(
-                url="https://events.pagerduty.com/v2/enqueue",
-                payload={**pagerduty_base, "event_action": "acknowledge"},
-                timeout=timeout,
-            ),
-            "resolve": _post_json(
-                url="https://events.pagerduty.com/v2/enqueue",
-                payload={**pagerduty_base, "event_action": "resolve"},
-                timeout=timeout,
-            ),
-        },
     }
 
     json_path = Path(args.json_out)

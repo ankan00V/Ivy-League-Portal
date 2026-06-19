@@ -15,7 +15,7 @@ RUN apt-get update \
 
 # Install python dependencies
 COPY requirements.txt .
-RUN pip wheel --no-cache-dir --no-deps --wheel-dir /app/wheels -r requirements.txt
+RUN pip install --no-cache-dir --user -r requirements.txt
 
 #########
 # FINAL #
@@ -40,10 +40,9 @@ RUN apt-get update \
     && apt-get install -y libpq-dev \
     && apt-get clean
 
-# Install dependencies built in the builder stage
-COPY --from=builder /app/wheels /wheels
-COPY --from=builder /app/requirements.txt .
-RUN pip install --no-cache /wheels/*
+# Copy Python packages from builder
+COPY --from=builder /root/.local /root/.local
+ENV PATH=/root/.local/bin:$PATH
 
 # Install gunicorn for production usage
 RUN pip install gunicorn uvicorn[standard]
