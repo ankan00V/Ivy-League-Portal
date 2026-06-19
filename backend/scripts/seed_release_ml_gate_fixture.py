@@ -83,30 +83,63 @@ async def _seed_users_and_opportunities(*, days: int) -> tuple[list[User], list[
         )
 
     opportunities: list[Opportunity] = []
+    
+    # Define persona-aligned opportunity templates for better quality gate coverage
+    opportunity_templates = [
+        # AI/ML opportunities (25% of dataset)
+        {"title": "Machine Learning Research Intern", "desc": "Work on ML models, ranking systems, and NLP research.", "domain": "research", "type": "internship"},
+        {"title": "AI/ML Engineering Internship", "desc": "Build machine learning pipelines, data science tools, and recommender systems.", "domain": "engineering", "type": "internship"},
+        {"title": "Data Science Research Fellowship", "desc": "Research in deep learning, NLP, and AI model optimization.", "domain": "research", "type": "fellowship"},
+        {"title": "ML Engineer - Ranking Systems", "desc": "Develop ranking algorithms, recommendation engines, and ML infrastructure.", "domain": "engineering", "type": "research"},
+        {"title": "NLP Research Internship", "desc": "Natural language processing, machine learning, and AI research.", "domain": "research", "type": "internship"},
+        
+        # Frontend/Product opportunities (25% of dataset)
+        {"title": "Frontend Engineering Internship", "desc": "Build React applications, design systems, and accessible UI components.", "domain": "engineering", "type": "internship"},
+        {"title": "Product Engineer - React/TypeScript", "desc": "Frontend development with React, TypeScript, Next.js, and modern web technologies.", "domain": "engineering", "type": "internship"},
+        {"title": "UI/UX Engineering Intern", "desc": "Design systems, Figma, accessibility, and frontend performance optimization.", "domain": "engineering", "type": "internship"},
+        {"title": "Web Performance Engineer", "desc": "Frontend optimization, React performance, and web vitals improvement.", "domain": "engineering", "type": "research"},
+        {"title": "Design Systems Engineer", "desc": "Build component libraries, design tokens, and accessible UI systems.", "domain": "engineering", "type": "internship"},
+        
+        # Open Source/Hackathon opportunities (25% of dataset)
+        {"title": "Google Summer of Code - GSoC", "desc": "Open source development program for students. Work on GitHub projects.", "domain": "engineering", "type": "internship"},
+        {"title": "MLH Hackathon - DevFolio", "desc": "Major League Hacking hackathon with prizes and mentorship.", "domain": "engineering", "type": "internship"},
+        {"title": "Open Source Fellowship - GSSoC", "desc": "Girl Script Summer of Code open source program for students.", "domain": "engineering", "type": "fellowship"},
+        {"title": "GitHub Campus Expert Program", "desc": "Open source leadership, hackathon organization, and community building.", "domain": "engineering", "type": "fellowship"},
+        {"title": "DevPost Coding Challenge", "desc": "Hackathon competition with API challenges and open source contributions.", "domain": "engineering", "type": "internship"},
+        
+        # Startup/Remote opportunities (25% of dataset)
+        {"title": "Remote Software Engineering Intern", "desc": "Startup internship with remote work. Backend, frontend, and full-stack development.", "domain": "engineering", "type": "internship"},
+        {"title": "Startup Internship - Full Stack", "desc": "Remote internship at early-stage startup. Python, JavaScript, and API development.", "domain": "engineering", "type": "internship"},
+        {"title": "Remote Backend Engineer Intern", "desc": "Startup role with remote work. Build APIs, databases, and backend systems.", "domain": "engineering", "type": "internship"},
+        {"title": "Fresher Software Engineer - Remote", "desc": "Entry-level remote software role at growing startup. Full-stack development.", "domain": "engineering", "type": "internship"},
+        {"title": "Remote Startup Internship", "desc": "Work remotely at innovative startup. Software engineering and product development.", "domain": "engineering", "type": "internship"},
+    ]
+    
     for index in range(90):
         created_at = _created_at(index, days=days)
+        template = opportunity_templates[index % len(opportunity_templates)]
         opportunities.append(
             Opportunity(
-                title=f"Release Gate Opportunity {index}",
-                description=(
-                    "Deterministic CI opportunity for ranking parity, model promotion, "
-                    "feature freshness, and DS operating-loop release gates."
-                ),
+                title=template["title"],
+                description=template["desc"],
                 url=f"https://example.com/release-gate/opportunities/{index}",
-                opportunity_type=["internship", "research", "fellowship"][index % 3],
+                opportunity_type=template["type"],
                 portal_category="ci-release-gate",
-                domain=["engineering", "research", "policy", "finance"][index % 4],
+                domain=template["domain"],
                 university=["Harvard", "Yale", "Princeton", "Columbia"][index % 4],
                 source="ci_release_gate_fixture",
                 location=["Boston", "New Haven", "Princeton", "New York"][index % 4],
                 eligibility="Open to verified candidates in the CI fixture.",
                 lifecycle_status="published",
+                opportunity_status="active",
                 published_at=created_at,
                 lifecycle_updated_at=created_at,
                 deadline=utc_now() + timedelta(days=30 + (index % 30)),
                 created_at=created_at,
                 updated_at=created_at,
                 last_seen_at=utc_now(),
+                freshness_score=0.85 + (index % 10) / 100.0,
+                quality_score=0.80 + (index % 15) / 100.0,
             )
         )
 
