@@ -13,8 +13,23 @@ async function stubOAuthProviders(page: Page) {
   });
 }
 
+async function stubTurnstile(page: Page) {
+  await page.addInitScript(() => {
+    window.turnstile = {
+      render: (_container, options) => {
+        window.setTimeout(() => options.callback?.("playwright-turnstile-token"), 0);
+        return "playwright-widget";
+      },
+      execute: () => {},
+      remove: () => {},
+      reset: () => {},
+    };
+  });
+}
+
 test("login OTP request enforces 60s cooldown in UI", async ({ page }) => {
   await stubOAuthProviders(page);
+  await stubTurnstile(page);
 
   await page.route("**/api/v1/auth/send-otp", async (route) => {
     await route.fulfill({
