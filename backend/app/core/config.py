@@ -353,7 +353,7 @@ class Settings(BaseSettings):
     MLOPS_TRAIN_GRID_STEP: float = 0.05
     MLOPS_ACTIVATION_POLICY: str = "guarded"  # manual | auc_gain | guarded
     MLOPS_AUTO_ACTIVATE: bool = False
-    MLOPS_AUTO_ACTIVATE_MIN_AUC_GAIN: float = 0.0
+    MLOPS_AUTO_ACTIVATE_MIN_AUC_GAIN: float = 0.02
     MLOPS_AUTO_ACTIVATE_MIN_POSITIVE_RATE: float = 0.005
     MLOPS_AUTO_ACTIVATE_MAX_WEIGHT_SHIFT: float = 0.35
     MLOPS_GUARDRAIL_LOOKBACK_DAYS: int = 30
