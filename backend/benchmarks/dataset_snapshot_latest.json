@@ -1,17 +1,17 @@
 {
   "counts": {
     "applications": 0,
-    "drift_reports": 276,
+    "drift_reports": 280,
     "experiment_assignments": 300,
     "experiments": 3,
     "opportunities": 330,
     "opportunity_interactions": 15706,
     "profiles": 319,
-    "ranking_model_versions": 275,
+    "ranking_model_versions": 279,
     "users": 323
   },
-  "generated_at": "2026-06-24T07:51:38.413209+00:00",
-  "snapshot_date": "June 24, 2026",
+  "generated_at": "2026-06-25T07:53:00.619489+00:00",
+  "snapshot_date": "June 25, 2026",
   "source_distribution": {
     "aicte_internship": 10,
     "codeforces": 2,
