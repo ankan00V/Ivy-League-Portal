@@ -95,6 +95,48 @@ class Settings(BaseSettings):
     SCRAPER_GREENHOUSE_BOARD_TOKENS: str = "databricks,stripe,airbnb"
     SCRAPER_GENERIC_PORTAL_MAX_ITEMS: int = 12
 
+    # Managed rendering/search provider for JS-heavy and blocked career pages.
+    FIRECRAWL_ENABLED: bool = False
+    FIRECRAWL_API_KEY: Optional[str] = None
+    FIRECRAWL_API_URL: str = "https://api.firecrawl.dev"
+    FIRECRAWL_REQUIRE_API_KEY: bool = True
+    FIRECRAWL_MODE: str = "fallback"  # fallback | preferred
+    FIRECRAWL_SEARCH_ENABLED: bool = True
+    FIRECRAWL_TIMEOUT_SECONDS: float = 30.0
+    FIRECRAWL_MAX_RETRIES: int = 2
+    FIRECRAWL_RETRY_BACKOFF_SECONDS: float = 0.5
+    FIRECRAWL_MAX_CONCURRENT: int = 3
+    FIRECRAWL_WAIT_FOR_MS: int = 1000
+    FIRECRAWL_CACHE_MAX_AGE_MS: int = 15 * 60 * 1000
+    FIRECRAWL_MIN_HTML_LENGTH: int = 500
+    FIRECRAWL_MAX_CONTENT_CHARS: int = 2_000_000
+    FIRECRAWL_CIRCUIT_FAILURE_THRESHOLD: int = 3
+    FIRECRAWL_CIRCUIT_RECOVERY_SECONDS: float = 120.0
+
+    # Browser Use Cloud CDP rendering for blocked or JS-heavy pages.
+    BROWSER_USE_ENABLED: bool = False
+    BROWSER_USE_API_KEY: Optional[str] = None
+    BROWSER_USE_MODE: str = "fallback"  # fallback | preferred | disabled
+    BROWSER_USE_TIMEOUT_SECONDS: float = 60.0
+    BROWSER_USE_MAX_CONCURRENT: int = 2
+    BROWSER_USE_WAIT_FOR_MS: int = 1500
+    BROWSER_USE_MAX_CONTENT_CHARS: int = 2_000_000
+    BROWSER_USE_PROXY_COUNTRY: str = "us"
+    BROWSER_USE_CIRCUIT_FAILURE_THRESHOLD: int = 3
+    BROWSER_USE_CIRCUIT_RECOVERY_SECONDS: float = 120.0
+
+    # Crawlee local crawler fallback (BeautifulSoup + optional Playwright).
+    CRAWLEE_ENABLED: bool = False
+    CRAWLEE_MODE: str = "fallback"  # fallback | preferred | disabled
+    CRAWLEE_TIMEOUT_SECONDS: float = 30.0
+    CRAWLEE_MAX_RETRIES: int = 1
+    CRAWLEE_MAX_CONCURRENT: int = 2
+    CRAWLEE_USE_PLAYWRIGHT: bool = True
+    CRAWLEE_WAIT_FOR_MS: int = 1000
+    CRAWLEE_MAX_CONTENT_CHARS: int = 2_000_000
+    CRAWLEE_CIRCUIT_FAILURE_THRESHOLD: int = 3
+    CRAWLEE_CIRCUIT_RECOVERY_SECONDS: float = 120.0
+
     # Source discovery pipeline
     DISCOVERY_ENABLED: bool = True
     SERPAPI_KEY: Optional[str] = None

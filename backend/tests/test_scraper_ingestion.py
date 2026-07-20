@@ -8,6 +8,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.services.scraper import (
+    GenericOpportunityPortalScraper,
     GreenhouseScraper,
     _dedupe_by_url,
     _extract_batch_years,
@@ -188,6 +189,79 @@ class TestScraperIngestionHelpers(unittest.TestCase):
         self.assertEqual(rows[0]["location"], "Remote")
         self.assertEqual(rows[0]["opportunity_type"], "Internship")
         self.assertIn("boards-api.greenhouse.io", session.urls[0])
+
+    def test_tensorhack_profiles_parse_hackathon_and_new_grad_rows(self) -> None:
+        from bs4 import BeautifulSoup
+
+        scraper = GenericOpportunityPortalScraper(source_configs=[])
+        hackathon_soup = BeautifulSoup(
+            """
+            <div class="board-grid">
+              <a class="hk-card" href="/hackathons/devpost-global-ai-hackathon-series-with-qwen-cloud">
+                <div class="hk-meta mono">02 / online / &lt; 01d left &gt;</div>
+                <div class="hk-body">
+                  <h3 class="hk-name display">Global AI Hackathon Series With Qwen Cloud</h3>
+                  <p class="hk-org mono">Alibaba Cloud</p>
+                </div>
+                <div class="hk-foot">
+                  <span class="hk-prize mono">$45K prize</span>
+                  <span class="hk-tags mono">MACHINE LEARNING/AI · DESIGN</span>
+                </div>
+              </a>
+            </div>
+            """,
+            "html.parser",
+        )
+        hackathon_rows = scraper._extract_from_source_cards(
+            soup=hackathon_soup,
+            listing_url="https://tensorhack.com/hackathons",
+            source_name="tensorhack_hackathons",
+            default_type="Hackathon",
+            default_university="TensorHack",
+        )
+        self.assertEqual(len(hackathon_rows), 1)
+        self.assertEqual(hackathon_rows[0]["source"], "tensorhack_hackathons")
+        self.assertEqual(hackathon_rows[0]["title"], "Global AI Hackathon Series With Qwen Cloud")
+        self.assertEqual(hackathon_rows[0]["university"], "Alibaba Cloud")
+        self.assertEqual(
+            hackathon_rows[0]["url"],
+            "https://tensorhack.com/hackathons/devpost-global-ai-hackathon-series-with-qwen-cloud",
+        )
+
+        jobs_soup = BeautifulSoup(
+            """
+            <a class="job-row" href="/jobs/ashby-notion-7e6dc7fe">
+              <div class="job-main">
+                <span class="job-role display">Software Engineer, New Grad (AI)</span>
+                <span class="job-co mono">Notion · San Francisco, California · Remote</span>
+              </div>
+              <div class="job-right">
+                <span class="job-tags mono">PRODUCTIVITY · FRONTEND · AI</span>
+                <span class="job-comp mono"></span>
+              </div>
+            </a>
+            <a class="job-row" href="/jobs/lever-fampay-manager">
+              <div class="job-main">
+                <span class="job-role display">IT Manager</span>
+                <span class="job-co mono">FamPay · Bengaluru · On-site</span>
+              </div>
+              <div class="job-right">
+                <span class="job-tags mono">FINTECH · CONSUMER · INDIA</span>
+              </div>
+            </a>
+            """,
+            "html.parser",
+        )
+        job_rows = scraper._extract_from_source_cards(
+            soup=jobs_soup,
+            listing_url="https://tensorhack.com/jobs",
+            source_name="tensorhack_jobs",
+            default_type="Job",
+            default_university="TensorHack",
+        )
+        early_career_rows = [row for row in job_rows if is_early_career_opportunity(row)]
+        self.assertEqual([row["title"] for row in early_career_rows], ["Software Engineer, New Grad (AI)"])
+        self.assertTrue(early_career_rows[0]["url"].startswith("https://tensorhack.com/jobs/"))
 
     def test_assess_opportunity_trust_blocks_fee_based_opportunities(self) -> None:
         assessment = assess_opportunity_trust(

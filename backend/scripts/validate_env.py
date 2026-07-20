@@ -41,6 +41,11 @@ def _bool_env(name: str, default: bool = False) -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _is_placeholder(name: str) -> bool:
+    value = str(_value(name) or "").strip().lower()
+    return not value or value.startswith("<") or value.startswith("replace-")
+
+
 def _check_required(name: str, *, severity: str = "fatal") -> CheckResult:
     return CheckResult(
         name=name,
@@ -81,6 +86,87 @@ def _validate_llm() -> list[CheckResult]:
     return results
 
 
+def _validate_firecrawl(*, production: bool) -> list[CheckResult]:
+    enabled = _bool_env("FIRECRAWL_ENABLED")
+    mode = str(_value("FIRECRAWL_MODE") or "fallback").strip().lower()
+    results = [
+        CheckResult(
+            name="Firecrawl",
+            ok=True,
+            severity="info",
+            detail="enabled" if enabled else "disabled; direct scraper fallback active",
+        ),
+        CheckResult(
+            name="FIRECRAWL_MODE",
+            ok=mode in {"fallback", "preferred"},
+            severity="fatal" if production or enabled else "warning",
+            detail=mode,
+        ),
+    ]
+    if not enabled:
+        return results
+    results.append(_check_required("FIRECRAWL_API_URL"))
+    if _bool_env("FIRECRAWL_REQUIRE_API_KEY", default=True):
+        results.append(
+            CheckResult(
+                name="FIRECRAWL_API_KEY",
+                ok=not _is_placeholder("FIRECRAWL_API_KEY"),
+                severity="fatal",
+                detail="set" if not _is_placeholder("FIRECRAWL_API_KEY") else "missing or placeholder",
+            )
+        )
+    return results
+
+
+def _validate_browser_use(*, production: bool) -> list[CheckResult]:
+    enabled = _bool_env("BROWSER_USE_ENABLED")
+    mode = str(_value("BROWSER_USE_MODE") or "fallback").strip().lower()
+    results = [
+        CheckResult(
+            name="Browser Use",
+            ok=True,
+            severity="info",
+            detail="enabled" if enabled else "disabled; managed render chain skips Browser Use",
+        ),
+        CheckResult(
+            name="BROWSER_USE_MODE",
+            ok=mode in {"fallback", "preferred", "disabled"},
+            severity="fatal" if production or enabled else "warning",
+            detail=mode,
+        ),
+    ]
+    if not enabled:
+        return results
+    results.append(
+        CheckResult(
+            name="BROWSER_USE_API_KEY",
+            ok=not _is_placeholder("BROWSER_USE_API_KEY"),
+            severity="fatal",
+            detail="set" if not _is_placeholder("BROWSER_USE_API_KEY") else "missing or placeholder",
+        )
+    )
+    return results
+
+
+def _validate_crawlee(*, production: bool) -> list[CheckResult]:
+    enabled = _bool_env("CRAWLEE_ENABLED")
+    mode = str(_value("CRAWLEE_MODE") or "fallback").strip().lower()
+    return [
+        CheckResult(
+            name="Crawlee",
+            ok=True,
+            severity="info",
+            detail="enabled" if enabled else "disabled; local Crawlee fallback inactive",
+        ),
+        CheckResult(
+            name="CRAWLEE_MODE",
+            ok=mode in {"fallback", "preferred", "disabled"},
+            severity="fatal" if production or enabled else "warning",
+            detail=mode,
+        ),
+    ]
+
+
 def validate(*, production: bool = False) -> list[CheckResult]:
     results = [
         _check_required("MONGODB_URL"),
@@ -114,6 +200,9 @@ def validate(*, production: bool = False) -> list[CheckResult]:
         ),
     ]
     results.extend(_validate_llm())
+    results.extend(_validate_firecrawl(production=production))
+    results.extend(_validate_browser_use(production=production))
+    results.extend(_validate_crawlee(production=production))
     return results
 
 

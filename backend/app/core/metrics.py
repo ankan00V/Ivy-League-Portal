@@ -56,6 +56,12 @@ DISCOVERY_SOURCES_IN_PIPELINE: Optional["Gauge"] = None
 DISCOVERY_LLM_CALLS_TOTAL: Optional["Counter"] = None
 DISCOVERY_LLM_COST_USD_TOTAL: Optional["Counter"] = None
 DISCOVERY_PROBATION_SOURCES: Optional["Gauge"] = None
+FIRECRAWL_REQUESTS_TOTAL: Optional["Counter"] = None
+FIRECRAWL_REQUEST_LATENCY_SECONDS: Optional["Histogram"] = None
+BROWSER_USE_REQUESTS_TOTAL: Optional["Counter"] = None
+BROWSER_USE_REQUEST_LATENCY_SECONDS: Optional["Histogram"] = None
+CRAWLEE_REQUESTS_TOTAL: Optional["Counter"] = None
+CRAWLEE_REQUEST_LATENCY_SECONDS: Optional["Histogram"] = None
 
 
 def init_metrics() -> None:
@@ -96,6 +102,12 @@ def init_metrics() -> None:
     global DISCOVERY_LLM_CALLS_TOTAL
     global DISCOVERY_LLM_COST_USD_TOTAL
     global DISCOVERY_PROBATION_SOURCES
+    global FIRECRAWL_REQUESTS_TOTAL
+    global FIRECRAWL_REQUEST_LATENCY_SECONDS
+    global BROWSER_USE_REQUESTS_TOTAL
+    global BROWSER_USE_REQUEST_LATENCY_SECONDS
+    global CRAWLEE_REQUESTS_TOTAL
+    global CRAWLEE_REQUEST_LATENCY_SECONDS
 
     if not metrics_available() or Counter is None or Histogram is None or Gauge is None:
         return
@@ -281,6 +293,38 @@ def init_metrics() -> None:
     DISCOVERY_PROBATION_SOURCES = Gauge(
         "discovery_probation_sources",
         "Current number of sources in probation.",
+    )
+    FIRECRAWL_REQUESTS_TOTAL = Counter(
+        "firecrawl_requests_total",
+        "Firecrawl requests by operation and outcome.",
+        labelnames=("operation", "status"),
+    )
+    FIRECRAWL_REQUEST_LATENCY_SECONDS = Histogram(
+        "firecrawl_request_duration_seconds",
+        "Firecrawl request duration by operation.",
+        labelnames=("operation",),
+        buckets=(0.25, 0.5, 1, 2, 3, 5, 10, 20, 30, 60),
+    )
+    BROWSER_USE_REQUESTS_TOTAL = Counter(
+        "browser_use_requests_total",
+        "Browser Use requests by outcome.",
+        labelnames=("status",),
+    )
+    BROWSER_USE_REQUEST_LATENCY_SECONDS = Histogram(
+        "browser_use_request_duration_seconds",
+        "Browser Use request duration.",
+        buckets=(1, 2, 5, 10, 20, 30, 45, 60, 90, 120),
+    )
+    CRAWLEE_REQUESTS_TOTAL = Counter(
+        "crawlee_requests_total",
+        "Crawlee requests by engine and outcome.",
+        labelnames=("engine", "status"),
+    )
+    CRAWLEE_REQUEST_LATENCY_SECONDS = Histogram(
+        "crawlee_request_duration_seconds",
+        "Crawlee request duration by engine.",
+        labelnames=("engine",),
+        buckets=(0.25, 0.5, 1, 2, 3, 5, 10, 20, 30, 60),
     )
 
 
