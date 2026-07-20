@@ -80,6 +80,7 @@ flowchart LR
 ### Platform
 - MongoDB-first backend architecture + Redis support.
 - Background jobs with retry, dead-letter behavior, bounded concurrency, queue caps, and handler timeouts.
+- Opportunity ingestion is scheduled immediately at API startup and then every `SCRAPER_INTERVAL_MINUTES` (30 minutes by default). Each `scraper.run` is persisted in the Mongo-backed job queue for retry and operational visibility.
 - Source discovery pipeline with company seeds, user submissions, qualification queues, adaptive extraction, managed Firecrawl fallback for JS-heavy pages, probation, dynamic scraper registration, and health quarantine.
 - Official company careers intelligence with a curated S-tier internship watchlist across global tech, quant/trading, Indian product, IT services, government/PSU, research, consulting, analytics, banking, manufacturing, aerospace, energy, FMCG, and hidden-gem employers.
 - The intelligent source-discovery loop continues expanding beyond the curated list through company seeds, careers-page crawling, web search, similar-source expansion, employer claims, and admin review.
@@ -177,7 +178,7 @@ Latest drift report: id=`69e32d07` alert=`False` psi=0.030294 max_z=0.069408 not
 <!-- MODEL_VERSION_METADATA:END -->
 
 ### Engineering quality signal
-- Focused scraper/source contract suite: **36 passing tests** (latest run on June 18, 2026)
+- Focused scraper/source contract suite: **34 passing tests** (latest local run on July 20, 2026)
 - Production infra readiness gate: managed MongoDB, Redis, ClickHouse, and S3-compatible artifact storage have been verified from the local runtime; the full strict gate still requires deployed frontend/backend domains and a production BI URL.
 - Local developer harness smoke: backend, MongoDB, Redis, queue, embedding model, learned ranker, artifact store, warehouse freshness, public opportunities, API docs, and frontend routes passed on June 19, 2026; this is not production deployment proof.
 - Backend full suite baseline: **200 passing tests** (latest recorded full run on June 3, 2026)
