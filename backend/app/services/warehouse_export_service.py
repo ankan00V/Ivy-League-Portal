@@ -343,7 +343,10 @@ class WarehouseExportService:
         if value is None:
             return ""
         if isinstance(value, (datetime, date)):
-            return value.isoformat()
+            # clickhouse-connect encodes temporal columns from Python temporal
+            # values. Converting them to strings breaks dynamically inferred
+            # Date/DateTime schemas during INSERT.
+            return value
         if isinstance(value, (dict, list, tuple)):
             return json.dumps(value, default=str, sort_keys=True)
         return value

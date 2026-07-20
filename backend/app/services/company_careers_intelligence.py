@@ -305,7 +305,7 @@ class CompanyCareersIntelligenceService:
 
         if not rows and seed.careers_url:
             try:
-                page = await self.http_client.fetch(seed.careers_url, timeout_seconds=10)
+                page = await self.http_client.fetch(seed.careers_url, timeout_seconds=10, render=True)
                 page_rows = self.extract_official_page_links(seed, page)
                 report.fetched += len(page_rows)
                 filtered = [row for row in page_rows if _is_early_career(row)]
@@ -383,7 +383,7 @@ class CompanyCareersIntelligenceService:
             )
         if seed.careers_url:
             try:
-                page = await self.http_client.fetch(seed.careers_url, timeout_seconds=8)
+                page = await self.http_client.fetch(seed.careers_url, timeout_seconds=8, render=True)
                 candidates = self._endpoints_from_page(page) + candidates
             except Exception:
                 pass

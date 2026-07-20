@@ -43,11 +43,16 @@ jobs:
       - name: Run lifecycle pipeline
         if: env.MODEL_LIFECYCLE_READY == 'true'
         run: |
-          python backend/scripts/run_model_lifecycle_pipeline.py \
-            --lookback-days 90 \
-            --label-window-hours 72 \
-            --min-rows 200 \
+          args=(
+            --lookback-days 90
+            --label-window-hours 72
+            --min-rows 200
             --grid-step 0.05
+          )
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            args+=(--allow-insufficient-training-data)
+          fi
+          python backend/scripts/run_model_lifecycle_pipeline.py "${args[@]}"
 
       - name: Upload lifecycle artifacts
         if: always()

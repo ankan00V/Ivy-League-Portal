@@ -1,7 +1,7 @@
 import sys
 import tempfile
 import unittest
-import sys
+from datetime import date
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -82,7 +82,7 @@ class TestWarehouseClickHouseExport(unittest.TestCase):
         inserts: list[tuple[str, list[list[object]], list[str]]] = []
 
         class FakeDuckConnection:
-            description = [("date",), ("metrics",), ("impressions",)]
+            description = [("cohort_date",), ("metrics",), ("impressions",)]
 
             def __enter__(self):
                 return self
@@ -94,7 +94,7 @@ class TestWarehouseClickHouseExport(unittest.TestCase):
                 return self
 
             def fetchall(self):
-                return [("2026-01-01", {"ctr": 0.12}, 10)]
+                return [(date(2026, 1, 1), {"ctr": 0.12}, 10)]
 
         fake_duckdb = SimpleNamespace(connect=lambda *_args, **_kwargs: FakeDuckConnection())
 
@@ -121,7 +121,9 @@ class TestWarehouseClickHouseExport(unittest.TestCase):
 
         self.assertEqual(tables, ["mart_daily_metrics"])
         self.assertTrue(any("CREATE TABLE IF NOT EXISTS" in command for command in commands))
+        self.assertTrue(any("`cohort_date` Date" in command for command in commands))
         self.assertEqual(inserts[0][0], "mart_daily_metrics")
+        self.assertEqual(inserts[0][1][0][0], date(2026, 1, 1))
         self.assertEqual(inserts[0][1][0][1], '{"ctr": 0.12}')
 
 

@@ -25,6 +25,8 @@ from urllib3.util.retry import Retry
 from app.core.config import settings
 from app.core.time import utc_now
 from app.services.opportunity_trust import apply_trust_assessment, apply_trust_assessment_preserving_review, assess_opportunity_trust
+from app.services.scraper_fetch_bridge import fetch_page_sync
+from app.services.source_discovery import FetchedPage
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +88,7 @@ INTERNSHALA_LISTINGS: list[tuple[str, str]] = [
 
 HACK2SKILL_EVENT_LISTINGS: list[str] = [
     "https://hack2skill.com",
+    "https://hack2skill.com/hackathons-listing",
 ]
 
 FRESHERSWORLD_LISTINGS: list[tuple[str, str]] = [
@@ -697,7 +700,146 @@ GENERIC_PORTAL_LISTINGS: list[dict[str, Any]] = [
             "https://www.careeronestop.org/",
         ],
     },
+    {
+        "source": "tensorhack_hackathons",
+        "label": "TensorHack Hackathons",
+        "default_type": "Hackathon",
+        "default_university": "TensorHack",
+        "listings": [
+            "https://tensorhack.com/hackathons",
+        ],
+    },
+    {
+        "source": "tensorhack_jobs",
+        "label": "TensorHack Jobs",
+        "default_type": "Job",
+        "default_university": "TensorHack",
+        "listings": [
+            "https://tensorhack.com/jobs",
+        ],
+    },
+    {
+        "source": "tensorhack_opportunities",
+        "label": "TensorHack Opportunities",
+        "default_type": "Internship",
+        "default_university": "TensorHack",
+        "listings": [
+            "https://tensorhack.com/opportunities",
+        ],
+    },
 ]
+
+SCRAPER_SOURCE_AUDIT_OVERRIDES: dict[str, dict[str, Any]] = {
+    "naukri": {
+        "enabled": False,
+        "disabled_reason": "Duplicate of the dedicated NaukriScraper scheduled job.",
+    },
+    "cuvette": {
+        "enabled": False,
+        "disabled_reason": "Audit 2026-06-25: careers page returns 403 to managed fetch providers.",
+    },
+    "foundit": {
+        "enabled": False,
+        "disabled_reason": "Audit 2026-06-25: listing page fetched but no opportunities parsed.",
+    },
+    "instahyre": {
+        "enabled": False,
+        "disabled_reason": "Audit 2026-06-25: candidate portal requires auth/session-specific markup.",
+    },
+    "hirist": {
+        "enabled": False,
+        "disabled_reason": "Audit 2026-06-25: homepage no longer exposes parseable public job cards.",
+    },
+    "geeksforgeeks_jobs": {
+        "enabled": False,
+        "disabled_reason": "Audit 2026-06-25: jobs page returns anti-bot/challenge HTML to anonymous fetchers.",
+    },
+    "kaggle": {
+        "enabled": False,
+        "disabled_reason": "Audit 2026-06-25: competitions page returns a minimal challenge shell without listings.",
+    },
+    "letsintern": {
+        "enabled": False,
+        "disabled_reason": "Audit 2026-06-25: homepage no longer exposes parseable internship cards.",
+    },
+    "smartinternz": {
+        "enabled": False,
+        "disabled_reason": "Audit 2026-06-25: internships page fetched but no opportunities parsed.",
+    },
+    "freelancer": {
+        "enabled": False,
+        "disabled_reason": "Audit 2026-06-25: jobs page fetched but no early-career opportunities parsed.",
+    },
+    "monster": {
+        "enabled": False,
+        "disabled_reason": "Audit 2026-06-25: search results fetched but no opportunities parsed.",
+    },
+    "careerbuilder": {
+        "enabled": False,
+        "disabled_reason": "Audit 2026-06-25: search results fetched but no opportunities parsed.",
+    },
+    "simplyhired": {
+        "enabled": False,
+        "disabled_reason": "Audit 2026-06-25: search results fetched but no opportunities parsed.",
+    },
+    "jobspresso": {
+        "enabled": False,
+        "disabled_reason": "Audit 2026-06-25: remote work page fetched but no opportunities parsed.",
+    },
+    "justremote": {
+        "enabled": False,
+        "disabled_reason": "Audit 2026-06-25: remote jobs page fetched but no opportunities parsed.",
+    },
+    "nodesk": {
+        "enabled": False,
+        "disabled_reason": "Audit 2026-06-25: remote jobs page fetched but no opportunities parsed.",
+    },
+    "remote4me": {
+        "enabled": False,
+        "disabled_reason": "Audit 2026-06-25: homepage fetched but no opportunities parsed.",
+    },
+    "remote_habits": {
+        "enabled": False,
+        "disabled_reason": "Audit 2026-06-25: jobs page fetched but no opportunities parsed.",
+    },
+    "skip_the_drive": {
+        "enabled": False,
+        "disabled_reason": "Audit 2026-06-25: homepage fetched but no opportunities parsed.",
+    },
+    "working_nomads": {
+        "enabled": False,
+        "disabled_reason": "Audit 2026-06-25: jobs page fetched but no opportunities parsed.",
+    },
+    "ycombinator_jobs": {
+        "enabled": False,
+        "disabled_reason": "Audit 2026-06-25: public jobs page exposes role navigation, not direct job cards; needs a dedicated connector.",
+    },
+    "reskilll": {
+        "enabled": False,
+        "disabled_reason": "Audit 2026-06-25: hackathons page fetched but no opportunities parsed.",
+    },
+    "remoteok_asia": {
+        "enabled": False,
+        "disabled_reason": "Audit 2026-06-25: shared Remote OK API rarely yields Asia-filtered early-career rows.",
+    },
+    "remoteok_europe": {
+        "enabled": False,
+        "disabled_reason": "Audit 2026-06-25: shared Remote OK API rarely yields Europe-filtered early-career rows.",
+    },
+}
+
+
+def merged_portal_listings() -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for config in GENERIC_PORTAL_LISTINGS:
+        row = dict(config)
+        source = str(row.get("source") or "").strip().lower()
+        override = SCRAPER_SOURCE_AUDIT_OVERRIDES.get(source)
+        if override:
+            row.update(override)
+        rows.append(row)
+    return rows
+
 
 GENERIC_OPPORTUNITY_KEYWORDS = {
     "job",
@@ -1284,6 +1426,28 @@ def _build_retry_session() -> requests.Session:
     return session
 
 
+def _fetch_listing_page(url: str, *, render: bool = True) -> FetchedPage:
+    """Fetch listing HTML through the managed provider chain when rendering is needed."""
+
+    page = fetch_page_sync(
+        url,
+        render=render,
+        timeout_seconds=float(settings.SCRAPER_TIMEOUT_SECONDS),
+    )
+    if page.status_code >= 400:
+        raise requests.HTTPError(f"{page.status_code} Client Error for url: {page.final_url}")
+    return page
+
+
+def _listing_needs_render(listing_url: str) -> bool:
+    lowered = str(listing_url or "").strip().lower()
+    if lowered.endswith((".rss", ".xml", ".json")):
+        return False
+    if "/api/" in lowered or lowered.rstrip("/").endswith("/api"):
+        return False
+    return True
+
+
 def _infer_opportunity_type(title: str, description: str) -> str:
     text = f"{title} {description}".lower()
     for opp_type, hints in TYPE_HINTS.items():
@@ -1697,13 +1861,8 @@ class NaukriScraper:
 
         for search_url in search_urls:
             try:
-                response = self.session.get(
-                    search_url,
-                    headers=self.headers,
-                    timeout=settings.SCRAPER_TIMEOUT_SECONDS,
-                )
-                response.raise_for_status()
-                soup = BeautifulSoup(response.text, "html.parser")
+                page = _fetch_listing_page(search_url, render=True)
+                soup = BeautifulSoup(page.text, "html.parser")
 
                 parsed_jobs = self._extract_from_cards(soup)
                 if not parsed_jobs:
@@ -1811,13 +1970,8 @@ class InternshalaScraper:
 
         for listing_url, default_type in INTERNSHALA_LISTINGS:
             try:
-                response = self.session.get(
-                    listing_url,
-                    headers=self.headers,
-                    timeout=settings.SCRAPER_TIMEOUT_SECONDS,
-                )
-                response.raise_for_status()
-                soup = BeautifulSoup(response.text, "html.parser")
+                page = _fetch_listing_page(listing_url, render=True)
+                soup = BeautifulSoup(page.text, "html.parser")
                 opportunities.extend(self._extract_cards(soup, listing_url, default_type))
                 if len(opportunities) >= max_items:
                     break
@@ -1841,6 +1995,7 @@ class Hack2SkillScraper:
 
     def _extract_cards(self, soup: BeautifulSoup, listing_url: str) -> list[dict]:
         opportunities: list[dict] = []
+        seen_urls: set[str] = set()
 
         for anchor in soup.select('a[href*="vision.hack2skill.com/event/"]'):
             container = anchor.find_parent(
@@ -1858,6 +2013,10 @@ class Hack2SkillScraper:
             url = (anchor.get("href") or "").strip()
             if not title or not url:
                 continue
+            full_url = urljoin(listing_url, url)
+            if full_url in seen_urls:
+                continue
+            seen_urls.add(full_url)
 
             meta_node = container.find("div", class_=lambda value: value and "py-1" in str(value))
             meta_line = _collapse_whitespace(meta_node.get_text(" ", strip=True) if meta_node else "")
@@ -1886,10 +2045,35 @@ class Hack2SkillScraper:
                 {
                     "title": title,
                     "description": description[:700],
-                    "url": urljoin(listing_url, url),
+                    "url": full_url,
                     "opportunity_type": _infer_opportunity_type(title, description),
                     "university": "Hack2Skill",
                     "deadline": deadline,
+                    "source": "hack2skill",
+                }
+            )
+
+        for anchor in soup.select('a[href*="/hack/"], a[href*="/event/"]'):
+            href = (anchor.get("href") or "").strip()
+            if not href or href.startswith("#"):
+                continue
+            full_url = urljoin(listing_url, href)
+            if full_url in seen_urls:
+                continue
+            title = _collapse_whitespace(anchor.get("title") or anchor.get_text(" ", strip=True))
+            if not title or len(title) < 4 or len(title) > 220:
+                continue
+            if title.lower() in {"hackathons", "events", "learn more", "view all"}:
+                continue
+            seen_urls.add(full_url)
+            opportunities.append(
+                {
+                    "title": title,
+                    "description": "Live hackathon or event listed on Hack2Skill.",
+                    "url": full_url,
+                    "opportunity_type": _infer_opportunity_type(title, title),
+                    "university": "Hack2Skill",
+                    "deadline": None,
                     "source": "hack2skill",
                 }
             )
@@ -1901,13 +2085,8 @@ class Hack2SkillScraper:
 
         for listing_url in HACK2SKILL_EVENT_LISTINGS:
             try:
-                response = self.session.get(
-                    listing_url,
-                    headers=self.headers,
-                    timeout=settings.SCRAPER_TIMEOUT_SECONDS,
-                )
-                response.raise_for_status()
-                soup = BeautifulSoup(response.text, "html.parser")
+                page = _fetch_listing_page(listing_url, render=True)
+                soup = BeautifulSoup(page.text, "html.parser")
                 opportunities.extend(self._extract_cards(soup, listing_url))
                 if len(opportunities) >= max_items:
                     break
@@ -1997,13 +2176,8 @@ class FreshersworldScraper:
 
         for listing_url, default_type in FRESHERSWORLD_LISTINGS:
             try:
-                response = self.session.get(
-                    listing_url,
-                    headers=self.headers,
-                    timeout=settings.SCRAPER_TIMEOUT_SECONDS,
-                )
-                response.raise_for_status()
-                soup = BeautifulSoup(response.text, "html.parser")
+                page = _fetch_listing_page(listing_url, render=True)
+                soup = BeautifulSoup(page.text, "html.parser")
                 parsed = self._extract_cards(soup)
                 if default_type:
                     for record in parsed:
@@ -2103,17 +2277,12 @@ class IndeedIndiaScraper:
 
         for listing_url, default_type in INDEED_INDIA_LISTINGS:
             try:
-                response = self.session.get(
-                    listing_url,
-                    headers=self.headers,
-                    timeout=settings.SCRAPER_TIMEOUT_SECONDS,
-                )
-                response.raise_for_status()
-                if self._response_is_blocked(response.text):
+                page = _fetch_listing_page(listing_url, render=True)
+                if self._response_is_blocked(page.text):
                     errors.append("Blocked by Indeed India anti-bot challenge.")
                     continue
 
-                soup = BeautifulSoup(response.text, "html.parser")
+                soup = BeautifulSoup(page.text, "html.parser")
                 parsed = self._extract_cards(soup)
                 if default_type:
                     for record in parsed:
@@ -2249,7 +2418,7 @@ class GenericOpportunityPortalScraper:
         self.session = session or _build_retry_session()
         self.source_configs = {
             str(config.get("source") or "").strip().lower(): config
-            for config in (source_configs or GENERIC_PORTAL_LISTINGS)
+            for config in (source_configs if source_configs is not None else merged_portal_listings())
             if str(config.get("source") or "").strip() and config.get("enabled", True)
         }
         self.headers = {
@@ -2352,6 +2521,28 @@ class GenericOpportunityPortalScraper:
                 "description_selectors": ["p", "div[class*='description']", "div[class*='details']"],
                 "company_selectors": ["span[class*='host']", "div[class*='host']", "span"],
                 "meta_selectors": ["div[class*='details']", "ul", "p"],
+            },
+            "tensorhack_hackathons": {
+                "card_selectors": [".board-grid a.hk-card"],
+                "title_selectors": [".hk-name", "h3"],
+                "description_selectors": [".hk-body", ".hk-foot"],
+                "company_selectors": [".hk-org"],
+                "meta_selectors": [".hk-meta", ".hk-prize", ".hk-tags"],
+            },
+            "tensorhack_jobs": {
+                "card_selectors": ["a.job-row"],
+                "title_selectors": [".job-role"],
+                "description_selectors": [".job-main", ".job-right"],
+                "company_selectors": [".job-co"],
+                "location_selectors": [".job-co"],
+                "meta_selectors": [".job-tags", ".job-comp"],
+            },
+            "tensorhack_opportunities": {
+                "card_selectors": ["a.job-row"],
+                "title_selectors": [".job-role"],
+                "description_selectors": [".job-main", ".job-right"],
+                "company_selectors": [".job-co"],
+                "meta_selectors": [".job-comp", ".opp-when"],
             },
         }
 
@@ -2966,6 +3157,8 @@ class GenericOpportunityPortalScraper:
                 href = (title_node.get("href") or "").strip()
             elif title_node.find("a", href=True):
                 href = (title_node.find("a", href=True).get("href") or "").strip()
+            elif getattr(card, "name", None) == "a":
+                href = (card.get("href") or "").strip()
             url = href if href.startswith("http") else urljoin(listing_url, href)
             url = _canonicalize_url(url)
             if not title or not url or url in seen_urls:
@@ -3048,16 +3241,11 @@ class GenericOpportunityPortalScraper:
                         break
                     continue
 
-                response = self.session.get(
-                    listing_url,
-                    headers=self.headers,
-                    timeout=settings.SCRAPER_TIMEOUT_SECONDS,
-                )
-                response.raise_for_status()
-                content_type = str(response.headers.get("content-type") or "").lower()
+                page = _fetch_listing_page(listing_url, render=_listing_needs_render(listing_url))
+                content_type = page.content_type.lower()
                 if "json" in content_type or listing_url.rstrip("/").endswith("/api"):
                     parsed = self._extract_from_json_payload(
-                        payload=response.json(),
+                        payload=json.loads(page.text),
                         source_name=normalized_source,
                         default_type=default_type,
                         default_university=default_university,
@@ -3068,7 +3256,7 @@ class GenericOpportunityPortalScraper:
                     continue
                 if "rss" in content_type or "xml" in content_type or listing_url.endswith(".rss"):
                     parsed = self._extract_from_rss(
-                        xml_text=response.text,
+                        xml_text=page.text,
                         source_name=normalized_source,
                         default_type=default_type,
                         default_university=default_university,
@@ -3078,7 +3266,7 @@ class GenericOpportunityPortalScraper:
                         break
                     continue
 
-                soup = BeautifulSoup(response.text, "html.parser")
+                soup = BeautifulSoup(page.text, "html.parser")
 
                 if normalized_source == "extern":
                     parsed = self._extract_extern_cards(soup=soup, listing_url=listing_url)
@@ -3588,7 +3776,7 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
                     str(config.get("source") or "").strip().lower(),
                     str(config.get("label") or config.get("source") or "Platform").strip(),
                 )
-                for config in GENERIC_PORTAL_LISTINGS
+                for config in merged_portal_listings()
                 if str(config.get("source") or "").strip() and config.get("enabled", True)
             ]
             portal_fetch_results = await asyncio.gather(

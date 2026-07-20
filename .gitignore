@@ -16,6 +16,8 @@ frontend/test-results/
 backend/storage/resumes/
 backend/storage/model_artifacts/
 backend/storage/warehouse/
+backend/storage/key_value_stores/
+backend/storage/request_queues/
 backend/models/
 backend/backend/
 backend/uvicorn_local.log

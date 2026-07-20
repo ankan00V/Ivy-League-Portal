@@ -38,6 +38,9 @@ from app.models.source_discovery import (
     SourceStatus,
 )
 from app.models.user import User
+from app.services.browser_use_client import BrowserUseClient, BrowserUseUnavailableError, browser_use_client
+from app.services.crawlee_client import CrawleeClient, CrawleeUnavailableError, crawlee_client
+from app.services.firecrawl_client import FirecrawlClient, FirecrawlUnavailableError, firecrawl_client
 from app.services.opportunity_trust import apply_trust_assessment, assess_opportunity_trust
 
 try:  # pragma: no cover - dependency availability is environment-specific
@@ -261,6 +264,8 @@ class FetchedPage:
     status_code: int
     text: str
     elapsed_seconds: float
+    content_type: str = "text/html"
+    provider: str = "direct"
 
 
 @dataclass
@@ -426,15 +431,83 @@ class LocalMemoryQueue(RedisQueue):
 
 
 class SourceHttpClient:
-    def __init__(self, timeout_seconds: float | None = None) -> None:
+    def __init__(
+        self,
+        timeout_seconds: float | None = None,
+        firecrawl: FirecrawlClient | None = None,
+        browser_use: BrowserUseClient | None = None,
+        crawlee: CrawleeClient | None = None,
+    ) -> None:
         self.timeout_seconds = timeout_seconds or float(getattr(settings, "SCRAPER_TIMEOUT_SECONDS", 20))
+        self.firecrawl = firecrawl or firecrawl_client
+        self.browser_use = browser_use or browser_use_client
+        self.crawlee = crawlee or crawlee_client
         self._global_semaphore = asyncio.Semaphore(
             max(1, int(getattr(settings, "SOURCE_DISCOVERY_MAX_CONCURRENT", 5)))
         )
         self._domain_locks: dict[str, asyncio.Lock] = {}
         self._last_domain_request: dict[str, float] = {}
 
-    async def fetch(self, url: str, *, timeout_seconds: float | None = None) -> FetchedPage:
+    @staticmethod
+    def _provider_mode(setting_name: str) -> str:
+        return str(getattr(settings, setting_name, "fallback") or "fallback").strip().lower()
+
+    def _preferred_render_providers(self) -> list[str]:
+        providers: list[str] = []
+        if self.firecrawl.configured and self._provider_mode("FIRECRAWL_MODE") == "preferred":
+            providers.append("firecrawl")
+        if self.browser_use.configured and self._provider_mode("BROWSER_USE_MODE") == "preferred":
+            providers.append("browser_use")
+        if self.crawlee.configured and self._provider_mode("CRAWLEE_MODE") == "preferred":
+            providers.append("crawlee")
+        return providers
+
+    def _fallback_render_providers(self) -> list[str]:
+        providers: list[str] = []
+        if self.firecrawl.configured and self._provider_mode("FIRECRAWL_MODE") != "disabled":
+            providers.append("firecrawl")
+        if self.browser_use.configured and self._provider_mode("BROWSER_USE_MODE") != "disabled":
+            providers.append("browser_use")
+        if self.crawlee.configured and self._provider_mode("CRAWLEE_MODE") != "disabled":
+            providers.append("crawlee")
+        return providers
+
+    async def _fetch_render_provider(self, provider: str, url: str, timeout_seconds: float) -> FetchedPage:
+        if provider == "firecrawl":
+            return await self._fetch_firecrawl(url, timeout_seconds)
+        if provider == "browser_use":
+            return await self._fetch_browser_use(url, timeout_seconds)
+        if provider == "crawlee":
+            return await self._fetch_crawlee(url, timeout_seconds, render=True)
+        raise ValueError(f"unsupported_render_provider:{provider}")
+
+    async def _try_render_providers(
+        self,
+        providers: list[str],
+        url: str,
+        timeout_seconds: float,
+        *,
+        domain: str,
+        phase: str,
+    ) -> FetchedPage | None:
+        for provider in providers:
+            try:
+                return await self._fetch_render_provider(provider, url, timeout_seconds)
+            except (FirecrawlUnavailableError, BrowserUseUnavailableError, CrawleeUnavailableError):
+                logger.warning(
+                    "%s render provider failed; trying next provider",
+                    phase,
+                    extra={"domain": domain, "provider": provider},
+                )
+        return None
+
+    async def fetch(
+        self,
+        url: str,
+        *,
+        timeout_seconds: float | None = None,
+        render: bool = False,
+    ) -> FetchedPage:
         if httpx is None:
             raise RuntimeError("httpx is required for source discovery HTTP fetches")
         normalized = normalize_url(url)
@@ -448,22 +521,110 @@ class SourceHttpClient:
                 last = self._last_domain_request.get(domain, 0.0)
                 if now - last < min_gap:
                     await asyncio.sleep(min_gap - (now - last))
-                started = loop.time()
-                async with httpx.AsyncClient(
-                    follow_redirects=True,
-                    timeout=timeout_seconds or self.timeout_seconds,
-                    headers=DEFAULT_HEADERS,
-                    max_redirects=3,
-                ) as client:
-                    response = await client.get(normalized)
-                self._last_domain_request[domain] = loop.time()
-                return FetchedPage(
-                    url=normalized,
-                    final_url=str(response.url),
-                    status_code=int(response.status_code),
-                    text=response.text or "",
-                    elapsed_seconds=max(0.0, loop.time() - started),
+                timeout = timeout_seconds or self.timeout_seconds
+
+                if render:
+                    preferred_page = await self._try_render_providers(
+                        self._preferred_render_providers(),
+                        normalized,
+                        timeout,
+                        domain=domain,
+                        phase="Preferred",
+                    )
+                    if preferred_page is not None:
+                        self._last_domain_request[domain] = loop.time()
+                        return preferred_page
+
+                direct_error: Exception | None = None
+                direct_page: FetchedPage | None = None
+                try:
+                    direct_page = await self._fetch_direct(normalized, timeout)
+                except Exception as exc:
+                    direct_error = exc
+
+                should_fallback = render and (
+                    direct_page is None or self._needs_rendered_fallback(direct_page)
                 )
+                if should_fallback:
+                    rendered_page = await self._try_render_providers(
+                        self._fallback_render_providers(),
+                        normalized,
+                        timeout,
+                        domain=domain,
+                        phase="Fallback",
+                    )
+                    if rendered_page is not None:
+                        self._last_domain_request[domain] = loop.time()
+                        return rendered_page
+
+                self._last_domain_request[domain] = loop.time()
+                if direct_page is not None:
+                    return direct_page
+                assert direct_error is not None
+                raise direct_error
+
+    async def _fetch_direct(self, url: str, timeout_seconds: float) -> FetchedPage:
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        async with httpx.AsyncClient(
+            follow_redirects=True,
+            timeout=timeout_seconds,
+            headers=DEFAULT_HEADERS,
+            max_redirects=3,
+        ) as client:
+            response = await client.get(url)
+        return FetchedPage(
+            url=url,
+            final_url=str(response.url),
+            status_code=int(response.status_code),
+            text=response.text or "",
+            elapsed_seconds=max(0.0, loop.time() - started),
+            content_type=str(response.headers.get("content-type") or "").lower(),
+            provider="direct",
+        )
+
+    async def _fetch_firecrawl(self, url: str, timeout_seconds: float) -> FetchedPage:
+        result = await self.firecrawl.scrape(url, timeout_seconds=timeout_seconds)
+        return FetchedPage(
+            url=url,
+            final_url=result.final_url,
+            status_code=result.status_code,
+            text=result.html or result.markdown,
+            elapsed_seconds=result.elapsed_seconds,
+            content_type="text/html" if result.html else "text/markdown",
+            provider="firecrawl",
+        )
+
+    async def _fetch_browser_use(self, url: str, timeout_seconds: float) -> FetchedPage:
+        result = await self.browser_use.scrape(url, timeout_seconds=timeout_seconds)
+        return FetchedPage(
+            url=url,
+            final_url=result.final_url,
+            status_code=result.status_code,
+            text=result.html,
+            elapsed_seconds=result.elapsed_seconds,
+            content_type="text/html",
+            provider="browser_use",
+        )
+
+    async def _fetch_crawlee(self, url: str, timeout_seconds: float, *, render: bool) -> FetchedPage:
+        result = await self.crawlee.scrape(url, render=render, timeout_seconds=timeout_seconds)
+        return FetchedPage(
+            url=url,
+            final_url=result.final_url,
+            status_code=result.status_code,
+            text=result.html,
+            elapsed_seconds=result.elapsed_seconds,
+            content_type="text/html",
+            provider="crawlee",
+        )
+
+    @staticmethod
+    def _needs_rendered_fallback(page: FetchedPage) -> bool:
+        if page.status_code in {401, 403, 408, 409, 425, 429} or page.status_code >= 500:
+            return True
+        is_html = "html" in page.content_type or page.content_type == ""
+        return is_html and len(page.text.strip()) < max(1, int(settings.FIRECRAWL_MIN_HTML_LENGTH))
 
 
 def _dedupe_preserve_order(values: Iterable[str], *, limit: int = 20) -> list[str]:
@@ -834,14 +995,14 @@ class CareersPageFinder:
         for path in CAREERS_PATHS:
             url = f"{base_url}{path}"
             try:
-                page = await self.http_client.fetch(url, timeout_seconds=6)
+                page = await self.http_client.fetch(url, timeout_seconds=6, render=True)
                 if 200 <= page.status_code < 300:
                     return normalize_url(page.final_url)
             except Exception:
                 continue
 
         try:
-            page = await self.http_client.fetch(base_url, timeout_seconds=8)
+            page = await self.http_client.fetch(base_url, timeout_seconds=8, render=True)
             if page.status_code < 400:
                 soup = BeautifulSoup(page.text, "html.parser")
                 for link in soup.find_all("a", href=True):
@@ -855,22 +1016,29 @@ class CareersPageFinder:
 
     async def _search_for_careers_page(self, domain: str) -> Optional[str]:
         key = (getattr(settings, "SERPAPI_KEY", "") or "").strip()
-        if not key or httpx is None:
-            return None
-        params = {
-            "engine": "google",
-            "q": f"site:{domain} careers OR jobs internship",
-            "api_key": key,
-            "num": "5",
-        }
-        async with httpx.AsyncClient(timeout=10, headers=DEFAULT_HEADERS) as client:
-            response = await client.get("https://serpapi.com/search.json", params=params)
-            response.raise_for_status()
-            payload = response.json()
-        for row in payload.get("organic_results", []) or []:
-            link = str(row.get("link") or "")
-            if domain in normalize_domain(urlparse(link).netloc):
-                return normalize_url(link)
+        query = f"site:{domain} careers OR jobs internship"
+        if key and httpx is not None:
+            params = {
+                "engine": "google",
+                "q": query,
+                "api_key": key,
+                "num": "5",
+            }
+            async with httpx.AsyncClient(timeout=10, headers=DEFAULT_HEADERS) as client:
+                response = await client.get("https://serpapi.com/search.json", params=params)
+                response.raise_for_status()
+                payload = response.json()
+            for row in payload.get("organic_results", []) or []:
+                link = str(row.get("link") or "")
+                if domain in normalize_domain(urlparse(link).netloc):
+                    return normalize_url(link)
+        if settings.FIRECRAWL_SEARCH_ENABLED and firecrawl_client.configured:
+            try:
+                for row in await firecrawl_client.search(query, limit=5):
+                    if domain in normalize_domain(urlparse(row.url).netloc):
+                        return normalize_url(row.url)
+            except FirecrawlUnavailableError:
+                logger.warning("Firecrawl careers-page search unavailable", extra={"domain": domain})
         return None
 
 
@@ -943,32 +1111,73 @@ class SourceDiscoveryEngine:
 
     async def _discover_from_web_search(self, run: SourceDiscoveryRun) -> list[DiscoveryCandidate]:
         key = (getattr(settings, "SERPAPI_KEY", "") or "").strip()
-        if not key or httpx is None:
+        firecrawl_search = bool(settings.FIRECRAWL_SEARCH_ENABLED and firecrawl_client.configured)
+        if (not key or httpx is None) and not firecrawl_search:
             return []
         queries = await self.query_generator.generate(limit=10)
         candidates: list[DiscoveryCandidate] = []
-        async with httpx.AsyncClient(timeout=10, headers=DEFAULT_HEADERS) as client:
+        client = httpx.AsyncClient(timeout=10, headers=DEFAULT_HEADERS) if key and httpx is not None else None
+        try:
             for query in queries:
-                params = {"engine": "google", "q": query, "api_key": key, "num": "5"}
-                try:
-                    response = await client.get("https://serpapi.com/search.json", params=params)
-                    response.raise_for_status()
-                    payload = response.json()
-                    run.queries_executed += 1
-                    for row in payload.get("organic_results", [])[:5]:
-                        link = str(row.get("link") or "")
-                        if link:
-                            candidates.append(
-                                DiscoveryCandidate(
-                                    url=link,
-                                    method=DiscoveryMethod.web_search,
-                                    discovery_query=query,
-                                    name=str(row.get("title") or "") or None,
-                                )
-                            )
-                except Exception as exc:
-                    run.errors.append(f"web_search:{query}:{exc}")
+                query_rows: list[tuple[str, str | None]] = []
+                prefer_firecrawl = (
+                    firecrawl_search
+                    and str(settings.FIRECRAWL_MODE or "fallback").strip().lower() == "preferred"
+                )
+                if prefer_firecrawl:
+                    query_rows = await self._search_firecrawl(query, run)
+                if not query_rows and client is not None:
+                    query_rows = await self._search_serpapi(client, query, key, run)
+                if not query_rows and firecrawl_search and not prefer_firecrawl:
+                    query_rows = await self._search_firecrawl(query, run)
+                for link, title in query_rows:
+                    candidates.append(
+                        DiscoveryCandidate(
+                            url=link,
+                            method=DiscoveryMethod.web_search,
+                            discovery_query=query,
+                            name=title,
+                        )
+                    )
+        finally:
+            if client is not None:
+                await client.aclose()
         return candidates
+
+    async def _search_serpapi(
+        self,
+        client: Any,
+        query: str,
+        key: str,
+        run: SourceDiscoveryRun,
+    ) -> list[tuple[str, str | None]]:
+        params = {"engine": "google", "q": query, "api_key": key, "num": "5"}
+        try:
+            response = await client.get("https://serpapi.com/search.json", params=params)
+            response.raise_for_status()
+            payload = response.json()
+            run.queries_executed += 1
+            return [
+                (str(row.get("link") or ""), str(row.get("title") or "") or None)
+                for row in payload.get("organic_results", [])[:5]
+                if str(row.get("link") or "").strip()
+            ]
+        except Exception as exc:
+            run.errors.append(f"serpapi_search:{query}:{type(exc).__name__}")
+            return []
+
+    async def _search_firecrawl(
+        self,
+        query: str,
+        run: SourceDiscoveryRun,
+    ) -> list[tuple[str, str | None]]:
+        try:
+            rows = await firecrawl_client.search(query, limit=5)
+            run.queries_executed += 1
+            return [(row.url, row.title) for row in rows]
+        except FirecrawlUnavailableError as exc:
+            run.errors.append(f"firecrawl_search:{query}:{exc}")
+            return []
 
     async def _discover_from_company_seeds(self, limit: int = 50) -> list[DiscoveryCandidate]:
         seeds = await self.next_company_seeds(limit=limit)
@@ -1004,7 +1213,7 @@ class SourceDiscoveryEngine:
         candidates: list[DiscoveryCandidate] = []
         for source in promoted:
             try:
-                page = await self.http_client.fetch(source.url, timeout_seconds=8)
+                page = await self.http_client.fetch(source.url, timeout_seconds=8, render=True)
                 soup = BeautifulSoup(page.text, "html.parser")
                 for link in soup.find_all("a", href=True):
                     label = " ".join([link.get_text(" ", strip=True), str(link.get("href") or "")]).lower()
@@ -1245,7 +1454,7 @@ class SourceQualificationService:
         page: FetchedPage | None = None
         details: dict[str, Any] = {}
         try:
-            page = await self.http_client.fetch(source.url, timeout_seconds=5)
+            page = await self.http_client.fetch(source.url, timeout_seconds=5, render=True)
             details["reachability"] = self._reachability_check(page).model_dump()
         except Exception as exc:
             details["reachability"] = QualificationCheckResult(
@@ -1487,7 +1696,7 @@ class AdaptiveExtractionService:
         await source.save()
 
         try:
-            page = await self.http_client.fetch(source.url, timeout_seconds=10)
+            page = await self.http_client.fetch(source.url, timeout_seconds=10, render=True)
             outcome = await self._extract_from_page(source, page)
             valid = [self._normalize_opportunity(row, source.url) for row in outcome.opportunities]
             valid = [row for row in valid if row]
@@ -2169,7 +2378,7 @@ class TemplateDrivenScraper:
         return await self._scrape_with_css_template(registration)
 
     async def _scrape_schema_org(self, registration: ScraperRegistration) -> ScraperRunResult:
-        page = await self.http_client.fetch(registration.careers_url, timeout_seconds=10)
+        page = await self.http_client.fetch(registration.careers_url, timeout_seconds=10, render=True)
         soup = BeautifulSoup(page.text or "", "html.parser")
         extractor = AdaptiveExtractionService(http_client=self.http_client)
         rows = [
@@ -2282,7 +2491,7 @@ class TemplateDrivenScraper:
         for page_number in range(1, max_pages + 1):
             page_url = base_url if page_number == 1 or not pagination_pattern else urljoin(base_url, str(pagination_pattern).replace("{n}", str(page_number)))
             try:
-                page = await self.http_client.fetch(page_url, timeout_seconds=10)
+                page = await self.http_client.fetch(page_url, timeout_seconds=10, render=True)
                 soup = BeautifulSoup(page.text or "", "html.parser")
                 for element in soup.select(listing_selector)[:50]:
                     title_node = element.select_one(title_selector)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,15 @@ from app.services.mlops.drift_service import drift_service
 from app.services.mlops.retraining_service import retraining_service
 from app.services.ranking_model_service import ranking_model_service
 from scripts.publish_model_metadata import _build_metadata_markdown, _collect_snapshot, _save_artifact, _upsert_readme_section
+
+INSUFFICIENT_TRAINING_DATA_RE = re.compile(r"^insufficient_training_data:\s*(\d+)\s*<\s*(\d+)$")
+
+
+def _insufficient_training_rows(error: ValueError) -> tuple[int, int] | None:
+    match = INSUFFICIENT_TRAINING_DATA_RE.fullmatch(str(error).strip())
+    if match is None:
+        return None
+    return int(match.group(1)), int(match.group(2))
 
 
 def _model_score(model: RankingModelVersion) -> tuple[float, float, str]:
@@ -61,6 +71,11 @@ async def _main() -> int:
     parser.add_argument("--activation-policy", type=str, default=str(settings.MLOPS_ACTIVATION_POLICY))
     parser.add_argument("--max-champion-candidates", type=int, default=20)
     parser.add_argument(
+        "--allow-insufficient-training-data",
+        action="store_true",
+        help="Return success with an auditable skipped artifact when the training window has too few rows.",
+    )
+    parser.add_argument(
         "--artifact",
         type=str,
         default=str(BACKEND_ROOT / "benchmarks" / "model_lifecycle_latest.json"),
@@ -92,18 +107,36 @@ async def _main() -> int:
     )
 
     try:
-        train_result = await retraining_service.retrain_and_register(
-            lookback_days=int(args.lookback_days),
-            label_window_hours=int(args.label_window_hours),
-            min_rows=int(args.min_rows),
-            grid_step=float(args.grid_step),
-            auto_activate=True,
-            activation_policy=str(args.activation_policy),
-            min_auc_gain_for_activation=float(settings.MLOPS_AUTO_ACTIVATE_MIN_AUC_GAIN),
-            min_positive_rate_for_activation=float(settings.MLOPS_AUTO_ACTIVATE_MIN_POSITIVE_RATE),
-            max_weight_shift_for_activation=float(settings.MLOPS_AUTO_ACTIVATE_MAX_WEIGHT_SHIFT),
-            notes="lifecycle_pipeline",
-        )
+        try:
+            train_result = await retraining_service.retrain_and_register(
+                lookback_days=int(args.lookback_days),
+                label_window_hours=int(args.label_window_hours),
+                min_rows=int(args.min_rows),
+                grid_step=float(args.grid_step),
+                auto_activate=True,
+                activation_policy=str(args.activation_policy),
+                min_auc_gain_for_activation=float(settings.MLOPS_AUTO_ACTIVATE_MIN_AUC_GAIN),
+                min_positive_rate_for_activation=float(settings.MLOPS_AUTO_ACTIVATE_MIN_POSITIVE_RATE),
+                max_weight_shift_for_activation=float(settings.MLOPS_AUTO_ACTIVATE_MAX_WEIGHT_SHIFT),
+                notes="lifecycle_pipeline",
+            )
+        except ValueError as exc:
+            insufficient = _insufficient_training_rows(exc)
+            if insufficient is None or not bool(args.allow_insufficient_training_data):
+                raise
+            training_rows, required_rows = insufficient
+            artifact_path = Path(args.artifact)
+            result_payload = {
+                "status": "skipped_insufficient_training_data",
+                "trained_rows": training_rows,
+                "required_rows": required_rows,
+                "lookback_days": int(args.lookback_days),
+                "label_window_hours": int(args.label_window_hours),
+                "artifact": str(artifact_path),
+            }
+            _save_artifact(artifact_path, result_payload)
+            print(json.dumps(result_payload, indent=2, sort_keys=True))
+            return 0
 
         champion = await _select_champion(max_models=int(args.max_champion_candidates))
         champion_id = None

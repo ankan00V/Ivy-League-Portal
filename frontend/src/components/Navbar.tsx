@@ -7,8 +7,18 @@ import { clearAccessToken, getAuthStateEventName, hasAuthSession } from "@/lib/a
 
 export default function Navbar() {
     const [scrolled, setScrolled] = useState(false);
-    const [isAuthenticated, setIsAuthenticated] = useState(() => hasAuthSession());
+    const [isAuthenticated, setIsAuthenticated] = useState(false);
+    const [hasMounted, setHasMounted] = useState(false);
     const router = useRouter();
+
+    // Initialize auth state on mount to prevent hydration mismatch
+    // This is intentional - we need to sync client state after mount
+    /* eslint-disable */
+    useEffect(() => {
+        setHasMounted(true);
+        setIsAuthenticated(hasAuthSession());
+    }, []);
+    /* eslint-enable */
 
     useEffect(() => {
         const handleScroll = () => setScrolled(window.scrollY > 20);
@@ -64,10 +74,16 @@ export default function Navbar() {
                 }}
             >
                 <BrandLogo size="lg" />
-                <div style={{ display: "flex", gap: "2rem", alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                <div style={{ display: "flex", gap: "2rem", alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }} suppressHydrationWarning>
                     <Link href="#features" style={{ fontSize: "0.95rem", color: "var(--text-secondary)" }}>Features</Link>
                     <Link href="#incoscore" style={{ fontSize: "0.95rem", color: "var(--text-secondary)" }}>InCoScore</Link>
-                    {isAuthenticated ? (
+                    {!hasMounted ? (
+                        // Show unauthenticated state during SSR to match server render
+                        <>
+                            <Link href="/login" style={{ fontSize: "0.95rem", fontWeight: 500, color: "var(--text-primary)" }}>Sign In</Link>
+                            <Link href="/register" className="btn-primary">Get Early Access</Link>
+                        </>
+                    ) : isAuthenticated ? (
                         <>
                             <Link href="/profile" style={{ fontSize: "0.95rem", fontWeight: 700, color: "var(--text-primary)" }}>
                                 Profile
