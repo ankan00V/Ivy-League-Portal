@@ -49,6 +49,10 @@ class OpportunityVectorService:
             return "faiss"
         return "numpy_flat"
 
+    def is_ready(self) -> bool:
+        """Whether this process already has a usable in-memory opportunity index."""
+        return self._last_build_at is not None
+
     def _score_to_similarity(self, score: float) -> float:
         return float(max(-1.0, min(1.0, score)))
 

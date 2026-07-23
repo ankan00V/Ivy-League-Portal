@@ -8,9 +8,17 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from app.services.embedding_pipeline import EmbeddingPipeline  # noqa: E402
 from app.services.vector_service import OpportunityVectorService  # noqa: E402
+from app.core.time import utc_now  # noqa: E402
 
 
 class TestEmbeddingPipeline(unittest.TestCase):
+    def test_vector_readiness_requires_an_existing_index_build(self) -> None:
+        service = OpportunityVectorService()
+
+        self.assertFalse(service.is_ready())
+        service._last_build_at = utc_now()
+        self.assertTrue(service.is_ready())
+
     def test_opportunity_text_uses_rich_structured_representation(self) -> None:
         text = EmbeddingPipeline().opportunity_text(
             {

@@ -10,7 +10,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
-from typing import Any, Iterable, TypeAlias
+from typing import Any, Awaitable, Iterable, TypeAlias
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 import xml.etree.ElementTree as ET
 
@@ -3345,6 +3345,36 @@ def get_scraper_runtime_status() -> dict[str, Any]:
     return snapshot
 
 
+async def _collect_fetch_batch_results(
+    awaitables: list[Awaitable[Any]],
+    *,
+    batch_name: str,
+    timeout_seconds: float,
+) -> list[Any]:
+    """Return completed fetches while turning slow providers into source errors."""
+    if not awaitables:
+        return []
+
+    tasks = [asyncio.create_task(awaitable) for awaitable in awaitables]
+    timeout = max(1.0, float(timeout_seconds))
+    _, pending = await asyncio.wait(tasks, timeout=timeout)
+    results: list[Any] = []
+    for task in tasks:
+        if task in pending:
+            results.append(TimeoutError(f"{batch_name} fetch timed out after {timeout:g}s"))
+            continue
+        try:
+            results.append(task.result())
+        except Exception as exc:
+            results.append(exc)
+
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+    return results
+
+
 def _new_source_report(source: str) -> dict[str, Any]:
     return {
         "source": source,
@@ -3446,7 +3476,7 @@ async def _insert_and_broadcast(
 
     parsed_count = len(normalized_records)
 
-    if len(normalized_records) > 1:
+    if settings.SCRAPER_INTRA_BATCH_SEMANTIC_DEDUP_ENABLED and len(normalized_records) > 1:
         from app.services.embedding_service import embedding_service
 
         semantic_texts = [
@@ -3498,9 +3528,6 @@ async def _insert_and_broadcast(
             }
 
     from app.services.vector_service import opportunity_vector_service
-
-    if normalized_records:
-        await opportunity_vector_service.rebuild()
 
     for normalized_payload in normalized_records:
         url = normalized_payload["url"]
@@ -3579,12 +3606,14 @@ async def _insert_and_broadcast(
                 f"{normalized_payload.get('title', '')} {normalized_payload.get('description', '')} "
                 f"{normalized_payload.get('opportunity_type', '')}"
             ).strip()
-            semantic_duplicates = await opportunity_vector_service.find_semantic_duplicates(
-                semantic_text,
-                threshold=semantic_threshold,
-                top_k=1,
-                exclude_urls=[url],
-            )
+            semantic_duplicates = []
+            if opportunity_vector_service.is_ready():
+                semantic_duplicates = await opportunity_vector_service.find_semantic_duplicates(
+                    semantic_text,
+                    threshold=semantic_threshold,
+                    top_k=1,
+                    exclude_urls=[url],
+                )
             if semantic_duplicates:
                 duplicate_url = semantic_duplicates[0].get("url")
                 duplicate = await Opportunity.find_one({"url": duplicate_url})
@@ -3664,9 +3693,6 @@ async def _insert_and_broadcast(
             failed_count += 1
             print(f"[ScraperInsert] Failed to upsert '{normalized_payload.get('title', 'unknown')}': {exc}")
 
-    if inserted_count or updated_count:
-        await opportunity_vector_service.rebuild(force=True)
-
     return {
         "inserted": inserted_count,
         "updated": updated_count,
@@ -3742,53 +3768,37 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
                     errors,
                 )
 
-            base_fetch_results = await asyncio.gather(
-                asyncio.to_thread(ivy_connector.fetch_ivy_league_opportunities, 10),
-                fetch_unstop_batch(),
-                asyncio.to_thread(
-                    naukri_scraper.fetch_it_jobs,
-                    max(1, settings.SCRAPER_NAUKRI_MAX_ITEMS),
-                ),
-                asyncio.to_thread(
-                    internshala_scraper.fetch_live_opportunities,
-                    max(1, settings.SCRAPER_INTERNSHALA_MAX_ITEMS),
-                ),
-                asyncio.to_thread(
-                    hack2skill_scraper.fetch_live_opportunities,
-                    max(1, settings.SCRAPER_HACK2SKILL_MAX_ITEMS),
-                ),
-                asyncio.to_thread(
-                    freshersworld_scraper.fetch_live_opportunities,
-                    max(1, settings.SCRAPER_FRESHERSWORLD_MAX_ITEMS),
-                ),
-                asyncio.to_thread(
-                    indeed_india_scraper.fetch_live_opportunities,
-                    max(1, settings.SCRAPER_INDEED_MAX_ITEMS),
-                ),
-                asyncio.to_thread(
-                    greenhouse_scraper.fetch_live_opportunities,
-                    max(1, settings.SCRAPER_GREENHOUSE_MAX_ITEMS),
-                ),
-                return_exceptions=True,
-            )
-            portal_specs: list[tuple[str, str]] = [
-                (
-                    str(config.get("source") or "").strip().lower(),
-                    str(config.get("label") or config.get("source") or "Platform").strip(),
-                )
-                for config in merged_portal_listings()
-                if str(config.get("source") or "").strip() and config.get("enabled", True)
-            ]
-            portal_fetch_results = await asyncio.gather(
-                *[
+            base_fetch_results = await _collect_fetch_batch_results(
+                [
+                    asyncio.to_thread(ivy_connector.fetch_ivy_league_opportunities, 10),
+                    fetch_unstop_batch(),
                     asyncio.to_thread(
-                        generic_portal_scraper.fetch_live_opportunities,
-                        source_name,
-                        max(1, settings.SCRAPER_GENERIC_PORTAL_MAX_ITEMS),
-                    )
-                    for source_name, _ in portal_specs
+                        naukri_scraper.fetch_it_jobs,
+                        max(1, settings.SCRAPER_NAUKRI_MAX_ITEMS),
+                    ),
+                    asyncio.to_thread(
+                        internshala_scraper.fetch_live_opportunities,
+                        max(1, settings.SCRAPER_INTERNSHALA_MAX_ITEMS),
+                    ),
+                    asyncio.to_thread(
+                        hack2skill_scraper.fetch_live_opportunities,
+                        max(1, settings.SCRAPER_HACK2SKILL_MAX_ITEMS),
+                    ),
+                    asyncio.to_thread(
+                        freshersworld_scraper.fetch_live_opportunities,
+                        max(1, settings.SCRAPER_FRESHERSWORLD_MAX_ITEMS),
+                    ),
+                    asyncio.to_thread(
+                        indeed_india_scraper.fetch_live_opportunities,
+                        max(1, settings.SCRAPER_INDEED_MAX_ITEMS),
+                    ),
+                    asyncio.to_thread(
+                        greenhouse_scraper.fetch_live_opportunities,
+                        max(1, settings.SCRAPER_GREENHOUSE_MAX_ITEMS),
+                    ),
                 ],
-                return_exceptions=True,
+                batch_name="primary_sources",
+                timeout_seconds=settings.SCRAPER_FETCH_BATCH_TIMEOUT_SECONDS,
             )
 
             (
@@ -3891,6 +3901,27 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
                 source_label="Greenhouse",
                 result=greenhouse_result,
                 empty_message="No opportunities parsed from Greenhouse.",
+            )
+
+            portal_specs: list[tuple[str, str]] = [
+                (
+                    str(config.get("source") or "").strip().lower(),
+                    str(config.get("label") or config.get("source") or "Platform").strip(),
+                )
+                for config in merged_portal_listings()
+                if str(config.get("source") or "").strip() and config.get("enabled", True)
+            ]
+            portal_fetch_results = await _collect_fetch_batch_results(
+                [
+                    asyncio.to_thread(
+                        generic_portal_scraper.fetch_live_opportunities,
+                        source_name,
+                        max(1, settings.SCRAPER_GENERIC_PORTAL_MAX_ITEMS),
+                    )
+                    for source_name, _ in portal_specs
+                ],
+                batch_name="generic_portals",
+                timeout_seconds=settings.SCRAPER_FETCH_BATCH_TIMEOUT_SECONDS,
             )
 
             for (source_name, source_label), source_result in zip(portal_specs, portal_fetch_results):

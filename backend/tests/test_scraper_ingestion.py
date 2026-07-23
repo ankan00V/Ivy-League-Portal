@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 from datetime import datetime, timedelta, timezone
 import sys
@@ -10,6 +11,7 @@ if str(BACKEND_ROOT) not in sys.path:
 from app.services.scraper import (
     GenericOpportunityPortalScraper,
     GreenhouseScraper,
+    _collect_fetch_batch_results,
     _dedupe_by_url,
     _extract_batch_years,
     _extract_deadline_from_text,
@@ -340,6 +342,30 @@ class TestScraperIngestionHelpers(unittest.TestCase):
         )
         self.assertIn(assessment.trust_status, {TRUST_STATUS_NEEDS_REVIEW, TRUST_STATUS_BLOCKED})
         self.assertGreaterEqual(assessment.risk_score, 45)
+
+
+class TestScraperFetchBatchTimeout(unittest.IsolatedAsyncioTestCase):
+    async def test_completed_results_are_preserved_when_a_sibling_times_out(self) -> None:
+        started = asyncio.Event()
+
+        async def completed() -> list[str]:
+            return ["fresh"]
+
+        async def blocked() -> list[str]:
+            started.set()
+            await asyncio.Event().wait()
+            return []
+
+        results = await _collect_fetch_batch_results(
+            [completed(), blocked()],
+            batch_name="test_sources",
+            timeout_seconds=0.01,
+        )
+
+        self.assertTrue(started.is_set())
+        self.assertEqual(results[0], ["fresh"])
+        self.assertIsInstance(results[1], TimeoutError)
+        self.assertIn("test_sources fetch timed out", str(results[1]))
 
 
 if __name__ == "__main__":
