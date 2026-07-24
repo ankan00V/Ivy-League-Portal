@@ -98,7 +98,7 @@ flowchart LR
 <!-- DATASET_SNAPSHOT:START -->
 
 ## Dataset Size (Verified Snapshot)
-Snapshot date: **July 23, 2026**
+Snapshot date: **July 24, 2026**
 
 - Opportunities: **330**
 - Applications: **0**
