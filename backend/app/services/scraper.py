@@ -3596,14 +3596,15 @@ async def _insert_and_broadcast(
             now_naive = _to_naive_utc(utc_now())
             canonical_key = str(normalized_payload.get("canonical_key") or "").strip()
             duplicate_cluster_key = str(normalized_payload.get("duplicate_cluster_key") or "").strip()
+            existing_url_match = existing_by_url.get(url)
             existing = (
-                existing_by_url.get(url)
+                existing_url_match
                 or existing_by_key.get(canonical_key)
                 or existing_by_cluster.get(duplicate_cluster_key)
             )
             if existing:
                 changed = False
-                for field in [
+                merge_fields = [
                     "title",
                     "description",
                     "opportunity_type",
@@ -3633,7 +3634,17 @@ async def _insert_and_broadcast(
                     "normalized_title",
                     "normalized_organization",
                     "duration_months",
-                ]:
+                ]
+                # When the match came from canonical_key/duplicate_cluster_key
+                # rather than the URL, the incoming record is a *different*
+                # listing that merely normalised to the same key. Overwriting
+                # the row's title/description/deadline while leaving the old URL
+                # in place produced records whose Apply button led to an
+                # unrelated - often closed - posting. Keep the row internally
+                # consistent by taking the incoming URL too.
+                if existing_url_match is None and str(getattr(existing, "url", "") or "") != url:
+                    merge_fields = merge_fields + ["url"]
+                for field in merge_fields:
                     incoming = normalized_payload.get(field)
                     if incoming is None:
                         continue
