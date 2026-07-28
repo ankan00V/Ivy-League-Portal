@@ -97,12 +97,33 @@ class JobRunner:
         now = utc_now()
         cutoff = now - lock_timeout
 
+        # A worker that dies mid-job (deploy, crash, OOM, scale-down) leaves the
+        # row in "running" forever: it was never claimable again, yet it still
+        # counted toward JOBS_MAX_PENDING_PER_TYPE and blocked its dedupe_key.
+        # Enough restarts and the queue wedges permanently.
+        #
+        # Reclaim only once the job cannot still be running legitimately. The
+        # handler timeout bounds a live job's runtime and may exceed the lock
+        # timeout, so reclaiming at the lock timeout alone would execute a slow
+        # but healthy job twice.
+        abandoned_cutoff = now - timedelta(
+            seconds=max(
+                float(max(30, int(settings.JOBS_LOCK_TIMEOUT_SECONDS))),
+                float(settings.JOBS_HANDLER_TIMEOUT_SECONDS) * 2.0,
+            )
+        )
+
         collection = _get_collection(BackgroundJob)
         doc = await collection.find_one_and_update(
             {
-                "status": {"$in": ["pending", "retry"]},
-                "run_after": {"$lte": now},
-                "$or": [{"locked_at": None}, {"locked_at": {"$lte": cutoff}}],
+                "$or": [
+                    {
+                        "status": {"$in": ["pending", "retry"]},
+                        "run_after": {"$lte": now},
+                        "$or": [{"locked_at": None}, {"locked_at": {"$lte": cutoff}}],
+                    },
+                    {"status": "running", "locked_at": {"$lte": abandoned_cutoff}},
+                ]
             },
             {
                 "$set": {
