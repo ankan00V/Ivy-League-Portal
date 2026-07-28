@@ -5,7 +5,7 @@ from datetime import datetime
 from app.core.config import settings
 from app.core.metrics import OPPORTUNITY_FRESHNESS_SECONDS, OPPORTUNITY_STALE
 from app.models.opportunity import Opportunity
-from app.core.time import utc_now
+from app.core.time import as_utc_aware, utc_now
 
 
 async def refresh_freshness_metrics() -> dict[str, float | bool]:
@@ -25,7 +25,11 @@ async def refresh_freshness_metrics() -> dict[str, float | bool]:
 
     item = latest[0]
     last = item.last_seen_at or item.updated_at or item.created_at
-    last_value = last if last is not None else now
+    # Opportunity timestamps are persisted naive-UTC by the scraper, so they come
+    # back from Mongo without a tzinfo. Subtracting those from an aware utc_now()
+    # raises TypeError, which previously failed the whole scraper job after the
+    # scrape had already succeeded.
+    last_value = as_utc_aware(last) or now
     freshness_seconds = max(0.0, (now - last_value).total_seconds())
     stale_threshold_seconds = max(60.0, float(max(1, settings.SCRAPER_MAX_STALENESS_MINUTES)) * 60.0)
     stale = freshness_seconds > stale_threshold_seconds

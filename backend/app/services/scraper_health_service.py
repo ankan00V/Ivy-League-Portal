@@ -56,11 +56,19 @@ class ScraperHealthService:
             source_name = str(source.get("source") or "unknown").strip().lower() or "unknown"
             errors = [str(item) for item in list(source.get("errors") or []) if str(item).strip()]
             fetched = max(0, int(source.get("fetched") or 0))
-            parsed = max(0, int(source.get("parsed") or fetched))
+            # These use explicit None checks rather than `or`. A genuine zero is
+            # meaningful here: `parsed or fetched` reported 100% parse success
+            # for a source whose rows were all filtered out, and
+            # `deduplicated or (fetched - parsed)` relabelled scope rejections
+            # as duplicates. Both made a broken pipeline look healthy.
+            parsed_raw = source.get("parsed")
+            parsed = max(0, int(parsed_raw if parsed_raw is not None else fetched))
             inserted = max(0, int(source.get("inserted") or 0))
             updated = max(0, int(source.get("updated") or 0))
             failed = max(0, int(source.get("failed") or 0))
-            deduplicated = max(0, int(source.get("deduplicated") or max(0, fetched - parsed)))
+            deduplicated_raw = source.get("deduplicated")
+            deduplicated = max(0, int(deduplicated_raw)) if deduplicated_raw is not None else 0
+            out_of_scope = max(0, int(source.get("out_of_scope") or 0))
             status = _status_bucket("failed" if errors and fetched == 0 else source.get("status") or report.get("status"))
             parse_error_count = max(failed, int(source.get("parse_error_count") or 0), len(errors))
             parse_times = [float(item) for item in list(source.get("parse_times_ms") or []) if item is not None]
@@ -79,6 +87,7 @@ class ScraperHealthService:
                 items_inserted=inserted,
                 items_updated=updated,
                 items_deduplicated=deduplicated,
+                items_out_of_scope=out_of_scope,
                 parse_error_count=parse_error_count,
                 error_samples=[
                     {"message": message[:500], "source": source_name}

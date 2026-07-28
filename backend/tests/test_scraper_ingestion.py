@@ -1,6 +1,7 @@
 import asyncio
 import unittest
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 import sys
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from app.services.scraper import (
     GreenhouseScraper,
     _collect_fetch_batch_results,
     _dedupe_by_url,
+    _expire_opportunities,
     _extract_batch_years,
     _extract_deadline_from_text,
     _extract_stipend,
@@ -167,6 +169,66 @@ class TestScraperIngestionHelpers(unittest.TestCase):
                 }
             )
         )
+
+    def test_early_career_gate_ignores_seniority_words_in_description(self) -> None:
+        """Descriptions routinely name senior colleagues without the role being senior.
+
+        Matching seniority nouns against the description rejected the majority of
+        legitimate internships, so the exclusion is scoped to title/eligibility.
+        """
+        for description in (
+            "You will work alongside senior engineers on production services.",
+            "Graduate trainee reporting to the engineering manager.",
+            "Software development intern - you will lead small projects.",
+            "Cloud intern working with our solution architect team.",
+            "Join our staff of 200 engineers.",
+        ):
+            with self.subTest(description=description):
+                self.assertTrue(
+                    is_early_career_opportunity(
+                        {
+                            "title": "Software Engineering Intern",
+                            "description": description,
+                            "opportunity_type": "Job",
+                        }
+                    )
+                )
+
+    def test_early_career_gate_accepts_zero_and_one_anchored_year_ranges(self) -> None:
+        """`0-2 years` is the most common fresher phrasing and must not be rejected."""
+        for description in (
+            "Experience: 0-2 years",
+            "Looking for candidates with 0 to 3 years of experience.",
+            "1-2 years experience welcome.",
+            "Experience: 0 - 2 years",
+        ):
+            with self.subTest(description=description):
+                self.assertTrue(
+                    is_early_career_opportunity(
+                        {
+                            "title": "Software Engineer Trainee",
+                            "description": description,
+                            "opportunity_type": "Job",
+                        }
+                    )
+                )
+
+    def test_early_career_gate_still_rejects_explicit_multi_year_demands(self) -> None:
+        for description in (
+            "We need 5+ years of backend experience.",
+            "At least 4 years building distributed systems.",
+            "Guaranteed placement bootcamp with paid enrollment.",
+        ):
+            with self.subTest(description=description):
+                self.assertFalse(
+                    is_early_career_opportunity(
+                        {
+                            "title": "Backend Developer",
+                            "description": description,
+                            "opportunity_type": "Job",
+                        }
+                    )
+                )
 
     def test_greenhouse_scraper_parses_public_jobs_api(self) -> None:
         session = DummySession(
@@ -366,6 +428,93 @@ class TestScraperFetchBatchTimeout(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(results[0], ["fresh"])
         self.assertIsInstance(results[1], TimeoutError)
         self.assertIn("test_sources fetch timed out", str(results[1]))
+
+
+class TestInternshalaListingBudget(unittest.TestCase):
+    """Every configured Internshala listing must be requested.
+
+    The two job listings are declared first; filling the item budget greedily in
+    order meant the internship listings were never fetched, so India's largest
+    internship board contributed zero internships.
+    """
+
+    def test_all_listings_are_requested_including_internships(self) -> None:
+        import app.services.scraper as scraper_module
+
+        requested: list[str] = []
+
+        def fake_fetch(url: str, *, render: bool = True):
+            requested.append(url)
+            cards = "".join(
+                f'<div class="internship_meta"><h3><a href="/x/{i}">Role {i}</a></h3>'
+                f'<div class="company_name">Acme</div></div>'
+                for i in range(40)
+            )
+            return SimpleNamespace(text=f"<html><body>{cards}</body></html>",
+                                   status_code=200, final_url=url)
+
+        original = scraper_module._fetch_listing_page
+        scraper_module._fetch_listing_page = fake_fetch
+        try:
+            scraper_module.internshala_scraper.fetch_live_opportunities(max_items=30)
+        finally:
+            scraper_module._fetch_listing_page = original
+
+        self.assertEqual(len(requested), len(scraper_module.INTERNSHALA_LISTINGS))
+        internship_listings = [
+            url for url, kind in scraper_module.INTERNSHALA_LISTINGS if kind == "Internship"
+        ]
+        self.assertTrue(internship_listings, "config should declare internship listings")
+        for url in internship_listings:
+            self.assertIn(url, requested)
+
+
+class TestExpiryIsNonDestructive(unittest.IsolatedAsyncioTestCase):
+    """Past-deadline rows must be retired by status, never hard-deleted.
+
+    Most deadlines in the corpus are synthetic (`now + 30 days`), so deleting on
+    that basis destroyed rows that had not genuinely closed.
+    """
+
+    class _FakeOpportunity:
+        def __init__(self, status: str = "active") -> None:
+            self.id = "fake-id"
+            self.opportunity_status = status
+            self.updated_at = None
+            self.saved = False
+            self.deleted = False
+
+        async def save(self) -> None:
+            self.saved = True
+
+        async def delete(self) -> None:  # pragma: no cover - must never run
+            self.deleted = True
+            raise AssertionError("expiry must not hard-delete opportunities")
+
+    async def test_past_deadline_row_is_marked_expired_not_deleted(self) -> None:
+        record = self._FakeOpportunity()
+
+        marked = await _expire_opportunities([record])
+
+        self.assertEqual(marked, 1)
+        self.assertEqual(record.opportunity_status, "expired")
+        self.assertTrue(record.saved)
+        self.assertFalse(record.deleted)
+
+    async def test_already_retired_rows_are_not_rewritten(self) -> None:
+        for status in ("expired", "filled", "removed"):
+            with self.subTest(status=status):
+                record = self._FakeOpportunity(status=status)
+                marked = await _expire_opportunities([record])
+                self.assertEqual(marked, 0)
+                self.assertFalse(record.saved)
+
+    async def test_duplicate_records_are_only_counted_once(self) -> None:
+        record = self._FakeOpportunity()
+
+        marked = await _expire_opportunities([record, record])
+
+        self.assertEqual(marked, 1)
 
 
 if __name__ == "__main__":

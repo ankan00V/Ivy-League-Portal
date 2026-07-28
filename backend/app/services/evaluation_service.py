@@ -4,13 +4,12 @@ import json
 import re
 from typing import Any, Iterable, Optional
 
-from openai import AsyncOpenAI
-
 from app.core.config import settings
 from app.models.opportunity import Opportunity
 from app.models.profile import Profile
 from app.services.bedrock_llm_client import BedrockLLMClient, BedrockLLMConfig
 from app.services.embedding_service import embedding_service
+from app.services.openai_client import create_async_openai_client
 from app.services.recommendation_service import recommendation_service
 from app.services.ranking_metrics import (
     mrr,
@@ -59,10 +58,15 @@ class EvaluationService:
                 model_id=self._bedrock_model,
             )
         )
-        self._judge_client = AsyncOpenAI(
-            base_url=self._judge_api_base_url,
-            api_key=self._judge_api_key or "dummy_key_to_prevent_boot_crash",
-        )
+        self._judge_client: Any | None = None
+
+    def _get_judge_client(self) -> Any:
+        if self._judge_client is None:
+            self._judge_client = create_async_openai_client(
+                base_url=self._judge_api_base_url,
+                api_key=self._judge_api_key or "dummy_key_to_prevent_boot_crash",
+            )
+        return self._judge_client
 
     def _judge_configured(self) -> bool:
         if self._provider == "bedrock":
@@ -289,7 +293,7 @@ class EvaluationService:
             )
             model = self._bedrock_model
         else:
-            response = await self._judge_client.chat.completions.create(
+            response = await self._get_judge_client().chat.completions.create(
                 model=model,
                 messages=messages,
                 extra_headers=self._judge_headers(title="VidyaVerse LLM Judge"),
@@ -379,7 +383,7 @@ class EvaluationService:
             )
             model = self._bedrock_model
         else:
-            response = await self._judge_client.chat.completions.create(
+            response = await self._get_judge_client().chat.completions.create(
                 model=model,
                 messages=messages,
                 extra_headers=self._judge_headers(title="VidyaVerse RAG Judge"),

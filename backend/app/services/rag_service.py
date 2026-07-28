@@ -7,8 +7,6 @@ from typing import Any, Optional
 from uuid import uuid4
 
 from beanie import PydanticObjectId
-from openai import AsyncOpenAI
-
 from app.core.config import settings
 from app.models.profile import Profile
 from app.schemas.rag import (
@@ -21,6 +19,7 @@ from app.schemas.rag import (
 from app.services.bedrock_llm_client import BedrockLLMClient, BedrockLLMConfig
 from app.services.evaluation_service import evaluation_service
 from app.services.nlp_service import nlp_service
+from app.services.openai_client import create_async_openai_client
 from app.services.rag_template_registry_service import rag_template_registry_service
 from app.services.vector_service import opportunity_vector_service
 
@@ -72,10 +71,15 @@ class RAGService:
                 model_id=self._bedrock_model,
             )
         )
-        self._client = AsyncOpenAI(
-            base_url=self._api_base_url,
-            api_key=self._api_key or "dummy_key_to_prevent_boot_crash",
-        )
+        self._client: Any | None = None
+
+    def _get_client(self) -> Any:
+        if self._client is None:
+            self._client = create_async_openai_client(
+                base_url=self._api_base_url,
+                api_key=self._api_key or "dummy_key_to_prevent_boot_crash",
+            )
+        return self._client
 
     def _llm_configured(self) -> bool:
         if self._provider == "bedrock":
@@ -354,7 +358,7 @@ class RAGService:
                 )
             else:
                 response = await asyncio.wait_for(
-                    self._client.chat.completions.create(
+                    self._get_client().chat.completions.create(
                         model=self._rag_model,
                         messages=messages,
                         extra_headers=self._extra_headers(title="VidyaVerse RAG"),

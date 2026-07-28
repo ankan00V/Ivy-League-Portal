@@ -534,16 +534,20 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
+    warmup_task: asyncio.Task[None] | None = None
     if settings.RAG_WARMUP_ON_STARTUP:
-        warmup_started_at = time.perf_counter()
-        try:
-            await asyncio.wait_for(
-                _warmup_rag_components(),
-                timeout=max(10.0, float(settings.RAG_WARMUP_TIMEOUT_SECONDS)),
-            )
-            logger.info("RAG warmup completed in %.2fs", time.perf_counter() - warmup_started_at)
-        except Exception as exc:
-            logger.warning("RAG warmup skipped/failed: %s", exc)
+        async def _run_rag_warmup() -> None:
+            warmup_started_at = time.perf_counter()
+            try:
+                await asyncio.wait_for(
+                    _warmup_rag_components(),
+                    timeout=max(10.0, float(settings.RAG_WARMUP_TIMEOUT_SECONDS)),
+                )
+                logger.info("RAG warmup completed in %.2fs", time.perf_counter() - warmup_started_at)
+            except Exception as exc:
+                logger.warning("RAG warmup skipped/failed: %s", exc)
+
+        warmup_task = asyncio.create_task(_run_rag_warmup())
 
     freshness_task: asyncio.Task[None] | None = None
     if settings.METRICS_ENABLED:
@@ -564,6 +568,8 @@ async def lifespan(app: FastAPI):
         scheduler.shutdown()
     if freshness_task is not None:
         freshness_task.cancel()
+    if warmup_task is not None:
+        warmup_task.cancel()
     await job_runner.stop()
     await close_redis()
     client.close()

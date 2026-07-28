@@ -922,6 +922,24 @@ EXPERIENCED_ROLE_PATTERNS = [
     r"\bpaid\s+training\b",
 ]
 
+# Ranges anchored at 0 or 1 are early-career even though they name a number
+# above 1. "0-2 years" is the most common fresher phrasing in Indian postings,
+# and the bare [2-9] rule in EXPERIENCED_ROLE_PATTERNS matches inside it.
+EARLY_CAREER_RANGE_PATTERNS = [
+    r"\b[01]\s*(?:-|–|to)\s*\d+\s*\+?\s*years?\b",
+]
+
+# Disqualifiers that stay meaningful anywhere in a posting, including the
+# description. Bare seniority nouns are deliberately NOT in this list: a
+# description routinely names the senior engineers you would work alongside or
+# the manager you would report to without the role itself being senior.
+EXPERIENCE_DEMAND_PATTERNS = [
+    r"(?<![-–\d])\b[2-9]\s*\+\s*years?\b",
+    r"\b(?:minimum|min\.?|at\s+least)\s+[2-9]\s*\+?\s*years?\b",
+    r"\bbootcamp\b",
+    r"\bjob\s+guaranteed\b",
+]
+
 TRACKING_QUERY_KEYS = {
     "_hsenc",
     "_hsmi",
@@ -1482,10 +1500,25 @@ def is_early_career_opportunity(record: dict[str, Any]) -> bool:
     tags_text = _collapse_whitespace(" ".join(tags_signal_parts)).lower()
     description_text = _collapse_whitespace(record.get("description")).lower()
     text = _collapse_whitespace(f"{primary_text} {tags_text} {description_text}").lower()
-    if any(re.search(pattern, text, re.IGNORECASE) for pattern in EXPERIENCED_ROLE_PATTERNS):
-        return False
+
+    # An explicit early-career signal wins outright. This is checked before any
+    # exclusion because a genuine internship posting almost always mentions the
+    # senior staff you would work with, the manager you report to, or a degree
+    # timeline expressed in years - none of which describe the role's own level.
     if any(re.search(pattern, primary_text, re.IGNORECASE) for pattern in EARLY_CAREER_PATTERNS):
         return True
+    if any(re.search(pattern, text, re.IGNORECASE) for pattern in EARLY_CAREER_RANGE_PATTERNS):
+        return True
+
+    # Seniority nouns only describe this role when they appear in the title or
+    # eligibility. Matching them against the description rejected the majority
+    # of legitimate internships.
+    if any(re.search(pattern, primary_text, re.IGNORECASE) for pattern in EXPERIENCED_ROLE_PATTERNS):
+        return False
+
+    # Explicit multi-year demands disqualify wherever they appear.
+    if any(re.search(pattern, text, re.IGNORECASE) for pattern in EXPERIENCE_DEMAND_PATTERNS):
+        return False
     tags = {tag.strip().lower() for tag in re.split(r"[,|]", tags_text) if tag.strip()}
     return bool(tags & {"intern", "internship", "entry level", "entry-level", "new grad", "graduate trainee"})
 
@@ -1968,13 +2001,19 @@ class InternshalaScraper:
     def fetch_live_opportunities(self, max_items: int = 30) -> list[dict]:
         opportunities: list[dict] = []
 
+        # The budget is shared evenly across listings. Filling greedily in
+        # declaration order let the two job listings consume the whole quota,
+        # so the internship listings - the reason this connector exists - were
+        # never requested and this source returned zero internships.
+        listing_count = max(1, len(INTERNSHALA_LISTINGS))
+        per_listing = max(1, -(-max_items // listing_count))
+
         for listing_url, default_type in INTERNSHALA_LISTINGS:
             try:
                 page = _fetch_listing_page(listing_url, render=True)
                 soup = BeautifulSoup(page.text, "html.parser")
-                opportunities.extend(self._extract_cards(soup, listing_url, default_type))
-                if len(opportunities) >= max_items:
-                    break
+                cards = self._extract_cards(soup, listing_url, default_type)
+                opportunities.extend(cards[:per_listing])
             except Exception as exc:
                 logger.debug("[Internshala] Failed fetch from %s: %s", listing_url, exc)
 
@@ -3391,31 +3430,52 @@ def _new_source_report(source: str) -> dict[str, Any]:
     }
 
 
-async def _delete_opportunities(records: Iterable[Any]) -> int:
-    deleted_count = 0
+async def _expire_opportunities(records: Iterable[Any]) -> int:
+    """Retire past-deadline rows by status instead of destroying them.
+
+    Most deadlines in the corpus are synthetic - several connectors stamp
+    `now + 30 days` or `updated_at + 45 days` when the source exposes no real
+    closing date. Hard-deleting on that basis permanently destroyed rows that
+    were never genuinely expired, with no tombstone and no way to audit or
+    recover. `opportunity_status="expired"` already hides a row from every
+    student-facing surface (see opportunity_visibility.is_opportunity_expired).
+    """
+    expired_count = 0
     seen_ids: set[str] = set()
+    now_naive = _to_naive_utc(utc_now())
     for record in records:
         record_id = str(getattr(record, "id", ""))
         if record_id and record_id in seen_ids:
             continue
         if record_id:
             seen_ids.add(record_id)
-        await record.delete()
-        deleted_count += 1
-    return deleted_count
+        current_status = str(getattr(record, "opportunity_status", "") or "").strip().lower()
+        if current_status in {"expired", "filled", "removed"}:
+            continue
+        record.opportunity_status = "expired"
+        record.updated_at = now_naive
+        await record.save()
+        expired_count += 1
+    return expired_count
 
 
 async def _cleanup_inactive_opportunities(Opportunity) -> dict[str, int]:
     now = _to_naive_utc(utc_now())
     cleanup_report = {
+        "expired_marked": 0,
         "expired_deleted": 0,
         "stale_deleted": 0,
         "hard_stale_deleted": 0,
         "total_deleted": 0,
     }
 
-    expired_records = await Opportunity.find_many({"deadline": {"$ne": None, "$lt": now}}).to_list()
-    cleanup_report["expired_deleted"] = await _delete_opportunities(expired_records)
+    expired_records = await Opportunity.find_many(
+        {
+            "deadline": {"$ne": None, "$lt": now},
+            "opportunity_status": {"$nin": ["expired", "filled", "removed"]},
+        }
+    ).to_list()
+    cleanup_report["expired_marked"] = await _expire_opportunities(expired_records)
     cleanup_report["total_deleted"] = (
         cleanup_report["expired_deleted"]
         + cleanup_report["stale_deleted"]
@@ -3738,7 +3798,7 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
         _scraper_runtime_state["last_started_at"] = _iso(started_at)
 
         report_sources: list[dict[str, Any]] = []
-        totals = {"fetched": 0, "inserted": 0, "updated": 0, "failed": 0, "deleted": 0}
+        totals = {"fetched": 0, "inserted": 0, "updated": 0, "failed": 0, "deleted": 0, "expired": 0}
 
         try:
             system_user = await User.find_one({"is_admin": True})
@@ -4020,6 +4080,7 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
                 totals["updated"] += int(source_report["updated"])
                 totals["failed"] += int(source_report["failed"])
             totals["deleted"] = int(cleanup_report["total_deleted"])
+            totals["expired"] = int(cleanup_report["expired_marked"])
 
             any_errors = any(source_report["errors"] for source_report in report_sources)
             any_progress = (totals["fetched"] + totals["inserted"] + totals["updated"]) > 0

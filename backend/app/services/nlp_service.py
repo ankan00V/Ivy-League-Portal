@@ -4,7 +4,6 @@ import re
 from typing import Any
 
 import numpy as np
-import spacy
 
 from app.services.embedding_service import embedding_service
 from app.services.nlp_model_service import nlp_model_service
@@ -37,6 +36,8 @@ class NLPService:
     def _ensure_nlp(self):
         if self._nlp is not None:
             return self._nlp
+
+        import spacy
 
         try:
             self._nlp = spacy.load("en_core_web_sm")

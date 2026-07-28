@@ -5,8 +5,6 @@ from typing import Any, Optional
 from uuid import uuid4
 
 from beanie.odm.operators.find.comparison import In
-from openai import AsyncOpenAI
-
 from app.core.config import settings
 from app.core.time import utc_now
 from app.models.assistant_audit_event import AssistantAuditEvent
@@ -16,6 +14,7 @@ from app.models.opportunity import Opportunity
 from app.models.profile import Profile
 from app.models.user import User
 from app.services.bedrock_llm_client import BedrockLLMClient, BedrockLLMConfig
+from app.services.openai_client import create_async_openai_client
 from app.services.rag_service import rag_service
 from app.services.ranking_model_service import ranking_model_service
 from app.services.ranking_request_telemetry_service import ranking_request_telemetry_service
@@ -74,10 +73,15 @@ class AssistantService:
                 model_id=self._bedrock_model,
             )
         )
-        self._client = AsyncOpenAI(
-            base_url=self._api_base_url,
-            api_key=self._api_key or "dummy_key_to_prevent_boot_crash",
-        )
+        self._client: Any | None = None
+
+    def _get_client(self) -> Any:
+        if self._client is None:
+            self._client = create_async_openai_client(
+                base_url=self._api_base_url,
+                api_key=self._api_key or "dummy_key_to_prevent_boot_crash",
+            )
+        return self._client
 
     def _llm_configured(self) -> bool:
         if self._provider == "bedrock":
@@ -534,7 +538,7 @@ class AssistantService:
                     messages=api_messages,
                 )
             else:
-                response = await self._client.chat.completions.create(
+                response = await self._get_client().chat.completions.create(
                     model=self._model,
                     messages=api_messages,
                     extra_headers=self._extra_headers(),

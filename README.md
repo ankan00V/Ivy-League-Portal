@@ -2,7 +2,7 @@
 
 > AI-powered opportunity intelligence platform that helps students discover, prioritize, and act on internships, research roles, scholarships, and hackathons.
 
-**Last updated:** June 19, 2026
+**Last updated:** July 28, 2026
 **Status:** Active build, production-readiness gates enabled
 
 ## 1) Executive Summary
@@ -81,6 +81,7 @@ flowchart LR
 - MongoDB-first backend architecture + Redis support.
 - Background jobs with retry, dead-letter behavior, bounded concurrency, queue caps, and handler timeouts.
 - Opportunity ingestion is scheduled immediately at API startup and then every `SCRAPER_INTERVAL_MINUTES` (30 minutes by default). Each `scraper.run` is persisted in the Mongo-backed job queue for retry and operational visibility; primary sources are saved before generic portals, each fetch batch has a bounded `SCRAPER_FETCH_BATCH_TIMEOUT_SECONDS` (180 seconds by default), and model-backed semantic dedup/embedding rebuilds remain off the ingestion critical path by default.
+- Past-deadline opportunities are retired by setting `opportunity_status="expired"`, which hides them from every student-facing surface. Ingestion never hard-deletes opportunity rows: many connectors synthesise a deadline when the source exposes none, so deletion destroyed records that had not genuinely closed.
 - Source discovery pipeline with company seeds, user submissions, qualification queues, adaptive extraction, managed Firecrawl fallback for JS-heavy pages, probation, dynamic scraper registration, and health quarantine.
 - Official company careers intelligence with a curated S-tier internship watchlist across global tech, quant/trading, Indian product, IT services, government/PSU, research, consulting, analytics, banking, manufacturing, aerospace, energy, FMCG, and hidden-gem employers.
 - The intelligent source-discovery loop continues expanding beyond the curated list through company seeds, careers-page crawling, web search, similar-source expansion, employer claims, and admin review.
@@ -99,38 +100,115 @@ flowchart LR
 <!-- DATASET_SNAPSHOT:START -->
 
 ## Dataset Size (Verified Snapshot)
-Snapshot date: **July 19, 2026**
+Snapshot date: **July 28, 2026**
 
-- Opportunities: **330**
+- Opportunities: **359**
 - Applications: **0**
-- Opportunity interactions: **15,706**
-- Experiments: **3**
-- Experiment assignments: **300**
-- Ranking model versions: **360**
-- Drift reports: **361**
-- Profiles: **319**
-- Users: **323**
+- Opportunity interactions: **8,374**
+- Experiments: **2**
+- Experiment assignments: **0**
+- Ranking model versions: **1**
+- Drift reports: **0**
+- Profiles: **30**
+- Users: **32**
 
 Source distribution for opportunities:
-- `freshersworld`: 61
-- `internshala`: 58
-- `indeed_india`: 53
-- `unstop`: 32
-- `linkedin`: 19
-- `ivy_rss`: 15
+- `linkedin`: 23
+- `unstop`: 19
+- `ivy_rss`: 17
+- `indeed_india`: 13
+- `glassdoor`: 12
 - `hackerearth`: 12
-- `ycombinator_jobs`: 12
-- `aicte_internship`: 10
-- `makeintern`: 9
-- `wayup`: 9
-- `devfolio`: 8
-- `devpost`: 8
-- `foundit`: 8
-- `promilo`: 7
-- `hack2skill`: 5
-- `codeforces`: 2
-- `handshake`: 1
+- `devfolio`: 11
+- `github_internship_lists`: 11
+- `aicte_internship`: 9
+- `freshersworld`: 9
+- `company_careers_iitb_ac_in`: 8
+- `company_careers_upgrad_com`: 8
+- `greenhouse`: 8
+- `major_league_hacking`: 8
+- `makeintern`: 8
+- `wayup`: 8
+- `company_careers_iitr_ac_in`: 7
+- `company_careers_tcs_com`: 7
+- `devpost`: 7
+- `company_careers_datadoghq_com`: 6
+- `company_careers_iitd_ac_in`: 6
+- `internshala`: 6
+- `groww_in_company_careers`: 5
+- `linkedin_remote`: 5
+- `remoteok`: 5
+- `company_careers_notion_so`: 4
+- `company_careers_paytm_com`: 4
+- `hack2skill`: 4
+- `promilo`: 4
+- `company_careers_americanexpress_com`: 3
+- `company_careers_bankofbaroda_in`: 3
+- `company_careers_byjus_com`: 3
+- `company_careers_hdfclife_com`: 3
+- `company_careers_hsbc_com`: 3
+- `company_careers_iisc_ac_in`: 3
+- `company_careers_iitk_ac_in`: 3
+- `company_careers_linkedin_com`: 3
+- `company_careers_shopify_com`: 3
+- `handshake`: 3
+- `naukri`: 3
+- `cloudflare_com_company_careers`: 2
+- `company_careers_adobe_com`: 2
+- `company_careers_airbnb_com`: 2
+- `company_careers_axisbank_com`: 2
+- `company_careers_bain_com`: 2
+- `company_careers_cloudflare_com`: 2
+- `company_careers_drreddys_com`: 2
+- `company_careers_figma_com`: 2
+- `company_careers_groww_in`: 2
+- `company_careers_icicibank_com`: 2
+- `company_careers_jpmorganchase_com`: 2
+- `company_careers_kotak_com`: 2
+- `company_careers_larsentoubro_com`: 2
+- `company_careers_myvi_in`: 2
+- `company_careers_niramai_com`: 2
+- `wellfound`: 2
+- `company_careers_accenture_com`: 1
+- `company_careers_acko_com`: 1
+- `company_careers_apple_com`: 1
+- `company_careers_atherenergy_com`: 1
+- `company_careers_atlassian_com`: 1
+- `company_careers_barc_gov_in`: 1
+- `company_careers_bcg_com`: 1
+- `company_careers_browserstack_com`: 1
+- `company_careers_capgemini_com`: 1
+- `company_careers_citi_com`: 1
+- `company_careers_databricks_com`: 1
+- `company_careers_deloitte_com`: 1
+- `company_careers_ey_com`: 1
+- `company_careers_freshworks_com`: 1
+- `company_careers_gitlab_com`: 1
+- `company_careers_google_com`: 1
+- `company_careers_hdfcbank_com`: 1
+- `company_careers_ibm_com`: 1
+- `company_careers_inmobi_com`: 1
+- `company_careers_jsw_in`: 1
+- `company_careers_loreal_com`: 1
+- `company_careers_mahindra_com`: 1
+- `company_careers_makemytrip_com`: 1
+- `company_careers_marutisuzuki_com`: 1
+- `company_careers_meesho_io`: 1
+- `company_careers_mongodb_com`: 1
+- `company_careers_mphasis_com`: 1
+- `company_careers_mu-sigma_com`: 1
+- `company_careers_myntra_com`: 1
+- `company_careers_phonepe_com`: 1
+- `company_careers_remote_com`: 1
+- `company_careers_servicenow_com`: 1
+- `company_careers_shiprocket_in`: 1
+- `elastic_run_company_careers`: 1
+- `paytm_com_company_careers`: 1
+- `razorpay_com_company_careers`: 1
+- `remotees`: 1
 - `techgig`: 1
+- `virtual_vocations`: 1
+- `we_work_remotely`: 1
 
 <!-- DATASET_SNAPSHOT:END -->
 
@@ -178,10 +256,10 @@ Latest drift report: id=`69e32d07` alert=`False` psi=0.030294 max_z=0.069408 not
 <!-- MODEL_VERSION_METADATA:END -->
 
 ### Engineering quality signal
-- Focused scraper/source contract suite: **38 passing tests** (latest local run on July 23, 2026)
+- Focused scraper/source contract suite: **46 passing tests** (latest local run on July 28, 2026)
 - Production infra readiness gate: managed MongoDB, Redis, ClickHouse, and S3-compatible artifact storage have been verified from the local runtime; the full strict gate still requires deployed frontend/backend domains and a production BI URL.
 - Local developer harness smoke: backend, MongoDB, Redis, queue, embedding model, learned ranker, artifact store, warehouse freshness, public opportunities, API docs, and frontend routes passed on June 19, 2026; this is not production deployment proof.
-- Backend full suite baseline: **200 passing tests** (latest recorded full run on June 3, 2026)
+- Backend full suite baseline: **256 passing tests** (latest recorded full run on July 28, 2026)
 - Frontend lint: **passing**
 - Frontend production build: **passing**
 - Security and release gates: **active in CI**

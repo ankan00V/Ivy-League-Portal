@@ -23,6 +23,10 @@ class ScraperRunLog(Document):
     items_inserted: int = Field(default=0, ge=0)
     items_updated: int = Field(default=0, ge=0)
     items_deduplicated: int = Field(default=0, ge=0)
+    # Rows fetched and parsed successfully but rejected by the early-career
+    # scope filter. Previously discarded, which made an over-aggressive filter
+    # indistinguishable from a healthy run.
+    items_out_of_scope: int = Field(default=0, ge=0)
     parse_error_count: int = Field(default=0, ge=0)
     error_samples: list[dict[str, Any]] = Field(default_factory=list)
 
