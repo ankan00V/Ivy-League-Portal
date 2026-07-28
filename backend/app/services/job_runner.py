@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
 from datetime import datetime, timedelta
 from typing import Any, Awaitable, Callable, Optional
@@ -24,6 +25,8 @@ from app.core.metrics import (
 from app.models.background_job import BackgroundJob
 from app.core.time import utc_now
 
+
+logger = logging.getLogger(__name__)
 
 JobHandler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 
@@ -225,13 +228,33 @@ class JobRunner:
 
     async def _loop(self) -> None:
         poll = max(0.2, float(settings.JOBS_POLL_INTERVAL_SECONDS))
+        logger.info("job runner started worker_id=%s poll=%.2fs", self._worker_id, poll)
+        consecutive_errors = 0
+        saturated_since: datetime | None = None
         while not self._stop_event.is_set():
             try:
                 max_concurrency = max(1, int(settings.JOBS_MAX_CONCURRENCY))
                 if len(self._inflight) >= max_concurrency:
+                    # Saturation is normal briefly, but a permanently full
+                    # in-flight set means the queue has silently stopped
+                    # draining - the failure mode that hid a 40-day ingestion
+                    # outage. Surface it instead of spinning quietly.
+                    now = utc_now()
+                    if saturated_since is None:
+                        saturated_since = now
+                    elif (now - saturated_since).total_seconds() >= 300:
+                        logger.warning(
+                            "job runner saturated for %.0fs: %d/%d in-flight, not claiming new work",
+                            (now - saturated_since).total_seconds(),
+                            len(self._inflight),
+                            max_concurrency,
+                        )
+                        saturated_since = now
                     await asyncio.sleep(poll)
                     continue
+                saturated_since = None
                 job = await self._claim_next()
+                consecutive_errors = 0
                 if job is None:
                     await asyncio.sleep(poll)
                     continue
@@ -241,7 +264,15 @@ class JobRunner:
             except asyncio.CancelledError:
                 break
             except Exception:
+                # A persistently failing poll used to be indistinguishable from
+                # an idle queue: the exception was swallowed with no log, so the
+                # runner looked healthy while claiming nothing.
+                consecutive_errors += 1
+                logger.exception(
+                    "job runner poll failed (consecutive=%d); retrying", consecutive_errors
+                )
                 await asyncio.sleep(min(2.0, poll))
+        logger.info("job runner stopped worker_id=%s", self._worker_id)
 
     def start(self) -> None:
         if not settings.JOBS_ENABLED:
