@@ -17,9 +17,16 @@ REVIEW_RISK_SCORE = 45
 
 PAYMENT_PATTERNS = [
     r"\b(application|registration|processing|security|training|interview|joining)\s+(fee|fees|charge|charges|deposit)\b",
-    r"\bpay\s+(rs\.?|inr|₹|\$)?\s*\d+",
+    # These target the *candidate* being asked to pay. The previous form,
+    # `pay\s+(currency)?\s*\d+`, also matched legitimate compensation such as
+    # "We pay 25000 per month stipend" and flagged the posting for review.
+    r"(?<!\bwe\s)\bpay\s+(?:rs\.?|inr|₹|\$)\s*\d+",
+    r"\bpay\s+(?:rs\.?|inr|₹|\$)?\s*\d+[^.]{0,40}\b(?:fee|fees|deposit|to\s+(?:apply|join|register|start))\b",
     r"\b(refundable|non[-\s]?refundable)\s+(deposit|fee)\b",
-    r"\bwallet|upi|gpay|phonepe|paytm|bank\s+transfer\b",
+    # The \b anchors previously bound only to the first and last alternatives,
+    # leaving the middle ones unanchored - a bare "upi" matched inside ordinary
+    # words such as "occupied", scoring +55 risk and hiding the opportunity.
+    r"\b(?:wallet|upi|gpay|phonepe|paytm|bank\s+transfer)\b",
 ]
 
 IDENTITY_PATTERNS = [

@@ -1,4 +1,5 @@
 import asyncio
+import re
 import unittest
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -428,6 +429,42 @@ class TestScraperFetchBatchTimeout(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(results[0], ["fresh"])
         self.assertIsInstance(results[1], TimeoutError)
         self.assertIn("test_sources fetch timed out", str(results[1]))
+
+
+class TestPaymentPatternPrecision(unittest.TestCase):
+    """Fee-scam detection must not fire on ordinary posting language.
+
+    `\\bwallet|upi|...\\b` anchored only its first and last alternatives, so a
+    bare "upi" matched inside words like "occupied"; and `pay\\s+\\d+` matched
+    legitimate stipend disclosures. Both scored +55 risk and hid the posting.
+    """
+
+    def _flagged(self, text: str) -> bool:
+        from app.services.opportunity_trust import PAYMENT_PATTERNS
+
+        return any(re.search(pattern, text, re.IGNORECASE) for pattern in PAYMENT_PATTERNS)
+
+    def test_legitimate_postings_are_not_flagged(self) -> None:
+        for text in (
+            "The role is currently occupied by a contractor.",
+            "We pay 25000 per month stipend.",
+            "Stipend: pay 15000 INR monthly.",
+            "Laptop and equipment provided at no cost.",
+        ):
+            with self.subTest(text=text):
+                self.assertFalse(self._flagged(text))
+
+    def test_fee_scam_signals_are_still_flagged(self) -> None:
+        for text in (
+            "Send money to our paytm wallet.",
+            "Pay Rs 500 registration fee.",
+            "pay 500 to apply for this role",
+            "A non-refundable deposit is required.",
+            "Application fee of 200.",
+            "transfer via upi to confirm your seat",
+        ):
+            with self.subTest(text=text):
+                self.assertTrue(self._flagged(text))
 
 
 class TestInternshalaListingBudget(unittest.TestCase):
