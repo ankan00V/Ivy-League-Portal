@@ -15,6 +15,7 @@ from app.services.scraper import (
     GreenhouseScraper,
     _collect_fetch_batch_results,
     _dedupe_by_url,
+    _enrich_metadata,
     _expire_opportunities,
     _extract_batch_years,
     _extract_deadline_from_text,
@@ -556,3 +557,92 @@ class TestExpiryIsNonDestructive(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestStipendExtraction(unittest.TestCase):
+    """Stipend was populated on 0 of 364 active opportunities.
+
+    The old patterns anchored the currency with \\b, but "₹" is a non-word
+    character so \\b could never match before it - excluding most Indian
+    postings outright. There was also no form for amount-then-currency, a
+    labelled bare amount, lakh/LPA notation, or an explicit "unpaid".
+    """
+
+    def test_extracts_common_indian_stipend_formats(self) -> None:
+        for text, expected_fragment in (
+            ("Stipend: Rs. 15000 per month", "15000"),
+            ("₹25,000/month stipend", "25,000"),
+            ("Stipend 10000 INR monthly", "10000"),
+            ("Paid internship with stipend of 20000", "20000"),
+            ("CTC 6 LPA for selected candidates", "6 LPA"),
+            ("Salary: ₹4,00,000 - ₹6,00,000 per annum", "4,00,000"),
+            ("Stipend 20k/month", "20k"),
+            ("25,000 rupees per month", "25,000"),
+        ):
+            with self.subTest(text=text):
+                extracted = _extract_stipend(text)
+                self.assertIsNotNone(extracted, f"no stipend extracted from {text!r}")
+                self.assertIn(expected_fragment.lower(), str(extracted).lower())
+
+    def test_records_explicitly_unpaid_roles(self) -> None:
+        for text in ("This is an unpaid internship", "No stipend will be provided"):
+            with self.subTest(text=text):
+                self.assertIsNotNone(_extract_stipend(text))
+
+    def test_does_not_invent_a_stipend_from_prose(self) -> None:
+        for text in (
+            "competitive salary",
+            "salary: 2 years experience required",
+            "We offer growth and mentorship",
+            "apply within 3 days",
+        ):
+            with self.subTest(text=text):
+                self.assertIsNone(_extract_stipend(text))
+
+
+class TestOpportunityTypeCanonicalisation(unittest.TestCase):
+    """Plurals were stored as distinct types, splitting filters and portals.
+
+    The corpus held Hackathon (31) and Hackathons (18) separately, so a student
+    filtering hackathons saw roughly half of them.
+    """
+
+    def test_plurals_collapse_to_one_spelling(self) -> None:
+        from app.services.opportunity_visibility import canonical_opportunity_type
+
+        for raw, expected in (
+            ("Hackathons", "Hackathon"),
+            ("hackathon", "Hackathon"),
+            ("Conferences", "Conference"),
+            ("Internships", "Internship"),
+            ("jobs", "Job"),
+            ("Scholarships", "Scholarship"),
+        ):
+            with self.subTest(raw=raw):
+                self.assertEqual(canonical_opportunity_type(raw), expected)
+
+    def test_ingestion_canonicalises_the_type(self) -> None:
+        enriched = _enrich_metadata(
+            {
+                "title": "Some Event",
+                "university": "Acme",
+                "url": "https://acme.example/1",
+                "opportunity_type": "Hackathons",
+                "description": "d",
+            }
+        )
+        self.assertEqual(enriched["opportunity_type"], "Hackathon")
+
+    def test_currency_token_must_not_match_inside_a_word(self) -> None:
+        """"yea[rs]," previously yielded a stipend of "rs,".
+
+        Dropping \\b to support "₹" (a non-word character) let "rs" match inside
+        ordinary words, so a negative lookbehind guards the currency instead.
+        """
+        for text in (
+            "3 years, strong communication skills",
+            "Requires 2 years, a degree, and initiative",
+            "Team Leader with 5 years, experience",
+        ):
+            with self.subTest(text=text):
+                self.assertIsNone(_extract_stipend(text))

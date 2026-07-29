@@ -35,18 +35,51 @@ COMPETITIVE_KEYWORDS = {
 }
 
 
+_CANONICAL_OPPORTUNITY_TYPES = {
+    "hiring challenge": "Hiring Challenge",
+    "hiring challenges": "Hiring Challenge",
+    "internship": "Internship",
+    "internships": "Internship",
+    "job": "Job",
+    "jobs": "Job",
+    "competition": "Competition",
+    "competitions": "Competition",
+    "hackathon": "Hackathon",
+    "hackathons": "Hackathon",
+    "scholarship": "Scholarship",
+    "scholarships": "Scholarship",
+    "conference": "Conference",
+    "conferences": "Conference",
+    "workshop": "Workshop",
+    "workshops": "Workshop",
+    "fellowship": "Fellowship",
+    "fellowships": "Fellowship",
+    "research": "Research",
+    "opportunity": "Opportunity",
+    "opportunities": "Opportunity",
+}
+
+
 def canonical_opportunity_type(value: str | None) -> str | None:
+    """Normalise an opportunity type to a single canonical spelling.
+
+    Plurals previously fell through to the generic title-caser, so the corpus
+    carried "Hackathon" and "Hackathons" as separate types (31 and 18 rows) and
+    "Conference"/"Conferences" likewise. Type filters and portal routing treat
+    them as distinct, so a student filtering hackathons saw roughly half of
+    them.
+    """
     candidate = str(value or "").strip().lower()
     if not candidate:
         return None
-    mapping = {
-        "hiring challenge": "Hiring Challenge",
-        "internship": "Internship",
-        "job": "Job",
-        "competition": "Competition",
-        "hackathon": "Hackathon",
-    }
-    return mapping.get(candidate, " ".join(part.capitalize() for part in candidate.split()))
+    mapped = _CANONICAL_OPPORTUNITY_TYPES.get(candidate)
+    if mapped:
+        return mapped
+    # Fall back to singularising a simple trailing plural before title-casing,
+    # so an unmapped "Symposiums" does not diverge from "Symposium".
+    if candidate.endswith("s") and candidate[:-1] in _CANONICAL_OPPORTUNITY_TYPES:
+        return _CANONICAL_OPPORTUNITY_TYPES[candidate[:-1]]
+    return " ".join(part.capitalize() for part in candidate.split())
 
 
 def resolve_opportunity_portal(

@@ -1006,9 +1006,40 @@ WORK_MODE_PATTERNS: list[tuple[str, list[str]]] = [
     ("Onsite", [r"\bon[-\s]?site\b", r"\bin office\b"]),
 ]
 
+# Stipend was populated on 0 of 364 active opportunities. The previous patterns
+# required a currency token immediately before the amount AND anchored it with
+# \b - but "₹" is a non-word character, so \b could never match before it, which
+# alone excluded most Indian postings. They also had no form for
+# amount-then-currency ("10000 INR"), for a labelled bare amount ("stipend of
+# 20000"), for lakh/LPA notation, or for an explicit "unpaid".
+# Require at least one digit: a bare "," must not qualify as an amount.
+_STIPEND_AMOUNT = r"\d[\d,]*(?:\.\d+)?"
+_STIPEND_UNIT = r"(?:\s*(?:k|lpa|lakhs?|cr|crores?))?"
+_STIPEND_PERIOD = r"(?:\s*(?:/|per|a)\s*(?:month|week|year|annum|hour|day))?"
+# A plain \b cannot precede "₹" (it is a non-word character), but "rs"/"inr"
+# genuinely need a boundary or they match inside words - "yea[rs],"" produced a
+# stipend of "rs,". An explicit negative lookbehind covers both cases.
+_STIPEND_CURRENCY = r"(?<![A-Za-z0-9])(?:rs\.?|inr|₹)"
+
 STIPEND_PATTERNS = [
-    r"\b(?:stipend|salary|ctc|pay)\s*[:\-]?\s*((?:rs\.?|inr|₹)\s*[\d,]+(?:\s*-\s*(?:rs\.?|inr|₹)?\s*[\d,]+)?(?:\s*/\s*(?:month|week|year|annum))?)",
-    r"\b((?:rs\.?|inr|₹)\s*[\d,]+(?:\s*-\s*(?:rs\.?|inr|₹)?\s*[\d,]+)?(?:\s*/\s*(?:month|week|year|annum)))",
+    # Labelled, currency-prefixed: "Stipend: Rs. 15,000 per month"
+    rf"(?:stipend|salary|ctc|compensation|remuneration)\s*(?:of|is|:|-|–)?\s*"
+    rf"({_STIPEND_CURRENCY}\s*{_STIPEND_AMOUNT}{_STIPEND_UNIT}"
+    rf"(?:\s*(?:-|–|to)\s*{_STIPEND_CURRENCY}?\s*{_STIPEND_AMOUNT}{_STIPEND_UNIT})?{_STIPEND_PERIOD})",
+    # Currency-prefixed anywhere: "₹25,000/month". No \b - see note above.
+    rf"({_STIPEND_CURRENCY}\s*{_STIPEND_AMOUNT}{_STIPEND_UNIT}"
+    rf"(?:\s*(?:-|–|to)\s*{_STIPEND_CURRENCY}?\s*{_STIPEND_AMOUNT}{_STIPEND_UNIT})?{_STIPEND_PERIOD})",
+    # Amount then currency: "10000 INR monthly", "25,000 rupees"
+    rf"({_STIPEND_AMOUNT}\s*(?:inr|rs\.?|rupees){_STIPEND_PERIOD})",
+    # Labelled lakh/LPA notation without a currency symbol: "CTC 6 LPA"
+    rf"(?:stipend|salary|ctc|compensation)\s*(?:of|is|:|-|–)?\s*"
+    rf"({_STIPEND_AMOUNT}\s*(?:lpa|lakhs?|k)\b{_STIPEND_PERIOD})",
+    # Labelled bare amount. Requires 4+ digits so it cannot latch onto
+    # "salary: 2 years" or similar prose.
+    rf"(?:stipend|salary|ctc|compensation)\s*(?:of|is|:|-|–)?\s*"
+    rf"(\d[\d,]{{3,}}{_STIPEND_PERIOD})",
+    # "Unpaid" is information a student needs, not an absence of information.
+    r"\b(unpaid|no\s+stipend|without\s+stipend)\b",
 ]
 
 BATCH_PATTERNS = [
@@ -1351,6 +1382,18 @@ def _enrich_metadata(record: dict[str, Any]) -> dict[str, Any]:
     metadata_text = " ".join(part for part in [title, description, university] if part)
     enriched = dict(record)
     enriched["url"] = _canonicalize_url(record.get("url"))
+    # Canonicalise the type at ingestion. It was previously normalised only on
+    # the employer and admin write paths, so scraped rows accumulated both
+    # "Hackathon" and "Hackathons" (and Conference/Conferences) as distinct
+    # types. Type filters and portal routing treat those as different, so a
+    # student filtering hackathons saw only part of them.
+    if record.get("opportunity_type"):
+        from app.services.opportunity_visibility import canonical_opportunity_type
+
+        enriched["opportunity_type"] = (
+            canonical_opportunity_type(record.get("opportunity_type"))
+            or record.get("opportunity_type")
+        )
     enriched["location"] = record.get("location") or _extract_location(metadata_text)
     enriched["work_mode"] = record.get("work_mode") or _extract_work_mode(metadata_text)
     enriched["stipend"] = record.get("stipend") or _extract_stipend(metadata_text)
