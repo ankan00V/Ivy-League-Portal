@@ -2291,26 +2291,50 @@ class TrustScoringEngine:
             registration.updated_at = utc_now()
             await registration.save()
 
+        # Imported here rather than at module scope: scraper.py imports
+        # FetchedPage from this module, so a top-level import would be circular.
+        from app.services.scraper import _enrich_metadata, _to_naive_utc
+
         probation_rows = await ProbationOpportunity.find_many(ProbationOpportunity.discovered_source_id == source.id).to_list()
         inserted = 0
         for row in probation_rows:
             if await Opportunity.find_one(Opportunity.url == row.url):
                 continue
             payload = row.raw_payload or {}
+            # The scraper persists these as naive UTC. Writing aware datetimes
+            # here left the collection with both, and comparing the two raises
+            # TypeError - the same mismatch that killed every scraper run for
+            # 40 days via refresh_freshness_metrics.
+            flushed_at = _to_naive_utc(utc_now())
+            record = {
+                "title": row.title,
+                "description": str(
+                    payload.get("description_preview") or payload.get("description") or row.title
+                ),
+                "url": row.url,
+                "university": row.company or source.name or source.domain,
+                "source": source.name or source.domain,
+                "source_id": str(source.id),
+                "domain": source.domain,
+                "location": payload.get("location"),
+                "work_mode": payload.get("work_mode"),
+                "stipend": payload.get("stipend_text") or payload.get("stipend"),
+                "opportunity_type": str(payload.get("opportunity_type") or "Job").title(),
+            }
+            # Promoted rows previously bypassed enrichment entirely, so they
+            # landed without canonical_key or duplicate_cluster_key and were
+            # therefore invisible to the deduplication path.
+            enriched = _enrich_metadata(dict(record))
             opportunity = Opportunity(
-                title=row.title,
-                description=str(payload.get("description_preview") or payload.get("description") or row.title),
-                url=row.url,
-                university=row.company or source.name or source.domain,
-                source=source.name or source.domain,
-                source_id=str(source.id),
-                domain=source.domain,
-                location=payload.get("location"),
-                work_mode=payload.get("work_mode"),
-                stipend=payload.get("stipend_text") or payload.get("stipend"),
-                opportunity_type=str(payload.get("opportunity_type") or "Job").title(),
-                last_seen_at=utc_now(),
-                updated_at=utc_now(),
+                **record,
+                normalized_title=enriched.get("normalized_title"),
+                normalized_organization=enriched.get("normalized_organization"),
+                canonical_key=enriched.get("canonical_key"),
+                canonical_url_hash=enriched.get("canonical_url_hash"),
+                duplicate_cluster_key=enriched.get("duplicate_cluster_key"),
+                title_company_location_hash=enriched.get("title_company_location_hash"),
+                last_seen_at=flushed_at,
+                updated_at=flushed_at,
             )
             apply_trust_assessment(opportunity, assess_opportunity_trust(opportunity))
             try:
@@ -2552,17 +2576,40 @@ class ProbationManager:
                 quality_score = self._quality_score(row)
                 if quality_score > 40:
                     passed_quality += 1
+                item_url = str(row.get("apply_url") or row.get("url") or "")
                 try:
-                    await ProbationOpportunity(
-                        discovered_source_id=source.id,
-                        scraper_key=registration.scraper_key,
-                        title=str(row.get("title") or "")[:300],
-                        company=str(row.get("company") or registration.source_name),
-                        url=str(row.get("apply_url") or row.get("url")),
-                        raw_payload=row,
-                        quality_score=quality_score,
-                        run_number=run_number,
-                    ).insert()
+                    # Upsert on (source, url). This used to insert
+                    # unconditionally, so every probation run duplicated the
+                    # source's entire result set - the live collection held
+                    # 3,497 rows for 249 distinct URLs.
+                    existing_probation = (
+                        await ProbationOpportunity.find_one(
+                            ProbationOpportunity.discovered_source_id == source.id,
+                            ProbationOpportunity.url == item_url,
+                        )
+                        if item_url
+                        else None
+                    )
+                    if existing_probation is not None:
+                        existing_probation.title = str(row.get("title") or "")[:300]
+                        existing_probation.company = str(
+                            row.get("company") or registration.source_name
+                        )
+                        existing_probation.raw_payload = row
+                        existing_probation.quality_score = quality_score
+                        existing_probation.run_number = run_number
+                        await existing_probation.save()
+                    else:
+                        await ProbationOpportunity(
+                            discovered_source_id=source.id,
+                            scraper_key=registration.scraper_key,
+                            title=str(row.get("title") or "")[:300],
+                            company=str(row.get("company") or registration.source_name),
+                            url=item_url,
+                            raw_payload=row,
+                            quality_score=quality_score,
+                            run_number=run_number,
+                        ).insert()
                 except Exception as exc:
                     source.probation_failures.append(f"probation_item_insert:{exc}")
             source.probation_runs = run_number
