@@ -43,7 +43,11 @@ class Settings(BaseSettings):
     AUTH_SESSION_ACTIVITY_UPDATE_INTERVAL_SECONDS: int = 60
     AUTH_COOKIE_ONLY_MODE: bool = False
     ADMIN_BOOTSTRAP_ENABLED: bool = True
-    ADMIN_BOOTSTRAP_EMAIL: str = "ghoshankan005@gmail.com"
+    # Deliberately empty. This identity is reserved for the hidden admin control
+    # plane, so baking a real address into source shipped one maintainer's
+    # personal email to every clone of the repository and made it the admin
+    # account by default. Supply it via the environment.
+    ADMIN_BOOTSTRAP_EMAIL: str = ""
     ADMIN_BOOTSTRAP_PASSWORD: Optional[str] = None
     ADMIN_TOTP_SECRET: Optional[str] = None
     ADMIN_TOTP_ISSUER: str = "Vidyaverse"

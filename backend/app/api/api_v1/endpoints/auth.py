@@ -291,9 +291,19 @@ def _verify_turnstile_or_raise(token: Optional[str], *, request: Optional[Reques
 
 def _reject_reserved_admin_identity_for_public_auth(email: str) -> None:
     if is_reserved_admin_email(email):
+        # Responds exactly as it would for an address with no account. The
+        # previous message ("This identity uses the dedicated admin
+        # authentication flow") confirmed which address owns the hidden control
+        # plane, turning the public auth surface into an admin-enumeration
+        # oracle for anyone willing to probe addresses.
+        #
+        # The consequence is that the admin sees a "no account" message on the
+        # public login page; the control-plane entry point is documented in
+        # docs/runbooks/hidden-admin-security-architecture.md rather than
+        # advertised here.
         raise HTTPException(
-            status_code=403,
-            detail="This identity uses the dedicated admin authentication flow.",
+            status_code=404,
+            detail="No account found for this email",
         )
 
 

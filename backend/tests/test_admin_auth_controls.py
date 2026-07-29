@@ -37,14 +37,23 @@ class TestAdminAuthControls(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(totp_service.decrypt_secret(encrypted), secret)
 
     async def test_reserved_admin_identity_is_blocked_from_public_otp_flow(self) -> None:
-        with patch("app.api.api_v1.endpoints.auth.settings.ADMIN_BOOTSTRAP_EMAIL", "ghoshankan005@gmail.com"):
+        """The public auth surface must not reveal which address is the admin.
+
+        This previously answered 403 "This identity uses the dedicated admin
+        authentication flow", which let anyone probe addresses until they found
+        the one owning the hidden control plane. The response now matches an
+        address with no account.
+        """
+        with patch("app.api.api_v1.endpoints.auth.settings.ADMIN_BOOTSTRAP_EMAIL", "reserved-admin@example.com"):
             with self.assertRaises(HTTPException) as ctx:
-                await auth_endpoint._validate_user_for_purpose("ghoshankan005@gmail.com", "signin")
-        self.assertEqual(ctx.exception.status_code, 403)
+                await auth_endpoint._validate_user_for_purpose("reserved-admin@example.com", "signin")
+        self.assertEqual(ctx.exception.status_code, 404)
+        self.assertEqual(ctx.exception.detail, "No account found for this email")
+        self.assertNotIn("admin", str(ctx.exception.detail).lower())
 
     def test_scopes_for_user_only_grants_admin_scopes_for_reserved_identity(self) -> None:
-        with patch("app.api.api_v1.endpoints.auth.settings.ADMIN_BOOTSTRAP_EMAIL", "ghoshankan005@gmail.com"):
-            reserved_admin = SimpleNamespace(is_admin=True, email="ghoshankan005@gmail.com")
+        with patch("app.api.api_v1.endpoints.auth.settings.ADMIN_BOOTSTRAP_EMAIL", "reserved-admin@example.com"):
+            reserved_admin = SimpleNamespace(is_admin=True, email="reserved-admin@example.com")
             shadow_admin = SimpleNamespace(is_admin=True, email="someoneelse@example.com")
             reserved_scopes = auth_endpoint._scopes_for_user(reserved_admin)
             shadow_scopes = auth_endpoint._scopes_for_user(shadow_admin)
@@ -54,7 +63,7 @@ class TestAdminAuthControls(unittest.IsolatedAsyncioTestCase):
     async def test_reserved_admin_password_login_returns_verification_challenge(self) -> None:
         admin_user = SimpleNamespace(
             id="admin-user-id",
-            email="ghoshankan005@gmail.com",
+            email="reserved-admin@example.com",
             hashed_password="hashed-password",
             is_admin=True,
             is_active=True,
@@ -62,12 +71,12 @@ class TestAdminAuthControls(unittest.IsolatedAsyncioTestCase):
             totp_enabled=False,
             totp_secret_encrypted="encrypted-secret",
         )
-        form_data = SimpleNamespace(username="ghoshankan005@gmail.com", password="secret-password")
+        form_data = SimpleNamespace(username="reserved-admin@example.com", password="secret-password")
         unlocked = SimpleNamespace(locked=False)
         fake_user_model = SimpleNamespace(email=object(), find_one=AsyncMock(return_value=admin_user))
 
         with (
-            patch("app.api.api_v1.endpoints.auth.settings.ADMIN_BOOTSTRAP_EMAIL", "ghoshankan005@gmail.com"),
+            patch("app.api.api_v1.endpoints.auth.settings.ADMIN_BOOTSTRAP_EMAIL", "reserved-admin@example.com"),
             patch.object(auth_endpoint.auth_security_service, "check_lock", new=AsyncMock(return_value=unlocked)),
             patch.object(auth_endpoint.auth_security_service, "audit_event", new=AsyncMock()),
             patch("app.api.api_v1.endpoints.auth.User", fake_user_model),
@@ -80,8 +89,8 @@ class TestAdminAuthControls(unittest.IsolatedAsyncioTestCase):
                 return_value=SimpleNamespace(
                     secret="JBSWY3DPEHPK3PXP",
                     issuer="Vidyaverse",
-                    account_name="ghoshankan005@gmail.com",
-                    uri="otpauth://totp/Vidyaverse:ghoshankan005@gmail.com?secret=JBSWY3DPEHPK3PXP",
+                    account_name="reserved-admin@example.com",
+                    uri="otpauth://totp/Vidyaverse:reserved-admin@example.com?secret=JBSWY3DPEHPK3PXP",
                 ),
             ),
         ):
@@ -97,7 +106,7 @@ class TestAdminAuthControls(unittest.IsolatedAsyncioTestCase):
     async def test_admin_verify_otp_returns_totp_session(self) -> None:
         admin_user = SimpleNamespace(
             id="admin-user-id",
-            email="ghoshankan005@gmail.com",
+            email="reserved-admin@example.com",
             is_admin=True,
             is_active=True,
             account_type="candidate",
@@ -105,13 +114,13 @@ class TestAdminAuthControls(unittest.IsolatedAsyncioTestCase):
         unlocked = SimpleNamespace(locked=False)
         fake_user_model = SimpleNamespace(email=object(), find_one=AsyncMock(return_value=admin_user))
         payload = auth_endpoint.AdminOtpVerifyRequest(
-            email="ghoshankan005@gmail.com",
+            email="reserved-admin@example.com",
             otp="123456",
             admin_challenge_token="challenge-token",
         )
 
         with (
-            patch("app.api.api_v1.endpoints.auth.settings.ADMIN_BOOTSTRAP_EMAIL", "ghoshankan005@gmail.com"),
+            patch("app.api.api_v1.endpoints.auth.settings.ADMIN_BOOTSTRAP_EMAIL", "reserved-admin@example.com"),
             patch("app.api.api_v1.endpoints.auth._decode_admin_challenge_token", return_value="admin-user-id"),
             patch.object(auth_endpoint.auth_security_service, "check_lock", new=AsyncMock(return_value=unlocked)),
             patch.object(auth_endpoint.auth_security_service, "audit_event", new=AsyncMock()),
@@ -128,7 +137,7 @@ class TestAdminAuthControls(unittest.IsolatedAsyncioTestCase):
     async def test_admin_verify_totp_issues_admin_token(self) -> None:
         admin_user = SimpleNamespace(
             id="admin-user-id",
-            email="ghoshankan005@gmail.com",
+            email="reserved-admin@example.com",
             is_admin=True,
             is_active=True,
             account_type="candidate",
@@ -138,13 +147,13 @@ class TestAdminAuthControls(unittest.IsolatedAsyncioTestCase):
         unlocked = SimpleNamespace(locked=False)
         fake_user_model = SimpleNamespace(email=object(), find_one=AsyncMock(return_value=admin_user))
         payload = auth_endpoint.AdminTotpVerifyRequest(
-            email="ghoshankan005@gmail.com",
+            email="reserved-admin@example.com",
             totp_code="654321",
             admin_totp_token="totp-token",
         )
 
         with (
-            patch("app.api.api_v1.endpoints.auth.settings.ADMIN_BOOTSTRAP_EMAIL", "ghoshankan005@gmail.com"),
+            patch("app.api.api_v1.endpoints.auth.settings.ADMIN_BOOTSTRAP_EMAIL", "reserved-admin@example.com"),
             patch("app.api.api_v1.endpoints.auth._decode_admin_totp_token", return_value="admin-user-id"),
             patch.object(auth_endpoint.auth_security_service, "check_lock", new=AsyncMock(return_value=unlocked)),
             patch.object(auth_endpoint.auth_security_service, "audit_event", new=AsyncMock()),
@@ -164,17 +173,17 @@ class TestAdminAuthControls(unittest.IsolatedAsyncioTestCase):
     async def test_admin_resend_otp_uses_existing_challenge(self) -> None:
         admin_user = SimpleNamespace(
             id="admin-user-id",
-            email="ghoshankan005@gmail.com",
+            email="reserved-admin@example.com",
             is_admin=True,
         )
         fake_user_model = SimpleNamespace(email=object(), find_one=AsyncMock(return_value=admin_user))
         payload = auth_endpoint.AdminResendOtpRequest(
-            email="ghoshankan005@gmail.com",
+            email="reserved-admin@example.com",
             admin_challenge_token="challenge-token",
         )
 
         with (
-            patch("app.api.api_v1.endpoints.auth.settings.ADMIN_BOOTSTRAP_EMAIL", "ghoshankan005@gmail.com"),
+            patch("app.api.api_v1.endpoints.auth.settings.ADMIN_BOOTSTRAP_EMAIL", "reserved-admin@example.com"),
             patch("app.api.api_v1.endpoints.auth._decode_admin_challenge_token", return_value="admin-user-id"),
             patch("app.api.api_v1.endpoints.auth.User", fake_user_model),
             patch.object(auth_endpoint.auth_security_service, "audit_event", new=AsyncMock()),
@@ -189,7 +198,7 @@ class TestAdminAuthControls(unittest.IsolatedAsyncioTestCase):
     async def test_admin_dependency_allows_configured_cidr_and_audits(self) -> None:
         user = SimpleNamespace(
             id="64b64b64b64b64b64b64b64b",
-            email="ghoshankan005@gmail.com",
+            email="reserved-admin@example.com",
             account_type="candidate",
             is_admin=True,
             _token_scopes=["admin"],
@@ -201,7 +210,7 @@ class TestAdminAuthControls(unittest.IsolatedAsyncioTestCase):
         )
 
         with (
-            patch.object(deps.settings, "ADMIN_BOOTSTRAP_EMAIL", "ghoshankan005@gmail.com"),
+            patch.object(deps.settings, "ADMIN_BOOTSTRAP_EMAIL", "reserved-admin@example.com"),
             patch.object(deps.settings, "ADMIN_ALLOWED_IPS", ["10.10.2.0/24"]),
             patch.object(deps.auth_security_service, "audit_event", new=AsyncMock()) as audit_event,
         ):
@@ -214,7 +223,7 @@ class TestAdminAuthControls(unittest.IsolatedAsyncioTestCase):
     async def test_admin_dependency_blocks_unallowlisted_ip(self) -> None:
         user = SimpleNamespace(
             id="64b64b64b64b64b64b64b64b",
-            email="ghoshankan005@gmail.com",
+            email="reserved-admin@example.com",
             account_type="candidate",
             is_admin=True,
             _token_scopes=["admin"],
@@ -226,7 +235,7 @@ class TestAdminAuthControls(unittest.IsolatedAsyncioTestCase):
         )
 
         with (
-            patch.object(deps.settings, "ADMIN_BOOTSTRAP_EMAIL", "ghoshankan005@gmail.com"),
+            patch.object(deps.settings, "ADMIN_BOOTSTRAP_EMAIL", "reserved-admin@example.com"),
             patch.object(deps.settings, "ADMIN_ALLOWED_IPS", ["10.10.2.0/24"]),
             patch.object(deps.auth_security_service, "audit_event", new=AsyncMock()) as audit_event,
         ):

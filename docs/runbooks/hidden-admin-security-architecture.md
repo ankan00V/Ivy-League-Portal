@@ -3,6 +3,21 @@
 ## Objective
 Implement a non-public admin control plane with strict single-identity ownership, TOTP MFA, and auditable privileged actions across backend and frontend.
 
+## Entry Point
+The admin control plane is reached at `/control/auth` (sign-in) and `/control/ops`
+(dashboard). Neither is linked from the public UI and both are excluded from the
+OpenAPI schema.
+
+The reserved admin identity is supplied by `ADMIN_BOOTSTRAP_EMAIL` and must be set
+in the environment; it deliberately has no default in `app/core/config.py`, so it
+is never baked into source or a public clone.
+
+Signing in with the reserved admin address on the **public** `/login` or
+`/send-otp` surface returns `404 "No account found for this email"` - identical to
+an address with no account. That is intentional: an admin-specific message let
+anyone probe addresses to discover which one owns the control plane. No OTP is
+issued on the public path, so use `/control/auth`.
+
 ## Scope
 - Dedicated hidden admin authentication flow.
 - Dedicated hidden admin dashboard for platform controls.
