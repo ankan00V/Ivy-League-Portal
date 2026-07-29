@@ -57,3 +57,33 @@ class LoopLocalSemaphore:
         # Same loop as __aenter__ (guaranteed by `async with`), so this resolves
         # to the same semaphore instance that was acquired.
         self._for_running_loop().release()
+
+
+class LoopLocalLockMap:
+    """Named `asyncio.Lock`s scoped to the running event loop.
+
+    `asyncio.Lock` binds to a loop exactly as `asyncio.Semaphore` does, so a
+    dict of locks held on a module-cached client had the same defect: fine on
+    the loop that created them, `RuntimeError` on every other one.
+
+    Note the scope this gives you: locks are per loop, so they order callers
+    within a loop but not across loops. Anything that must hold across loops or
+    threads needs its own cross-thread guard.
+    """
+
+    def __init__(self) -> None:
+        self._per_loop: weakref.WeakKeyDictionary[Any, dict[str, asyncio.Lock]] = (
+            weakref.WeakKeyDictionary()
+        )
+
+    def get(self, key: str) -> asyncio.Lock:
+        loop = asyncio.get_running_loop()
+        locks = self._per_loop.get(loop)
+        if locks is None:
+            locks = {}
+            self._per_loop[loop] = locks
+        lock = locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            locks[key] = lock
+        return lock

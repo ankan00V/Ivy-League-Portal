@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+import time
 import csv
 import hashlib
 import json
@@ -19,6 +21,7 @@ from bs4 import BeautifulSoup
 from pydantic import BaseModel, Field
 from pymongo.errors import DuplicateKeyError
 
+from app.core.async_limits import LoopLocalLockMap, LoopLocalSemaphore
 from app.core.config import settings
 from app.core.redis import get_redis
 from app.core.time import utc_now
@@ -442,10 +445,19 @@ class SourceHttpClient:
         self.firecrawl = firecrawl or firecrawl_client
         self.browser_use = browser_use or browser_use_client
         self.crawlee = crawlee or crawlee_client
-        self._global_semaphore = asyncio.Semaphore(
-            max(1, int(getattr(settings, "SOURCE_DISCOVERY_MAX_CONCURRENT", 5)))
+        # scraper_fetch_bridge caches one SourceHttpClient for the process but
+        # runs asyncio.run() per fetch, so these primitives are used from a new
+        # event loop every call. Plain asyncio.Semaphore/Lock bind to the first
+        # loop that queues a waiter and reject every loop after that, which
+        # silently killed every render-backed source.
+        self._global_semaphore = LoopLocalSemaphore(
+            lambda: getattr(settings, "SOURCE_DISCOVERY_MAX_CONCURRENT", 5)
         )
-        self._domain_locks: dict[str, asyncio.Lock] = {}
+        self._domain_locks = LoopLocalLockMap()
+        # Guarded by a threading lock rather than the per-loop asyncio lock:
+        # per-domain politeness has to hold across loops and threads, and the
+        # asyncio locks above only order callers within a single loop.
+        self._domain_request_guard = threading.Lock()
         self._last_domain_request: dict[str, float] = {}
 
     @staticmethod
@@ -512,15 +524,24 @@ class SourceHttpClient:
             raise RuntimeError("httpx is required for source discovery HTTP fetches")
         normalized = normalize_url(url)
         domain = normalize_domain(urlparse(normalized).netloc)
-        lock = self._domain_locks.setdefault(domain, asyncio.Lock())
+        lock = self._domain_locks.get(domain)
         async with self._global_semaphore:
             async with lock:
                 min_gap = 1.0 / max(0.1, float(getattr(settings, "SOURCE_FETCH_RATE_LIMIT", 1)))
+                # time.monotonic rather than loop.time(): each fetch may run on
+                # its own event loop, and loop clocks are not comparable across
+                # loops, so per-domain politeness silently degraded.
                 loop = asyncio.get_running_loop()
-                now = loop.time()
-                last = self._last_domain_request.get(domain, 0.0)
-                if now - last < min_gap:
-                    await asyncio.sleep(min_gap - (now - last))
+                now = time.monotonic()
+                with self._domain_request_guard:
+                    last = self._last_domain_request.get(domain, 0.0)
+                    wait_for = max(0.0, min_gap - (now - last))
+                    # Reserve the slot before sleeping so concurrent loops
+                    # stagger instead of all reading the same stale timestamp
+                    # and hitting the domain together.
+                    self._last_domain_request[domain] = now + wait_for
+                if wait_for > 0:
+                    await asyncio.sleep(wait_for)
                 timeout = timeout_seconds or self.timeout_seconds
 
                 if render:
@@ -532,7 +553,7 @@ class SourceHttpClient:
                         phase="Preferred",
                     )
                     if preferred_page is not None:
-                        self._last_domain_request[domain] = loop.time()
+                        self._last_domain_request[domain] = time.monotonic()
                         return preferred_page
 
                 direct_error: Exception | None = None
@@ -554,10 +575,10 @@ class SourceHttpClient:
                         phase="Fallback",
                     )
                     if rendered_page is not None:
-                        self._last_domain_request[domain] = loop.time()
+                        self._last_domain_request[domain] = time.monotonic()
                         return rendered_page
 
-                self._last_domain_request[domain] = loop.time()
+                self._last_domain_request[domain] = time.monotonic()
                 if direct_page is not None:
                     return direct_page
                 assert direct_error is not None
