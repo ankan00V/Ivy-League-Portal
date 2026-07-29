@@ -1,0 +1,26 @@
+# Runtime configuration is supplied by the deployment environment, never baked
+# into the application image.
+.env
+.env.*
+
+# Local Python environments, caches, test output, and developer artifacts.
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.log
+server_logs.txt
+
+# These files are not required to serve the production API. Model artifacts are
+# loaded from the configured object store at runtime.
+tests/
+benchmarks/
+storage/
+models/
+backend/
+
+# Source-control and editor metadata.
+.git/
+.DS_Store
