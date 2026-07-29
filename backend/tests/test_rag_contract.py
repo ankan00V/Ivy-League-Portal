@@ -80,6 +80,32 @@ class TestRAGContracts(unittest.TestCase):
         self.assertFalse(checked.safety.hallucination_checks_passed)
         self.assertIn("no_retrieval_results", checked.safety.failed_checks)
 
+    def test_substituted_citation_is_not_reported_as_grounded(self) -> None:
+        """A fallback citation must not be presented as a grounded answer.
+
+        When the model returns no citable opportunity the service attaches the
+        top retrieval result so the response shape stays intact. The answer is
+        not actually grounded in that source, so the substitution has to be
+        recorded rather than passing the safety checks silently.
+        """
+        results = [
+            {"id": "a1", "url": "https://example.com/a1", "title": "Opp A", "source": "unit-test"},
+        ]
+        insights = RAGInsights.model_validate(
+            {
+                "summary": "Summary with no valid opportunity references",
+                "top_opportunities": [],
+                "deadline_urgency": "N/A",
+                "recommended_action": "Apply",
+            }
+        )
+
+        checked = self.service._apply_hallucination_checks(insights, results)
+
+        self.assertEqual(len(checked.citations), 1)
+        self.assertIn("citations_substituted_from_retrieval", checked.safety.failed_checks)
+        self.assertFalse(checked.safety.hallucination_checks_passed)
+
 
 if __name__ == "__main__":
     unittest.main()

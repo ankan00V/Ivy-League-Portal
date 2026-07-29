@@ -238,7 +238,14 @@ class RAGService:
         if results and not merged_citations:
             first = next(iter(allowed.values()), None)
             if first:
+                # The model produced no citable opportunity, so this attaches
+                # the top retrieval result instead. That keeps the response
+                # shape intact, but the answer is NOT grounded in this source -
+                # the model never referenced it. Recording the substitution
+                # keeps hallucination_checks_passed honest; previously the
+                # answer was silently presented as fully grounded.
                 merged_citations = [RAGCitation.model_validate(first)]
+                failed_checks.append("citations_substituted_from_retrieval")
             else:
                 failed_checks.append("missing_citations")
 
