@@ -64,6 +64,11 @@ export MLOPS_MODEL_ARTIFACT_S3_REGION="${MLOPS_MODEL_ARTIFACT_S3_REGION:-us-east
 export MLOPS_MODEL_ARTIFACT_S3_ACCESS_KEY_ID="${MLOPS_MODEL_ARTIFACT_S3_ACCESS_KEY_ID:-minioadmin}"
 export MLOPS_MODEL_ARTIFACT_S3_SECRET_ACCESS_KEY="${MLOPS_MODEL_ARTIFACT_S3_SECRET_ACCESS_KEY:-minioadmin}"
 export MODEL_ARTIFACT_BUCKET="${MODEL_ARTIFACT_BUCKET:-vidyaverse-model-artifacts}"
+# Local fallback for the learned ranker. ensure_learned_ranker_artifact_ready
+# tries LEARNED_RANKER_ARTIFACT_URI first and falls back to this path, so the
+# harness still boots with a working ranker when the object store has not been
+# seeded. The checksum is verified either way.
+export LEARNED_RANKER_MODEL_PATH="${LEARNED_RANKER_MODEL_PATH:-${BACKEND_DIR}/models/learned_ranker.lgb.txt}"
 export NEXT_PUBLIC_API_BASE_URL="${NEXT_PUBLIC_API_BASE_URL:-http://127.0.0.1:${BACKEND_PORT}}"
 export BACKEND_INTERNAL_URL="${BACKEND_INTERNAL_URL:-http://127.0.0.1:${BACKEND_PORT}}"
 
