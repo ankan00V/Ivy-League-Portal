@@ -9,6 +9,7 @@ from datetime import timedelta
 from typing import Any, Callable
 from urllib.parse import urlparse
 
+from app.core.async_limits import LoopLocalSemaphore
 from app.core.config import settings
 from app.core import metrics
 
@@ -34,7 +35,7 @@ class CrawleeClient:
 
     def __init__(self, *, monotonic: Callable[[], float] = time.monotonic) -> None:
         self._monotonic = monotonic
-        self._semaphore = asyncio.Semaphore(max(1, int(settings.CRAWLEE_MAX_CONCURRENT)))
+        self._semaphore = LoopLocalSemaphore(lambda: settings.CRAWLEE_MAX_CONCURRENT)
         self._consecutive_failures = 0
         self._circuit_open_until = 0.0
 
