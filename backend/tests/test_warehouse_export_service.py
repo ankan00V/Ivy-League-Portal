@@ -120,7 +120,13 @@ class TestWarehouseClickHouseExport(unittest.TestCase):
             )
 
         self.assertEqual(tables, ["mart_daily_metrics"])
-        self.assertTrue(any("CREATE TABLE IF NOT EXISTS" in command for command in commands))
+        # The export is a full refresh, so the table is rebuilt each run.
+        # CREATE TABLE IF NOT EXISTS previously made a wrongly inferred schema
+        # permanent - a column created as String stayed String forever and
+        # rejected every later date value.
+        self.assertTrue(any("DROP TABLE IF EXISTS" in command for command in commands))
+        self.assertTrue(any(command.startswith("CREATE TABLE `") for command in commands))
+        self.assertFalse(any("CREATE TABLE IF NOT EXISTS" in command for command in commands))
         self.assertTrue(any("`cohort_date` Date" in command for command in commands))
         self.assertEqual(inserts[0][0], "mart_daily_metrics")
         self.assertEqual(inserts[0][1][0][0], date(2026, 1, 1))
@@ -178,3 +184,35 @@ class TestWarehouseFreshnessGate(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestClickHouseSchemaInference(unittest.TestCase):
+    """Schema was inferred from rows[0] alone.
+
+    A column that happened to be NULL in the first row was typed String, and the
+    first real date in any later row then failed to insert with
+    "'datetime.date' object has no attribute 'encode'" - which is exactly how
+    the live warehouse export broke.
+    """
+
+    def setUp(self) -> None:
+        from app.services.warehouse_export_service import WarehouseExportService
+
+        self.service = WarehouseExportService()
+
+    def test_column_sample_skips_leading_nulls(self) -> None:
+        rows = [
+            (None, "a"),
+            (date(2026, 1, 1), "b"),
+        ]
+        self.assertEqual(self.service._column_sample(rows, 0), date(2026, 1, 1))
+
+    def test_all_null_column_falls_back_to_string(self) -> None:
+        rows = [(None,), (None,)]
+        self.assertEqual(self.service._column_sample(rows, 0), "")
+        self.assertEqual(self.service._clickhouse_type(self.service._column_sample(rows, 0)), "String")
+
+    def test_date_column_with_leading_null_is_typed_date(self) -> None:
+        rows = [(None,), (date(2026, 1, 1),)]
+        inferred = self.service._clickhouse_type(self.service._column_sample(rows, 0))
+        self.assertEqual(inferred, "Date")
