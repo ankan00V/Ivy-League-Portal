@@ -7,6 +7,7 @@ import json
 import logging
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -3384,6 +3385,24 @@ def get_scraper_runtime_status() -> dict[str, Any]:
     return snapshot
 
 
+# asyncio.to_thread uses the loop's default executor, which is sized
+# min(32, cpu + 4) - 14 on a 10-core machine. The generic-portal batch alone
+# submits 24 fetches, so ten of them could not start until a slot freed while
+# the batch deadline was already counting down from batch start. Sources
+# declared late in GENERIC_PORTAL_LISTINGS were therefore starved first and
+# reported as timeouts having barely run. These fetches are network-bound, so a
+# dedicated, larger pool costs little.
+_FETCH_EXECUTOR = ThreadPoolExecutor(
+    max_workers=48,
+    thread_name_prefix="scraper-fetch",
+)
+
+
+def _fetch_in_thread(func: Any, *args: Any) -> Awaitable[Any]:
+    """asyncio.to_thread equivalent bound to the dedicated fetch pool."""
+    return asyncio.get_running_loop().run_in_executor(_FETCH_EXECUTOR, func, *args)
+
+
 async def _collect_fetch_batch_results(
     awaitables: list[Awaitable[Any]],
     *,
@@ -3984,7 +4003,7 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
             ]
             portal_fetch_results = await _collect_fetch_batch_results(
                 [
-                    asyncio.to_thread(
+                    _fetch_in_thread(
                         generic_portal_scraper.fetch_live_opportunities,
                         source_name,
                         max(1, settings.SCRAPER_GENERIC_PORTAL_MAX_ITEMS),
