@@ -7,6 +7,7 @@ from typing import Any, Optional
 from uuid import uuid4
 
 from beanie import PydanticObjectId
+from beanie.odm.operators.find.comparison import In
 from beanie.exceptions import CollectionWasNotInitialized
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -1126,17 +1127,37 @@ async def delete_resume(
 
 
 @router.get("/leaderboard", response_model=list[LeaderboardEntry])
-async def get_leaderboard(limit: int = 10, search: Optional[str] = None) -> Any:
+async def get_leaderboard(
+    limit: int = 10,
+    search: Optional[str] = None,
+    current_user: User = Depends(get_current_active_user),
+) -> Any:
     """
     Global InCoScore leaderboard used for ranking and smart shortlisting views.
+
+    Requires authentication: this returns real users' names and handles, and
+    `search` matches on name substrings, so leaving it open made it an
+    unauthenticated directory and enumerator over the entire user base.
     """
     safe_limit = max(1, min(limit, 100))
-    profiles = await Profile.find_all().sort("-incoscore").to_list()
     search_term = (search or "").strip().lower().lstrip("@")
+
+    # Bound the scan. This previously loaded every Profile in the collection on
+    # an anonymous endpoint and then issued one User.get() per profile - a full
+    # scan plus N+1 that grows linearly with signups.
+    scan_limit = safe_limit if not search_term else min(1000, max(safe_limit * 20, 200))
+    profiles = await Profile.find_all().sort("-incoscore").limit(scan_limit).to_list()
+
+    # One batched lookup instead of a round trip per profile.
+    user_ids = [profile.user_id for profile in profiles if profile.user_id]
+    users_by_id: dict[Any, User] = {}
+    if user_ids:
+        for user in await User.find(In(User.id, user_ids)).to_list():
+            users_by_id[user.id] = user
 
     leaderboard: list[LeaderboardEntry] = []
     for rank, profile in enumerate(profiles, start=1):
-        user = await User.get(profile.user_id)
+        user = users_by_id.get(profile.user_id)
         if not user:
             continue
         handle = await ensure_system_username(user, profile)
