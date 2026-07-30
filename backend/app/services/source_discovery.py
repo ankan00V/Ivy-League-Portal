@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from pymongo.errors import DuplicateKeyError
 
 from app.core.async_limits import LoopLocalLockMap, LoopLocalSemaphore
+from app.core.url_guard import BlockedTargetURL, assert_public_http_url
 from app.core.config import settings
 from app.core.redis import get_redis
 from app.core.time import utc_now
@@ -523,6 +524,16 @@ class SourceHttpClient:
         if httpx is None:
             raise RuntimeError("httpx is required for source discovery HTTP fetches")
         normalized = normalize_url(url)
+        # Guard before any provider runs. normalize_url only checks scheme and a
+        # non-empty netloc, so user-submitted sources reached the network
+        # unvalidated: http://169.254.169.254/ read cloud instance metadata and
+        # http://10.0.0.5:8080/ made the qualification pipeline an internal port
+        # scanner whose reachability result was returned to the submitter.
+        #
+        # Applied here rather than only in _fetch_direct so the render providers
+        # are covered by the same check; theirs inspects literal IPs only, which
+        # a hostname resolving to a private address walks straight past.
+        normalized = assert_public_http_url(normalized)
         domain = normalize_domain(urlparse(normalized).netloc)
         lock = self._domain_locks.get(domain)
         async with self._global_semaphore:
@@ -587,13 +598,26 @@ class SourceHttpClient:
     async def _fetch_direct(self, url: str, timeout_seconds: float) -> FetchedPage:
         loop = asyncio.get_running_loop()
         started = loop.time()
+        # Redirects are followed manually so every hop is re-validated. With
+        # follow_redirects=True a public, allowlisted domain could 302 into
+        # 169.254.169.254 and the guard on the initial URL would never see it.
+        max_hops = 3
         async with httpx.AsyncClient(
-            follow_redirects=True,
+            follow_redirects=False,
             timeout=timeout_seconds,
             headers=DEFAULT_HEADERS,
-            max_redirects=3,
         ) as client:
-            response = await client.get(url)
+            target = assert_public_http_url(url)
+            for _hop in range(max_hops + 1):
+                response = await client.get(target)
+                if response.status_code not in {301, 302, 303, 307, 308}:
+                    break
+                location = response.headers.get("location")
+                if not location:
+                    break
+                target = assert_public_http_url(str(httpx.URL(target).join(location)))
+            else:
+                raise BlockedTargetURL(f"target_redirect_limit_exceeded:{url}")
         return FetchedPage(
             url=url,
             final_url=str(response.url),

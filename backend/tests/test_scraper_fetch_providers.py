@@ -10,6 +10,12 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
+# Provider-routing tests use non-resolvable hosts (careers.example.com).
+# Stub DNS so they reach the routing logic; the SSRF guard itself is
+# covered by tests/test_url_guard.py.
+from app.core import url_guard as _url_guard
+_url_guard.resolve_hostname = lambda hostname: ["93.184.216.34"]
+
 from app.core.config import settings  # noqa: E402
 from app.services.browser_use_client import (  # noqa: E402
     BrowserUseClient,

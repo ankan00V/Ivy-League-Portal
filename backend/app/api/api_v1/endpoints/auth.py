@@ -1925,7 +1925,13 @@ async def send_otp(request: OTPSendRequest, http_request: Request = None):  # ty
     """
     normalized_email = str(request.email).strip().lower()
     ip_address, user_agent = _request_context(http_request)
-    if request.purpose == "signin" and not is_reserved_admin_email(normalized_email):
+    # Verified for every purpose, not just signin. Gating on signin alone left
+    # purpose="signup" as an unauthenticated, captcha-free endpoint that sends
+    # real mail to any address supplied - the 60s cooldown is per-email, so an
+    # attacker rotates addresses freely and burns SMTP quota and sender
+    # reputation. The per-IP limit is not a backstop while X-Forwarded-For is
+    # trusted unconditionally.
+    if not is_reserved_admin_email(normalized_email):
         _verify_turnstile_or_raise(request.turnstile_token, request=http_request)
     existing_user = await _validate_user_for_purpose(normalized_email, request.purpose)
     requested_account_type = _normalize_account_type(request.account_type, default="candidate")

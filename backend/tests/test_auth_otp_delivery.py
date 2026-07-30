@@ -59,6 +59,7 @@ class TestOtpDeliveryBehavior(unittest.IsolatedAsyncioTestCase):
         )
 
         with (
+            patch.object(auth.settings, "TURNSTILE_ENABLED", False),
             patch.object(auth.settings, "ENVIRONMENT", "local"),
             patch.object(auth.settings, "OTP_ALLOW_DEBUG_FALLBACK", True),
             patch.object(auth.settings, "OTP_SEND_COOLDOWN_SECONDS", 60),
@@ -83,6 +84,7 @@ class TestOtpDeliveryBehavior(unittest.IsolatedAsyncioTestCase):
         )
 
         with (
+            patch.object(auth.settings, "TURNSTILE_ENABLED", False),
             patch.object(auth.settings, "ENVIRONMENT", "production"),
             patch.object(auth.settings, "OTP_ALLOW_DEBUG_FALLBACK", True),
             patch.object(auth.settings, "OTP_SEND_COOLDOWN_SECONDS", 60),
