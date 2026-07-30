@@ -24,6 +24,7 @@ from app.services.scraper import (
     _parse_datetime,
     is_valid_apply_url,
     is_early_career_opportunity,
+    is_probable_opportunity_posting,
     is_opportunity_active,
 )
 from app.core.time import utc_now
@@ -646,3 +647,62 @@ class TestOpportunityTypeCanonicalisation(unittest.TestCase):
         ):
             with self.subTest(text=text):
                 self.assertIsNone(_extract_stipend(text))
+
+
+class TestNonPostingGate(unittest.TestCase):
+    """About a quarter of the active corpus was not an opportunity at all.
+
+    Generic anchor extraction harvests a listing page's chrome alongside its
+    rows, so nav links, help centres, login pages, marketing and university
+    newsroom articles were ingested and shown to students as opportunities.
+    """
+
+    def test_rejects_navigation_and_marketing_chrome(self) -> None:
+        for title, url in (
+            ("Or see all categories", "https://www.wayup.com/s/internships/all"),
+            ("Careers help center", "https://support.joinhandshake.com/hc/en-us"),
+            ("intern salaries in Coimbatore", "https://www.glassdoor.co.in/Salaries/x.htm"),
+            ("Employer/Post Internship", "https://internship.aicte-india.org/login_new.php"),
+            ("Host a public hackathon", "https://info.devpost.com/product/public-hackathons"),
+            ("Register Now", "https://hack2skill.com/event/x"),
+            ("Internship in Delhi", "https://internshala.com/internship/internship-in-delhi"),
+            ("Students's Corner", "https://www.barc.gov.in/students/index.html"),
+        ):
+            with self.subTest(title=title):
+                self.assertFalse(is_probable_opportunity_posting({"title": title, "url": url}))
+
+    def test_rejects_newsroom_articles_about_past_awards(self) -> None:
+        """An article about someone who already won an award is not applyable."""
+        for title, url in (
+            (
+                "Lilia Burtonpatel and Ram Narayanan named Goldwater Scholars",
+                "https://www.princeton.edu/news/2026/05/26/x",
+            ),
+            (
+                "Cornell Atkinson announces $1.24M in joint EDF grants",
+                "https://news.cornell.edu/stories/2026/04/x",
+            ),
+            (
+                "Graduate Hooding 2026: 'Your bold scholarship'",
+                "https://www.princeton.edu/news/2026/05/26/y",
+            ),
+        ):
+            with self.subTest(title=title):
+                self.assertFalse(is_probable_opportunity_posting({"title": title, "url": url}))
+
+    def test_keeps_genuine_postings(self) -> None:
+        for title, url in (
+            ("Software Engineering Intern", "https://job-boards.greenhouse.io/cloudflare/jobs/8013562"),
+            ("Software Engineer, New Grad", "https://jobs.lever.co/notion/abc-123"),
+            ("Governance, Risk, and Compliance Intern", "https://jobs.ashbyhq.com/notion/xyz"),
+            ("R&D Engineer Intern", "https://internshala.com/internship/detail/rd-intern-12345"),
+            ("Agentic Commerce Hackathon", "https://devfolio.co/hackathons/agentic-commerce"),
+            ("Python Internship", "https://in.indeed.com/rc/clk?jk=abc123"),
+        ):
+            with self.subTest(title=title):
+                self.assertTrue(is_probable_opportunity_posting({"title": title, "url": url}))
+
+    def test_rejects_bare_host_with_no_path(self) -> None:
+        self.assertFalse(
+            is_probable_opportunity_posting({"title": "Acme Careers", "url": "https://acme.com"})
+        )

@@ -1206,6 +1206,76 @@ def is_valid_apply_url(value: str | None) -> bool:
     return str(value or "").strip().lower().startswith(("http://", "https://"))
 
 
+# Roughly a quarter of the active corpus was not an opportunity at all: listing
+# navigation ("Or see all categories"), help centres, login pages, marketing
+# ("Host a public hackathon"), salary pages, and university newsroom articles
+# about people who had already won awards. Generic anchor extraction harvests a
+# page's chrome alongside its rows, so this rejects the chrome by shape rather
+# than by disabling whole sources.
+_NON_POSTING_PATH_PATTERNS = [
+    r"/(?:login|signin|sign-in|signup|sign-up|register|logout)(?:[/._]|$)",
+    r"/(?:help|support|faq|contact|about|privacy|terms|pricing)(?:[/.]|$)",
+    r"/(?:news|stories|press|blog|guides|resources|newsroom|gazette)(?:/|$)",
+    r"/salaries?(?:/|$)",
+    r"/(?:product|solutions|features|host|employer[s]?/post)(?:/|$)",
+    r"/(?:all|categories|category|browse|explore|directory)(?:/|$)",
+]
+
+_NON_POSTING_HOST_PREFIXES = ("support.", "help.", "info.", "docs.", "blog.", "news.")
+
+# Titles that are page furniture rather than a role.
+_NON_POSTING_TITLE_PATTERNS = [
+    r"^(?:or\s+)?see\s+all\b",
+    r"^(?:view|browse|explore|see)\s+(?:all|more|other)\b",
+    r"^register\s+now$",
+    r"^apply\s+now$",
+    r"^learn\s+more$",
+    r"^host\s+(?:a|an|your)\b",
+    r"^(?:careers?|jobs?)\s+(?:help|centre|center|faq)\b",
+    r"\bhelp\s+cent(?:re|er)\b",
+    r"^(?:students?|graduates?|freshers?)(?:'s)?\s*(?:corner|faq)?$",
+    r"^(?:employer|recruiter)\s*/\s*post\b",
+    r"^internships?\s+in\s+[a-z\s]+$",
+    r"^post\s+(?:a\s+)?(?:job|internship)\b",
+]
+
+# Newsroom copy: an article *about* an award is not an award you can apply to.
+_NEWS_TITLE_PATTERNS = [
+    r"\b(?:named|awarded|wins?|won|announces?|announced|receives?|honou?red)\b.*\b(?:scholar|scholarship|fellow|grant|award|prize)\b",
+    r"\b(?:scholars?|fellows?)\s+named\b",
+    r"\$[\d.,]+\s*(?:million|billion|m|bn|k)?\b.*\b(?:gift|grant|funding|donation)\b",
+]
+
+
+def is_probable_opportunity_posting(record: dict[str, Any]) -> bool:
+    """Reject rows that are page furniture rather than an applyable posting."""
+    url = str(record.get("apply_url") or record.get("url") or "").strip()
+    if not is_valid_apply_url(url):
+        return False
+
+    parsed = urlparse(url.lower())
+    host = parsed.netloc.split("@")[-1].split(":")[0]
+    if host.startswith(_NON_POSTING_HOST_PREFIXES):
+        return False
+
+    path = parsed.path or "/"
+    # A bare host with no path cannot identify a specific posting.
+    if path in {"", "/"} and not parsed.query:
+        return False
+    if any(re.search(pattern, path) for pattern in _NON_POSTING_PATH_PATTERNS):
+        return False
+
+    title = _collapse_whitespace(record.get("title")).lower()
+    if not title:
+        return False
+    if any(re.search(pattern, title) for pattern in _NON_POSTING_TITLE_PATTERNS):
+        return False
+    if any(re.search(pattern, title) for pattern in _NEWS_TITLE_PATTERNS):
+        return False
+
+    return True
+
+
 def _record_value(record: dict[str, Any], field_name: str) -> Any:
     if field_name in record:
         return record.get(field_name)
@@ -3565,15 +3635,21 @@ async def _insert_and_broadcast(
     normalized_records: list[dict[str, Any]] = []
     seen_urls: set[str] = set()
     out_of_scope_count = 0
+    non_posting_count = 0
 
     from app.services.opportunity_quality_service import opportunity_quality_scorer
 
     for opp_data in opportunity_rows:
+        # Rejected before the scope check so a nav link or newsroom article is
+        # never counted as an out-of-scope *opportunity*.
+        if not is_probable_opportunity_posting(opp_data):
+            non_posting_count += 1
+            continue
         if not is_early_career_opportunity(opp_data):
             out_of_scope_count += 1
             continue
         url = (opp_data.get("url") or "").strip()
-        if not is_valid_apply_url(url) or url in seen_urls:
+        if url in seen_urls:
             continue
         seen_urls.add(url)
         classification = ai_system.classify_opportunity(
@@ -3832,7 +3908,11 @@ async def _insert_and_broadcast(
         "failed": failed_count,
         "parsed": parsed_count,
         "out_of_scope": out_of_scope_count,
-        "deduplicated": max(0, len(opportunity_rows) - out_of_scope_count - len(normalized_records)),
+        "non_posting": non_posting_count,
+        "deduplicated": max(
+            0,
+            len(opportunity_rows) - out_of_scope_count - non_posting_count - len(normalized_records),
+        ),
         "avg_trust_score": round(sum(trust_scores) / len(trust_scores), 2) if trust_scores else None,
     }
 
