@@ -20,7 +20,11 @@ ensure_mongo_keyfile() {
 
 is_vidyaverse_backend() {
   local url="$1"
-  /usr/bin/curl -fsS "${url}/health" 2>/dev/null | python3 -c 'import json, sys; payload=json.load(sys.stdin); raise SystemExit(0 if payload.get("service") == "VidyaVerse API" else 1)' >/dev/null 2>&1
+  # Probes /health/ready, not /health. /health is now a static liveness reply
+  # that returns as soon as uvicorn binds, so waiting on it would let the
+  # harness proceed to the smoke test while Mongo, Redis and the model artifacts
+  # were still loading. Readiness is what "the backend is up" has to mean here.
+  /usr/bin/curl -fsS "${url}/health/ready" 2>/dev/null | python3 -c 'import json, sys; payload=json.load(sys.stdin); raise SystemExit(0 if payload.get("service") == "VidyaVerse API" and payload.get("status") == "healthy" else 1)' >/dev/null 2>&1
 }
 
 BACKEND_REUSED=0

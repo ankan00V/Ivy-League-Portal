@@ -581,11 +581,17 @@ async def _warmup_rag_components() -> None:
     await nlp_service.classify_intent("data science internships")
     await opportunity_vector_service.rebuild(force=False)
 
+# Compared on a stripped, lowercased value. Every production guard in this file
+# normalises before comparing, but these three did not - so ENVIRONMENT set to
+# "Production" or " production" tripped all the guards while still publishing
+# the API schema, /docs and /redoc.
+_IS_PRODUCTION = str(settings.ENVIRONMENT or "").strip().lower() == "production"
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    openapi_url=f"{settings.API_V1_STR}/openapi.json" if settings.ENVIRONMENT != "production" else None,
-    docs_url="/docs" if settings.ENVIRONMENT != "production" else None,
-    redoc_url="/redoc" if settings.ENVIRONMENT != "production" else None,
+    openapi_url=f"{settings.API_V1_STR}/openapi.json" if not _IS_PRODUCTION else None,
+    docs_url="/docs" if not _IS_PRODUCTION else None,
+    redoc_url="/redoc" if not _IS_PRODUCTION else None,
     lifespan=lifespan,
 )
 
@@ -784,9 +790,50 @@ async def _metrics_dependency(request: Request) -> Any:
     return current_user
 
 
+_LOCAL_ENVIRONMENTS = {"local", "dev", "development", "test"}
+
+
+def _readiness_is_open() -> bool:
+    """Detailed readiness is unauthenticated only outside production.
+
+    Compared case-insensitively on a stripped value: elsewhere in this file the
+    production guards normalise, while the docs exposure check compared raw, so
+    ENVIRONMENT="Production" fired the guards *and* published /docs.
+    """
+    return str(settings.ENVIRONMENT or "").strip().lower() in _LOCAL_ENVIRONMENTS
+
+
+async def _readiness_dependency(request: Request) -> Any:
+    """Gate the dependency fan-out behind auth in production.
+
+    The detailed payload runs a Mongo ping, a Redis ping, a ClickHouse query, an
+    S3 head_bucket and two count_documents on every call, and the endpoint is
+    exempt from rate limiting so load balancers are never throttled. Left open
+    it was both an unauthenticated DoS amplifier against paid dependencies and a
+    disclosure of environment, PID, uptime, database and bucket names.
+    """
+    if _readiness_is_open():
+        return None
+    auth_header = (request.headers.get("authorization") or "").strip()
+    token = None
+    if auth_header.lower().startswith("bearer "):
+        token = auth_header.split(" ", 1)[1].strip() or None
+    return await get_current_admin_user(request=request, token=token)
+
+
 @app.get("/health", tags=["system"])
-async def health_check(request: Request):
-    """Health check endpoint for load balancers."""
+async def health_check():
+    """Liveness probe for load balancers.
+
+    Deliberately static and cheap: no dependency calls, no environment or
+    process detail. Use /health/ready for the dependency fan-out.
+    """
+    return {"status": "ok", "service": settings.PROJECT_NAME}
+
+
+@app.get("/health/ready", tags=["system"])
+async def readiness_check(request: Request, _auth: Any = Depends(_readiness_dependency)):
+    """Full dependency readiness. Admin-authenticated outside local environments."""
     init_metrics()
     checks = {
         "mongodb": await _run_check("mongodb", lambda: _mongo_health(request), required=True),
