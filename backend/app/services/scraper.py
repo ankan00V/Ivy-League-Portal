@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
+import html
 import json
 import logging
 import re
@@ -1093,6 +1094,26 @@ def _strip_html(value: str | None) -> str:
     return BeautifulSoup(value, "html.parser").get_text(" ", strip=True)
 
 
+def _clean_description(value: str | None) -> str:
+    """Normalise a scraped description into readable plain text.
+
+    Sources return raw markup, and the opportunity card prints the value
+    verbatim, so listings showed literal tags to students. Beyond stripping
+    tags this also decodes entities (&amp;nbsp;, &amp;amp;) and drops the boilerplate
+    lead-ins that several ATS templates prepend, which otherwise consume the
+    whole card preview before any information about the role appears.
+    """
+    text = _strip_html(value)
+    if not text:
+        return ""
+    text = html.unescape(text)
+    # A second strip: entity decoding can reveal tags that were encoded once.
+    if "<" in text and ">" in text:
+        text = _strip_html(text)
+    text = text.replace(" ", " ")
+    return _collapse_whitespace(text)
+
+
 def _collapse_whitespace(value: str | None) -> str:
     if not value:
         return ""
@@ -1474,11 +1495,17 @@ def _extract_ppo_availability(text: str) -> str | None:
 
 
 def _enrich_metadata(record: dict[str, Any]) -> dict[str, Any]:
-    description = _collapse_whitespace(record.get("description"))
+    # Descriptions arrive as raw markup from most sources. The card renders the
+    # value verbatim, so students were reading literal tags:
+    #   "<div><strong>About Groww:</strong></div> <div>We are a passionate..."
+    # Stripping here rather than in the UI keeps every consumer clean - feed,
+    # RAG context, embeddings and the LLM extractor all read this field.
+    description = _clean_description(record.get("description"))
     title = _collapse_whitespace(record.get("title"))
     university = _collapse_whitespace(record.get("university"))
     metadata_text = " ".join(part for part in [title, description, university] if part)
     enriched = dict(record)
+    enriched["description"] = description
     enriched["url"] = _canonicalize_url(record.get("url"))
     # Canonicalise the type at ingestion. It was previously normalised only on
     # the employer and admin write paths, so scraped rows accumulated both

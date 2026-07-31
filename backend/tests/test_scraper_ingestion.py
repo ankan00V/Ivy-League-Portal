@@ -13,6 +13,7 @@ if str(BACKEND_ROOT) not in sys.path:
 from app.services.scraper import (
     GenericOpportunityPortalScraper,
     GreenhouseScraper,
+    _clean_description,
     _collect_fetch_batch_results,
     _dedupe_by_url,
     _enrich_metadata,
@@ -770,3 +771,51 @@ class TestFetchInThreadIsAwaitableAsATask(unittest.IsolatedAsyncioTestCase):
             timeout_seconds=10,
         )
         self.assertEqual(results, [42, "OK"])
+
+
+class TestDescriptionCleaning(unittest.TestCase):
+    """Descriptions were rendered verbatim, so students read literal markup.
+
+    A real card showed:
+      "<div><strong>About Groww:</strong></div> <div>We are a passionate..."
+
+    Stripping at ingestion rather than in the UI keeps every consumer clean:
+    the feed, RAG context, embeddings and the LLM extractor all read this field.
+    """
+
+    def test_strips_tags_from_real_ats_markup(self) -> None:
+        cleaned = _clean_description(
+            "<div><strong>About Groww:</strong></div> <div>We are a passionate group "
+            "of people focused on making financial services accessible.</div>"
+        )
+        self.assertNotIn("<", cleaned)
+        self.assertNotIn(">", cleaned)
+        self.assertTrue(cleaned.startswith("About Groww:"))
+
+    def test_decodes_entities_including_double_encoded_markup(self) -> None:
+        self.assertEqual(_clean_description("&lt;p&gt;Encoded once&lt;/p&gt; then decoded"),
+                         "Encoded once then decoded")
+        self.assertEqual(_clean_description("Spaced&nbsp;&nbsp;out&nbsp;text"), "Spaced out text")
+
+    def test_plain_text_is_left_alone(self) -> None:
+        self.assertEqual(
+            _clean_description("Plain text description with no markup."),
+            "Plain text description with no markup.",
+        )
+
+    def test_empty_input_yields_empty_string(self) -> None:
+        self.assertEqual(_clean_description(None), "")
+        self.assertEqual(_clean_description(""), "")
+
+    def test_enrichment_applies_the_cleaning(self) -> None:
+        enriched = _enrich_metadata(
+            {
+                "title": "Video Editor Intern",
+                "university": "Groww",
+                "url": "https://groww.in/careers/1",
+                "opportunity_type": "Internship",
+                "description": "<p><strong>About Groww:</strong></p><p>Financial services.</p>",
+            }
+        )
+        self.assertNotIn("<", enriched["description"])
+        self.assertIn("About Groww:", enriched["description"])

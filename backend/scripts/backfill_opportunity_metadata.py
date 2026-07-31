@@ -36,7 +36,11 @@ if str(BACKEND_ROOT) not in sys.path:
 from pymongo import MongoClient, UpdateOne  # noqa: E402
 
 from app.services.opportunity_visibility import canonical_opportunity_type  # noqa: E402
-from app.services.scraper import _collapse_whitespace, _extract_stipend  # noqa: E402
+from app.services.scraper import (  # noqa: E402
+    _clean_description,
+    _collapse_whitespace,
+    _extract_stipend,
+)
 
 
 def main() -> int:
@@ -53,6 +57,7 @@ def main() -> int:
 
     operations: list[UpdateOne] = []
     stipend_found = 0
+    descriptions_cleaned = 0
     type_changes: Counter[str] = Counter()
     stipend_examples: list[str] = []
 
@@ -77,6 +82,15 @@ def main() -> int:
                 if len(stipend_examples) < args.limit_preview:
                     stipend_examples.append(f"{str(row.get('title'))[:44]} -> {stipend}")
 
+        # Descriptions were stored as raw markup and rendered verbatim, so
+        # cards showed literal tags. Re-clean whatever is already stored.
+        raw_description = row.get("description")
+        if raw_description:
+            cleaned = _clean_description(raw_description)
+            if cleaned and cleaned != raw_description:
+                updates["description"] = cleaned
+                descriptions_cleaned += 1
+
         raw_type = row.get("opportunity_type")
         if raw_type:
             canonical = canonical_opportunity_type(raw_type)
@@ -91,6 +105,7 @@ def main() -> int:
         "scanned": scanned,
         "rows_to_update": len(operations),
         "stipend_recovered": stipend_found,
+        "descriptions_cleaned": descriptions_cleaned,
         "type_changes": dict(type_changes),
         "applied": False,
     }
