@@ -112,7 +112,12 @@ if [[ "${BACKEND_REUSED}" -eq 0 ]]; then
     echo "${BACKEND_PID}" > "${LOG_DIR}/backend.pid"
   fi
 
-  for _ in $(seq 1 90); do
+  # ~5 minutes. The probe now waits for /health/ready rather than /health, and
+  # readiness genuinely exercises Mongo, Redis, ClickHouse, the artifact store
+  # and the learned-ranker load, so first boot on a cold cache legitimately
+  # exceeds the previous 3-minute budget. Timing out early meant the smoke test
+  # ran against a half-started backend and reported failures that were not real.
+  for _ in $(seq 1 150); do
     if is_vidyaverse_backend "http://127.0.0.1:${BACKEND_PORT}"; then
       break
     fi

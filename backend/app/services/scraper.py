@@ -3539,9 +3539,15 @@ _FETCH_EXECUTOR = ThreadPoolExecutor(
 )
 
 
-def _fetch_in_thread(func: Any, *args: Any) -> Awaitable[Any]:
-    """asyncio.to_thread equivalent bound to the dedicated fetch pool."""
-    return asyncio.get_running_loop().run_in_executor(_FETCH_EXECUTOR, func, *args)
+async def _fetch_in_thread(func: Any, *args: Any) -> Any:
+    """asyncio.to_thread equivalent bound to the dedicated fetch pool.
+
+    Must be a coroutine function, not one that returns the executor Future
+    directly: callers hand the result to asyncio.create_task, which accepts a
+    coroutine and rejects a Future with "a coroutine was expected". Returning
+    the Future failed every scheduled scraper run.
+    """
+    return await asyncio.get_running_loop().run_in_executor(_FETCH_EXECUTOR, func, *args)
 
 
 async def _collect_fetch_batch_results(

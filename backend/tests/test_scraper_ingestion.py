@@ -742,3 +742,31 @@ class TestStipendExtractionAgainstRealIndianFormats(unittest.TestCase):
     def test_absent_stipend_yields_nothing(self) -> None:
         """"Not Available" carries no amount and must not fabricate one."""
         self.assertIsNone(_extract_stipend("Not Available"))
+
+
+class TestFetchInThreadIsAwaitableAsATask(unittest.IsolatedAsyncioTestCase):
+    """_fetch_in_thread must be a coroutine function, not a Future factory.
+
+    _collect_fetch_batch_results wraps every entry in asyncio.create_task, which
+    rejects a Future with "a coroutine was expected, got <Future pending ...>".
+    Returning loop.run_in_executor(...) directly therefore failed every
+    scheduled scraper run while each source still scraped fine in isolation -
+    which made it look like a source problem rather than a plumbing one.
+    """
+
+    def test_is_a_coroutine_function(self) -> None:
+        import inspect
+
+        from app.services.scraper import _fetch_in_thread
+
+        self.assertTrue(inspect.iscoroutinefunction(_fetch_in_thread))
+
+    async def test_survives_the_real_batch_collector(self) -> None:
+        from app.services.scraper import _collect_fetch_batch_results, _fetch_in_thread
+
+        results = await _collect_fetch_batch_results(
+            [_fetch_in_thread(lambda value: value * 2, 21), _fetch_in_thread(str.upper, "ok")],
+            batch_name="unit_test_sources",
+            timeout_seconds=10,
+        )
+        self.assertEqual(results, [42, "OK"])
