@@ -1227,9 +1227,15 @@ _NON_POSTING_HOST_PREFIXES = ("support.", "help.", "info.", "docs.", "blog.", "n
 _NON_POSTING_TITLE_PATTERNS = [
     r"^(?:or\s+)?see\s+all\b",
     r"^(?:view|browse|explore|see)\s+(?:all|more|other)\b",
-    r"^register\s+now$",
-    r"^apply\s+now$",
-    r"^learn\s+more$",
+    # Trailing arrows and punctuation are common on these links ("Register now
+    # »", "Apply now ->"), so the anchors tolerate them rather than requiring an
+    # exact match.
+    r"^register\s+now\b",
+    r"^apply\s+now\b",
+    r"^learn\s+more\b",
+    r"^read\s+more\b",
+    r"^view\s+details\b",
+    r"^sign\s+(?:up|in)\b",
     r"^host\s+(?:a|an|your)\b",
     r"^(?:careers?|jobs?)\s+(?:help|centre|center|faq)\b",
     r"\bhelp\s+cent(?:re|er)\b",
