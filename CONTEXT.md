@@ -147,6 +147,27 @@ The README used to overstate; corrected in `016ffc1`, but be alert:
 → Crawlee. Scrapling is free so it precedes paid providers. Proven:
 news.columbia.edu and wellfound both 403 → 200.
 
+### Fallback chains — nothing should stall on one provider
+Audited 2026-07-31, all verified present in code:
+
+| Subsystem | Chain |
+|---|---|
+| page fetch | direct → **scrapling** → firecrawl → browser_use → crawlee |
+| discovery search | **firecrawl** (no quota) → serpapi (capped 20/day) |
+| embeddings | sentence-transformers → hash fallback |
+| rate limiter | redis → fail-**closed** on auth, fail-open elsewhere |
+| ranker artifact | s3 uri → local model path (checksum-verified either way) |
+| ranking modes | ml → semantic on failure |
+| cache | redis → direct DB |
+| job runner | retry + abandoned-job reclamation |
+| LLM extraction | openai-compatible (NVIDIA) → claude |
+| scraper batch | per-batch timeout, partial results retained |
+
+Firecrawl now **leads** discovery search rather than trailing it: SerpAPI's free
+tier is ~250/month and discovery runs unattended, so leading with SerpAPI meant
+expansion stopped entirely once the daily budget was spent.
+
+
 ---
 
 ## 7. Open items

@@ -1239,18 +1239,17 @@ class SourceDiscoveryEngine:
         try:
             for query in queries:
                 query_rows: list[tuple[str, str | None]] = []
-                prefer_firecrawl = (
-                    firecrawl_search
-                    and str(settings.FIRECRAWL_MODE or "fallback").strip().lower() == "preferred"
-                )
-                if prefer_firecrawl:
+                # Firecrawl leads unconditionally now, so FIRECRAWL_MODE no
+                # longer decides ordering here. It has no per-search quota, whereas
+                # SerpAPI's free tier is ~250 searches a month and autonomous
+                # discovery runs unattended on a schedule. Leading with SerpAPI
+                # meant discovery stalled entirely once the daily budget was
+                # spent; leading with Firecrawl keeps expansion running and
+                # leaves SerpAPI as the fallback for queries Firecrawl misses.
+                if firecrawl_search:
                     query_rows = await self._search_firecrawl(query, run)
-                # Budgeted per query: this loop runs up to 10 generated queries
-                # per discovery sweep, on a schedule, unattended.
                 if not query_rows and client is not None and serpapi_budget.try_consume():
                     query_rows = await self._search_serpapi(client, query, key, run)
-                if not query_rows and firecrawl_search and not prefer_firecrawl:
-                    query_rows = await self._search_firecrawl(query, run)
                 for link, title in query_rows:
                     candidates.append(
                         DiscoveryCandidate(
