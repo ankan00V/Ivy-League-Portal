@@ -207,6 +207,7 @@ async def lifespan(app: FastAPI):
         or settings.MLOPS_AUTORUN_ENABLED
         or settings.ANALYTICS_WAREHOUSE_AUTORUN_ENABLED
         or settings.EMBEDDING_AUTORUN_ENABLED
+        or settings.DESCRIPTION_ENRICHMENT_ENABLED
         or settings.DISCOVERY_ENABLED
         or settings.EXPERIMENT_AUTO_GRADUATION_ENABLED
         or settings.OPPORTUNITY_STATUS_AUTORUN_ENABLED
@@ -384,6 +385,25 @@ async def lifespan(app: FastAPI):
                 "interval",
                 minutes=max(5, int(settings.EMBEDDING_REBUILD_INTERVAL_MINUTES)),
                 id="embedding_rebuild_job",
+                replace_existing=True,
+                next_run_time=datetime.now(timezone.utc),
+            )
+
+        if settings.DESCRIPTION_ENRICHMENT_ENABLED:
+
+            async def _enqueue_description_enrichment() -> None:
+                await job_runner.enqueue(
+                    job_type="opportunities.enrich_descriptions",
+                    payload={},
+                    max_attempts=2,
+                    dedupe_key="opportunities.enrich_descriptions",
+                )
+
+            scheduler.add_job(
+                _enqueue_description_enrichment,
+                "interval",
+                minutes=max(10, int(settings.DESCRIPTION_ENRICHMENT_INTERVAL_MINUTES)),
+                id="description_enrichment_job",
                 replace_existing=True,
                 next_run_time=datetime.now(timezone.utc),
             )

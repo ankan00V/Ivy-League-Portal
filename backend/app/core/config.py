@@ -131,6 +131,17 @@ class Settings(BaseSettings):
     BROWSER_USE_CIRCUIT_FAILURE_THRESHOLD: int = 3
     BROWSER_USE_CIRCUIT_RECOVERY_SECONDS: float = 120.0
 
+    # Detail-page description enrichment. Listing cards carry a title and a line
+    # of chrome; the role's requirements live on the detail page. Measured on the
+    # live corpus: only 47% of active rows had a usable description. Budgeted
+    # because it costs one fetch per opportunity and can fall through to a paid
+    # provider.
+    DESCRIPTION_ENRICHMENT_ENABLED: bool = True
+    DESCRIPTION_ENRICHMENT_MAX_PER_RUN: int = 25
+    DESCRIPTION_ENRICHMENT_TIMEOUT_SECONDS: float = 25.0
+    DESCRIPTION_ENRICHMENT_MAX_CHARS: int = 4000
+    DESCRIPTION_ENRICHMENT_INTERVAL_MINUTES: int = 60
+
     # Scrapling: local, BSD-3, no per-call cost. Stealth headers and TLS
     # impersonation clear sources a plain GET cannot, so it is tried before the
     # paid providers. Measured: news.columbia.edu 403 -> 200, wellfound 403 ->

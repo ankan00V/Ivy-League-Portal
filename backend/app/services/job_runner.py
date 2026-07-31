@@ -434,6 +434,17 @@ async def _job_embeddings_rebuild(payload: dict[str, Any]) -> dict[str, Any]:
     return await embedding_pipeline.rebuild_vector_index_if_stale(force=bool(payload.get("force") or False))
 
 
+async def _job_description_enrichment(payload: dict[str, Any]) -> dict[str, Any]:
+    """Improve unusable descriptions from the opportunity's own detail page.
+
+    Kept off the ingestion critical path: it re-fetches one page per row and can
+    fall through to a paid provider, so it runs on its own budgeted schedule.
+    """
+    from app.services.description_enrichment import enrich_opportunity_descriptions
+
+    return await enrich_opportunity_descriptions(limit=payload.get("limit"))
+
+
 async def _job_mlops_retrain(payload: dict[str, Any]) -> dict[str, Any]:
     from app.services.mlops.retraining_service import retraining_service
 
@@ -703,6 +714,7 @@ def register_default_jobs() -> None:
     job_runner.register("opportunities.quality_pipeline", _job_opportunity_quality)
     job_runner.register("opportunities.dedup_scan", _job_opportunities_dedup_scan)
     job_runner.register("embeddings.rebuild", _job_embeddings_rebuild)
+    job_runner.register("opportunities.enrich_descriptions", _job_description_enrichment)
     job_runner.register("mlops.retrain", _job_mlops_retrain)
     job_runner.register("mlops.drift", _job_mlops_drift)
     job_runner.register("mlops.alert", _job_mlops_alert)
