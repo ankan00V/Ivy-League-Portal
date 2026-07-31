@@ -34,6 +34,10 @@ class Row:
     opportunity_id: str
     label: float
     features: dict[str, float]
+    # "impression" = the vector the ranker actually scored, replayed as-is.
+    # "recomputed" = legacy row with no persisted vector, rebuilt at training
+    # time and therefore carrying temporal skew and behaviour leakage.
+    feature_source: str = "recomputed"
 
 
 def _client_kwargs() -> dict[str, Any]:
@@ -169,6 +173,41 @@ async def _build_training_rows(
         label = _label_from_events(candidates)
 
         stored = imp.features or {}
+
+        # Prefer the feature vector the ranker actually scored at impression
+        # time. Recomputing it here is wrong in three separate ways:
+        #
+        #  - build_ranker_features() below is called without `now=`, so it
+        #    defaults to the moment the training job runs. Every temporal
+        #    feature (recency_hours, freshness_decay_24h, deadline_days_left,
+        #    ...) is therefore offset by the gap between the impression and the
+        #    training run, which is how the shipped model learned a split at
+        #    recency_hours <= 0.034 - satisfiable only for about two minutes
+        #    after a scrape - and consequently scores every live candidate
+        #    identically.
+        #  - the behaviour map is aggregated over the whole window with no
+        #    cutoff at impression time, so behaviour features encode the very
+        #    clicks and applies that produce the label. behavior_score is the
+        #    highest-gain feature in the shipped model.
+        #  - only a subset of build_ranker_features' arguments is passed here,
+        #    so roughly ten inputs that serving populates are constant at zero
+        #    in training.
+        #
+        # The serving path already records this dict per candidate
+        # (recommendation_service.rank -> "ranker_features"), so use it.
+        persisted = stored.get("ranker_features")
+        if isinstance(persisted, dict) and persisted:
+            rows.append(
+                Row(
+                    user_id=user_id,
+                    opportunity_id=opportunity_id,
+                    label=label,
+                    features={str(k): _as_float(v) for k, v in persisted.items()},
+                    feature_source="impression",
+                )
+            )
+            continue
+
         baseline_score = _as_float(stored.get("baseline_score"))
         semantic_score = _as_float(stored.get("semantic_score"))
         behavior_score = _as_float(stored.get("behavior_score"))
@@ -193,8 +232,24 @@ async def _build_training_rows(
             behavior_source_pref=behavior_source_pref,
         ).values
 
-        rows.append(Row(user_id=user_id, opportunity_id=opportunity_id, label=label, features=feats))
+        rows.append(
+            Row(
+                user_id=user_id,
+                opportunity_id=opportunity_id,
+                label=label,
+                features=feats,
+                feature_source="recomputed",
+            )
+        )
 
+    recomputed = sum(1 for row in rows if row.feature_source == "recomputed")
+    if recomputed:
+        print(
+            f"[train_learned_ranker] WARNING: {recomputed}/{len(rows)} rows had no "
+            "persisted impression features and were recomputed at training time. "
+            "Those rows carry temporal skew and behaviour leakage; treat any metric "
+            "derived from them as unvalidated."
+        )
     return rows
 
 
