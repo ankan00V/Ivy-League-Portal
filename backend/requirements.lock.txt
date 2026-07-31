@@ -7,6 +7,7 @@ amqp==5.3.1
 annotated-doc==0.0.4
 annotated-types==0.7.0
 anyio==4.12.1
+apify-client==3.1.0
 apify-fingerprint-datapoints==0.13.0
 apscheduler==3.11.2
 async-timeout==5.0.1
@@ -39,6 +40,7 @@ colorama==0.4.6
 confection==0.1.5
 crawlee==1.7.3
 cryptography==46.0.5
+curl-cffi==0.15.0
 cymem==2.0.13
 distro==1.9.0
 dnspython==2.8.0
@@ -69,6 +71,7 @@ jinja2==3.1.6
 jiter==0.13.0
 jmespath==1.1.0
 joblib==1.5.3
+kaggle==2.2.4
 kombu==5.6.2
 lazy-model==0.4.0
 lightgbm==4.6.0
@@ -123,6 +126,7 @@ s3transfer==0.17.0
 safetensors==0.7.0
 scikit-learn==1.8.0
 scipy==1.17.1
+scrapling==0.4.12
 sentence-transformers==5.4.1
 setuptools==82.0.0
 shellingham==1.5.4

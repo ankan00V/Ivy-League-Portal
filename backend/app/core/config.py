@@ -131,6 +131,18 @@ class Settings(BaseSettings):
     BROWSER_USE_CIRCUIT_FAILURE_THRESHOLD: int = 3
     BROWSER_USE_CIRCUIT_RECOVERY_SECONDS: float = 120.0
 
+    # Scrapling: local, BSD-3, no per-call cost. Stealth headers and TLS
+    # impersonation clear sources a plain GET cannot, so it is tried before the
+    # paid providers. Measured: news.columbia.edu 403 -> 200, wellfound 403 ->
+    # 200. Only its HTTP fetcher is used; rendering stays with Crawlee/Browser
+    # Use rather than adding a third headless browser.
+    SCRAPLING_ENABLED: bool = True
+    SCRAPLING_MODE: str = "fallback"  # fallback | preferred | disabled
+    SCRAPLING_TIMEOUT_SECONDS: float = 40.0
+    SCRAPLING_MAX_CONCURRENT: int = 4
+    SCRAPLING_CIRCUIT_FAILURE_THRESHOLD: int = 4
+    SCRAPLING_CIRCUIT_RECOVERY_SECONDS: float = 120.0
+
     # Crawlee local crawler fallback (BeautifulSoup + optional Playwright).
     CRAWLEE_ENABLED: bool = False
     CRAWLEE_MODE: str = "fallback"  # fallback | preferred | disabled

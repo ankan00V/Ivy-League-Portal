@@ -23,6 +23,7 @@ from pymongo.errors import DuplicateKeyError
 
 from app.core.async_limits import LoopLocalLockMap, LoopLocalSemaphore
 from app.core.url_guard import BlockedTargetURL, assert_public_http_url
+from app.services.scrapling_client import scrapling_client
 from app.core.config import settings
 from app.core.redis import get_redis
 from app.core.time import utc_now
@@ -612,6 +613,17 @@ class SourceHttpClient:
                 except Exception as exc:
                     direct_error = exc
 
+                # Scrapling before the paid providers: it is local and free, and
+                # its stealth headers clear sources a plain GET cannot. Measured
+                # 403 -> 200 on news.columbia.edu and wellfound.com/jobs, both of
+                # which were otherwise dead. Only attempted when the direct fetch
+                # actually failed or came back blocked, so healthy sources are
+                # untouched.
+                if direct_page is None or int(getattr(direct_page, "status_code", 0)) in {401, 403, 429}:
+                    scrapling_page = await self._try_scrapling(normalized, timeout)
+                    if scrapling_page is not None:
+                        direct_page, direct_error = scrapling_page, None
+
                 should_fallback = render and (
                     direct_page is None or self._needs_rendered_fallback(direct_page)
                 )
@@ -632,6 +644,28 @@ class SourceHttpClient:
                     return direct_page
                 assert direct_error is not None
                 raise direct_error
+
+    async def _try_scrapling(self, url: str, timeout_seconds: float) -> FetchedPage | None:
+        """Best-effort local anti-bot fetch. Never raises into the chain."""
+        if not scrapling_client.configured:
+            return None
+        if str(settings.SCRAPLING_MODE or "fallback").strip().lower() == "disabled":
+            return None
+        try:
+            result = await scrapling_client.scrape(url, timeout_seconds=timeout_seconds)
+        except Exception as exc:
+            logger.debug("scrapling fetch unavailable for %s: %s", url, exc)
+            return None
+        logger.info("scrapling recovered %s (status %s)", url, result.status_code)
+        return FetchedPage(
+            url=url,
+            final_url=result.final_url,
+            status_code=result.status_code,
+            text=result.html,
+            elapsed_seconds=result.elapsed_seconds,
+            content_type="text/html",
+            provider="scrapling",
+        )
 
     async def _fetch_direct(self, url: str, timeout_seconds: float) -> FetchedPage:
         loop = asyncio.get_running_loop()
