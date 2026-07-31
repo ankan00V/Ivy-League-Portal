@@ -113,6 +113,16 @@ class SessionSecurityService:
                 return SessionValidationResult(False, "session_store_unavailable")
             return SessionValidationResult(True, "session_store_unavailable")
 
+        # Checked before anything else and regardless of
+        # AUTH_SESSION_REQUIRE_SERVER_STATE: an explicit revocation must be
+        # honoured even in the permissive mode, where a missing session record
+        # otherwise reads as valid.
+        try:
+            if await redis.get(self._revoked_key(session_id)):
+                return SessionValidationResult(False, "session_revoked")
+        except Exception:
+            logger.exception("Failed to read session revocation marker")
+
         try:
             raw = await redis.get(self._session_key(session_id))
         except Exception:
@@ -158,6 +168,7 @@ class SessionSecurityService:
                 if user_id:
                     await redis.srem(self._user_sessions_key(user_id), candidate)
             await redis.delete(self._session_key(candidate))
+            await self._mark_revoked(redis, candidate)
         except Exception:
             logger.exception("Failed to invalidate auth session")
 
@@ -178,6 +189,7 @@ class SessionSecurityService:
             if keep and session_id == keep:
                 continue
             await redis.delete(self._session_key(session_id))
+            await self._mark_revoked(redis, session_id)
             await redis.srem(user_key, session_id)
             count += 1
         return count
@@ -211,6 +223,32 @@ class SessionSecurityService:
 
     def _session_key(self, session_id: str) -> str:
         return f"{self._prefix()}:session:{session_id}"
+
+    def _revoked_key(self, session_id: str) -> str:
+        return f"{self._prefix()}:revoked:{session_id}"
+
+    def _revocation_ttl_seconds(self) -> int:
+        """Outlive any token that could still reference the revoked session."""
+        minutes = max(1, int(getattr(settings, "ACCESS_TOKEN_EXPIRE_MINUTES", 60) or 60))
+        return int(minutes * 60) + 300
+
+    async def _mark_revoked(self, redis: Any, session_id: str) -> None:
+        """Record an explicit revocation tombstone.
+
+        Deleting the session record alone was not enough to log anyone out.
+        When AUTH_SESSION_REQUIRE_SERVER_STATE is false, validation treats a
+        missing record as `session_not_found` -> valid, so a stolen token kept
+        working after logout, after "sign out all devices" and after an admin
+        revoked the session, until the JWT expired on its own.
+
+        A tombstone distinguishes "deliberately revoked" from "no server state",
+        so revocation is honoured either way, and it expires once no live token
+        could still carry that session id.
+        """
+        try:
+            await redis.set(self._revoked_key(session_id), b"1", ex=self._revocation_ttl_seconds())
+        except Exception:
+            logger.exception("Failed to record session revocation")
 
     def _user_sessions_key(self, user_id: str) -> str:
         return f"{self._prefix()}:user:{user_id}:sessions"
