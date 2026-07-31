@@ -3,7 +3,7 @@
 **Purpose:** hand-off document so a fresh session can continue without re-deriving
 anything or repeating mistakes. Update this whenever something material changes.
 
-**Last updated:** 2026-07-31
+**Last updated:** 2026-07-31 (session 1 end)
 **Branch:** `AnkanCodes/readme-freshness-policy` (31 commits ahead of the previous
 tip `c94bc9a`, all pushed)
 **Remote:** https://github.com/ankan00V/Ivy-League-Portal
@@ -85,9 +85,11 @@ The README used to overstate; corrected in `016ffc1`, but be alert:
 
 ## 4. Current state
 
-- **318 backend tests passing.** Run: `cd backend && ./venv/bin/python -m pytest tests -q`
+- **323 backend tests passing.** Run: `cd backend && ./venv/bin/python -m pytest tests -q`
 - **Smoke test 15/16** (the WARN is warehouse freshness, refreshed on CI schedule).
-- Corpus: ~402 active opportunities. Taxonomy: Internship, Job, Hackathon,
+- Corpus: ~530 active opportunities. Usable descriptions ~50% and climbing
+  (hourly `opportunities.enrich_descriptions` job, 25 rows/run).
+- Corpus: Taxonomy: Internship, Job, Hackathon,
   Competition, Conference, Opportunity. No Scholarship/Research, no plural split.
 - **25 of 32 configured sources produce rows.**
 
@@ -162,6 +164,7 @@ Audited 2026-07-31, all verified present in code:
 | job runner | retry + abandoned-job reclamation |
 | LLM extraction | openai-compatible (NVIDIA) → claude |
 | scraper batch | per-batch timeout, partial results retained |
+| description enrichment | detail page via the same chain; skips on 4xx or error-page text |
 
 Firecrawl now **leads** discovery search rather than trailing it: SerpAPI's free
 tier is ~250/month and discovery runs unattended, so leading with SerpAPI meant
