@@ -220,6 +220,49 @@ PRIORITY_TIER_SCORE = {
 }
 
 
+class _SerpApiBudget:
+    """Caps SerpAPI calls per UTC day.
+
+    SerpAPI's free tier is roughly 250 searches a month and there is no
+    server-side guard on the account. Autonomous discovery runs on a schedule
+    and calls the search path once per candidate domain, so an unattended day
+    could drain the month's quota. Counted in-process, which is approximate
+    across multiple workers but bounds the worst case instead of leaving it
+    unbounded.
+    """
+
+    def __init__(self) -> None:
+        self._day = ""
+        self._used = 0
+
+    def _today(self) -> str:
+        return utc_now().strftime("%Y-%m-%d")
+
+    def try_consume(self) -> bool:
+        limit = int(getattr(settings, "SERPAPI_MAX_SEARCHES_PER_DAY", 20) or 0)
+        if limit <= 0:
+            return True
+        today = self._today()
+        if today != self._day:
+            self._day, self._used = today, 0
+        if self._used >= limit:
+            logger.warning(
+                "SerpAPI daily budget exhausted (%d/%d); skipping search this cycle",
+                self._used,
+                limit,
+            )
+            return False
+        self._used += 1
+        return True
+
+    @property
+    def used_today(self) -> int:
+        return self._used if self._day == self._today() else 0
+
+
+serpapi_budget = _SerpApiBudget()
+
+
 class DiscoveryRunSummary(BaseModel):
     run_id: str
     status: str
@@ -1062,7 +1105,9 @@ class CareersPageFinder:
     async def _search_for_careers_page(self, domain: str) -> Optional[str]:
         key = (getattr(settings, "SERPAPI_KEY", "") or "").strip()
         query = f"site:{domain} careers OR jobs internship"
-        if key and httpx is not None:
+        # Budgeted: this runs once per candidate domain during a discovery
+        # sweep, which is the path most likely to drain the monthly quota.
+        if key and httpx is not None and serpapi_budget.try_consume():
             params = {
                 "engine": "google",
                 "q": query,
@@ -1171,7 +1216,9 @@ class SourceDiscoveryEngine:
                 )
                 if prefer_firecrawl:
                     query_rows = await self._search_firecrawl(query, run)
-                if not query_rows and client is not None:
+                # Budgeted per query: this loop runs up to 10 generated queries
+                # per discovery sweep, on a schedule, unattended.
+                if not query_rows and client is not None and serpapi_budget.try_consume():
                     query_rows = await self._search_serpapi(client, query, key, run)
                 if not query_rows and firecrawl_search and not prefer_firecrawl:
                     query_rows = await self._search_firecrawl(query, run)

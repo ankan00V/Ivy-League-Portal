@@ -143,9 +143,24 @@ class Settings(BaseSettings):
     CRAWLEE_CIRCUIT_FAILURE_THRESHOLD: int = 3
     CRAWLEE_CIRCUIT_RECOVERY_SECONDS: float = 120.0
 
+    # Apify managed actors. Used for sources whose own markup yields little -
+    # Unstop's actor returns real deadlines, structured eligibility and a
+    # registration fee, none of which the HTML scraper can recover.
+    APIFY_API_TOKEN: Optional[str] = None
+    APIFY_ENABLED: bool = True
+    APIFY_UNSTOP_ACTOR: str = "solidcode/unstop-scraper"
+    APIFY_UNSTOP_MAX_RESULTS: int = 60
+    APIFY_TIMEOUT_SECONDS: float = 180.0
+    # Apify bills per compute unit, so ingestion must not call it on every
+    # scraper cycle. This is the minimum gap between runs.
+    APIFY_MIN_INTERVAL_MINUTES: int = 360
+
     # Source discovery pipeline
     DISCOVERY_ENABLED: bool = True
     SERPAPI_KEY: Optional[str] = None
+    # SerpAPI has no per-plan guard in code and the free tier is ~250 searches
+    # a month, which autonomous discovery can drain in a day.
+    SERPAPI_MAX_SEARCHES_PER_DAY: int = 20
     GOOGLE_SEARCH_API_KEY: Optional[str] = None
     CLAUDE_API_KEY: Optional[str] = None
     CLAUDE_MODEL: str = "claude-3-5-sonnet-20241022"
