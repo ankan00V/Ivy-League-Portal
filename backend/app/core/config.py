@@ -155,6 +155,23 @@ class Settings(BaseSettings):
     # scraper cycle. This is the minimum gap between runs.
     APIFY_MIN_INTERVAL_MINUTES: int = 360
 
+    # Product scope. The platform currently serves internships and adjacent
+    # student opportunities only. Scholarships, fellowships and standalone
+    # research grants are deliberately out of scope: chasing them cost SerpAPI
+    # and LLM credit, and every scholarship row the pipeline ever produced was
+    # a university newsroom article about an award someone had already won,
+    # not something a student could apply to.
+    OPPORTUNITY_SCOPE_TYPES: list[str] = [
+        "Internship",
+        "Job",
+        "Hackathon",
+        "Competition",
+        "Workshop",
+        "Conference",
+        "Hiring Challenge",
+        "Opportunity",
+    ]
+
     # Source discovery pipeline
     DISCOVERY_ENABLED: bool = True
     SERPAPI_KEY: Optional[str] = None

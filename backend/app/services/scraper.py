@@ -1247,6 +1247,28 @@ _NEWS_TITLE_PATTERNS = [
 ]
 
 
+def is_in_scope_opportunity(record: dict[str, Any]) -> bool:
+    """Reject opportunity types the product does not currently serve.
+
+    Scope is internships and adjacent student opportunities - hackathons,
+    competitions, workshops, conferences. Scholarships, fellowships and
+    standalone research grants are out: pursuing them spent SerpAPI and LLM
+    credit, and every scholarship row the pipeline produced turned out to be a
+    university newsroom article about an award already awarded rather than
+    something a student could apply to.
+    """
+    from app.services.opportunity_visibility import canonical_opportunity_type
+
+    raw_type = record.get("opportunity_type")
+    if not raw_type:
+        return True
+    canonical = canonical_opportunity_type(raw_type) or str(raw_type)
+    allowed = {str(item).strip().lower() for item in (settings.OPPORTUNITY_SCOPE_TYPES or [])}
+    if not allowed:
+        return True
+    return canonical.strip().lower() in allowed
+
+
 def is_probable_opportunity_posting(record: dict[str, Any]) -> bool:
     """Reject rows that are page furniture rather than an applyable posting."""
     url = str(record.get("apply_url") or record.get("url") or "").strip()
@@ -3644,6 +3666,9 @@ async def _insert_and_broadcast(
         # never counted as an out-of-scope *opportunity*.
         if not is_probable_opportunity_posting(opp_data):
             non_posting_count += 1
+            continue
+        if not is_in_scope_opportunity(opp_data):
+            out_of_scope_count += 1
             continue
         if not is_early_career_opportunity(opp_data):
             out_of_scope_count += 1

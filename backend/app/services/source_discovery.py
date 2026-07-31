@@ -181,9 +181,7 @@ THIRD_PARTY_PLATFORM_TERMS = {
     "internship platform",
     "opportunity platform",
     "hackathon",
-    "fellowship",
     "research internship",
-    "scholarship",
     "early careers",
     "off campus",
     "fresher",
@@ -208,7 +206,6 @@ SOURCE_TYPE_PRIORITY = {
     "hackathon_platform": 12,
     "research_portal": 10,
     "university_portal": 8,
-    "scholarship_portal": 7,
 }
 
 PRIORITY_TIER_SCORE = {
@@ -378,8 +375,6 @@ def infer_source_type(url: str, html_title: str | None = None, text: str | None 
     domain = normalize_domain(parsed.netloc)
     if "hackathon" in haystack:
         return "hackathon_platform"
-    if "scholarship" in haystack:
-        return "scholarship_portal"
     if "research" in haystack and (domain.endswith(".edu") or domain.endswith(".ac.in") or "institute" in haystack):
         return "research_portal"
     if domain.endswith(".edu") or domain.endswith(".ac.in"):
@@ -2304,7 +2299,7 @@ class TrustScoringEngine:
                 score += per_item * 0.45
             if "₹" in haystack or "inr" in haystack or "student" in haystack or "fresher" in haystack:
                 score += per_item * 0.25
-            if str(row.get("opportunity_type") or "").lower() in {"internship", "job", "hackathon", "scholarship", "research"}:
+            if str(row.get("opportunity_type") or "").lower() in {"internship", "job", "hackathon", "competition", "workshop", "conference"}:
                 score += per_item * 0.30
         return round(min(20, score), 2)
 
