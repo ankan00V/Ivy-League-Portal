@@ -251,6 +251,26 @@ button {
   transform: translate(-1px, -1px);
 }
 
+.sidebar-logout-btn {
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-sm);
+  color: var(--text-primary);
+  font-weight: 800;
+  width: 100%;
+  padding: 0.74rem 0.82rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.64rem;
+}
+
+.sidebar-logout-btn:hover {
+  background: var(--bg-surface-hover);
+  color: var(--danger, #d73a31);
+  transform: translate(-1px, -1px);
+}
+
 .sidebar-rank-card {
   background: var(--brand-accent);
   border: 2px solid var(--border-subtle);
@@ -1960,6 +1980,8 @@ select.input-base {
   }
 
   .mobile-drawer-foot {
+    display: grid;
+    gap: 0.75rem;
     padding-top: 0.75rem;
   }
 }

@@ -69,6 +69,7 @@ flowchart LR
 - Personalized dashboard behavior for signed-in users.
 - Candidate + employer user journeys.
 - Ask AI opportunity assistant.
+- Candidate-only Resume Readiness Review: an on-demand, deterministic analysis of an uploaded resume with an explainable `0–100` clarity/readability score, category evidence, strengths, weak spots, and improvements. It is advisory only—not a hiring prediction, eligibility decision, or opportunity-ranking signal—and does not persist extracted resume text or review output.
 
 ### AI/ML
 - Multi-source ingestion with semantic deduplication.
@@ -95,6 +96,7 @@ flowchart LR
 - CSRF origin checks plus double-submit token validation for unsafe requests under cookie auth.
 - Security headers with strict CSP + Trusted Types controls.
 - Auth lockout/audit instrumentation.
+- OTP delivery retries record redacted recipient identifiers and error classes only; plaintext email addresses, OTP values, and SMTP error bodies are excluded from application logs.
 - Hidden admin control plane with TOTP and admin action auditing.
 
 ## 7) Metrics and Impact

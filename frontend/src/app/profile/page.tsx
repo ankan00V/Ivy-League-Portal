@@ -25,6 +25,7 @@ import {
 
 import { CenteredPageSkeleton } from "@/components/LoadingSkeletons";
 import Sidebar from "@/components/Sidebar";
+import ResumeReadinessReview from "@/components/ResumeReadinessReview";
 import FormSection from "@/components/ui/FormSection";
 import PillGroup from "@/components/ui/PillGroup";
 import SelectField from "@/components/ui/SelectField";
@@ -1082,6 +1083,9 @@ export default function ProfilePage() {
           />
         </label>
         <p className="profile-section-footnote">Supported formats: .txt, .pdf, .doc, .docx (max 8 MB).</p>
+        {profile.account_type === "candidate" && profile.resume_filename ? (
+          <ResumeReadinessReview resumeFilename={profile.resume_filename} />
+        ) : null}
       </div>
     </>
   );

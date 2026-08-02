@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -20,6 +21,7 @@ from app.models.profile import Profile
 from app.models.user import User
 from app.schemas.user import UserResponse
 from app.services.intelligence import calculate_incoscore
+from app.services.resume_review_service import review_resume
 from app.services.username_service import ensure_system_username
 
 router = APIRouter()
@@ -418,6 +420,27 @@ class ProfileStrengthResponse(BaseModel):
     missing_signal_details: list[ProfileSignalDetail] = Field(default_factory=list)
     recommendation: str
     updated_at: datetime
+
+
+class ResumeReviewCategoryResponse(BaseModel):
+    key: str
+    label: str
+    score: int = Field(ge=0)
+    maximum: int = Field(gt=0)
+    evidence: list[str] = Field(default_factory=list)
+
+
+class ResumeReviewResponse(BaseModel):
+    version: str
+    resume_filename: str
+    score: int = Field(ge=0, le=100)
+    summary: str
+    categories: list[ResumeReviewCategoryResponse]
+    strengths: list[str] = Field(default_factory=list)
+    weaknesses: list[str] = Field(default_factory=list)
+    recommendations: list[str] = Field(default_factory=list)
+    advisory: str
+    reviewed_at: datetime
 
 
 class LeaderboardEntry(BaseModel):
@@ -1097,6 +1120,42 @@ async def download_resume(
         path=storage_path,
         media_type=(profile.resume_content_type or "application/octet-stream"),
         filename=profile.resume_filename or "resume",
+    )
+
+
+@router.get("/me/resume/review", response_model=ResumeReviewResponse)
+async def get_resume_review(
+    current_user: User = Depends(get_current_active_user),
+) -> ResumeReviewResponse:
+    profile = await _get_or_create_profile_for_user(current_user)
+    if str(profile.account_type or "candidate").strip().lower() != "candidate":
+        raise HTTPException(status_code=403, detail="Resume readiness review is available for candidate profiles only.")
+
+    storage_key = (profile.resume_storage_key or "").strip()
+    filename = (profile.resume_filename or "").strip()
+    if not storage_key or not filename:
+        raise HTTPException(status_code=404, detail="Upload a resume before requesting a review.")
+
+    storage_path = _resume_storage_dir() / storage_key
+    if not storage_path.is_file():
+        raise HTTPException(status_code=404, detail="Stored resume not found.")
+
+    content = await asyncio.to_thread(storage_path.read_bytes)
+    extension = _safe_resume_extension(filename)
+    text = (await asyncio.to_thread(_extract_resume_text, extension=extension, content=content)).strip()
+    try:
+        review = review_resume(
+            text,
+            profile_skills=str(profile.skills or ""),
+            preferred_roles=str(profile.preferred_roles or ""),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return ResumeReviewResponse(
+        **review,
+        resume_filename=filename,
+        reviewed_at=datetime.now(timezone.utc),
     )
 
 

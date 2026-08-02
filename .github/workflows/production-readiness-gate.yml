@@ -64,10 +64,13 @@ jobs:
       - name: Run auth and onboarding tests
         run: |
           python -m unittest backend.tests.test_auth_oauth -v
+          python -m unittest backend.tests.test_auth_otp_delivery -v
+          python -m unittest backend.tests.test_email_service -v
           python -m unittest backend.tests.test_auth_cookie_session -v
           python -m unittest backend.tests.test_http_security_middleware -v
           python -m unittest backend.tests.test_session_security_service -v
           python -m unittest backend.tests.test_users_ranking_summary -v
+          python -m unittest backend.tests.test_resume_review_service -v
 
   recommendation-regressions:
     name: Recommendation and Analytics Regressions
@@ -170,7 +173,7 @@ jobs:
       - name: Validate browser security headers
         env:
           PLAYWRIGHT_USE_SYSTEM_CHROME: "1"
-        run: npm run e2e -- --project=chromium --grep "Browser security headers|Profile editing and university selection persist"
+        run: npm run e2e -- --project=chromium --grep "@smoke|@ux visual snapshot|Browser security headers"
 
   staging-multi-role-release-block:
     name: Staging Multi-Role E2E (Release Blocking)

@@ -1,6 +1,6 @@
 import { expect, test, type Route } from "@playwright/test";
 
-test("Profile editing and university selection persist", async ({ page }) => {
+test("@smoke profile editing and university selection persist", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("auth_session_present", "1");
     localStorage.setItem("access_token_expires_at", String(Date.now() + 60 * 60 * 1000));
@@ -54,10 +54,10 @@ test("Profile editing and university selection persist", async ({ page }) => {
     permanent_address_pincode: "",
     hobbies: [],
     social_links: {},
-    resume_url: "",
-    resume_filename: "",
-    resume_content_type: "",
-    resume_uploaded_at: "",
+    resume_url: "/api/v1/users/me/resume/download",
+    resume_filename: "candidate-resume.pdf",
+    resume_content_type: "application/pdf",
+    resume_uploaded_at: "2026-08-02T00:00:00.000Z",
   };
   let lastSavedPayload: Record<string, unknown> | null = null;
 
@@ -92,6 +92,32 @@ test("Profile editing and university selection persist", async ({ page }) => {
     });
   });
 
+  await page.route("**/api/v1/users/me/resume/review", async (route: Route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        version: "resume_readiness.v1",
+        resume_filename: "candidate-resume.pdf",
+        score: 78,
+        summary: "Strong resume readiness signals are present.",
+        categories: [
+          {
+            key: "skills",
+            label: "Skills evidence",
+            score: 16,
+            maximum: 20,
+            evidence: ["Dedicated skills section found", "Detected technical skills: python, sql"],
+          },
+        ],
+        strengths: ["Skills evidence"],
+        weaknesses: ["Measured impact"],
+        recommendations: ["Add outcome-focused bullets with metrics, scale, or time saved"],
+        advisory: "This review measures clarity and ATS readability only. It does not predict hiring outcomes or make eligibility decisions.",
+      }),
+    });
+  });
+
   await page.goto("/profile");
 
   const firstNameInput = page.getByPlaceholder("First name");
@@ -122,4 +148,9 @@ test("Profile editing and university selection persist", async ({ page }) => {
   await expect.poll(() => lastSavedPayload?.first_name).toBe("EDITED");
   await expect.poll(() => lastSavedPayload?.college_name).toBe(selectableUniversityValue.toLocaleUpperCase("en-IN"));
   await expect(page.getByText("Profile updated successfully.")).toBeVisible();
+
+  await page.getByRole("button", { name: /Resume/ }).click();
+  await expect(page.getByRole("heading", { name: "Resume Readiness Review" })).toBeVisible();
+  await expect(page.getByText("78/100")).toBeVisible();
+  await expect(page.getByText("Add outcome-focused bullets with metrics, scale, or time saved")).toBeVisible();
 });

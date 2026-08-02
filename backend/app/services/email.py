@@ -1,5 +1,6 @@
 import asyncio
 import aiosmtplib
+from hashlib import sha256
 from email.message import EmailMessage
 from email.utils import formataddr
 from html import escape
@@ -11,6 +12,11 @@ import certifi
 from app.core.config import settings, smtp_from_email_value, smtp_from_name_value, smtp_server_value
 
 logger = logging.getLogger(__name__)
+
+
+def recipient_log_id(email: str) -> str:
+    normalized = str(email or "").strip().lower().encode("utf-8")
+    return sha256(normalized).hexdigest()[:12]
 
 
 def _otp_text_body(*, otp: str, expiry_minutes: int = 5) -> str:
@@ -170,12 +176,13 @@ async def send_email_otp(to_email: str, otp: str):
         send_kwargs["password"] = settings.SMTP_PASSWORD
 
     max_attempts = max(1, int(getattr(settings, "OTP_EMAIL_MAX_RETRIES", 3)))
+    delivery_id = recipient_log_id(to_email)
     last_error: Exception | None = None
     for attempt in range(1, max_attempts + 1):
         try:
             await aiosmtplib.send(message, **send_kwargs)
             if attempt > 1:
-                logger.warning("OTP email delivery recovered on retry %s for %s", attempt, to_email)
+                logger.warning("OTP email delivery recovered delivery_id=%s attempt=%s", delivery_id, attempt)
             return True
         except Exception as exc:
             last_error = exc
@@ -183,22 +190,22 @@ async def send_email_otp(to_email: str, otp: str):
                 break
             backoff_seconds = min(4.0, 0.6 * (2 ** (attempt - 1)))
             logger.warning(
-                "OTP email attempt %s/%s failed for %s: %s. Retrying in %.1fs",
+                "OTP email delivery retry delivery_id=%s attempt=%s max_attempts=%s error_class=%s backoff_seconds=%.1f",
+                delivery_id,
                 attempt,
                 max_attempts,
-                to_email,
-                exc,
+                exc.__class__.__name__,
                 backoff_seconds,
             )
             await asyncio.sleep(backoff_seconds)
 
     if last_error:
         logger.error(
-            "Failed to send OTP email to %s after %s attempts: %s",
-            to_email,
+            "OTP email delivery failed delivery_id=%s attempts=%s error_class=%s",
+            delivery_id,
             max_attempts,
-            last_error,
+            last_error.__class__.__name__,
         )
         raise last_error
-    logger.error("Failed to send OTP email to %s after %s attempts", to_email, max_attempts)
+    logger.error("OTP email delivery failed delivery_id=%s attempts=%s", delivery_id, max_attempts)
     raise RuntimeError("Unknown SMTP delivery failure")

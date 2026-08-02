@@ -159,7 +159,7 @@ test.describe("Opportunity interaction contracts", () => {
     });
   });
 
-  test("logs impression and click metadata from opportunity feed", async ({ page }) => {
+  test("@smoke logs impression and click metadata from opportunity feed", async ({ page }) => {
     const captured: InteractionPayload[] = [];
     await stubOpportunityRoutes(page, captured);
 
