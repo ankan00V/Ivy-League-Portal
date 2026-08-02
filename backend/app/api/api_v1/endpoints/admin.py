@@ -39,6 +39,7 @@ from app.services.opportunity_trust import (
     apply_trust_assessment,
     assess_opportunity_trust,
 )
+from app.services.opportunity_quality_service import opportunity_quality_scorer
 
 router = APIRouter(include_in_schema=False)
 
@@ -122,6 +123,7 @@ class AdminOpportunityUpdate(BaseModel):
     domain: Optional[str] = None
     source: Optional[str] = None
     location: Optional[str] = None
+    work_mode: Optional[str] = None
     eligibility: Optional[str] = None
     ppo_available: Optional[str] = None
     duration_start: Optional[datetime] = None
@@ -143,6 +145,11 @@ class AdminOpportunityResponse(BaseModel):
     domain: Optional[str] = None
     source: Optional[str] = None
     location: Optional[str] = None
+    work_mode: Optional[str] = None
+    quality_score: Optional[float] = None
+    quality_missing_fields: list[str] = Field(default_factory=list)
+    quality_review_required: bool = False
+    quality_review_reasons: list[str] = Field(default_factory=list)
     eligibility: Optional[str] = None
     ppo_available: Optional[str] = None
     trust_status: str
@@ -258,6 +265,9 @@ def _opportunity_payload(row: Opportunity) -> AdminOpportunityResponse:
         location=row.location,
         work_mode=row.work_mode,
         quality_score=row.quality_score,
+        quality_missing_fields=list(row.quality_missing_fields or []),
+        quality_review_required=bool(row.quality_review_required),
+        quality_review_reasons=list(row.quality_review_reasons or []),
         eligibility=row.eligibility,
         ppo_available=row.ppo_available,
         trust_status=row.trust_status or TRUST_STATUS_UNREVIEWED,
@@ -412,7 +422,14 @@ async def admin_overview(
         1 for row in opportunities if (str(row.lifecycle_status or "published").strip().lower() != "published")
     )
     verified_opportunities_total = sum(1 for row in opportunities if (str(row.trust_status or TRUST_STATUS_UNREVIEWED).strip().lower() == TRUST_STATUS_VERIFIED))
-    needs_review_opportunities_total = sum(1 for row in opportunities if (str(row.trust_status or TRUST_STATUS_UNREVIEWED).strip().lower() == TRUST_STATUS_NEEDS_REVIEW))
+    needs_review_opportunities_total = sum(
+        1
+        for row in opportunities
+        if (
+            str(row.trust_status or TRUST_STATUS_UNREVIEWED).strip().lower() == TRUST_STATUS_NEEDS_REVIEW
+            or bool(getattr(row, "quality_review_required", False))
+        )
+    )
     blocked_opportunities_total = sum(1 for row in opportunities if (str(row.trust_status or TRUST_STATUS_UNREVIEWED).strip().lower() == TRUST_STATUS_BLOCKED))
     social_posts_total = await Post.find_many().count()
     social_comments_total = await SocialComment.find_many().count()
@@ -499,6 +516,7 @@ async def admin_create_opportunity(
         last_seen_at=utc_now(),
     )
     apply_trust_assessment(opportunity, assess_opportunity_trust(opportunity))
+    opportunity_quality_scorer.apply_quality_assessment(opportunity)
     if payload.trust_status:
         opportunity.trust_status = _validate_trust_status(payload.trust_status)
         opportunity.reviewed_by_user_id = current_user.id
@@ -556,6 +574,7 @@ async def admin_update_opportunity(
     )
     computed_assessment = assess_opportunity_trust(row)
     apply_trust_assessment(row, computed_assessment)
+    opportunity_quality_scorer.apply_quality_assessment(row)
     if "trust_status" in updates:
         row.trust_status = str(updates["trust_status"])
         row.reviewed_by_user_id = current_user.id

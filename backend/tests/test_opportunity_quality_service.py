@@ -18,8 +18,11 @@ class DummyOpportunity:
     work_mode = None
     stipend = "10k pm"
     deadline = "2026-07-01"
+    eligibility = "2026 and 2027 batch students"
     tags = []
     duration_months = None
+    duplicate_count = 0
+    duplicate_cluster_key = None
 
 
 class TestOpportunityQualityService(unittest.TestCase):
@@ -51,7 +54,10 @@ class TestOpportunityQualityService(unittest.TestCase):
                 "work_mode": None,
                 "stipend": None,
                 "deadline": None,
+                "eligibility": None,
                 "tags": [],
+                "duplicate_count": 0,
+                "duplicate_cluster_key": None,
             },
         )()
 
@@ -61,6 +67,50 @@ class TestOpportunityQualityService(unittest.TestCase):
         self.assertIn("apply_url", missing)
         self.assertIn("description", missing)
         self.assertIn("company", missing)
+        self.assertIn("eligibility", missing)
+
+    def test_quality_review_routes_missing_student_critical_fields_to_admin_queue(self) -> None:
+        scorer = OpportunityQualityScorer()
+        row = type(
+            "OpportunityStub",
+            (),
+            {
+                "title": "Incomplete internship",
+                "description": "A complete enough description to avoid a thin-description-only review decision.",
+                "url": "https://example.com/apply",
+                "university": "Example Labs",
+                "location": None,
+                "work_mode": None,
+                "stipend": None,
+                "deadline": None,
+                "eligibility": None,
+                "batch_years": [],
+                "tags": ["python"],
+                "duplicate_count": 0,
+                "duplicate_cluster_key": None,
+            },
+        )()
+
+        score, missing = scorer.score_payload(row)
+        required, reasons = scorer.review_status(row, score=score, missing=missing)
+
+        self.assertTrue(required)
+        self.assertIn("deadline", missing)
+        self.assertIn("location", missing)
+        self.assertIn("eligibility", missing)
+        self.assertIn("Application deadline is unavailable.", reasons)
+        self.assertIn("Candidate eligibility is unavailable.", reasons)
+
+    def test_quality_review_routes_duplicate_signals_even_when_fields_are_complete(self) -> None:
+        scorer = OpportunityQualityScorer()
+        row = DummyOpportunity()
+        row.duplicate_count = 1
+
+        score, missing = scorer.score_payload(row)
+        required, reasons = scorer.review_status(row, score=score, missing=missing)
+
+        self.assertTrue(required)
+        self.assertIn("Potential duplicate listing requires a source and canonical-record check.", reasons)
 
 
 if __name__ == "__main__":

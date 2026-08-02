@@ -3733,6 +3733,13 @@ async def _insert_and_broadcast(
         quality_score, quality_missing_fields = opportunity_quality_scorer.score_payload(synthetic, quality_updates)
         normalized_payload["quality_score"] = quality_score
         normalized_payload["quality_missing_fields"] = quality_missing_fields
+        quality_review_required, quality_review_reasons = opportunity_quality_scorer.review_status(
+            synthetic,
+            score=quality_score,
+            missing=quality_missing_fields,
+        )
+        normalized_payload["quality_review_required"] = quality_review_required
+        normalized_payload["quality_review_reasons"] = quality_review_reasons
         normalized_payload["last_quality_run_at"] = _to_naive_utc(utc_now())
         normalized_records.append(normalized_payload)
 
@@ -3826,9 +3833,6 @@ async def _insert_and_broadcast(
                     "batch_years",
                     "ppo_available",
                     "tags",
-                    "quality_score",
-                    "quality_missing_fields",
-                    "last_quality_run_at",
                     "canonical_key",
                     "canonical_url_hash",
                     "title_company_location_hash",
@@ -3853,6 +3857,22 @@ async def _insert_and_broadcast(
                     if getattr(existing, field, None) != incoming:
                         setattr(existing, field, incoming)
                         changed = True
+                before_quality = (
+                    getattr(existing, "quality_score", None),
+                    list(getattr(existing, "quality_missing_fields", []) or []),
+                    bool(getattr(existing, "quality_review_required", False)),
+                    list(getattr(existing, "quality_review_reasons", []) or []),
+                )
+                opportunity_quality_scorer.apply_quality_assessment(existing)
+                existing.last_quality_run_at = now_naive
+                after_quality = (
+                    getattr(existing, "quality_score", None),
+                    list(getattr(existing, "quality_missing_fields", []) or []),
+                    bool(getattr(existing, "quality_review_required", False)),
+                    list(getattr(existing, "quality_review_reasons", []) or []),
+                )
+                if before_quality != after_quality:
+                    changed = True
                 next_assessment = assess_opportunity_trust(existing)
                 if (
                     getattr(existing, "trust_status", None) != next_assessment.trust_status
@@ -3910,9 +3930,6 @@ async def _insert_and_broadcast(
                         "batch_years",
                         "ppo_available",
                         "tags",
-                        "quality_score",
-                        "quality_missing_fields",
-                        "last_quality_run_at",
                         "duration_months",
                     ]:
                         incoming = normalized_payload.get(field)
@@ -3921,6 +3938,22 @@ async def _insert_and_broadcast(
                         if getattr(duplicate, field, None) != incoming:
                             setattr(duplicate, field, incoming)
                             changed = True
+                    before_quality = (
+                        getattr(duplicate, "quality_score", None),
+                        list(getattr(duplicate, "quality_missing_fields", []) or []),
+                        bool(getattr(duplicate, "quality_review_required", False)),
+                        list(getattr(duplicate, "quality_review_reasons", []) or []),
+                    )
+                    opportunity_quality_scorer.apply_quality_assessment(duplicate)
+                    duplicate.last_quality_run_at = now_naive
+                    after_quality = (
+                        getattr(duplicate, "quality_score", None),
+                        list(getattr(duplicate, "quality_missing_fields", []) or []),
+                        bool(getattr(duplicate, "quality_review_required", False)),
+                        list(getattr(duplicate, "quality_review_reasons", []) or []),
+                    )
+                    if before_quality != after_quality:
+                        changed = True
                     duplicate.last_seen_at = now_naive
                     if changed:
                         duplicate.updated_at = now_naive

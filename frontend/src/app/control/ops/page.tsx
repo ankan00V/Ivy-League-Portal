@@ -58,6 +58,11 @@ type Opportunity = {
   domain?: string | null;
   source?: string | null;
   location?: string | null;
+  work_mode?: string | null;
+  quality_score?: number | null;
+  quality_missing_fields: string[];
+  quality_review_required: boolean;
+  quality_review_reasons: string[];
   eligibility?: string | null;
   ppo_available?: string | null;
   trust_status: OpportunityTrust;
@@ -200,7 +205,7 @@ const sectionMeta: Array<{
   { key: "active", label: "Live", icon: Shield, description: "Visible on student portals now" },
   { key: "expired", label: "Expired", icon: FileClock, description: "Past deadline, editable for resurfacing" },
   { key: "inactive", label: "Inactive", icon: EyeOff, description: "Draft, paused, or manually closed" },
-  { key: "review", label: "Review", icon: ShieldAlert, description: "Trust moderation queue and blocked listings" },
+  { key: "review", label: "Review", icon: ShieldAlert, description: "Trust and data-quality review queue" },
   { key: "automation", label: "Jobs", icon: Bot, description: "Queue and background operations" },
   { key: "community", label: "Community", icon: Trophy, description: "Posts and comments moderation" },
   { key: "users", label: "Users", icon: Users2, description: "Access and account controls" },
@@ -524,7 +529,7 @@ export default function AdminOpsPage() {
     [sortedOpportunities],
   );
   const needsReviewOpportunities = useMemo(
-    () => sortedOpportunities.filter((row) => row.trust_status === "needs_review"),
+    () => sortedOpportunities.filter((row) => row.trust_status === "needs_review" || row.quality_review_required),
     [sortedOpportunities],
   );
   const blockedOpportunities = useMemo(
@@ -1024,7 +1029,7 @@ export default function AdminOpsPage() {
             <MetricCard label="Expired Opportunities" value={overview?.expired_opportunities_total ?? "-"} hint="Past deadline, edit to resurface" />
             <MetricCard label="Inactive Opportunities" value={overview?.inactive_opportunities_total ?? "-"} hint="Draft, paused, or closed" />
             <MetricCard label="Verified Sources" value={overview?.verified_opportunities_total ?? "-"} hint="Low-risk listings visible to students" />
-            <MetricCard label="Needs Review" value={overview?.needs_review_opportunities_total ?? "-"} hint="Queued for manual trust moderation" tone="accent" />
+            <MetricCard label="Needs Review" value={overview?.needs_review_opportunities_total ?? "-"} hint="Trust risk, data gaps, or duplicate signals" tone="accent" />
             <MetricCard label="Blocked Sources" value={overview?.blocked_opportunities_total ?? "-"} hint="Stopped from reaching students" />
             <MetricCard label="Dead Background Jobs" value={overview?.jobs_dead_count ?? "-"} hint="Needs admin intervention" tone="accent" />
           </div>
@@ -1049,9 +1054,9 @@ export default function AdminOpsPage() {
               </p>
             </button>
             <button type="button" style={{ ...panelStyle(), padding: "1rem", textAlign: "left" }} onClick={() => setActiveSection("review")}>
-              <h3 style={{ fontSize: "1.12rem" }}>Review suspicious listings</h3>
+              <h3 style={{ fontSize: "1.12rem" }}>Review low-confidence listings</h3>
               <p style={{ color: "var(--text-secondary)" }}>
-                Manual moderation clears false positives and hard-blocks questionable sources before they reach students.
+                Resolve trust risk, missing student-critical fields, and duplicate signals before promotion.
               </p>
             </button>
           </div>
@@ -1249,8 +1254,8 @@ export default function AdminOpsPage() {
 
       {activeSection === "review" ? (
         <SectionShell
-          title="Trust Moderation Queue"
-          subtitle="Listings in needs review are held back from students until a human verifies or blocks them."
+          title="Opportunity Review Queue"
+          subtitle="Trust-risk listings stay blocked from student surfaces. Data-quality gaps stay reviewable without hiding otherwise legitimate opportunities."
           actions={
             <button type="button" style={actionButtonStyle("publish")} onClick={() => void queueTrustBackfill()} disabled={loading}>
               Queue Trust Backfill
@@ -1261,7 +1266,7 @@ export default function AdminOpsPage() {
             <div style={{ display: "grid", gap: "0.65rem" }}>
               <h3 style={{ fontSize: "1.1rem", marginBottom: "0.15rem" }}>Needs Review</h3>
               <p style={{ color: "var(--text-secondary)", fontSize: "0.94rem" }}>
-                Review risk reasons, source identity, and host mismatch before promoting to verified.
+                Resolve source trust, student-critical missing fields, and duplicate signals before promoting a listing.
               </p>
               {needsReviewOpportunities.length === 0 ? (
                 <div style={{ ...panelStyle("var(--bg-base)"), padding: "1rem", color: "var(--text-secondary)" }}>No items currently require review.</div>
@@ -1273,6 +1278,7 @@ export default function AdminOpsPage() {
                         <strong style={{ color: "var(--text-primary)", fontSize: "1.02rem" }}>{row.title}</strong>
                         <div style={{ color: "var(--text-secondary)", marginTop: "0.2rem" }}>
                           {(row.university || "Unknown")} · {(row.source || "unknown source")} · risk {row.risk_score}/100
+                          {row.quality_score != null ? ` · quality ${row.quality_score}/100` : ""}
                         </div>
                       </div>
                       <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
@@ -1284,6 +1290,9 @@ export default function AdminOpsPage() {
                         </button>
                         <button type="button" style={actionButtonStyle("delete")} onClick={() => void updateTrustStatus(row.id, "blocked")} disabled={loading}>
                           Block
+                        </button>
+                        <button type="button" style={actionButtonStyle("neutral")} onClick={() => startEdit(row)} disabled={loading}>
+                          Edit details
                         </button>
                       </div>
                     </div>
@@ -1298,6 +1307,14 @@ export default function AdminOpsPage() {
                         ))
                       )}
                     </div>
+                    {row.quality_review_required ? (
+                      <div style={{ display: "grid", gap: "0.3rem" }}>
+                        <strong style={{ color: "var(--text-primary)" }}>Data-quality review</strong>
+                        {(row.quality_review_reasons || []).map((reason) => (
+                          <span key={`${row.id}-quality-${reason}`} style={{ color: "var(--text-secondary)" }}>{reason}</span>
+                        ))}
+                      </div>
+                    ) : null}
                     <a href={row.url} target="_blank" rel="noreferrer" style={{ color: "var(--brand-primary)", fontWeight: 700 }}>
                       {row.url}
                     </a>

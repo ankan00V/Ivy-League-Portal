@@ -36,6 +36,8 @@ class Opportunity(Document):
     tags: list[str] = Field(default_factory=list)
     quality_score: Optional[float] = Field(default=None, ge=0.0, le=100.0, json_schema_extra={"index": True})
     quality_missing_fields: list[str] = Field(default_factory=list)
+    quality_review_required: bool = Field(default=False, json_schema_extra={"index": True})
+    quality_review_reasons: list[str] = Field(default_factory=list)
     last_quality_run_at: Optional[datetime] = Field(default=None, json_schema_extra={"index": True})
     embedding: list[float] = Field(default_factory=list)
     embedding_text_hash: Optional[str] = Field(default=None, json_schema_extra={"index": True})
@@ -91,6 +93,7 @@ class Opportunity(Document):
             "stipend",
             "tags",
             "quality_score",
+            "quality_review_required",
             "last_quality_run_at",
             "embedding_text_hash",
             "embedding_model_version",
