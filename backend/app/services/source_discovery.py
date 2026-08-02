@@ -47,6 +47,7 @@ from app.services.browser_use_client import BrowserUseClient, BrowserUseUnavaila
 from app.services.crawlee_client import CrawleeClient, CrawleeUnavailableError, crawlee_client
 from app.services.firecrawl_client import FirecrawlClient, FirecrawlUnavailableError, firecrawl_client
 from app.services.opportunity_trust import apply_trust_assessment, assess_opportunity_trust
+from app.services.skill_extractor import skill_extractor
 
 try:  # pragma: no cover - dependency availability is environment-specific
     import httpx
@@ -2994,9 +2995,7 @@ def _extract_work_mode_hint(text: str) -> Optional[str]:
 
 
 def _extract_skill_tags(text: str) -> list[str]:
-    known = ["python", "java", "javascript", "typescript", "react", "node", "sql", "aws", "machine learning", "data science"]
-    lower = str(text or "").lower()
-    return [item for item in known if item in lower][:8]
+    return skill_extractor.extract(text, max_tags=8)
 
 
 source_discovery_engine = SourceDiscoveryEngine()

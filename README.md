@@ -58,7 +58,7 @@ flowchart LR
 | Frontend | Next.js 16, TypeScript, Playwright |
 | Backend | FastAPI, Pydantic, Beanie ODM |
 | Data | Managed MongoDB, managed Redis, managed ClickHouse |
-| AI/ML | sentence-transformers, vector retrieval, learned ranker |
+| AI/ML | sentence-transformers, vector retrieval, learned ranker, optional skill-span extractor |
 | Storage | S3-compatible production artifact store |
 | Observability/Ops | GitHub Actions, Prometheus metrics, Grafana/BI, Slack/PagerDuty hooks |
 | Security | HttpOnly session cookies, Redis-backed sessions, CSRF double-submit, CSP, Trusted Types, auth abuse controls |
@@ -83,6 +83,7 @@ flowchart LR
 - Opportunity ingestion is scheduled immediately at API startup and then every `SCRAPER_INTERVAL_MINUTES` (30 minutes by default). Each `scraper.run` is persisted in the Mongo-backed job queue for retry and operational visibility; primary sources are saved before generic portals, each fetch batch has a bounded `SCRAPER_FETCH_BATCH_TIMEOUT_SECONDS` (180 seconds by default), and model-backed semantic dedup/embedding rebuilds remain off the ingestion critical path by default.
 - Past-deadline opportunities are retired by setting `opportunity_status="expired"`, which hides them from every student-facing surface. Ingestion never hard-deletes opportunity rows: many connectors synthesise a deadline when the source exposes none, so deletion destroyed records that had not genuinely closed.
 - Source discovery pipeline with company seeds, user submissions, qualification queues, adaptive extraction, managed Firecrawl fallback for JS-heavy pages, probation, dynamic scraper registration, and health quarantine.
+- Source-discovery skill tags use a guarded, optional skill-span extractor and retain the static keyword fallback whenever its local artifact is unavailable or inference fails.
 - Official company careers intelligence with a curated S-tier internship watchlist across global tech, quant/trading, Indian product, IT services, government/PSU, research, consulting, analytics, banking, manufacturing, aerospace, energy, FMCG, and hidden-gem employers.
 - The intelligent source-discovery loop continues expanding beyond the curated list through company seeds, careers-page crawling, web search, similar-source expansion, employer claims, and admin review.
 - Autonomous discovery now generates data-informed web queries from profile interests and opportunity history, searches for third-party opportunity platforms, and stores auditable priority scores/reasons so qualification and extraction spend budget on the highest-value internship and 0-1 year sources first.
@@ -315,6 +316,13 @@ Recent model versions:
 Latest drift report: `n/a`
 
 <!-- MODEL_VERSION_METADATA:END -->
+
+### Skill-span extraction lifecycle
+- `backend/scripts/train_skill_extractor_transformer.py` trains an optional token-classification model for extracting skill phrases from opportunity text. It is used only to enrich source-discovery query tags; it does **not** train or influence the behavioral opportunity ranker.
+- The training source is [SkillSpan](https://huggingface.co/datasets/jjzha/skillspan), pinned to revision `33062e6bd0e03a5e01ae299ce0518f4613ef4298` and licensed CC-BY-4.0. Its split contains 4,800 train, 3,174 development, and 3,569 held-out test sentences.
+- The current local run selected epoch 4 at a 0.50 confidence threshold and achieved held-out exact-span F1 `0.537738` against the `0.50` promotion gate. The reproducible local report is `backend/benchmarks/skill_extractor_transformer_latest.json`.
+- Runtime loading is controlled by `SKILL_EXTRACTOR_ENABLED`, `SKILL_EXTRACTOR_MODEL_PATH`, and `SKILL_EXTRACTOR_MIN_CONFIDENCE`. Model directories are ignored; a missing, corrupt, or rejected artifact falls back to the existing deterministic tags instead of breaking discovery.
+- The [India 2025 internship dataset](https://www.kaggle.com/datasets/jayaantanaath/internship-opportunities-in-india-2025/data) is suitable only as a deduplicated validation corpus for structured field extraction. It has no user-to-opportunity interaction labels, so it must never be used to train the learned ranker.
 
 ### Engineering quality signal
 - Focused scraper/source contract suite: **53 passing tests** (latest local run on July 29, 2026)

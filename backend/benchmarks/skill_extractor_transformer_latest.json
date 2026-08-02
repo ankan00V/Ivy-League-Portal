@@ -1,0 +1,28 @@
+{
+  "base_model": "distilbert-base-uncased",
+  "dataset": {
+    "id": "jjzha/skillspan",
+    "license": "cc-by-4.0",
+    "revision": "33062e6bd0e03a5e01ae299ce0518f4613ef4298"
+  },
+  "device": "mps",
+  "minimum_test_span_f1": 0.5,
+  "selection": {
+    "confidence": 0.5,
+    "epoch": 4.0,
+    "span_f1": 0.520542,
+    "span_precision": 0.477318,
+    "span_recall": 0.572375
+  },
+  "splits": {
+    "dev": 3174,
+    "test": 3569,
+    "train": 4800
+  },
+  "status": "approved",
+  "test": {
+    "span_f1": 0.537738,
+    "span_precision": 0.507098,
+    "span_recall": 0.572319
+  }
+}

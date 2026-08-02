@@ -429,6 +429,10 @@ class Settings(BaseSettings):
     USER_EMBEDDING_INTERACTION_THRESHOLD: int = 5
     USER_EMBEDDING_HALF_LIFE_DAYS: int = 7
 
+    SKILL_EXTRACTOR_ENABLED: bool = True
+    SKILL_EXTRACTOR_MODEL_PATH: str = str(ENV_FILE.parent / "models" / "skill_extractor.joblib")
+    SKILL_EXTRACTOR_MIN_CONFIDENCE: float = 0.6
+
     # Learned ranker (LightGBM/XGBoost) for real personalization
     LEARNED_RANKER_ENABLED: bool = False
     LEARNED_RANKER_MODEL_PATH: str = ""
