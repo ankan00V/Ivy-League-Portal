@@ -1,0 +1,31 @@
+{
+  "dataset": {
+    "id": "jjzha/skillspan",
+    "license": "cc-by-4.0",
+    "revision": "33062e6bd0e03a5e01ae299ce0518f4613ef4298"
+  },
+  "keyword_baseline_test": {
+    "span_f1": 0.083612,
+    "span_precision": 0.689655,
+    "span_recall": 0.044504
+  },
+  "minimum_test_span_f1": 0.35,
+  "selection": {
+    "confidence": 0.75,
+    "regularization": 1.0,
+    "span_f1": 0.150094,
+    "span_precision": 0.094945,
+    "span_recall": 0.358089
+  },
+  "splits": {
+    "dev": 3174,
+    "test": 3569,
+    "train": 4800
+  },
+  "status": "rejected",
+  "test": {
+    "span_f1": 0.179833,
+    "span_precision": 0.114568,
+    "span_recall": 0.417891
+  }
+}
