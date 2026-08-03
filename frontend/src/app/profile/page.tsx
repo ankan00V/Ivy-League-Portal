@@ -75,6 +75,8 @@ type ProfilePayload = {
   preferred_roles: string;
   preferred_locations: string;
   work_preferences: string[];
+  expected_stipend_range: string;
+  availability: string;
   pan_india: boolean;
   prefer_wfh: boolean;
   consent_data_processing: boolean;
@@ -133,6 +135,8 @@ type ProfileUpdatePayload = {
   preferred_roles?: string;
   preferred_locations?: string;
   work_preferences?: string[];
+  expected_stipend_range?: string;
+  availability?: string;
   pan_india: boolean;
   prefer_wfh: boolean;
   consent_data_processing: boolean;
@@ -340,6 +344,8 @@ function hydrateProfilePayload(profilePayload: Record<string, unknown>): Profile
     preferred_roles: toText(profilePayload.preferred_roles),
     preferred_locations: toText(profilePayload.preferred_locations),
     work_preferences: toStringArray(profilePayload.work_preferences),
+    expected_stipend_range: toText(profilePayload.expected_stipend_range),
+    availability: toText(profilePayload.availability),
     pan_india: Boolean(profilePayload.pan_india),
     prefer_wfh: Boolean(profilePayload.prefer_wfh),
     consent_data_processing: Boolean(profilePayload.consent_data_processing),
@@ -428,6 +434,8 @@ function buildProfileUpdatePayload(profile: ProfilePayload): ProfileUpdatePayloa
   assignOptionalText(payload, "company_description", profile.company_description);
   assignOptionalText(payload, "preferred_roles", profile.preferred_roles);
   assignOptionalText(payload, "preferred_locations", profile.preferred_locations);
+  assignOptionalText(payload, "expected_stipend_range", profile.expected_stipend_range);
+  assignOptionalText(payload, "availability", profile.availability);
   assignOptionalText(payload, "bio", profile.bio);
   assignOptionalText(payload, "skills", profile.skills);
   assignOptionalText(payload, "interests", profile.interests);
@@ -556,6 +564,8 @@ export default function ProfilePage() {
     preferred_roles: "",
     preferred_locations: "",
     work_preferences: [],
+    expected_stipend_range: "",
+    availability: "",
     pan_india: false,
     prefer_wfh: false,
     consent_data_processing: false,
@@ -956,6 +966,28 @@ export default function ProfilePage() {
               onChange={(event) => updateProfile("preferred_locations", event.target.value)}
               placeholder="Bangalore, Hyderabad, Remote"
             />
+          </div>
+
+          <div className="profile-field-grid two">
+            <TextField
+              wrapperClassName="profile-field"
+              label="Expected Stipend"
+              value={profile.expected_stipend_range}
+              onChange={(event) => updateProfile("expected_stipend_range", event.target.value)}
+              placeholder="₹20,000–₹35,000 per month"
+            />
+            <SelectField
+              wrapperClassName="profile-field"
+              label="Availability"
+              value={profile.availability}
+              onChange={(event) => updateProfile("availability", event.target.value)}
+            >
+              <option value="">Select availability</option>
+              <option value="immediately">Available immediately</option>
+              <option value="within_1_month">Available within 1 month</option>
+              <option value="within_3_months">Available within 3 months</option>
+              <option value="exploring">Exploring opportunities</option>
+            </SelectField>
           </div>
 
           <div className="profile-inline-group">

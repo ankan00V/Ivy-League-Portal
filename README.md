@@ -70,7 +70,7 @@ flowchart LR
 - Personalized dashboard behavior for signed-in users.
 - Candidate + employer user journeys.
 - Ask AI opportunity assistant.
-- Explainable recommendations on both opportunity feeds: users can see the profile-aligned reasons, receive advisory eligibility context, and hide unsuitable listings while the feedback is recorded for future ranking improvements.
+- Explainable recommendations on both opportunity feeds: users can see profile-aligned reasons, advisory eligibility context, and hide unsuitable listings while the feedback is recorded for future ranking improvements. Matching uses the candidate's degree, graduation year, skills, roles, locations, stipend expectation, and controlled availability preference.
 - Candidate-only Resume Readiness Review: an on-demand, deterministic analysis of an uploaded resume with an explainable `0–100` clarity/readability score, category evidence, strengths, weak spots, and improvements. It is advisory only—not a hiring prediction, eligibility decision, or opportunity-ranking signal—and does not persist extracted resume text or review output.
 
 ### AI/ML

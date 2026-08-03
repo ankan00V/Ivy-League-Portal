@@ -46,6 +46,7 @@ def _profile_query(profile: Profile) -> str:
         getattr(profile, "preferred_locations", "") or "",
         getattr(profile, "preferred_work_mode", "") or "",
         getattr(profile, "expected_stipend_range", "") or "",
+        str(getattr(profile, "availability", "") or "").replace("_", " "),
         getattr(profile, "user_type", "") or "",
     ]
     values.extend(getattr(profile, "domains_of_interest", []) or [])

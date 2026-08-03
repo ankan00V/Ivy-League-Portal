@@ -29,6 +29,8 @@ test("@smoke profile editing and university selection persist", async ({ page })
     goals: [],
     preferred_roles: "",
     preferred_locations: "",
+    expected_stipend_range: "",
+    availability: "",
     pan_india: false,
     prefer_wfh: false,
     consent_data_processing: true,
@@ -143,10 +145,15 @@ test("@smoke profile editing and university selection persist", async ({ page })
   await expect(universitySelect).toHaveValue(selectableUniversityValue);
   await expect(page.getByPlaceholder("Type your university name manually")).toHaveCount(0);
 
+  await page.getByPlaceholder("₹20,000–₹35,000 per month").fill("₹20,000–₹35,000 per month");
+  await page.locator('.profile-field:has-text("Availability") select').selectOption("within_1_month");
+
   await page.getByRole("button", { name: /^Save$/ }).click();
 
   await expect.poll(() => lastSavedPayload?.first_name).toBe("EDITED");
   await expect.poll(() => lastSavedPayload?.college_name).toBe(selectableUniversityValue.toLocaleUpperCase("en-IN"));
+  await expect.poll(() => lastSavedPayload?.expected_stipend_range).toBe("₹20,000–₹35,000 per month");
+  await expect.poll(() => lastSavedPayload?.availability).toBe("within_1_month");
   await expect(page.getByText("Profile updated successfully.")).toBeVisible();
 
   await page.getByRole("button", { name: /Resume/ }).click();

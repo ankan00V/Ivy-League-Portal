@@ -29,6 +29,7 @@ router = APIRouter()
 VALID_ACCOUNT_TYPES = {"candidate", "employer"}
 VALID_USER_TYPES = {"school_student", "college_student", "fresher", "professional"}
 VALID_HIRING_FOR = {"myself", "others"}
+VALID_AVAILABILITY = {"immediately", "within_1_month", "within_3_months", "exploring"}
 RESUME_REQUIRED_USER_TYPES = {"college_student", "fresher", "professional"}
 ALLOWED_RESUME_EXTENSIONS = {".txt", ".pdf", ".docx", ".doc"}
 RESUME_STORAGE_RELATIVE_DIR = Path("storage") / "resumes"
@@ -93,6 +94,7 @@ PROFILE_SIGNAL_METADATA: dict[str, tuple[str, str]] = {
     "preferred_work_mode": ("Preferred Work Mode", "Choose your preferred work setup."),
     "preferred_locations": ("Preferred Locations", "Add preferred locations for matching."),
     "expected_stipend_range": ("Expected Stipend", "Add your expected stipend range."),
+    "availability": ("Availability", "Select when you are available to start."),
     "graduation_year": ("Graduation Year", "Add your graduation year."),
     "work_preferences": ("Work Preferences", "Set your preferred work style, location, or job setup."),
     "education": ("Education", "Add education details."),
@@ -145,6 +147,7 @@ class ProfileUpdate(BaseModel):
     expected_stipend_range: Optional[str] = None
     expected_stipend_min: Optional[int] = Field(default=None, ge=0)
     expected_stipend_max: Optional[int] = Field(default=None, ge=0)
+    availability: Optional[str] = None
     graduation_year: Optional[int] = Field(default=None, ge=1990, le=2100)
     opportunity_types: Optional[list[str] | str] = None
     pan_india: Optional[bool] = None
@@ -174,6 +177,16 @@ class ProfileUpdate(BaseModel):
     permanent_address_pincode: Optional[str] = None
     hobbies: Optional[list[str] | str] = None
     social_links: Optional[dict[str, str]] = None
+
+    @field_validator("availability")
+    @classmethod
+    def validate_availability(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = str(value).strip().lower()
+        if normalized not in VALID_AVAILABILITY:
+            raise ValueError("availability must be a supported candidate availability option")
+        return normalized
     resume_url: Optional[str] = None
     resume_filename: Optional[str] = None
     resume_content_type: Optional[str] = None
@@ -339,6 +352,7 @@ class ProfileResponse(BaseModel):
     expected_stipend_range: Optional[str] = None
     expected_stipend_min: Optional[int] = None
     expected_stipend_max: Optional[int] = None
+    availability: Optional[str] = None
     graduation_year: Optional[int] = None
     opportunity_types: list[str] = Field(default_factory=list)
     pan_india: bool = False
@@ -759,6 +773,7 @@ def _profile_strength_checks(profile: Profile) -> list[tuple[str, bool]]:
                     ("preferred_work_mode", _text_present("preferred_work_mode")),
                     ("preferred_locations", _text_present("preferred_locations")),
                     ("expected_stipend_range", _text_present("expected_stipend_range")),
+                    ("availability", _text_present("availability")),
                     ("graduation_year", _value("graduation_year") is not None or _value("passout_year") is not None),
                 ]
             )
@@ -768,6 +783,7 @@ def _profile_strength_checks(profile: Profile) -> list[tuple[str, bool]]:
                     ("current_job_role", _text_present("current_job_role")),
                     ("total_work_experience", _text_present("total_work_experience")),
                     ("experience_summary", _text_present("experience_summary")),
+                    ("availability", _text_present("availability")),
                 ]
             )
 
@@ -888,6 +904,7 @@ def _apply_profile_patch(*, profile: Profile, user: User, payload: ProfileUpdate
         "expected_stipend_range",
         "expected_stipend_min",
         "expected_stipend_max",
+        "availability",
         "graduation_year",
         "passout_year",
         "opportunity_types",
