@@ -9,6 +9,7 @@ from pathlib import Path
 
 import certifi
 
+from app.core import metrics
 from app.core.config import settings, smtp_from_email_value, smtp_from_name_value, smtp_server_value
 
 logger = logging.getLogger(__name__)
@@ -17,6 +18,13 @@ logger = logging.getLogger(__name__)
 def recipient_log_id(email: str) -> str:
     normalized = str(email or "").strip().lower().encode("utf-8")
     return sha256(normalized).hexdigest()[:12]
+
+
+def _record_otp_delivery(outcome: str) -> None:
+    """Record a bounded, privacy-safe final OTP delivery outcome."""
+    metrics.init_metrics()
+    if metrics.OTP_EMAIL_DELIVERIES_TOTAL is not None:
+        metrics.OTP_EMAIL_DELIVERIES_TOTAL.labels(outcome=outcome).inc()
 
 
 def _otp_text_body(*, otp: str, expiry_minutes: int = 5) -> str:
@@ -150,10 +158,13 @@ async def send_email_otp(to_email: str, otp: str):
 
     smtp_server = smtp_server_value()
     if not smtp_server:
+        _record_otp_delivery("failed")
         raise RuntimeError("SMTP_SERVER is not configured.")
     if settings.SMTP_USE_TLS and settings.SMTP_STARTTLS:
+        _record_otp_delivery("failed")
         raise RuntimeError("Invalid SMTP settings: enable either SMTP_USE_TLS or SMTP_STARTTLS, not both.")
     if settings.SMTP_REQUIRE_AUTH and not (settings.SMTP_USER and settings.SMTP_PASSWORD):
+        _record_otp_delivery("failed")
         raise RuntimeError("SMTP_USER and SMTP_PASSWORD are required for authenticated SMTP delivery.")
 
     send_kwargs: dict[str, object] = {
@@ -183,6 +194,7 @@ async def send_email_otp(to_email: str, otp: str):
             await aiosmtplib.send(message, **send_kwargs)
             if attempt > 1:
                 logger.warning("OTP email delivery recovered delivery_id=%s attempt=%s", delivery_id, attempt)
+            _record_otp_delivery("sent")
             return True
         except Exception as exc:
             last_error = exc
@@ -206,6 +218,8 @@ async def send_email_otp(to_email: str, otp: str):
             max_attempts,
             last_error.__class__.__name__,
         )
+        _record_otp_delivery("failed")
         raise last_error
     logger.error("OTP email delivery failed delivery_id=%s attempts=%s", delivery_id, max_attempts)
+    _record_otp_delivery("failed")
     raise RuntimeError("Unknown SMTP delivery failure")

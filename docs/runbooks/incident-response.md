@@ -16,6 +16,12 @@
 2. Trigger scraper job (`POST /api/v1/opportunities/trigger-scraper`) and monitor `opportunity_freshness_seconds`.
 3. If scraper failures persist >15 minutes, fail over to cached recommendation mode and escalate ingestion owner.
 
+## OTP Delivery Failures
+1. Confirm the Grafana `OTP Delivery Failure Rate` panel and inspect the final `sent` versus `failed` counter rate over 15 minutes.
+2. Check configured SMTP host, port, TLS mode, and sender authentication in the deployment secret store; do not copy credentials or OTPs into tickets or chat.
+3. Review redacted OTP delivery logs by `delivery_id` and `error_class` to distinguish provider outage, certificate failure, and configuration error.
+4. If failures persist after provider recovery or a configuration rollback, disable affected login traffic, rotate the mail credential through the secret manager, and run the authenticated staging OTP smoke test before reopening access.
+
 ## Experiment Regression
 1. Open `/api/v1/experiments/{experiment_key}/report?conversion=click,apply,save&traffic_type=real`.
 2. Verify `diagnostics.guardrails` and confirm significant negative lift (`p_value < alpha`, `diff < 0`).

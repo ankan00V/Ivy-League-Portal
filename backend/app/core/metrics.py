@@ -41,6 +41,7 @@ RANKING_REQUESTS_TOTAL: Optional["Counter"] = None
 RANKING_REQUEST_LATENCY_MS: Optional["Histogram"] = None
 LEARNED_RANKER_MODEL_READY: Optional["Gauge"] = None
 INTERACTION_EVENTS_TOTAL: Optional["Counter"] = None
+OTP_EMAIL_DELIVERIES_TOTAL: Optional["Counter"] = None
 WAREHOUSE_EXPORTS_TOTAL: Optional["Counter"] = None
 ONLINE_FEATURE_PUBLISH_TOTAL: Optional["Counter"] = None
 EMBEDDING_PROVIDER_HEALTH: Optional["Gauge"] = None
@@ -87,6 +88,7 @@ def init_metrics() -> None:
     global RANKING_REQUEST_LATENCY_MS
     global LEARNED_RANKER_MODEL_READY
     global INTERACTION_EVENTS_TOTAL
+    global OTP_EMAIL_DELIVERIES_TOTAL
     global WAREHOUSE_EXPORTS_TOTAL
     global ONLINE_FEATURE_PUBLISH_TOTAL
     global EMBEDDING_PROVIDER_HEALTH
@@ -224,6 +226,11 @@ def init_metrics() -> None:
         "opportunity_interaction_events_total",
         "Interaction events by type and experiment variant.",
         labelnames=("interaction_type", "ranking_mode", "experiment_key", "experiment_variant", "traffic_type"),
+    )
+    OTP_EMAIL_DELIVERIES_TOTAL = Counter(
+        "auth_otp_email_deliveries_total",
+        "Final OTP email delivery outcomes after configured retries.",
+        labelnames=("outcome",),
     )
     WAREHOUSE_EXPORTS_TOTAL = Counter(
         "warehouse_exports_total",

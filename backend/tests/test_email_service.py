@@ -1,7 +1,7 @@
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
@@ -53,6 +53,29 @@ class TestEmailConfigResolution(unittest.TestCase):
 
 
 class TestEmailDeliveryRetries(unittest.IsolatedAsyncioTestCase):
+    async def test_send_email_otp_records_final_delivery_outcome_without_pii(self) -> None:
+        counter = Mock()
+        counter.labels.return_value = Mock()
+        with (
+            patch.object(email_service.settings, "SMTP_SERVER", "smtp.gmail.com"),
+            patch.object(email_service.settings, "SMTP_HOST", "smtp.gmail.com"),
+            patch.object(email_service.settings, "SMTP_PORT", 587),
+            patch.object(email_service.settings, "SMTP_STARTTLS", True),
+            patch.object(email_service.settings, "SMTP_USE_TLS", False),
+            patch.object(email_service.settings, "SMTP_REQUIRE_AUTH", True),
+            patch.object(email_service.settings, "SMTP_USER", "mailer@example.com"),
+            patch.object(email_service.settings, "SMTP_PASSWORD", "secret"),
+            patch.object(email_service.settings, "SMTP_FROM_EMAIL", "mailer@example.com"),
+            patch.object(email_service.settings, "OTP_EMAIL_MAX_RETRIES", 1),
+            patch("app.services.email.aiosmtplib.send", new=AsyncMock(return_value=True)),
+            patch("app.services.email.metrics.init_metrics"),
+            patch.object(email_service.metrics, "OTP_EMAIL_DELIVERIES_TOTAL", counter),
+        ):
+            await email_service.send_email_otp("student@example.com", "123456")
+
+        counter.labels.assert_called_once_with(outcome="sent")
+        counter.labels.return_value.inc.assert_called_once_with()
+
     async def test_send_email_otp_retries_then_succeeds(self) -> None:
         with (
             patch.object(email_service.settings, "SMTP_SERVER", "smtp.gmail.com"),

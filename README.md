@@ -26,7 +26,7 @@ Compared with standard portal architectures, this system adds:
 - **Evidence-driven ranking:** `baseline | semantic | ml | ab` modes with per-request telemetry, shadow scoring and gated promotion (see the ranking-maturity note in section 7 for what is and is not validated today)
 - **Self-growing source network:** discovered sources pass qualification, extraction, probation, trust scoring, and admin review before production promotion
 - **Production security posture:** Redis-backed cookie sessions, CSRF double-submit, CSP/Trusted Types, abuse locks, audit logs
-- **Operational maturity:** CI release gates, incident artifacts, scheduled scorecards, synthetic checks
+- **Operational maturity:** CI release gates, incident artifacts, scheduled scorecards, synthetic checks, and Grafana coverage for OTP delivery failures plus recommendation engagement
 - **Privileged governance:** hidden admin control plane with strict single-admin + TOTP
 
 ## 4) Architecture

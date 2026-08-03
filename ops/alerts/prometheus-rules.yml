@@ -60,6 +60,21 @@ groups:
           description: "Scraped opportunities are stale beyond configured freshness threshold."
           runbook: "docs/runbooks/incident-response.md#freshness-sla-breach"
 
+      - alert: VidyaVerseOTPDeliveryFailureRateHigh
+        expr: |
+          sum(rate(auth_otp_email_deliveries_total{outcome="failed"}[15m]))
+          /
+          clamp_min(sum(rate(auth_otp_email_deliveries_total[15m])), 1e-9)
+          > 0.1
+        for: 15m
+        labels:
+          severity: page
+          service: vidyaverse-auth
+        annotations:
+          summary: "OTP email delivery failure rate is above 10%"
+          description: "Final SMTP delivery failures remain elevated after configured retries."
+          runbook: "docs/runbooks/incident-response.md#otp-delivery-failures"
+
       - alert: VidyaVerseMLApplyRateRegression
         expr: |
           (
