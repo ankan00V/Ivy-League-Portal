@@ -1478,6 +1478,87 @@ select.input-base {
   background: rgba(255, 255, 255, 0.45);
 }
 
+.skill-picker {
+  position: relative;
+}
+
+.skill-picker-input-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 110px;
+  padding: 0.62rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-hard-sm);
+}
+
+.skill-picker-input-row:focus-within {
+  outline: 2px solid color-mix(in srgb, var(--brand-primary) 45%, transparent);
+  outline-offset: 2px;
+}
+
+.skill-picker-input {
+  flex: 1 1 12rem;
+  min-width: 11rem;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-weight: 650;
+}
+
+.skill-picker-input::placeholder {
+  color: var(--text-muted);
+}
+
+.skill-picker-menu {
+  position: absolute;
+  z-index: 20;
+  right: 0;
+  left: 0;
+  top: calc(100% + 0.35rem);
+  display: grid;
+  gap: 0.25rem;
+  max-height: 22rem;
+  overflow: auto;
+  padding: 0.35rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-hard-md);
+}
+
+.skill-picker-option {
+  display: grid;
+  gap: 0.12rem;
+  width: 100%;
+  padding: 0.62rem 0.7rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+}
+
+.skill-picker-option:hover,
+.skill-picker-option:focus-visible {
+  border-color: var(--border-subtle);
+  background: var(--bg-surface-hover);
+}
+
+.skill-picker-option span {
+  font-weight: 800;
+}
+
+.skill-picker-option small {
+  color: var(--text-secondary);
+  font-weight: 650;
+}
+
 .profile-resume-card {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);

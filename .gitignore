@@ -28,3 +28,15 @@ snapshot.json
 
 # macOS Finder metadata
 .DS_Store
+
+# Generated skills taxonomy exports. Regenerate with:
+#   python backend/scripts/generate_skills_taxonomy.py
+# Only skills_autocomplete.json and categories.json are tracked - they are the
+# two the frontend actually reads. The rest are alternate export formats of the
+# same 60k rows (.sql dump, .csv, .txt, alias map) and nothing loads them, so
+# they stay out of git history rather than adding 163 MB to every clone.
+frontend/public/data/skills-taxonomy/skills.json
+frontend/public/data/skills-taxonomy/skills.sql
+frontend/public/data/skills-taxonomy/skills.csv
+frontend/public/data/skills-taxonomy/skills.txt
+frontend/public/data/skills-taxonomy/aliases.json

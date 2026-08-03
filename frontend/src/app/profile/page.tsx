@@ -26,6 +26,7 @@ import {
 import { CenteredPageSkeleton } from "@/components/LoadingSkeletons";
 import Sidebar from "@/components/Sidebar";
 import ResumeReadinessReview from "@/components/ResumeReadinessReview";
+import SkillAutocompleteInput from "@/components/skills/SkillAutocompleteInput";
 import FormSection from "@/components/ui/FormSection";
 import PillGroup from "@/components/ui/PillGroup";
 import SelectField from "@/components/ui/SelectField";
@@ -208,8 +209,6 @@ const UPPERCASE_TEXT_FIELDS = new Set<keyof ProfilePayload>([
   "preferred_roles",
   "preferred_locations",
   "bio",
-  "skills",
-  "interests",
   "achievements",
   "education",
   "certificates",
@@ -1145,23 +1144,13 @@ export default function ProfilePage() {
       {renderSectionHeader("Skills", "Highlight your skills and areas of interest")}
       <div className="profile-field-grid two">
         <div>
-          <TextareaField
+          <SkillAutocompleteInput
             wrapperClassName="profile-field"
             label="Skills *"
-            rows={5}
             value={profile.skills}
-            onChange={(event) => updateProfile("skills", event.target.value)}
+            onChange={(nextValue) => updateProfile("skills", nextValue)}
             placeholder="Python, Data Analysis, C++, SQL, Communication"
           />
-          {splitCommaValues(profile.skills).length > 0 ? (
-            <div className="profile-tag-row">
-              {splitCommaValues(profile.skills).map((skill) => (
-                <span key={skill} className="profile-tag">
-                  {skill}
-                </span>
-              ))}
-            </div>
-          ) : null}
         </div>
         <div>
           <TextareaField
