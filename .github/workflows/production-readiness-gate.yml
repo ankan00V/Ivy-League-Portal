@@ -167,6 +167,9 @@ jobs:
           NEXT_TELEMETRY_DISABLED: "1"
         run: npm run build
 
+      - name: Verify standalone asset delivery
+        run: npm run verify:standalone
+
       - name: Verify system Chrome
         run: google-chrome --version
 

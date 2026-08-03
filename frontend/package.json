@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build && node scripts/start-standalone.mjs --sync-only",
+    "verify:standalone": "node scripts/verify-standalone-assets.mjs",
     "start": "node scripts/start-standalone.mjs",
     "lint": "eslint",
     "e2e": "playwright test",
