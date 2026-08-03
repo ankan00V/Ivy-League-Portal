@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 import asyncio
 from datetime import datetime, timezone
@@ -23,6 +24,8 @@ from app.schemas.user import UserResponse
 from app.services.intelligence import calculate_incoscore
 from app.services.resume_review_service import review_resume
 from app.services.username_service import ensure_system_username
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -1098,7 +1101,16 @@ async def upload_resume(
 
         try:
             parsed_data = ai_system.parse_resume(text)
-        except Exception:
+        except Exception as exc:
+            # Auto-fill is best-effort: a parse failure must not block the upload.
+            # It does have to be visible though - swallowing this silently meant a
+            # total parser outage would look like "users stopped filling profiles".
+            logger.warning(
+                "Resume auto-parse failed for user %s (%s): %s",
+                current_user.id,
+                type(exc).__name__,
+                exc,
+            )
             parsed_data = {}
         if isinstance(parsed_data, dict) and parsed_data:
             _apply_parsed_resume_signals(profile=profile, parsed_data=parsed_data)
