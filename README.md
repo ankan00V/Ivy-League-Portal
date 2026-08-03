@@ -334,7 +334,7 @@ Latest drift report: `n/a`
 - Production infra readiness gate: managed MongoDB, Redis, ClickHouse, and S3-compatible artifact storage have been verified from the local runtime; the full strict gate still requires deployed frontend/backend domains and a production BI URL.
 - Local developer harness smoke: 15/15 checks passed on July 29, 2026 - backend, MongoDB, Redis, queue, embedding model, learned ranker, artifact store, public opportunities, API docs, and all frontend routes. This is not production deployment proof.
 - Analytics warehouse: all eight ClickHouse marts materialize and `check_warehouse_release_gate` reports `status=fresh` (July 29, 2026).
-- Backend full suite baseline: **269 passing tests** (latest recorded full run on July 29, 2026)
+- Backend full suite baseline: **340 passing tests, 114 subtests passed** (latest local run on August 3, 2026)
 - Frontend lint: **passing**
 - Frontend production build: **passing**
 - Security and release gates: **active in CI**
