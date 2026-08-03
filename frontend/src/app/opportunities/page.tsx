@@ -6,7 +6,7 @@ import PageHeader from "@/components/ui/PageHeader";
 import PillGroup from "@/components/ui/PillGroup";
 import React from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { MapPin, Calendar, Send, Bookmark } from "lucide-react";
+import { MapPin, Calendar, Send, Bookmark, EyeOff } from "lucide-react";
 import Image from "next/image";
 import { Opportunity, useOpportunityFeed } from "@/hooks/useOpportunityFeed";
 import { useOpportunityFeedImpressions } from "@/lib/opportunity-feed-tracker";
@@ -26,6 +26,7 @@ export default function OpportunitiesPage() {
         trackerContext,
         handleSave,
         handleApply,
+        handleHide,
         markImageFallback,
     } = useOpportunityFeed();
     useOpportunityFeedImpressions(visibleOpportunities, trackerContext);
@@ -117,6 +118,32 @@ export default function OpportunitiesPage() {
             scoreLabel: `${trustScore}/100 source confidence`,
             evidenceLabel: evidence || "Organizer, host, and listing source are being continuously checked.",
         };
+    };
+
+    const renderMatchDetails = (opp: Opportunity) => {
+        const matchReasons = (opp.match_reasons || [])
+            .filter((reason) => !/(learned ranker|top model features|staged rollout|fallback)/i.test(reason))
+            .slice(0, 2);
+        const eligibilityWarnings = (opp.eligibility_warnings || []).slice(0, 1);
+        if (matchReasons.length === 0 && eligibilityWarnings.length === 0) {
+            return null;
+        }
+
+        return (
+            <div style={{ display: "grid", gap: "0.4rem", padding: "0.7rem", borderRadius: "var(--radius-sm)", background: "var(--bg-surface-hover)", border: "1px solid var(--border-subtle)" }}>
+                {matchReasons.length > 0 ? (
+                    <div>
+                        <strong style={{ fontSize: "0.82rem" }}>Why this matches you</strong>
+                        <ul style={{ margin: "0.28rem 0 0", paddingLeft: "1.05rem", color: "var(--text-secondary)", fontSize: "0.84rem" }}>
+                            {matchReasons.map((reason) => <li key={reason}>{reason}</li>)}
+                        </ul>
+                    </div>
+                ) : null}
+                {eligibilityWarnings.map((warning) => (
+                    <span key={warning} style={{ color: "var(--text-secondary)", fontSize: "0.82rem", fontWeight: 700 }}>{warning}</span>
+                ))}
+            </div>
+        );
     };
 
     const renderCompetitiveCard = (opp: Opportunity, idx: number) => {
@@ -295,6 +322,7 @@ export default function OpportunitiesPage() {
                                 ))}
                             </div>
                         ) : null}
+                        {renderMatchDetails(opp)}
                     </div>
 
                     <div
@@ -341,6 +369,9 @@ export default function OpportunitiesPage() {
                             >
                                 <Bookmark size={14} />
                                 {savedOpportunityIds[opp.id] ? "Saved" : "Save"}
+                            </button>
+                            <button className="btn-secondary" type="button" onClick={() => handleHide(opp)} aria-label={`Hide ${opp.title}`}>
+                                <EyeOff size={14} /> Hide
                             </button>
                         </div>
                     </div>
@@ -530,6 +561,7 @@ export default function OpportunitiesPage() {
                             ))}
                         </div>
                     ) : null}
+                    {renderMatchDetails(opp)}
 
                     <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap", marginTop: "auto" }}>
                         <button
@@ -549,6 +581,9 @@ export default function OpportunitiesPage() {
                         >
                             <Bookmark size={14} />
                             {savedOpportunityIds[opp.id] ? "Saved" : "Save"}
+                        </button>
+                        <button className="btn-secondary" type="button" onClick={() => handleHide(opp)} aria-label={`Hide ${opp.title}`}>
+                            <EyeOff size={14} /> Hide
                         </button>
                     </div>
                 </div>

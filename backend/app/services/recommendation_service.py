@@ -58,6 +58,26 @@ def _profile_query(profile: Profile) -> str:
 
 
 class RecommendationService:
+    def eligibility_warnings(self, *, profile: Profile, opportunity: Opportunity) -> list[str]:
+        batch_years = sorted({int(year) for year in list(getattr(opportunity, "batch_years", []) or []) if str(year).isdigit()})
+        profile_year = getattr(profile, "graduation_year", None) or getattr(profile, "passout_year", None)
+        try:
+            graduation_year = int(profile_year) if profile_year is not None else None
+        except (TypeError, ValueError):
+            graduation_year = None
+
+        if batch_years:
+            batch_label = ", ".join(str(year) for year in batch_years)
+            if graduation_year is None:
+                return [f"This listing specifies batches {batch_label}. Add your graduation year to verify fit."]
+            if graduation_year not in batch_years:
+                return [f"This listing specifies batches {batch_label}; your profile lists {graduation_year}. Confirm eligibility with the organizer."]
+            return [f"Your graduation year ({graduation_year}) matches the listed eligible batches."]
+
+        if not str(getattr(opportunity, "eligibility", "") or "").strip():
+            return ["Eligibility criteria are not published. Verify requirements with the organizer before applying."]
+        return []
+
     def _source_key(self, opportunity: Opportunity) -> str:
         return str(getattr(opportunity, "source", "") or "").strip().lower() or "unknown"
 
@@ -649,6 +669,7 @@ class RecommendationService:
                     "opportunity": opportunity,
                     "match_score": round(final_score, 3),
                     "match_reasons": reasons,
+                    "eligibility_warnings": self.eligibility_warnings(profile=profile, opportunity=opportunity),
                     "baseline_score": candidate["baseline_score"],
                     "semantic_score": candidate["semantic_score"],
                     "behavior_score": candidate["behavior_score"],

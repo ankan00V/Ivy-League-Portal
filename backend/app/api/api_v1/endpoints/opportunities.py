@@ -98,6 +98,7 @@ class OpportunityResponse(OpportunityCreate):
 class RecommendedOpportunityResponse(OpportunityResponse):
     match_score: float
     match_reasons: list[str]
+    eligibility_warnings: list[str] = Field(default_factory=list)
     baseline_score: Optional[float] = None
     semantic_score: Optional[float] = None
     behavior_score: Optional[float] = None
@@ -324,6 +325,7 @@ def _to_recommended_response(payload: dict[str, Any]) -> RecommendedOpportunityR
         last_seen_at=opportunity.last_seen_at,
         match_score=float(payload.get("match_score") or 0.0),
         match_reasons=list(payload.get("match_reasons") or []),
+        eligibility_warnings=list(payload.get("eligibility_warnings") or []),
         baseline_score=payload.get("baseline_score"),
         semantic_score=payload.get("semantic_score"),
         behavior_score=payload.get("behavior_score"),

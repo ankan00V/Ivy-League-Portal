@@ -35,12 +35,14 @@ export interface Opportunity {
   experiment_variant?: string;
   rank_position?: number;
   match_score?: number;
+  match_reasons?: string[];
+  eligibility_warnings?: string[];
   model_version_id?: string;
 }
 
 type OpportunityGroupKey = "competitive" | "career" | "other";
 type OpportunityGroups = Record<OpportunityGroupKey, Opportunity[]>;
-type OpportunityInteraction = "impression" | "click" | "save" | "apply";
+type OpportunityInteraction = "impression" | "click" | "save" | "apply" | "dismiss";
 
 const FEED_REFRESH_MS = 60 * 1000;
 const FEED_RETRY_MS = 15 * 1000;
@@ -106,6 +108,7 @@ export function useOpportunityFeed() {
   const [notice, setNotice] = useState<string | null>(null);
   const [applyingId, setApplyingId] = useState<string | null>(null);
   const [savedOpportunityIds, setSavedOpportunityIds] = useState<Record<string, boolean>>({});
+  const [hiddenOpportunityIds, setHiddenOpportunityIds] = useState<Record<string, boolean>>({});
   const [imageFallbackMap, setImageFallbackMap] = useState<Record<string, boolean>>({});
   const opportunitiesSignatureRef = useRef<string>("");
   const scraperTriggerAttemptedRef = useRef(false);
@@ -266,11 +269,11 @@ export function useOpportunityFeed() {
   );
 
   const filtered = useMemo(() => {
-    const source = selectOpportunitiesForTab(activeTab);
+    const source = selectOpportunitiesForTab(activeTab).filter((item) => !hiddenOpportunityIds[item.id]);
     const getSortTimestamp = (opportunity: Opportunity) =>
       new Date(opportunity.last_seen_at || opportunity.updated_at || opportunity.created_at || 0).getTime();
     return [...source].sort((a, b) => getSortTimestamp(b) - getSortTimestamp(a));
-  }, [activeTab, selectOpportunitiesForTab]);
+  }, [activeTab, hiddenOpportunityIds, selectOpportunitiesForTab]);
 
   const grouped = useMemo<OpportunityGroups>(() => {
     const matchesKeyword = (value: string, keywords: string[]) => keywords.some((keyword) => value.includes(keyword));
@@ -393,6 +396,14 @@ export function useOpportunityFeed() {
     [logOpportunityEvent],
   );
 
+  const handleHide = useCallback(
+    (opportunity: Opportunity) => {
+      setHiddenOpportunityIds((current) => ({ ...current, [opportunity.id]: true }));
+      void logOpportunityEvent(opportunity, "dismiss");
+    },
+    [logOpportunityEvent],
+  );
+
   const markImageFallback = useCallback((opportunityId: string) => {
     setImageFallbackMap((current) => {
       if (current[opportunityId]) {
@@ -410,6 +421,7 @@ export function useOpportunityFeed() {
     notice,
     applyingId,
     savedOpportunityIds,
+    hiddenOpportunityIds,
     imageFallbackMap,
     domains,
     grouped,
@@ -419,6 +431,7 @@ export function useOpportunityFeed() {
     selectOpportunityById,
     handleSave,
     handleApply,
+    handleHide,
     markImageFallback,
   };
 }
