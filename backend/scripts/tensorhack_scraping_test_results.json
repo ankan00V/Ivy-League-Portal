@@ -1,0 +1,34 @@
+[
+  {
+    "client": "firecrawl",
+    "url": "https://tensorhack.com",
+    "success": false,
+    "error": "FirecrawlUnavailableError: firecrawl_sdk_missing",
+    "data": null,
+    "analysis": {
+      "configured": true
+    }
+  },
+  {
+    "client": "crawlee",
+    "url": "https://tensorhack.com",
+    "render": false,
+    "success": false,
+    "error": "CrawleeUnavailableError: crawlee_scrape_failed:TypeError",
+    "data": null,
+    "analysis": {
+      "configured": true
+    }
+  },
+  {
+    "client": "crawlee",
+    "url": "https://tensorhack.com",
+    "render": true,
+    "success": false,
+    "error": "CrawleeUnavailableError: crawlee_scrape_failed:TypeError",
+    "data": null,
+    "analysis": {
+      "configured": true
+    }
+  }
+]

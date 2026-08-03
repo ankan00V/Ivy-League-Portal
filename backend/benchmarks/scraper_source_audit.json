@@ -1,0 +1,1199 @@
+{
+  "generated_at": "2026-07-09T03:03:23.168897+00:00",
+  "max_items": 8,
+  "timeout_seconds": 90.0,
+  "include_disabled": true,
+  "totals": {
+    "sources": 73,
+    "ok": 25,
+    "empty": 5,
+    "error": 2,
+    "disabled": 0,
+    "disabled_probe": 41
+  },
+  "rows": [
+    {
+      "source": "ivy_rss",
+      "status": "ok",
+      "count": 16,
+      "errors": [],
+      "elapsed_ms": 2894.4,
+      "sample_titles": [
+        "Yale cultural heritage fellowship connects leaders across Africa, Latin America, and the Caribbean",
+        "Yale fellowship helps undergraduates transform big questions into policy-relevant research",
+        "Princeton professors Andrea Bernstein, Ethan Kapstein and Sean Wilentz receive Berlin Prize fellowships"
+      ]
+    },
+    {
+      "source": "unstop:hackathons",
+      "status": "ok",
+      "count": 8,
+      "errors": [],
+      "elapsed_ms": 436.7,
+      "sample_titles": [
+        "Parsewave Game Jam 2026",
+        "System Seige",
+        "Hackside Down"
+      ]
+    },
+    {
+      "source": "unstop:quiz",
+      "status": "empty",
+      "count": 0,
+      "errors": [],
+      "elapsed_ms": 209.6,
+      "sample_titles": []
+    },
+    {
+      "source": "unstop:workshops-webinars",
+      "status": "empty",
+      "count": 0,
+      "errors": [],
+      "elapsed_ms": 195.2,
+      "sample_titles": []
+    },
+    {
+      "source": "unstop:conferences",
+      "status": "ok",
+      "count": 8,
+      "errors": [],
+      "elapsed_ms": 308.2,
+      "sample_titles": [
+        "0xCON 2026",
+        "ICONSTARS 2026 \u2013 InterConnect 2026-Conference",
+        "Study Abroad Expo \u2013 September 2026 Intake"
+      ]
+    },
+    {
+      "source": "naukri",
+      "status": "empty",
+      "count": 0,
+      "errors": [],
+      "elapsed_ms": 20575.0,
+      "sample_titles": []
+    },
+    {
+      "source": "internshala",
+      "status": "ok",
+      "count": 8,
+      "errors": [],
+      "elapsed_ms": 988.2,
+      "sample_titles": [
+        "iOS App Developer",
+        "SAP SD Consultant",
+        "PHP Developer"
+      ]
+    },
+    {
+      "source": "hack2skill",
+      "status": "ok",
+      "count": 4,
+      "errors": [],
+      "elapsed_ms": 1536.8,
+      "sample_titles": [
+        "NTPC",
+        "Electhon",
+        "Police Hackathon"
+      ]
+    },
+    {
+      "source": "freshersworld",
+      "status": "ok",
+      "count": 8,
+      "errors": [],
+      "elapsed_ms": 4035.7,
+      "sample_titles": [
+        "AI Developer Jobs Opening in LifeOS at Central Delhi, Bandra West, Chembur, Bangalore, Mumbai, Delhi",
+        "Internship Jobs Opening in Lumins Smart Lighting Solutions LLP at Vasai, Mumbai, Mumbai Suburbs",
+        "SAP Cloud Developer Trainee Jobs Opening in CrossOver IT Consulting Services LLP at Pondicherry"
+      ]
+    },
+    {
+      "source": "indeed_india",
+      "status": "ok",
+      "count": 8,
+      "errors": [],
+      "elapsed_ms": 8551.7,
+      "sample_titles": [
+        "Work from home part time",
+        "Data Entry Intern",
+        "Listener"
+      ]
+    },
+    {
+      "source": "greenhouse",
+      "status": "ok",
+      "count": 3,
+      "errors": [],
+      "elapsed_ms": 2654.4,
+      "sample_titles": [
+        "\u30bd\u30ea\u30e5\u30fc\u30b7\u30e7\u30f3\u30a2\u30fc\u30ad\u30c6\u30af\u30c8 (\u30d7\u30ea\u30bb\u30fc\u30eb\u30b9)",
+        "Account Executive, AI Sales (Grower)",
+        "Acquisition Manager"
+      ]
+    },
+    {
+      "source": "linkedin",
+      "status": "ok",
+      "count": 8,
+      "errors": [],
+      "elapsed_ms": 1760.4,
+      "sample_titles": [
+        "Freshers / Interns",
+        "US IT Recruiter - Freshers",
+        "Online Bidder _ Fresher"
+      ],
+      "label": "LinkedIn",
+      "enabled": true,
+      "disabled_reason": null,
+      "listings": [
+        "https://www.linkedin.com/jobs/search/?keywords=internship%20OR%20fresher%20OR%20entry%20level&location=India"
+      ]
+    },
+    {
+      "source": "major_league_hacking",
+      "status": "ok",
+      "count": 8,
+      "errors": [],
+      "elapsed_ms": 5496.7,
+      "sample_titles": [
+        "Work at MLH",
+        "Global Hack Week: Season Launch JUL 10 - 16 Everywhere, Worldwide Digital",
+        "FPH , FPH Midnight Virtual Hackathon JUL 17 - 19 Everywhere, Worldwide, US Digital"
+      ],
+      "label": "Major League Hacking",
+      "enabled": true,
+      "disabled_reason": null,
+      "listings": [
+        "https://mlh.io/seasons/2026/events"
+      ]
+    },
+    {
+      "source": "glassdoor",
+      "status": "error",
+      "count": 0,
+      "errors": [
+        "https://www.glassdoor.co.in/Job/india-internship-jobs-SRCH_IL.0,5_IN115_KO6,16.htm: 403 Client Error for url: https://www.glassdoor.co.in/Job/india-internship-jobs-SRCH_IL.0,5_IN115_KO6,16.htm"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nRuntimeError: https://www.glassdoor.co.in/Job/india-internship-jobs-SRCH_IL.0,5_IN115_KO6,16.htm: 403 Client Error for url: https://www.glassdoor.co.in/Job/india-internship-jobs-SRCH_IL.0,5_IN115_KO6,16.htm\n",
+      "elapsed_ms": 9508.1,
+      "sample_titles": [],
+      "label": "Glassdoor",
+      "enabled": true,
+      "disabled_reason": null,
+      "listings": [
+        "https://www.glassdoor.co.in/Job/india-internship-jobs-SRCH_IL.0,5_IN115_KO6,16.htm"
+      ]
+    },
+    {
+      "source": "naukri",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: naukri"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: naukri\n",
+      "elapsed_ms": 0.1,
+      "sample_titles": [],
+      "label": "Naukri",
+      "enabled": false,
+      "disabled_reason": "Duplicate of the dedicated NaukriScraper scheduled job.",
+      "listings": [
+        "https://www.naukri.com/internship-jobs",
+        "https://www.naukri.com/fresher-jobs"
+      ]
+    },
+    {
+      "source": "foundit",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: foundit"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: foundit\n",
+      "elapsed_ms": 0.1,
+      "sample_titles": [],
+      "label": "Foundit",
+      "enabled": false,
+      "disabled_reason": "Audit 2026-06-25: listing page fetched but no opportunities parsed.",
+      "listings": [
+        "https://www.foundit.in/srp/results?query=internship&locations=India"
+      ]
+    },
+    {
+      "source": "instahyre",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: instahyre"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: instahyre\n",
+      "elapsed_ms": 0.1,
+      "sample_titles": [],
+      "label": "Instahyre",
+      "enabled": false,
+      "disabled_reason": "Audit 2026-06-25: candidate portal requires auth/session-specific markup.",
+      "listings": [
+        "https://www.instahyre.com/candidate/opportunities/"
+      ]
+    },
+    {
+      "source": "hirist",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: hirist"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: hirist\n",
+      "elapsed_ms": 0.1,
+      "sample_titles": [],
+      "label": "Hirist",
+      "enabled": false,
+      "disabled_reason": "Audit 2026-06-25: homepage no longer exposes parseable public job cards.",
+      "listings": [
+        "https://www.hirist.tech/"
+      ]
+    },
+    {
+      "source": "cuvette",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: cuvette"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: cuvette\n",
+      "elapsed_ms": 0.1,
+      "sample_titles": [],
+      "label": "Cuvette",
+      "enabled": false,
+      "disabled_reason": "Audit 2026-06-25: careers page returns 403 to managed fetch providers.",
+      "listings": [
+        "https://www.cuvette.tech/jobs"
+      ]
+    },
+    {
+      "source": "devfolio",
+      "status": "ok",
+      "count": 8,
+      "errors": [],
+      "elapsed_ms": 1471.4,
+      "sample_titles": [
+        "Build with Gemma",
+        "All open hackathons",
+        "FutureForge Hackathon 2026"
+      ],
+      "label": "Devfolio",
+      "enabled": true,
+      "disabled_reason": null,
+      "listings": [
+        "https://devfolio.co/hackathons"
+      ]
+    },
+    {
+      "source": "hackerearth",
+      "status": "ok",
+      "count": 8,
+      "errors": [],
+      "elapsed_ms": 3521.7,
+      "sample_titles": [
+        "HackerEarth HACKATHON VibeCode Arena: FIFA 2026 Showdown 26 ENDS IN : : :",
+        "Deutsche Telekom Digital Labs Private Limited HACKATHON The Talent Hack 5984 STARTS ON Jul 10, 12:30 PM UTC (UTC)",
+        "ScriptedBy{Her} 2.0 Jun 8, 2026 UTC (UTC) Prizes 36275"
+      ],
+      "label": "HackerEarth",
+      "enabled": true,
+      "disabled_reason": null,
+      "listings": [
+        "https://www.hackerearth.com/challenges/hackathon/",
+        "https://www.hackerearth.com/challenges/competitive/"
+      ]
+    },
+    {
+      "source": "devpost",
+      "status": "ok",
+      "count": 8,
+      "errors": [],
+      "elapsed_ms": 1742.0,
+      "sample_titles": [
+        "Devpost Participate in our public hackathons",
+        "Devpost for Teams Access your company's private hackathons",
+        "Host a public hackathon"
+      ],
+      "label": "Devpost",
+      "enabled": true,
+      "disabled_reason": null,
+      "listings": [
+        "https://devpost.com/hackathons"
+      ]
+    },
+    {
+      "source": "techgig",
+      "status": "ok",
+      "count": 6,
+      "errors": [],
+      "elapsed_ms": 849.1,
+      "sample_titles": [
+        "AMDOCS wCode Clan - For Techie Divas The objective of this round is to screen candidates on the basis of their domain pr",
+        "ETS Global Scholar Challenge Powered by TOEFL 2nd Edition The objective of this round is to screen candidates on the bas",
+        "Zensar Technologies ZEN Codeathon The objective of this round is to screen candidates on the basis of their domain profi"
+      ],
+      "label": "TechGig",
+      "enabled": true,
+      "disabled_reason": null,
+      "listings": [
+        "https://www.techgig.com/challenge"
+      ]
+    },
+    {
+      "source": "reskilll",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: reskilll"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: reskilll\n",
+      "elapsed_ms": 0.4,
+      "sample_titles": [],
+      "label": "Reskilll",
+      "enabled": false,
+      "disabled_reason": "Audit 2026-06-25: hackathons page fetched but no opportunities parsed.",
+      "listings": [
+        "https://reskilll.com/hackathons"
+      ]
+    },
+    {
+      "source": "aicte_internship",
+      "status": "ok",
+      "count": 8,
+      "errors": [],
+      "elapsed_ms": 13601.2,
+      "sample_titles": [
+        "Employer/Post Internship",
+        "internship@aicte-india.org",
+        "Internship Report 2025-26"
+      ],
+      "label": "AICTE Internship Portal",
+      "enabled": true,
+      "disabled_reason": null,
+      "listings": [
+        "https://internship.aicte-india.org/"
+      ]
+    },
+    {
+      "source": "smartinternz",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: smartinternz"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: smartinternz\n",
+      "elapsed_ms": 0.1,
+      "sample_titles": [],
+      "label": "SmartInternz",
+      "enabled": false,
+      "disabled_reason": "Audit 2026-06-25: internships page fetched but no opportunities parsed.",
+      "listings": [
+        "https://smartinternz.com/internships"
+      ]
+    },
+    {
+      "source": "makeintern",
+      "status": "ok",
+      "count": 8,
+      "errors": [],
+      "elapsed_ms": 1168.3,
+      "sample_titles": [
+        "Virtual Internships",
+        "Office Internships",
+        "Campus Internships"
+      ],
+      "label": "MakeIntern",
+      "enabled": true,
+      "disabled_reason": null,
+      "listings": [
+        "https://www.makeintern.com/"
+      ]
+    },
+    {
+      "source": "letsintern",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: letsintern"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: letsintern\n",
+      "elapsed_ms": 0.1,
+      "sample_titles": [],
+      "label": "LetsIntern",
+      "enabled": false,
+      "disabled_reason": "Audit 2026-06-25: homepage no longer exposes parseable internship cards.",
+      "listings": [
+        "https://www.letsintern.com/"
+      ]
+    },
+    {
+      "source": "handshake",
+      "status": "ok",
+      "count": 3,
+      "errors": [],
+      "elapsed_ms": 491.7,
+      "sample_titles": [
+        "Find jobs and internships \u2192",
+        "Fellowship program",
+        "Careers help center"
+      ],
+      "label": "Handshake",
+      "enabled": true,
+      "disabled_reason": null,
+      "listings": [
+        "https://joinhandshake.com/students/"
+      ]
+    },
+    {
+      "source": "wellfound",
+      "status": "ok",
+      "count": 3,
+      "errors": [],
+      "elapsed_ms": 599.5,
+      "sample_titles": [
+        "Operations Associate - New Grad",
+        "Financial Professional (Entry Level, We Train and License You)",
+        "Management Trainee Program"
+      ],
+      "label": "Wellfound",
+      "enabled": true,
+      "disabled_reason": null,
+      "listings": [
+        "https://wellfound.com/jobs"
+      ]
+    },
+    {
+      "source": "ycombinator_jobs",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: ycombinator_jobs"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: ycombinator_jobs\n",
+      "elapsed_ms": 0.2,
+      "sample_titles": [],
+      "label": "Y Combinator Jobs",
+      "enabled": false,
+      "disabled_reason": "Audit 2026-06-25: public jobs page exposes role navigation, not direct job cards; needs a dedicated connector.",
+      "listings": [
+        "https://www.ycombinator.com/jobs"
+      ]
+    },
+    {
+      "source": "wayup",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: wayup"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: wayup\n",
+      "elapsed_ms": 0.1,
+      "sample_titles": [],
+      "label": "WayUp",
+      "enabled": false,
+      "disabled_reason": "Current public internship page exposes category navigation in bounded checks, not direct opportunity listings; requires a dedicated connector.",
+      "listings": [
+        "https://www.wayup.com/s/internships/"
+      ]
+    },
+    {
+      "source": "chegg_internships",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: chegg_internships"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: chegg_internships\n",
+      "elapsed_ms": 0.1,
+      "sample_titles": [],
+      "label": "Chegg Internships",
+      "enabled": false,
+      "disabled_reason": "Chegg's official internships page says Internships.com and careermatch.com closed in December 2023.",
+      "listings": [
+        "https://www.chegg.com/skills/internships-announcement/"
+      ]
+    },
+    {
+      "source": "zintellect",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: zintellect"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: zintellect\n",
+      "elapsed_ms": 0.1,
+      "sample_titles": [],
+      "label": "Zintellect",
+      "enabled": false,
+      "disabled_reason": "Current public catalog renders an app shell/catalog entry in bounded checks; requires a dedicated catalog API/browser connector.",
+      "listings": [
+        "https://www.zintellect.com/catalog"
+      ]
+    },
+    {
+      "source": "interstride",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: interstride"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: interstride\n",
+      "elapsed_ms": 0.1,
+      "sample_titles": [],
+      "label": "Interstride",
+      "enabled": false,
+      "disabled_reason": "Student/job portal access is institution/account gated; use an approved partner connector instead of anonymous scraping.",
+      "listings": [
+        "https://www.interstride.com/students/"
+      ]
+    },
+    {
+      "source": "untapped",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: untapped"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: untapped\n",
+      "elapsed_ms": 0.0,
+      "sample_titles": [],
+      "label": "Untapped",
+      "enabled": false,
+      "disabled_reason": "Current public page redirects to a career-program marketing page in bounded checks, not direct opportunity listings.",
+      "listings": [
+        "https://www.untapped.io/"
+      ]
+    },
+    {
+      "source": "parker_dewey",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: parker_dewey"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: parker_dewey\n",
+      "elapsed_ms": 0.1,
+      "sample_titles": [],
+      "label": "Parker Dewey",
+      "enabled": false,
+      "disabled_reason": "Current public career-launchers page exposes marketing/navigation links in bounded checks; use an approved micro-internship connector.",
+      "listings": [
+        "https://www.parkerdewey.com/career-launchers"
+      ]
+    },
+    {
+      "source": "extern",
+      "status": "ok",
+      "count": 8,
+      "errors": [],
+      "elapsed_ms": 1100.3,
+      "sample_titles": [
+        "Beats by Dre Creative Advertising Strategy Externship",
+        "Beats by Dre Data Analytics: Qualitative & Quantitative Insights",
+        "Center for Improving Youth Justice Data-Driven Decision-Making"
+      ],
+      "label": "Extern",
+      "enabled": true,
+      "disabled_reason": null,
+      "listings": [
+        "https://www.extern.com/externships"
+      ]
+    },
+    {
+      "source": "github_internship_lists",
+      "status": "ok",
+      "count": 8,
+      "errors": [],
+      "elapsed_ms": 3359.0,
+      "sample_titles": [
+        "Campus Software Engineer Intern",
+        "Software and Data Infrastructure Intern",
+        "Software Engineer Intern \ud83c\udf93"
+      ],
+      "label": "GitHub Internship Lists",
+      "enabled": true,
+      "disabled_reason": null,
+      "listings": [
+        "https://github.com/SimplifyJobs/Summer2026-Internships",
+        "https://github.com/SimplifyJobs/New-Grad-Positions"
+      ]
+    },
+    {
+      "source": "kaggle",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: kaggle"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: kaggle\n",
+      "elapsed_ms": 0.1,
+      "sample_titles": [],
+      "label": "Kaggle",
+      "enabled": false,
+      "disabled_reason": "Audit 2026-06-25: competitions page returns a minimal challenge shell without listings.",
+      "listings": [
+        "https://www.kaggle.com/competitions"
+      ]
+    },
+    {
+      "source": "codeforces",
+      "status": "error",
+      "count": 0,
+      "errors": [
+        "https://codeforces.com/contests: 403 Client Error for url: https://codeforces.com/contests"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nRuntimeError: https://codeforces.com/contests: 403 Client Error for url: https://codeforces.com/contests\n",
+      "elapsed_ms": 4180.0,
+      "sample_titles": [],
+      "label": "Codeforces",
+      "enabled": true,
+      "disabled_reason": null,
+      "listings": [
+        "https://codeforces.com/contests"
+      ]
+    },
+    {
+      "source": "geeksforgeeks_jobs",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: geeksforgeeks_jobs"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: geeksforgeeks_jobs\n",
+      "elapsed_ms": 0.1,
+      "sample_titles": [],
+      "label": "GeeksforGeeks Jobs",
+      "enabled": false,
+      "disabled_reason": "Audit 2026-06-25: jobs page returns anti-bot/challenge HTML to anonymous fetchers.",
+      "listings": [
+        "https://www.geeksforgeeks.org/jobs/"
+      ]
+    },
+    {
+      "source": "promilo",
+      "status": "ok",
+      "count": 5,
+      "errors": [],
+      "elapsed_ms": 974.3,
+      "sample_titles": [
+        "HawkHire Hr Consultants Digital Marketing Intern Gurgaon",
+        "Smart Travel Travel Consultant Intern Kerala - Other",
+        "SOLAROOT ENGINEERING SERVICES PVT. LTD. HR INTERN Gurgaon"
+      ],
+      "label": "Promilo",
+      "enabled": true,
+      "disabled_reason": null,
+      "listings": [
+        "https://promilo.com/"
+      ]
+    },
+    {
+      "source": "toptal",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: toptal"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: toptal\n",
+      "elapsed_ms": 0.1,
+      "sample_titles": [],
+      "label": "Toptal",
+      "enabled": false,
+      "disabled_reason": "No stable public early-career job feed; homepage is marketing content.",
+      "listings": [
+        "https://www.toptal.com/"
+      ]
+    },
+    {
+      "source": "skip_the_drive",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: skip_the_drive"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: skip_the_drive\n",
+      "elapsed_ms": 0.1,
+      "sample_titles": [],
+      "label": "Skip The Drive",
+      "enabled": false,
+      "disabled_reason": "Audit 2026-06-25: homepage fetched but no opportunities parsed.",
+      "listings": [
+        "https://www.skipthedrive.com/"
+      ]
+    },
+    {
+      "source": "nodesk",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: nodesk"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: nodesk\n",
+      "elapsed_ms": 0.1,
+      "sample_titles": [],
+      "label": "NoDesk",
+      "enabled": false,
+      "disabled_reason": "Audit 2026-06-25: remote jobs page fetched but no opportunities parsed.",
+      "listings": [
+        "https://nodesk.co/remote-jobs/"
+      ]
+    },
+    {
+      "source": "remote_habits",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: remote_habits"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: remote_habits\n",
+      "elapsed_ms": 0.1,
+      "sample_titles": [],
+      "label": "RemoteHabits",
+      "enabled": false,
+      "disabled_reason": "Audit 2026-06-25: jobs page fetched but no opportunities parsed.",
+      "listings": [
+        "https://remotehabits.com/jobs/"
+      ]
+    },
+    {
+      "source": "remotive",
+      "status": "empty",
+      "count": 0,
+      "errors": [],
+      "elapsed_ms": 374.6,
+      "sample_titles": [],
+      "label": "Remotive",
+      "enabled": true,
+      "disabled_reason": null,
+      "listings": [
+        "https://remotive.com/api/remote-jobs"
+      ]
+    },
+    {
+      "source": "remote4me",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: remote4me"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: remote4me\n",
+      "elapsed_ms": 0.2,
+      "sample_titles": [],
+      "label": "Remote4Me",
+      "enabled": false,
+      "disabled_reason": "Audit 2026-06-25: homepage fetched but no opportunities parsed.",
+      "listings": [
+        "https://remote4me.com/"
+      ]
+    },
+    {
+      "source": "pangian",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: pangian"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: pangian\n",
+      "elapsed_ms": 0.1,
+      "sample_titles": [],
+      "label": "Pangian",
+      "enabled": false,
+      "disabled_reason": "Public job board is currently in transition and the previous listings URL returns 404.",
+      "listings": [
+        "https://pangian.com/job-travel-remote/"
+      ]
+    },
+    {
+      "source": "remotees",
+      "status": "ok",
+      "count": 1,
+      "errors": [],
+      "elapsed_ms": 3719.5,
+      "sample_titles": [
+        "Web Development Intern 21d Solar Secure Solutions Bangalore, India Full-Time"
+      ],
+      "label": "Remotees",
+      "enabled": true,
+      "disabled_reason": null,
+      "listings": [
+        "https://remotees.com/"
+      ]
+    },
+    {
+      "source": "justremote",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: justremote"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: justremote\n",
+      "elapsed_ms": 0.1,
+      "sample_titles": [],
+      "label": "JustRemote",
+      "enabled": false,
+      "disabled_reason": "Audit 2026-06-25: remote jobs page fetched but no opportunities parsed.",
+      "listings": [
+        "https://justremote.co/remote-jobs"
+      ]
+    },
+    {
+      "source": "remotecrew",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: remotecrew"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: remotecrew\n",
+      "elapsed_ms": 0.1,
+      "sample_titles": [],
+      "label": "Remotecrew",
+      "enabled": false,
+      "disabled_reason": "Homepage is a hiring-service marketing site, not a public student job feed.",
+      "listings": [
+        "https://remotecrew.io/"
+      ]
+    },
+    {
+      "source": "europe_remotely",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: europe_remotely"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: europe_remotely\n",
+      "elapsed_ms": 0.1,
+      "sample_titles": [],
+      "label": "Europe Remotely",
+      "enabled": false,
+      "disabled_reason": "Blocks anonymous scraper traffic with 403.",
+      "listings": [
+        "https://europeremotely.com/"
+      ]
+    },
+    {
+      "source": "remoteok_europe",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: remoteok_europe"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: remoteok_europe\n",
+      "elapsed_ms": 0.1,
+      "sample_titles": [],
+      "label": "Remote OK Europe",
+      "enabled": false,
+      "disabled_reason": "Audit 2026-06-25: shared Remote OK API rarely yields Europe-filtered early-career rows.",
+      "listings": [
+        "https://remoteok.com/api"
+      ]
+    },
+    {
+      "source": "remoteok_asia",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: remoteok_asia"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: remoteok_asia\n",
+      "elapsed_ms": 0.1,
+      "sample_titles": [],
+      "label": "Remote OK Asia",
+      "enabled": false,
+      "disabled_reason": "Audit 2026-06-25: shared Remote OK API rarely yields Asia-filtered early-career rows.",
+      "listings": [
+        "https://remoteok.com/api"
+      ]
+    },
+    {
+      "source": "flexjobs",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: flexjobs"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: flexjobs\n",
+      "elapsed_ms": 0.1,
+      "sample_titles": [],
+      "label": "FlexJobs",
+      "enabled": false,
+      "disabled_reason": "Public site repeatedly times out/blocks anonymous scraping; requires a dedicated approved integration.",
+      "listings": [
+        "https://www.flexjobs.com/"
+      ]
+    },
+    {
+      "source": "remote_co",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: remote_co"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: remote_co\n",
+      "elapsed_ms": 0.0,
+      "sample_titles": [],
+      "label": "Remote.co",
+      "enabled": false,
+      "disabled_reason": "Public listings repeatedly time out during bounded health checks; requires a dedicated approved integration.",
+      "listings": [
+        "https://remote.co/remote-jobs/"
+      ]
+    },
+    {
+      "source": "we_work_remotely",
+      "status": "ok",
+      "count": 2,
+      "errors": [],
+      "elapsed_ms": 1076.0,
+      "sample_titles": [
+        "Junior Crypto Trader (Remote)",
+        "Web Development Intern"
+      ],
+      "label": "We Work Remotely",
+      "enabled": true,
+      "disabled_reason": null,
+      "listings": [
+        "https://weworkremotely.com/remote-jobs.rss"
+      ]
+    },
+    {
+      "source": "remoteok",
+      "status": "ok",
+      "count": 4,
+      "errors": [],
+      "elapsed_ms": 2116.9,
+      "sample_titles": [
+        "Entry Level Administrative Assistant",
+        "Entry Level Administrative Assistant",
+        "Entry Level Administrative Assistant"
+      ],
+      "label": "Remote OK",
+      "enabled": true,
+      "disabled_reason": null,
+      "listings": [
+        "https://remoteok.com/api"
+      ]
+    },
+    {
+      "source": "angellist",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: angellist"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: angellist\n",
+      "elapsed_ms": 0.2,
+      "sample_titles": [],
+      "label": "AngelList",
+      "enabled": false,
+      "disabled_reason": "AngelList jobs redirects to Wellfound and blocks anonymous scraping; Wellfound is already tracked separately.",
+      "listings": [
+        "https://angel.co/jobs"
+      ]
+    },
+    {
+      "source": "linkedin_remote",
+      "status": "empty",
+      "count": 0,
+      "errors": [],
+      "elapsed_ms": 1406.1,
+      "sample_titles": [],
+      "label": "LinkedIn Remote Jobs",
+      "enabled": true,
+      "disabled_reason": null,
+      "listings": [
+        "https://www.linkedin.com/jobs/search/?keywords=remote&location=Worldwide"
+      ]
+    },
+    {
+      "source": "freelancer",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: freelancer"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: freelancer\n",
+      "elapsed_ms": 0.1,
+      "sample_titles": [],
+      "label": "Freelancer",
+      "enabled": false,
+      "disabled_reason": "Audit 2026-06-25: jobs page fetched but no early-career opportunities parsed.",
+      "listings": [
+        "https://www.freelancer.com/jobs"
+      ]
+    },
+    {
+      "source": "working_nomads",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: working_nomads"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: working_nomads\n",
+      "elapsed_ms": 0.1,
+      "sample_titles": [],
+      "label": "Working Nomads",
+      "enabled": false,
+      "disabled_reason": "Audit 2026-06-25: jobs page fetched but no opportunities parsed.",
+      "listings": [
+        "https://www.workingnomads.com/jobs"
+      ]
+    },
+    {
+      "source": "simplyhired",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: simplyhired"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: simplyhired\n",
+      "elapsed_ms": 0.1,
+      "sample_titles": [],
+      "label": "SimplyHired",
+      "enabled": false,
+      "disabled_reason": "Audit 2026-06-25: search results fetched but no opportunities parsed.",
+      "listings": [
+        "https://www.simplyhired.com/search?q=remote"
+      ]
+    },
+    {
+      "source": "jobspresso",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: jobspresso"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: jobspresso\n",
+      "elapsed_ms": 0.1,
+      "sample_titles": [],
+      "label": "Jobspresso",
+      "enabled": false,
+      "disabled_reason": "Audit 2026-06-25: remote work page fetched but no opportunities parsed.",
+      "listings": [
+        "https://jobspresso.co/remote-work/"
+      ]
+    },
+    {
+      "source": "virtual_vocations",
+      "status": "ok",
+      "count": 1,
+      "errors": [],
+      "elapsed_ms": 2246.9,
+      "sample_titles": [
+        "Entry Level 4935"
+      ],
+      "label": "Virtual Vocations",
+      "enabled": true,
+      "disabled_reason": null,
+      "listings": [
+        "https://www.virtualvocations.com/jobs"
+      ]
+    },
+    {
+      "source": "stackoverflow_jobs",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: stackoverflow_jobs"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: stackoverflow_jobs\n",
+      "elapsed_ms": 0.1,
+      "sample_titles": [],
+      "label": "Stack Overflow Jobs",
+      "enabled": false,
+      "disabled_reason": "Stack Overflow Jobs is not a stable globally available public listings source.",
+      "listings": [
+        "https://stackoverflow.com/jobs"
+      ]
+    },
+    {
+      "source": "glassdoor_remote",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: glassdoor_remote"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: glassdoor_remote\n",
+      "elapsed_ms": 0.1,
+      "sample_titles": [],
+      "label": "Glassdoor Remote",
+      "enabled": false,
+      "disabled_reason": "Glassdoor blocks anonymous scraping with 403.",
+      "listings": [
+        "https://www.glassdoor.com/Job/remote-jobs-SRCH_KO0,6.htm"
+      ]
+    },
+    {
+      "source": "monster",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: monster"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: monster\n",
+      "elapsed_ms": 0.1,
+      "sample_titles": [],
+      "label": "Monster",
+      "enabled": false,
+      "disabled_reason": "Audit 2026-06-25: search results fetched but no opportunities parsed.",
+      "listings": [
+        "https://www.monster.com/jobs/search?q=remote"
+      ]
+    },
+    {
+      "source": "careercloud",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: careercloud"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: careercloud\n",
+      "elapsed_ms": 0.1,
+      "sample_titles": [],
+      "label": "Careercloud",
+      "enabled": false,
+      "disabled_reason": "Career advice/aggregation site, not a stable direct opportunity feed.",
+      "listings": [
+        "https://www.careercloud.com/"
+      ]
+    },
+    {
+      "source": "careerbuilder",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: careerbuilder"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: careerbuilder\n",
+      "elapsed_ms": 0.1,
+      "sample_titles": [],
+      "label": "CareerBuilder",
+      "enabled": false,
+      "disabled_reason": "Audit 2026-06-25: search results fetched but no opportunities parsed.",
+      "listings": [
+        "https://www.careerbuilder.com/jobs?keywords=remote"
+      ]
+    },
+    {
+      "source": "careeronestop",
+      "status": "disabled_probe",
+      "count": 0,
+      "errors": [
+        "Unsupported source: careeronestop"
+      ],
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/ankanghosh/Desktop/ivy league/backend/scripts/audit_scraper_sources.py\", line 53, in _run_sync\n    result = await asyncio.wait_for(asyncio.to_thread(fn, *args, **kwargs), timeout=timeout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py\", line 25, in to_thread\n    return await loop.run_in_executor(None, func_call)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: Unsupported source: careeronestop\n",
+      "elapsed_ms": 0.1,
+      "sample_titles": [],
+      "label": "CareerOneStop",
+      "enabled": false,
+      "disabled_reason": "Blocks anonymous scraper traffic with 403 and is not student-specific.",
+      "listings": [
+        "https://www.careeronestop.org/"
+      ]
+    }
+  ]
+}
