@@ -1,18 +1,31 @@
 {
-  "base_model": "distilbert-base-uncased",
+  "base_model": "jjzha/jobbert-base-cased",
   "dataset": {
     "id": "jjzha/skillspan",
     "license": "cc-by-4.0",
     "revision": "33062e6bd0e03a5e01ae299ce0518f4613ef4298"
   },
   "device": "mps",
+  "hyperparameters": {
+    "batch_size": 16,
+    "confidences_swept": [
+      0.3,
+      0.4,
+      0.5,
+      0.6,
+      0.7
+    ],
+    "epochs": 6,
+    "learning_rate": 3e-05,
+    "warmup_ratio": 0.1
+  },
   "minimum_test_span_f1": 0.5,
   "selection": {
-    "confidence": 0.5,
-    "epoch": 4.0,
-    "span_f1": 0.520542,
-    "span_precision": 0.477318,
-    "span_recall": 0.572375
+    "confidence": 0.3,
+    "epoch": 5.0,
+    "span_f1": 0.583444,
+    "span_precision": 0.548253,
+    "span_recall": 0.623463
   },
   "splits": {
     "dev": 3174,
@@ -21,8 +34,8 @@
   },
   "status": "approved",
   "test": {
-    "span_f1": 0.537738,
-    "span_precision": 0.507098,
-    "span_recall": 0.572319
+    "span_f1": 0.600594,
+    "span_precision": 0.574037,
+    "span_recall": 0.629729
   }
 }

@@ -69,6 +69,23 @@ class SkillExtractor:
     def _artifact_path(self) -> Path:
         return Path(str(settings.SKILL_EXTRACTOR_MODEL_PATH or "")).expanduser()
 
+    @staticmethod
+    def _resolve_model_dir(value: str) -> Path:
+        """Resolve a stored model_dir, relative to the repo root when relative.
+
+        Older artifacts baked in an absolute path like
+        /Users/<name>/Developer/ivy league/backend/models/... which breaks the
+        moment the checkout moves. This project has already moved once, from
+        Desktop to Developer, and a broken path here fails quietly: the loader
+        logs a warning and silently degrades to keyword extraction, so the model
+        looks present while contributing nothing. Absolute paths still work, so
+        artifacts trained before this change keep loading.
+        """
+        candidate = Path(str(value or "")).expanduser()
+        if candidate.is_absolute():
+            return candidate
+        return (Path(__file__).resolve().parents[3] / candidate).resolve()
+
     def _load_artifact(self) -> dict[str, Any] | None:
         if not settings.SKILL_EXTRACTOR_ENABLED:
             return None
@@ -92,7 +109,7 @@ class SkillExtractor:
                 model_type = str(artifact.get("model_type") or "linear")
                 if model_type == "linear" and not hasattr(artifact.get("pipeline"), "predict_proba"):
                     raise ValueError("skill extractor artifact has no probabilistic classifier")
-                if model_type == "transformer" and not Path(str(artifact.get("model_dir") or "")).is_dir():
+                if model_type == "transformer" and not self._resolve_model_dir(str(artifact.get("model_dir") or "")).is_dir():
                     raise ValueError("skill extractor transformer directory is unavailable")
                 self._artifact = artifact
             except Exception as exc:
@@ -154,7 +171,7 @@ class SkillExtractor:
             import torch  # type: ignore
             from transformers import AutoModelForTokenClassification, AutoTokenizer  # type: ignore
 
-            model_dir = str(artifact["model_dir"])
+            model_dir = str(SkillExtractor._resolve_model_dir(str(artifact["model_dir"])))
             device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
             tokenizer = AutoTokenizer.from_pretrained(model_dir)
             model = AutoModelForTokenClassification.from_pretrained(model_dir).to(device)

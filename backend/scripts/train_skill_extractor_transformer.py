@@ -14,7 +14,7 @@ from dotenv import dotenv_values
 from huggingface_hub import HfApi, hf_hub_download
 from torch.optim import AdamW
 from torch.utils.data import DataLoader, Dataset
-from transformers import AutoModelForTokenClassification, AutoTokenizer
+from transformers import AutoModelForTokenClassification, AutoTokenizer, get_linear_schedule_with_warmup
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = BACKEND_ROOT.parent
@@ -22,7 +22,10 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 DATASET_ID = "jjzha/skillspan"
-BASE_MODEL = "distilbert-base-uncased"
+# JobBERT: BERT continued-pretrained on job postings by the SkillSpan author.
+# Cased on purpose - most skills are proper nouns and an uncased model discards
+# that before training. distilbert-base-uncased scored 0.538 test span F1 here.
+BASE_MODEL = "jjzha/jobbert-base-cased"
 LABEL_TO_ID = {"O": 0, "B": 1, "I": 2}
 ID_TO_LABEL = {value: key for key, value in LABEL_TO_ID.items()}
 
@@ -122,28 +125,75 @@ def _collate(tokenizer: Any, batch: list[dict[str, Any]]) -> dict[str, torch.Ten
     return dict(encoded)
 
 
-def _predict(model: Any, tokenizer: Any, rows: list[dict[str, Any]], *, device: torch.device, confidence: float) -> list[list[str]]:
+def _word_predictions(
+    model: Any,
+    tokenizer: Any,
+    rows: list[dict[str, Any]],
+    *,
+    device: torch.device,
+    batch_size: int,
+) -> list[list[tuple[str, float]]]:
+    """Run the model once and return (label, probability) per word.
+
+    Kept separate from thresholding because the confidence sweep used to call a
+    row-at-a-time predict once per candidate threshold, re-running the whole dev
+    split three times per epoch to score logits that never changed. Inference now
+    happens once per epoch, batched, and each threshold is applied to the cached
+    probabilities.
+    """
     model.eval()
-    predicted: list[list[str]] = []
+    output: list[list[tuple[str, float]]] = []
     with torch.no_grad():
-        for row in rows:
-            tokens = [str(token) for token in row["tokens"]]
-            encoded = tokenizer(tokens, is_split_into_words=True, truncation=True, max_length=128, return_tensors="pt")
-            word_ids = encoded.word_ids(batch_index=0)
+        for start in range(0, len(rows), batch_size):
+            chunk = rows[start : start + batch_size]
+            token_lists = [[str(token) for token in row["tokens"]] for row in chunk]
+            encoded = tokenizer(
+                token_lists,
+                is_split_into_words=True,
+                padding=True,
+                truncation=True,
+                max_length=128,
+                return_tensors="pt",
+            )
             inputs = {key: value.to(device) for key, value in encoded.items()}
-            probabilities = torch.softmax(model(**inputs).logits[0], dim=-1).detach().cpu()
-            tags = ["O"] * len(tokens)
-            seen_words: set[int] = set()
-            for index, word_id in enumerate(word_ids):
-                if word_id is None or word_id in seen_words:
-                    continue
-                seen_words.add(word_id)
-                probability, label_id = probabilities[index].max(dim=-1)
-                label = ID_TO_LABEL[int(label_id)]
-                if label in {"B", "I"} and float(probability) >= confidence:
-                    tags[word_id] = label
-            predicted.append(tags)
-    return predicted
+            probabilities = torch.softmax(model(**inputs).logits, dim=-1).detach().cpu()
+            for offset, tokens in enumerate(token_lists):
+                # Default covers words truncated past max_length, which must score
+                # as O rather than silently vanishing from the span comparison.
+                per_word: list[tuple[str, float]] = [("O", 1.0)] * len(tokens)
+                seen_words: set[int] = set()
+                for index, word_id in enumerate(encoded.word_ids(batch_index=offset)):
+                    if word_id is None or word_id in seen_words:
+                        continue
+                    seen_words.add(word_id)
+                    probability, label_id = probabilities[offset][index].max(dim=-1)
+                    per_word[word_id] = (ID_TO_LABEL[int(label_id)], float(probability))
+                output.append(per_word)
+    return output
+
+
+def _apply_confidence(
+    word_predictions: list[list[tuple[str, float]]], *, confidence: float
+) -> list[list[str]]:
+    return [
+        [label if label in {"B", "I"} and probability >= confidence else "O" for label, probability in row]
+        for row in word_predictions
+    ]
+
+
+def _predict(
+    model: Any,
+    tokenizer: Any,
+    rows: list[dict[str, Any]],
+    *,
+    device: torch.device,
+    confidence: float,
+    batch_size: int = 32,
+) -> list[list[str]]:
+    return _apply_confidence(
+        _word_predictions(model, tokenizer, rows, device=device, batch_size=batch_size),
+        confidence=confidence,
+    )
 
 
 def main() -> None:
@@ -151,10 +201,45 @@ def main() -> None:
     parser.add_argument("--output", default="backend/models/skill_extractor.joblib")
     parser.add_argument("--model-dir", default="backend/models/skill_extractor_transformer")
     parser.add_argument("--report", default="backend/benchmarks/skill_extractor_transformer_latest.json")
-    parser.add_argument("--epochs", type=int, default=4)
+    parser.add_argument("--epochs", type=int, default=6)
     parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--eval-batch-size", type=int, default=32)
     parser.add_argument("--min-test-span-f1", type=float, default=0.5)
+    parser.add_argument(
+        "--base-model",
+        default=BASE_MODEL,
+        help=(
+            "HF model id. Defaults to JobBERT, which is BERT continued-pretrained on "
+            "job postings by the author of SkillSpan. Cased matters here: skills are "
+            "mostly proper nouns (Python, SQL, AWS), and an uncased model throws that "
+            "signal away before training starts."
+        ),
+    )
+    parser.add_argument("--learning-rate", type=float, default=3e-5)
+    parser.add_argument(
+        "--warmup-ratio",
+        type=float,
+        default=0.1,
+        help="Fraction of steps spent warming up before linear decay.",
+    )
+    parser.add_argument(
+        "--confidences",
+        default="0.34,0.4,0.45,0.5,0.55,0.6,0.7",
+        help=(
+            "Comma-separated decision thresholds swept on dev. Thresholding is free "
+            "now that the sweep reuses one set of cached probabilities, but values at "
+            "or below 1/num_labels are inert: the argmax class of a softmax over 3 "
+            "labels always scores at least 1/3, so 0.05 through 0.33 all produce "
+            "byte-identical predictions. Measured - 0.05 and 0.30 both gave dev F1 "
+            "0.5834. The sweep therefore starts just above the floor."
+        ),
+    )
     args = parser.parse_args()
+    confidences = tuple(
+        sorted({float(value) for value in str(args.confidences).split(",") if value.strip()})
+    )
+    if not confidences:
+        raise SystemExit("--confidences must contain at least one threshold")
 
     token = _hf_token()
     if not token:
@@ -166,9 +251,10 @@ def main() -> None:
         raise SystemExit("SkillSpan quality gate failed: incomplete split")
 
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL, token=token)
+    base_model = str(args.base_model)
+    tokenizer = AutoTokenizer.from_pretrained(base_model, token=token)
     model = AutoModelForTokenClassification.from_pretrained(
-        BASE_MODEL,
+        base_model,
         num_labels=len(LABEL_TO_ID),
         id2label=ID_TO_LABEL,
         label2id=LABEL_TO_ID,
@@ -180,7 +266,16 @@ def main() -> None:
         shuffle=True,
         collate_fn=lambda batch: _collate(tokenizer, batch),
     )
-    optimizer = AdamW(model.parameters(), lr=3e-5)
+    optimizer = AdamW(model.parameters(), lr=float(args.learning_rate))
+    # A constant LR for the whole run left the model still moving at the last
+    # step. Warmup then linear decay is the standard schedule for BERT-family
+    # token classification and costs nothing.
+    total_steps = max(1, len(loader) * max(1, args.epochs))
+    scheduler = get_linear_schedule_with_warmup(
+        optimizer,
+        num_warmup_steps=int(total_steps * max(0.0, min(0.5, args.warmup_ratio))),
+        num_training_steps=total_steps,
+    )
     expected_dev = [_tags(row) for row in splits["dev"]]
     best_state: dict[str, torch.Tensor] | None = None
     best_selection: dict[str, float] | None = None
@@ -193,9 +288,19 @@ def main() -> None:
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
-        for confidence in (0.5, 0.6, 0.7):
-            metrics = _metrics(expected_dev, _predict(model, tokenizer, splits["dev"], device=device, confidence=confidence))
+            scheduler.step()
+        dev_word_predictions = _word_predictions(
+            model, tokenizer, splits["dev"], device=device, batch_size=int(args.eval_batch_size)
+        )
+        for confidence in confidences:
+            metrics = _metrics(expected_dev, _apply_confidence(dev_word_predictions, confidence=confidence))
             selection = {"epoch": float(epoch), "confidence": confidence, **metrics}
+            print(
+                f"epoch {epoch} conf {confidence:.2f}  "
+                f"dev_f1={metrics['span_f1']:.4f} p={metrics['span_precision']:.4f} "
+                f"r={metrics['span_recall']:.4f}",
+                flush=True,
+            )
             if best_selection is None or selection["span_f1"] > best_selection["span_f1"]:
                 best_selection = selection
                 best_state = copy.deepcopy({key: value.detach().cpu() for key, value in model.state_dict().items()})
@@ -204,17 +309,31 @@ def main() -> None:
     model.load_state_dict(best_state)
     test_metrics = _metrics(
         [_tags(row) for row in splits["test"]],
-        _predict(model, tokenizer, splits["test"], device=device, confidence=best_selection["confidence"]),
+        _predict(
+            model,
+            tokenizer,
+            splits["test"],
+            device=device,
+            confidence=best_selection["confidence"],
+            batch_size=int(args.eval_batch_size),
+        ),
     )
     report = {
         "status": "approved" if test_metrics["span_f1"] >= args.min_test_span_f1 else "rejected",
         "dataset": {"id": DATASET_ID, "revision": revision, "license": "cc-by-4.0"},
-        "base_model": BASE_MODEL,
+        "base_model": base_model,
         "device": str(device),
         "splits": {name: len(rows) for name, rows in splits.items()},
         "selection": best_selection,
         "test": test_metrics,
         "minimum_test_span_f1": args.min_test_span_f1,
+        "hyperparameters": {
+            "epochs": int(args.epochs),
+            "batch_size": int(args.batch_size),
+            "learning_rate": float(args.learning_rate),
+            "warmup_ratio": float(args.warmup_ratio),
+            "confidences_swept": list(confidences),
+        },
     }
     report_path = REPO_ROOT / args.report
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -232,7 +351,10 @@ def main() -> None:
         {
             "schema_version": 1,
             "model_type": "transformer",
-            "model_dir": str(model_dir),
+            # Repo-relative so the artifact survives the checkout moving.
+            # An absolute path here fails silently at load time: the loader
+            # warns and degrades to keyword extraction.
+            "model_dir": str(Path(args.model_dir)),
             "id_to_label": ID_TO_LABEL,
             "min_confidence": best_selection["confidence"],
             "dataset": report["dataset"],
