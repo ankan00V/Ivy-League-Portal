@@ -18,7 +18,7 @@ Target role: AI Growth Engineer / AI Automation / MarTech / Applied AI internshi
 
 Hi, I am Ankan Ghosh, and this is VidyaVerse, an AI-powered opportunity intelligence platform that I built end to end.
 
-I will walk through it like I am using the product normally. The core problem I wanted to solve is that students and early-career candidates usually search across many different platforms for internships, jobs, hackathons, scholarships, workshops, and events. The data is scattered, duplicated, and often not personalized. So I built VidyaVerse to turn that messy opportunity data into a ranked, AI-assisted workflow.
+I will walk through it like I am using the product normally. The core problem I wanted to solve is that students and early-career candidates usually search across many different platforms for internships, jobs, hackathons, competitions, workshops, and conferences. The data is scattered, duplicated, and often not personalized. So I built VidyaVerse to turn that messy opportunity data into a ranked, AI-assisted workflow.
 
 This is the home page. The goal here is to make the product feel like an intelligence layer, not just another listing website. From here, I can go into the dashboard and start seeing the system working.
 
