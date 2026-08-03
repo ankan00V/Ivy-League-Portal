@@ -40,3 +40,6 @@ frontend/public/data/skills-taxonomy/skills.sql
 frontend/public/data/skills-taxonomy/skills.csv
 frontend/public/data/skills-taxonomy/skills.txt
 frontend/public/data/skills-taxonomy/aliases.json
+
+# Local-only session handoff notes. Owner keeps this out of the remote.
+CONTEXT.md
