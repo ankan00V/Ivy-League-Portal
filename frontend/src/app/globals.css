@@ -1514,6 +1514,13 @@ select.input-base {
   align-content: flex-start;
   gap: 0.45rem;
   min-height: 132px;
+  /* Without a ceiling the control grows a row per chip, so a student who picks
+     fifteen roles pushes every field below them off the screen. Capped at about
+     four rows; beyond that the chips scroll inside the box and the page layout
+     stops moving. */
+  max-height: 190px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 0.85rem;
   border: 2px solid var(--border-subtle);
   border-radius: var(--radius-md);
@@ -1527,6 +1534,23 @@ select.input-base {
   flex: 0 0 auto;
   margin-top: 0.3rem;
   color: var(--text-muted);
+  /* Stays put while the chips scroll past it. */
+  position: sticky;
+  top: 0;
+}
+
+.skill-picker-empty {
+  color: var(--text-muted);
+  font-weight: 600;
+  align-self: center;
+}
+
+/* The add-select sits under the chip box as a discrete action, so it should not
+   read as another equally-weighted field. */
+.taxonomy-add-select {
+  margin-top: 0.55rem;
+  height: 48px;
+  font-weight: 700;
 }
 
 .skill-picker-input-row:focus-within {

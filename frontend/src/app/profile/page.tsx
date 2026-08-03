@@ -32,6 +32,7 @@ import PillGroup from "@/components/ui/PillGroup";
 import SelectField from "@/components/ui/SelectField";
 import TextareaField from "@/components/ui/TextareaField";
 import TextField from "@/components/ui/TextField";
+import TaxonomyMultiSelect from "@/components/ui/TaxonomyMultiSelect";
 import ToggleRow from "@/components/ui/ToggleRow";
 import { useProfileData } from "@/hooks/useProfileData";
 import { INDIAN_INSTITUTION_OPTIONS, OTHER_INSTITUTION_LABEL } from "@/lib/indian-institutions";
@@ -41,6 +42,12 @@ import {
   getFieldOfStudyOptions,
 } from "@/lib/education-taxonomy";
 import { ROLE_GROUPS, ROLE_OPTIONS, findKnownRole, joinRoles, splitRoles } from "@/lib/role-taxonomy";
+import {
+  LOCATION_GROUPS,
+  LOCATION_OPTIONS,
+  joinLocations,
+  splitLocations,
+} from "@/lib/location-taxonomy";
 
 type AccountType = "candidate" | "employer";
 type UserType = "school_student" | "college_student" | "fresher" | "professional";
@@ -218,7 +225,6 @@ const UPPERCASE_TEXT_FIELDS = new Set<keyof ProfilePayload>([
   "company_name",
   "company_size",
   "company_description",
-  "preferred_locations",
   "bio",
   "achievements",
   "education",
@@ -920,64 +926,38 @@ export default function ProfilePage() {
     </>
   );
 
-  /* Preferred roles is a comma-separated list, so it needs add-and-remove rather
-     than a single <select>. Chips reuse the skill picker's visual language so the
-     two multi-value fields on this page behave the same way. */
-  const selectedPreferredRoles = splitRoles(profile.preferred_roles);
-  const selectedPreferredRoleKeys = new Set(selectedPreferredRoles.map((item) => item.toLowerCase()));
-
+  /* Preferred roles and preferred locations are both comma-separated lists, so
+     they share one add-and-remove control over two different vocabularies. */
   const renderPreferredRolesField = () => (
-    <FormSection
-      className="profile-field"
+    <TaxonomyMultiSelect
+      wrapperClassName="profile-field"
       label="Preferred Roles"
       helper="Pick the roles you want to be matched with. Add as many as apply."
-    >
-      <div className="skill-picker-input-row">
-        <Workflow className="skill-picker-icon" size={15} aria-hidden="true" />
-        {selectedPreferredRoles.map((role) => (
-          <span key={role} className="profile-tag removable">
-            {role}
-            <button
-              type="button"
-              aria-label={`Remove ${role}`}
-              onClick={() =>
-                updateProfile(
-                  "preferred_roles",
-                  joinRoles(selectedPreferredRoles.filter((item) => item !== role)),
-                )
-              }
-            >
-              <X size={12} aria-hidden="true" />
-            </button>
-          </span>
-        ))}
-      </div>
-      <select
-        className="input-base"
-        value=""
-        aria-label="Add a preferred role"
-        onChange={(event) => {
-          const selected = event.target.value;
-          if (!selected || selectedPreferredRoleKeys.has(selected.toLowerCase())) {
-            return;
-          }
-          updateProfile("preferred_roles", joinRoles([...selectedPreferredRoles, selected]));
-        }}
-      >
-        <option value="">+ Add a preferred role</option>
-        {ROLE_GROUPS.map((group) => (
-          <optgroup key={group} label={group}>
-            {ROLE_OPTIONS.filter(
-              (option) => option.group === group && !selectedPreferredRoleKeys.has(option.label.toLowerCase()),
-            ).map((option) => (
-              <option key={option.label} value={option.label}>
-                {option.label}
-              </option>
-            ))}
-          </optgroup>
-        ))}
-      </select>
-    </FormSection>
+      value={profile.preferred_roles}
+      onChange={(next) => updateProfile("preferred_roles", next)}
+      options={ROLE_OPTIONS}
+      groups={ROLE_GROUPS}
+      split={splitRoles}
+      join={joinRoles}
+      addLabel="+ Add a preferred role"
+      icon={Workflow}
+    />
+  );
+
+  const renderPreferredLocationsField = () => (
+    <TaxonomyMultiSelect
+      wrapperClassName="profile-field"
+      label="Preferred Work Locations"
+      helper="Add cities, states or a work mode like Remote. Bangalore and Bengaluru count as one."
+      value={profile.preferred_locations}
+      onChange={(next) => updateProfile("preferred_locations", next)}
+      options={LOCATION_OPTIONS}
+      groups={LOCATION_GROUPS}
+      split={splitLocations}
+      join={joinLocations}
+      addLabel="+ Add a preferred location"
+      icon={MapPinned}
+    />
   );
 
   const renderSpecializationField = () => (
@@ -1168,13 +1148,7 @@ export default function ProfilePage() {
 
           <div className="profile-field-grid two">
             {renderPreferredRolesField()}
-            <TextField
-              wrapperClassName="profile-field"
-              label="Preferred Work Locations"
-              value={profile.preferred_locations}
-              onChange={(event) => updateProfile("preferred_locations", event.target.value)}
-              placeholder="Bangalore, Hyderabad, Remote"
-            />
+            {renderPreferredLocationsField()}
           </div>
 
           <div className="profile-field-grid two">
