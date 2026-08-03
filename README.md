@@ -2,7 +2,7 @@
 
 > AI-powered opportunity intelligence platform that helps students discover, prioritize, and act on internships, research roles, scholarships, and hackathons.
 
-**Last updated:** July 29, 2026
+**Last updated:** August 03, 2026
 **Status:** Active build, production-readiness gates enabled
 
 ## 1) Executive Summary
@@ -106,129 +106,38 @@ flowchart LR
 <!-- DATASET_SNAPSHOT:START -->
 
 ## Dataset Size (Verified Snapshot)
-Snapshot date: **July 29, 2026**
+Snapshot date: **August 03, 2026**
 
-- Opportunities: **583**
+- Opportunities: **330**
 - Applications: **0**
-- Opportunity interactions: **9,776**
-- Experiments: **2**
-- Experiment assignments: **1**
-- Ranking model versions: **1**
-- Drift reports: **0**
-- Profiles: **31**
-- Users: **32**
+- Opportunity interactions: **15,706**
+- Experiments: **3**
+- Experiment assignments: **300**
+- Ranking model versions: **360**
+- Drift reports: **361**
+- Profiles: **319**
+- Users: **323**
 
 Source distribution for opportunities:
-- `company_careers_tcs_com`: 59
-- `company_careers_datadoghq_com`: 46
-- `internshala`: 28
-- `linkedin`: 23
-- `unstop`: 22
-- `glassdoor`: 19
-- `ivy_rss`: 17
-- `company_careers_cloudflare_com`: 16
-- `indeed_india`: 16
-- `company_careers_paytm_com`: 14
-- `github_internship_lists`: 13
+- `freshersworld`: 61
+- `internshala`: 58
+- `indeed_india`: 53
+- `unstop`: 32
+- `linkedin`: 19
+- `ivy_rss`: 15
 - `hackerearth`: 12
-- `makeintern`: 12
-- `devfolio`: 11
-- `aicte_internship`: 9
-- `company_careers_iitd_ac_in`: 9
-- `company_careers_iitr_ac_in`: 9
-- `company_careers_upgrad_com`: 9
-- `devpost`: 9
-- `freshersworld`: 9
-- `greenhouse`: 9
-- `company_careers_iitb_ac_in`: 8
-- `major_league_hacking`: 8
-- `wayup`: 8
-- `company_careers_airbnb_com`: 6
-- `company_careers_hul_co_in`: 6
-- `company_careers_razorpay_com`: 6
-- `company_careers_iitk_ac_in`: 5
-- `company_careers_notion_so`: 5
-- `groww_in_company_careers`: 5
-- `linkedin_remote`: 5
-- `remoteok`: 5
-- `techgig`: 5
-- `company_careers_citi_com`: 4
-- `company_careers_figma_com`: 4
-- `company_careers_hsbc_com`: 4
-- `company_careers_mckinsey_com`: 4
-- `company_careers_oyorooms_com`: 4
-- `hack2skill`: 4
-- `naukri`: 4
-- `promilo`: 4
-- `company_careers_americanexpress_com`: 3
-- `company_careers_bankofbaroda_in`: 3
-- `company_careers_byjus_com`: 3
-- `company_careers_gitlab_com`: 3
-- `company_careers_hdfclife_com`: 3
-- `company_careers_iisc_ac_in`: 3
-- `company_careers_linkedin_com`: 3
-- `company_careers_shopify_com`: 3
-- `handshake`: 3
-- `cloudflare_com_company_careers`: 2
-- `company_careers_adobe_com`: 2
-- `company_careers_axisbank_com`: 2
-- `company_careers_bain_com`: 2
-- `company_careers_drreddys_com`: 2
-- `company_careers_goldmansachs_com`: 2
-- `company_careers_groww_in`: 2
-- `company_careers_icicibank_com`: 2
-- `company_careers_infosys_com`: 2
-- `company_careers_inmobi_com`: 2
-- `company_careers_jpmorganchase_com`: 2
-- `company_careers_kotak_com`: 2
-- `company_careers_larsentoubro_com`: 2
-- `company_careers_loreal_com`: 2
-- `company_careers_meesho_io`: 2
-- `company_careers_myvi_in`: 2
-- `company_careers_niramai_com`: 2
-- `company_careers_oracle_com`: 2
-- `company_careers_remote_com`: 2
-- `company_careers_zeta_tech`: 2
-- `wellfound`: 2
-- `company_careers_accenture_com`: 1
-- `company_careers_acko_com`: 1
-- `company_careers_apple_com`: 1
-- `company_careers_atherenergy_com`: 1
-- `company_careers_atlassian_com`: 1
-- `company_careers_barc_gov_in`: 1
-- `company_careers_bcg_com`: 1
-- `company_careers_browserstack_com`: 1
-- `company_careers_canva_com`: 1
-- `company_careers_capgemini_com`: 1
-- `company_careers_confluent_io`: 1
-- `company_careers_databricks_com`: 1
-- `company_careers_deloitte_com`: 1
-- `company_careers_ey_com`: 1
-- `company_careers_freshworks_com`: 1
-- `company_careers_google_com`: 1
-- `company_careers_hdfcbank_com`: 1
-- `company_careers_ibm_com`: 1
-- `company_careers_jsw_in`: 1
-- `company_careers_mahindra_com`: 1
-- `company_careers_makemytrip_com`: 1
-- `company_careers_marutisuzuki_com`: 1
-- `company_careers_mongodb_com`: 1
-- `company_careers_morganstanley_com`: 1
-- `company_careers_mphasis_com`: 1
-- `company_careers_mu-sigma_com`: 1
-- `company_careers_myntra_com`: 1
-- `company_careers_phonepe_com`: 1
-- `company_careers_policybazaar_com`: 1
-- `company_careers_servicenow_com`: 1
-- `company_careers_shiprocket_in`: 1
-- `company_careers_visa_com`: 1
-- `company_careers_wakefit_co`: 1
-- `elastic_run_company_careers`: 1
-- `paytm_com_company_careers`: 1
-- `razorpay_com_company_careers`: 1
-- `remotees`: 1
-- `virtual_vocations`: 1
-- `we_work_remotely`: 1
+- `ycombinator_jobs`: 12
+- `aicte_internship`: 10
+- `makeintern`: 9
+- `wayup`: 9
+- `devfolio`: 8
+- `devpost`: 8
+- `foundit`: 8
+- `promilo`: 7
+- `hack2skill`: 5
+- `codeforces`: 2
+- `handshake`: 1
+- `techgig`: 1
 
 <!-- DATASET_SNAPSHOT:END -->
 
@@ -325,7 +234,9 @@ Latest drift report: `n/a`
 ### Skill-span extraction lifecycle
 - `backend/scripts/train_skill_extractor_transformer.py` trains an optional token-classification model for extracting skill phrases from opportunity text. It is used only to enrich source-discovery query tags; it does **not** train or influence the behavioral opportunity ranker.
 - The training source is [SkillSpan](https://huggingface.co/datasets/jjzha/skillspan), pinned to revision `33062e6bd0e03a5e01ae299ce0518f4613ef4298` and licensed CC-BY-4.0. Its split contains 4,800 train, 3,174 development, and 3,569 held-out test sentences.
-- The current local run selected epoch 4 at a 0.50 confidence threshold and achieved held-out exact-span F1 `0.537738` against the `0.50` promotion gate. The reproducible local report is `backend/benchmarks/skill_extractor_transformer_latest.json`.
+- The base model is [JobBERT](https://huggingface.co/jjzha/jobbert-base-cased), BERT continued-pretrained on job postings by the author of SkillSpan. It is **cased** deliberately: most skills are proper nouns (Python, SQL, AWS, PyTorch), and the previous `distilbert-base-uncased` base discarded that signal before training.
+- The current local run selected epoch 5 at a 0.30 confidence threshold on the development split and achieved held-out exact-span F1 `0.600594` (precision `0.574037`, recall `0.629729`) against the `0.50` promotion gate, up from `0.537738` on the uncased base. Selection is made on development data and the test split is scored once. The reproducible local report is `backend/benchmarks/skill_extractor_transformer_latest.json`.
+- Confidence thresholds at or below `1/num_labels` are inert, because the argmax class of a three-way softmax always scores at least one third. Measured: `0.05` and `0.30` produce identical development F1. The default sweep therefore starts at `0.34`.
 - Runtime loading is controlled by `SKILL_EXTRACTOR_ENABLED`, `SKILL_EXTRACTOR_MODEL_PATH`, and `SKILL_EXTRACTOR_MIN_CONFIDENCE`. Model directories are ignored; a missing, corrupt, or rejected artifact falls back to the existing deterministic tags instead of breaking discovery.
 - The [India 2025 internship dataset](https://www.kaggle.com/datasets/jayaantanaath/internship-opportunities-in-india-2025/data) is suitable only as a deduplicated validation corpus for structured field extraction. It has no user-to-opportunity interaction labels, so it must never be used to train the learned ranker.
 
