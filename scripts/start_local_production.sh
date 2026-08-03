@@ -27,6 +27,15 @@ is_vidyaverse_backend() {
   /usr/bin/curl -fsS "${url}/health/ready" 2>/dev/null | python3 -c 'import json, sys; payload=json.load(sys.stdin); raise SystemExit(0 if payload.get("service") == "VidyaVerse API" and payload.get("status") == "healthy" else 1)' >/dev/null 2>&1
 }
 
+is_vidyaverse_frontend() {
+  local url="${1%/}"
+  local homepage stylesheet
+  homepage="$(/usr/bin/curl -fsS "${url}/" 2>/dev/null)" || return 1
+  stylesheet="$(printf '%s' "${homepage}" | sed -nE 's/.*href="([^"?]*\.css)(\?[^" ]*)?".*/\1/p' | head -n 1)"
+  [[ -n "${stylesheet}" ]] || return 1
+  /usr/bin/curl -fsS -o /dev/null "${url}${stylesheet}" 2>/dev/null
+}
+
 BACKEND_REUSED=0
 if lsof -nP -iTCP:"${BACKEND_PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
   if is_vidyaverse_backend "http://127.0.0.1:${BACKEND_PORT}"; then
@@ -40,11 +49,11 @@ fi
 
 FRONTEND_REUSED=0
 if lsof -nP -iTCP:"${FRONTEND_PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
-  if /usr/bin/curl -fsS "http://127.0.0.1:${FRONTEND_PORT}/" >/dev/null 2>&1; then
+  if is_vidyaverse_frontend "http://127.0.0.1:${FRONTEND_PORT}"; then
     FRONTEND_REUSED=1
-    echo "Reusing healthy frontend already listening on ${FRONTEND_PORT}."
+    echo "Reusing healthy frontend and static assets already listening on ${FRONTEND_PORT}."
   else
-    echo "Frontend port ${FRONTEND_PORT} is already in use, but / is not reachable. Stop it first or set FRONTEND_PORT."
+    echo "Frontend port ${FRONTEND_PORT} is already in use, but its compiled assets are not healthy. Stop it first or set FRONTEND_PORT."
     exit 1
   fi
 fi
@@ -157,7 +166,7 @@ if [[ "${FRONTEND_REUSED}" -eq 0 ]]; then
   fi
 
   for _ in $(seq 1 60); do
-    if /usr/bin/curl -fsS "http://127.0.0.1:${FRONTEND_PORT}/" >/dev/null 2>&1; then
+    if is_vidyaverse_frontend "http://127.0.0.1:${FRONTEND_PORT}"; then
       break
     fi
     if [[ -n "${FRONTEND_PID}" ]] && ! kill -0 "${FRONTEND_PID}" >/dev/null 2>&1; then
