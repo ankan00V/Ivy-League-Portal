@@ -28,6 +28,7 @@ from app.core.config import settings
 from app.core.time import utc_now
 from app.services.opportunity_trust import apply_trust_assessment, apply_trust_assessment_preserving_review, assess_opportunity_trust
 from app.services.scraper_fetch_bridge import fetch_page_sync
+from app.services.skill_extractor import skill_extractor
 from app.services.source_discovery import FetchedPage
 
 logger = logging.getLogger(__name__)
@@ -1494,6 +1495,26 @@ def _extract_ppo_availability(text: str) -> str | None:
     return None
 
 
+def _merge_skill_tags(existing_tags: Any, metadata_text: str) -> list[str]:
+    if isinstance(existing_tags, str):
+        values = [existing_tags]
+    elif isinstance(existing_tags, (list, tuple, set)):
+        values = [str(value) for value in existing_tags]
+    else:
+        values = []
+
+    values.extend(skill_extractor.extract(metadata_text, max_tags=8))
+    tags: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized = _collapse_whitespace(value).lower()[:80]
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        tags.append(normalized)
+    return tags[:12]
+
+
 def _enrich_metadata(record: dict[str, Any]) -> dict[str, Any]:
     # Descriptions arrive as raw markup from most sources. The card renders the
     # value verbatim, so students were reading literal tags:
@@ -1507,6 +1528,7 @@ def _enrich_metadata(record: dict[str, Any]) -> dict[str, Any]:
     enriched = dict(record)
     enriched["description"] = description
     enriched["url"] = _canonicalize_url(record.get("url"))
+    enriched["tags"] = _merge_skill_tags(record.get("tags"), metadata_text)
     # Canonicalise the type at ingestion. It was previously normalised only on
     # the employer and admin write paths, so scraped rows accumulated both
     # "Hackathon" and "Hackathons" (and Conference/Conferences) as distinct

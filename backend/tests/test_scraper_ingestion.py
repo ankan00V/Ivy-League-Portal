@@ -3,6 +3,7 @@ import re
 import unittest
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from unittest.mock import patch
 import sys
 from pathlib import Path
 
@@ -819,3 +820,22 @@ class TestDescriptionCleaning(unittest.TestCase):
         )
         self.assertNotIn("<", enriched["description"])
         self.assertIn("About Groww:", enriched["description"])
+
+    def test_enrichment_merges_extracted_skills_with_source_tags(self) -> None:
+        record = {
+            "title": "Backend Intern",
+            "university": "Acme",
+            "url": "https://acme.example/careers/backend-intern",
+            "opportunity_type": "Internship",
+            "description": "Build services with Python and PostgreSQL.",
+            "tags": ["Engineering", "python"],
+        }
+
+        with patch("app.services.scraper.skill_extractor.extract", return_value=["python", "postgresql"]) as extract:
+            enriched = _enrich_metadata(record)
+
+        self.assertEqual(enriched["tags"], ["engineering", "python", "postgresql"])
+        extract.assert_called_once_with(
+            "Backend Intern Build services with Python and PostgreSQL. Acme",
+            max_tags=8,
+        )

@@ -2440,6 +2440,7 @@ class TrustScoringEngine:
                 "location": payload.get("location"),
                 "work_mode": payload.get("work_mode"),
                 "stipend": payload.get("stipend_text") or payload.get("stipend"),
+                "tags": payload.get("tags") or [],
                 "opportunity_type": str(payload.get("opportunity_type") or "Job").title(),
             }
             # Promoted rows previously bypassed enrichment entirely, so they
@@ -2454,6 +2455,7 @@ class TrustScoringEngine:
                 canonical_url_hash=enriched.get("canonical_url_hash"),
                 duplicate_cluster_key=enriched.get("duplicate_cluster_key"),
                 title_company_location_hash=enriched.get("title_company_location_hash"),
+                tags=enriched.get("tags") or [],
                 last_seen_at=flushed_at,
                 updated_at=flushed_at,
             )
