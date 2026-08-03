@@ -1,0 +1,8 @@
+title = "VidyaVerse Gitleaks policy"
+
+[allowlist]
+description = "Historical non-secret test fixtures verified during release-gate remediation."
+commits = [
+  "b7b47632f0c6c152744a6714a626c5d7e34f764a",
+  "b060de8df8dc90c520c058af4ccce35cf5876ad9",
+]
