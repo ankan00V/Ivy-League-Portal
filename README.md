@@ -27,6 +27,7 @@ Compared with standard portal architectures, this system adds:
 - **Self-growing source network:** discovered sources pass qualification, extraction, probation, trust scoring, and admin review before production promotion
 - **Production security posture:** Redis-backed cookie sessions, CSRF double-submit, CSP/Trusted Types, abuse locks, audit logs
 - **Operational maturity:** CI release gates, incident artifacts, scheduled scorecards, synthetic checks, and Grafana coverage for OTP delivery failures plus recommendation engagement
+- **Independent deployment probes:** backend `/health` and frontend `/api/health` liveness endpoints are container healthchecks, while backend `/health/ready` verifies production dependencies behind authentication
 - **Privileged governance:** hidden admin control plane with strict single-admin + TOTP
 
 ## 4) Architecture
