@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from app.core.config import settings
-from app.core.metrics import OPPORTUNITY_FRESHNESS_SECONDS, OPPORTUNITY_STALE
+from app.core import metrics as metrics_module
 from app.models.opportunity import Opportunity
 from app.core.time import as_utc_aware, utc_now
 
@@ -17,10 +17,10 @@ async def refresh_freshness_metrics() -> dict[str, float | bool]:
     now = utc_now()
     latest = await Opportunity.find_many().sort("-last_seen_at").limit(1).to_list()
     if not latest:
-        if OPPORTUNITY_FRESHNESS_SECONDS is not None:
-            OPPORTUNITY_FRESHNESS_SECONDS.set(0.0)
-        if OPPORTUNITY_STALE is not None:
-            OPPORTUNITY_STALE.set(0.0)
+        if metrics_module.OPPORTUNITY_FRESHNESS_SECONDS is not None:
+            metrics_module.OPPORTUNITY_FRESHNESS_SECONDS.set(0.0)
+        if metrics_module.OPPORTUNITY_STALE is not None:
+            metrics_module.OPPORTUNITY_STALE.set(0.0)
         return {"freshness_seconds": 0.0, "stale": False}
 
     item = latest[0]
@@ -34,10 +34,9 @@ async def refresh_freshness_metrics() -> dict[str, float | bool]:
     stale_threshold_seconds = max(60.0, float(max(1, settings.SCRAPER_MAX_STALENESS_MINUTES)) * 60.0)
     stale = freshness_seconds > stale_threshold_seconds
 
-    if OPPORTUNITY_FRESHNESS_SECONDS is not None:
-        OPPORTUNITY_FRESHNESS_SECONDS.set(float(freshness_seconds))
-    if OPPORTUNITY_STALE is not None:
-        OPPORTUNITY_STALE.set(1.0 if stale else 0.0)
+    if metrics_module.OPPORTUNITY_FRESHNESS_SECONDS is not None:
+        metrics_module.OPPORTUNITY_FRESHNESS_SECONDS.set(float(freshness_seconds))
+    if metrics_module.OPPORTUNITY_STALE is not None:
+        metrics_module.OPPORTUNITY_STALE.set(1.0 if stale else 0.0)
 
     return {"freshness_seconds": float(freshness_seconds), "stale": bool(stale)}
-

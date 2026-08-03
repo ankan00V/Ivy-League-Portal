@@ -7,14 +7,7 @@ from typing import Any
 from beanie.odm.operators.find.comparison import In
 
 from app.core.time import utc_now
-from app.core.metrics import (
-    ASSISTANT_QUALITY_VALUE,
-    FEATURE_FRESHNESS_SECONDS,
-    MODEL_INPUT_DRIFT_VALUE,
-    MODEL_PROMOTION_INFO,
-    PARITY_SCORECARD_VALUE,
-    RANKING_SLICE_RATE,
-)
+from app.core import metrics as metrics_module
 from app.models.assistant_audit_event import AssistantAuditEvent
 from app.models.model_drift_report import ModelDriftReport
 from app.models.opportunity import Opportunity
@@ -54,8 +47,8 @@ class DataScienceObservabilityService:
         count = await FeatureStoreRow.find_many().count()
         latest_row = latest[0] if latest else None
         freshness_seconds = _seconds_since(latest_row.updated_at) if latest_row else None
-        if FEATURE_FRESHNESS_SECONDS is not None:
-            FEATURE_FRESHNESS_SECONDS.set(float(freshness_seconds or 0.0))
+        if metrics_module.FEATURE_FRESHNESS_SECONDS is not None:
+            metrics_module.FEATURE_FRESHNESS_SECONDS.set(float(freshness_seconds or 0.0))
         return {
             "rows": int(count),
             "latest_feature_at": latest_row.updated_at if latest_row else None,
@@ -74,11 +67,11 @@ class DataScienceObservabilityService:
             }
             for row in rows
         ]
-        if payload and MODEL_INPUT_DRIFT_VALUE is not None:
+        if payload and metrics_module.MODEL_INPUT_DRIFT_VALUE is not None:
             latest_metrics = dict(payload[0].get("metrics") or {})
             for metric in ("query_bucket_psi", "max_feature_mean_z", "impressions"):
-                MODEL_INPUT_DRIFT_VALUE.labels(metric=metric).set(float(latest_metrics.get(metric) or 0.0))
-            MODEL_INPUT_DRIFT_VALUE.labels(metric="alert").set(1.0 if payload[0].get("alert") else 0.0)
+                metrics_module.MODEL_INPUT_DRIFT_VALUE.labels(metric=metric).set(float(latest_metrics.get(metric) or 0.0))
+            metrics_module.MODEL_INPUT_DRIFT_VALUE.labels(metric="alert").set(1.0 if payload[0].get("alert") else 0.0)
         return payload
 
     async def parity_scorecard(self, *, lookback_days: int = 30) -> dict[str, Any]:
@@ -114,13 +107,13 @@ class DataScienceObservabilityService:
             },
             "online": online,
         }
-        if PARITY_SCORECARD_VALUE is not None:
+        if metrics_module.PARITY_SCORECARD_VALUE is not None:
             offline = dict(payload["offline"])
             for metric, value in offline.items():
-                PARITY_SCORECARD_VALUE.labels(mode="offline", metric=str(metric)).set(float(value or 0.0))
+                metrics_module.PARITY_SCORECARD_VALUE.labels(mode="offline", metric=str(metric)).set(float(value or 0.0))
             for mode, values in online.items():
                 for metric, value in dict(values).items():
-                    PARITY_SCORECARD_VALUE.labels(mode=str(mode), metric=str(metric)).set(float(value or 0.0))
+                    metrics_module.PARITY_SCORECARD_VALUE.labels(mode=str(mode), metric=str(metric)).set(float(value or 0.0))
         return payload
 
     async def ranking_slice_metrics(self, *, lookback_days: int = 30, limit: int = 5) -> dict[str, Any]:
@@ -183,12 +176,12 @@ class DataScienceObservabilityService:
             "geography": summarize(geography_stats),
             "segment": summarize(segment_stats),
         }
-        if RANKING_SLICE_RATE is not None:
+        if metrics_module.RANKING_SLICE_RATE is not None:
             for slice_type, rows in payload.items():
                 for row in rows:
                     slice_name = str(row.get("slice") or "unknown")[:120]
                     for metric in ("ctr", "apply_rate", "impressions"):
-                        RANKING_SLICE_RATE.labels(
+                        metrics_module.RANKING_SLICE_RATE.labels(
                             slice_type=str(slice_type),
                             slice_name=slice_name,
                             metric=metric,
@@ -237,18 +230,18 @@ class DataScienceObservabilityService:
             "hallucination_rate": round(_safe_ratio(hallucination_flags, len(audits)), 6),
             "citation_correctness": None if citation_correctness is None else round(citation_correctness, 6),
         }
-        if ASSISTANT_QUALITY_VALUE is not None:
+        if metrics_module.ASSISTANT_QUALITY_VALUE is not None:
             prompt_label = ",".join(sorted(prompt_counts.keys()))[:120] or "unknown"
-            ASSISTANT_QUALITY_VALUE.labels(metric="failure_rate", prompt_version=prompt_label, route="all").set(payload["failure_rate"])
-            ASSISTANT_QUALITY_VALUE.labels(metric="latency_mean_ms", prompt_version=prompt_label, route="all").set(payload["latency_mean_ms"])
-            ASSISTANT_QUALITY_VALUE.labels(metric="hallucination_rate", prompt_version=prompt_label, route="all").set(payload["hallucination_rate"])
-            ASSISTANT_QUALITY_VALUE.labels(
+            metrics_module.ASSISTANT_QUALITY_VALUE.labels(metric="failure_rate", prompt_version=prompt_label, route="all").set(payload["failure_rate"])
+            metrics_module.ASSISTANT_QUALITY_VALUE.labels(metric="latency_mean_ms", prompt_version=prompt_label, route="all").set(payload["latency_mean_ms"])
+            metrics_module.ASSISTANT_QUALITY_VALUE.labels(metric="hallucination_rate", prompt_version=prompt_label, route="all").set(payload["hallucination_rate"])
+            metrics_module.ASSISTANT_QUALITY_VALUE.labels(
                 metric="citation_correctness",
                 prompt_version=prompt_label,
                 route="all",
             ).set(float(payload["citation_correctness"] or 0.0))
             for route, count in route_counts.items():
-                ASSISTANT_QUALITY_VALUE.labels(metric="route_count", prompt_version=prompt_label, route=route).set(float(count))
+                metrics_module.ASSISTANT_QUALITY_VALUE.labels(metric="route_count", prompt_version=prompt_label, route=route).set(float(count))
         return payload
 
     async def model_promotion_history(self, *, limit: int = 10) -> list[dict[str, Any]]:
@@ -270,8 +263,8 @@ class DataScienceObservabilityService:
                 "serving_ready": bool(row.serving_ready),
             }
             payload.append(item)
-            if MODEL_PROMOTION_INFO is not None:
-                MODEL_PROMOTION_INFO.labels(
+            if metrics_module.MODEL_PROMOTION_INFO is not None:
+                metrics_module.MODEL_PROMOTION_INFO.labels(
                     model_id=item["id"][:32],
                     model_name=str(row.name or "unknown")[:80],
                     status=status,

@@ -4,7 +4,7 @@ import json
 from typing import Iterable
 
 from app.core.config import settings
-from app.core.metrics import ONLINE_FEATURE_PUBLISH_TOTAL
+from app.core import metrics as metrics_module
 from app.core.redis import get_redis
 from app.core.time import utc_now
 from app.models.feature_store_row import FeatureStoreRow
@@ -46,8 +46,8 @@ class OnlineFeatureService:
             return 0
         redis = get_redis()
         if redis is None:
-            if ONLINE_FEATURE_PUBLISH_TOTAL is not None:
-                ONLINE_FEATURE_PUBLISH_TOTAL.labels(target="redis", status="skipped").inc()
+            if metrics_module.ONLINE_FEATURE_PUBLISH_TOTAL is not None:
+                metrics_module.ONLINE_FEATURE_PUBLISH_TOTAL.labels(target="redis", status="skipped").inc()
             return 0
 
         safe_ttl = max(60, int(settings.ONLINE_FEATURES_TTL_SECONDS))
@@ -68,8 +68,8 @@ class OnlineFeatureService:
             if published > 0:
                 await pipe.execute()
 
-        if ONLINE_FEATURE_PUBLISH_TOTAL is not None:
-            ONLINE_FEATURE_PUBLISH_TOTAL.labels(target="redis", status="ok").inc(published)
+        if metrics_module.ONLINE_FEATURE_PUBLISH_TOTAL is not None:
+            metrics_module.ONLINE_FEATURE_PUBLISH_TOTAL.labels(target="redis", status="ok").inc(published)
         return published
 
 

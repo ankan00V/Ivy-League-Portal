@@ -6,7 +6,7 @@ from datetime import date, datetime, timezone
 from typing import Any
 
 from app.core.config import analytics_bi_tool_url, settings
-from app.core.metrics import WAREHOUSE_EXPORTS_TOTAL
+from app.core import metrics as metrics_module
 from app.core.time import utc_now
 from app.models.analytics_cohort_aggregate import AnalyticsCohortAggregate
 from app.models.analytics_daily_aggregate import AnalyticsDailyAggregate
@@ -189,8 +189,8 @@ class WarehouseExportService:
                     table_names=[name for name in exported_tables if name.startswith("mart_")],
                 )
 
-            if WAREHOUSE_EXPORTS_TOTAL is not None:
-                WAREHOUSE_EXPORTS_TOTAL.labels(format=export_format, status="ok").inc()
+            if metrics_module.WAREHOUSE_EXPORTS_TOTAL is not None:
+                metrics_module.WAREHOUSE_EXPORTS_TOTAL.labels(format=export_format, status="ok").inc()
 
             run = WarehouseExportRun(
                 traffic_type=traffic_type,
@@ -222,8 +222,8 @@ class WarehouseExportService:
                 "clickhouse_tables": clickhouse_tables,
             }
         except Exception as exc:
-            if WAREHOUSE_EXPORTS_TOTAL is not None:
-                WAREHOUSE_EXPORTS_TOTAL.labels(format=export_format, status="error").inc()
+            if metrics_module.WAREHOUSE_EXPORTS_TOTAL is not None:
+                metrics_module.WAREHOUSE_EXPORTS_TOTAL.labels(format=export_format, status="error").inc()
             run = WarehouseExportRun(
                 traffic_type=traffic_type,
                 export_format=export_format,

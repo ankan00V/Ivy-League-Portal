@@ -12,7 +12,7 @@ from typing import Iterable
 import numpy as np
 from app.core.cache import cache_get_bytes, cache_key, cache_set_bytes
 from app.core.config import settings
-from app.core.metrics import CACHE_HITS_TOTAL, CACHE_MISSES_TOTAL, EMBEDDING_PROVIDER_HEALTH
+from app.core import metrics as metrics_module
 from app.services.openai_client import create_async_openai_client
 
 TOKEN_PATTERN = re.compile(r"[A-Za-z0-9+#]+")
@@ -60,8 +60,8 @@ class EmbeddingService:
 
     def _report_health(self, *, provider: str, mode: str, healthy: bool) -> None:
         self._active_mode = mode
-        if EMBEDDING_PROVIDER_HEALTH is not None:
-            EMBEDDING_PROVIDER_HEALTH.labels(provider=provider, mode=mode).set(1.0 if healthy else 0.0)
+        if metrics_module.EMBEDDING_PROVIDER_HEALTH is not None:
+            metrics_module.EMBEDDING_PROVIDER_HEALTH.labels(provider=provider, mode=mode).set(1.0 if healthy else 0.0)
 
     def is_degraded(self) -> bool:
         return self._active_mode in {"hash_fallback", "unavailable"}
@@ -239,14 +239,14 @@ class EmbeddingService:
                 (dim,) = struct.unpack("<I", cached[:4])
                 vector = np.frombuffer(cached[4:], dtype=np.float32, count=int(dim))
                 if vector.size == int(dim):
-                    if CACHE_HITS_TOTAL is not None:
-                        CACHE_HITS_TOTAL.labels(cache="embedding").inc()
+                    if metrics_module.CACHE_HITS_TOTAL is not None:
+                        metrics_module.CACHE_HITS_TOTAL.labels(cache="embedding").inc()
                     return vector
             except Exception:
                 pass
 
-        if CACHE_MISSES_TOTAL is not None:
-            CACHE_MISSES_TOTAL.labels(cache="embedding").inc()
+        if metrics_module.CACHE_MISSES_TOTAL is not None:
+            metrics_module.CACHE_MISSES_TOTAL.labels(cache="embedding").inc()
 
         vector = await self.embed_text(cleaned)
         try:

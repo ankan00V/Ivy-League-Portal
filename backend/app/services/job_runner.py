@@ -10,18 +10,7 @@ from pymongo import ReturnDocument
 from beanie.odm.operators.find.comparison import In
 
 from app.core.config import settings
-from app.core.metrics import (
-    JOBS_DEAD_TOTAL,
-    JOBS_ENQUEUED_TOTAL,
-    JOBS_FAILED_TOTAL,
-    JOBS_SUCCEEDED_TOTAL,
-    SCRAPER_RUNS_TOTAL,
-    SCRAPER_SOURCE_TOTAL,
-    DISCOVERY_PROBATION_SOURCES,
-    DISCOVERY_SOURCES_DISCOVERED_TOTAL,
-    DISCOVERY_SOURCES_IN_PIPELINE,
-    DISCOVERY_SOURCES_PROMOTED_TOTAL,
-)
+from app.core import metrics as metrics_module
 from app.models.background_job import BackgroundJob
 from app.core.time import utc_now
 
@@ -91,8 +80,8 @@ class JobRunner:
             updated_at=now,
         )
         await job.insert()
-        if JOBS_ENQUEUED_TOTAL is not None:
-            JOBS_ENQUEUED_TOTAL.labels(job_type=job_type).inc()
+        if metrics_module.JOBS_ENQUEUED_TOTAL is not None:
+            metrics_module.JOBS_ENQUEUED_TOTAL.labels(job_type=job_type).inc()
         return job
 
     async def _claim_next(self) -> Optional[BackgroundJob]:
@@ -166,8 +155,8 @@ class JobRunner:
                 }
             }
         )
-        if JOBS_SUCCEEDED_TOTAL is not None:
-            JOBS_SUCCEEDED_TOTAL.labels(job_type=job.job_type).inc()
+        if metrics_module.JOBS_SUCCEEDED_TOTAL is not None:
+            metrics_module.JOBS_SUCCEEDED_TOTAL.labels(job_type=job.job_type).inc()
 
     async def _mark_failure(self, job: BackgroundJob, error: str) -> None:
         now = utc_now()
@@ -189,8 +178,8 @@ class JobRunner:
                     }
                 }
             )
-            if JOBS_DEAD_TOTAL is not None:
-                JOBS_DEAD_TOTAL.labels(job_type=job.job_type).inc()
+            if metrics_module.JOBS_DEAD_TOTAL is not None:
+                metrics_module.JOBS_DEAD_TOTAL.labels(job_type=job.job_type).inc()
             return
 
         delay = self._backoff(attempts=attempts - 1)
@@ -208,8 +197,8 @@ class JobRunner:
                 }
             }
         )
-        if JOBS_FAILED_TOTAL is not None:
-            JOBS_FAILED_TOTAL.labels(job_type=job.job_type).inc()
+        if metrics_module.JOBS_FAILED_TOTAL is not None:
+            metrics_module.JOBS_FAILED_TOTAL.labels(job_type=job.job_type).inc()
 
     async def _run_job(self, job: BackgroundJob) -> None:
         handler = self._handlers.get(job.job_type)
@@ -307,13 +296,13 @@ async def _job_scraper(_: dict[str, Any]) -> dict[str, Any]:
     report = await run_scheduled_scrapers(force=True)
     status = str(report.get("status") or "unknown")
 
-    if SCRAPER_RUNS_TOTAL is not None:
-        SCRAPER_RUNS_TOTAL.labels(status=status).inc()
-    if SCRAPER_SOURCE_TOTAL is not None:
+    if metrics_module.SCRAPER_RUNS_TOTAL is not None:
+        metrics_module.SCRAPER_RUNS_TOTAL.labels(status=status).inc()
+    if metrics_module.SCRAPER_SOURCE_TOTAL is not None:
         for source in report.get("sources", []) or []:
             name = str(source.get("source") or "unknown")
             source_status = "error" if (source.get("errors") or []) else "ok"
-            SCRAPER_SOURCE_TOTAL.labels(source=name, status=source_status).inc()
+            metrics_module.SCRAPER_SOURCE_TOTAL.labels(source=name, status=source_status).inc()
 
     await refresh_freshness_metrics()
 
@@ -602,14 +591,14 @@ async def _job_opportunity_trust_backfill(payload: dict[str, Any]) -> dict[str, 
 async def _refresh_discovery_metrics() -> None:
     from app.models.source_discovery import DiscoveredSource, SourceStatus
 
-    if DISCOVERY_SOURCES_IN_PIPELINE is not None or DISCOVERY_PROBATION_SOURCES is not None:
+    if metrics_module.DISCOVERY_SOURCES_IN_PIPELINE is not None or metrics_module.DISCOVERY_PROBATION_SOURCES is not None:
         rows = await DiscoveredSource.find_many().to_list()
         for status in SourceStatus:
             count = sum(1 for row in rows if row.status == status)
-            if DISCOVERY_SOURCES_IN_PIPELINE is not None:
-                DISCOVERY_SOURCES_IN_PIPELINE.labels(status=status.value).set(count)
-            if status == SourceStatus.probation and DISCOVERY_PROBATION_SOURCES is not None:
-                DISCOVERY_PROBATION_SOURCES.set(count)
+            if metrics_module.DISCOVERY_SOURCES_IN_PIPELINE is not None:
+                metrics_module.DISCOVERY_SOURCES_IN_PIPELINE.labels(status=status.value).set(count)
+            if status == SourceStatus.probation and metrics_module.DISCOVERY_PROBATION_SOURCES is not None:
+                metrics_module.DISCOVERY_PROBATION_SOURCES.set(count)
 
 
 async def _job_source_discovery_run(payload: dict[str, Any]) -> dict[str, Any]:
@@ -618,8 +607,8 @@ async def _job_source_discovery_run(payload: dict[str, Any]) -> dict[str, Any]:
     summary = await source_discovery_engine.run_discovery(
         triggered_by=str(payload.get("triggered_by") or "scheduler")
     )
-    if DISCOVERY_SOURCES_DISCOVERED_TOTAL is not None and summary.urls_discovered:
-        DISCOVERY_SOURCES_DISCOVERED_TOTAL.inc(summary.urls_discovered)
+    if metrics_module.DISCOVERY_SOURCES_DISCOVERED_TOTAL is not None and summary.urls_discovered:
+        metrics_module.DISCOVERY_SOURCES_DISCOVERED_TOTAL.inc(summary.urls_discovered)
     await _refresh_discovery_metrics()
     return summary.model_dump(mode="json")
 
@@ -648,8 +637,8 @@ async def _job_probation_scrape_run(payload: dict[str, Any]) -> dict[str, Any]:
     result = await probation_manager.run_all_probation_sources(limit=int(payload.get("limit") or 100))
     after = await DiscoveredSource.find_many(DiscoveredSource.status == SourceStatus.promoted).count()
     promoted = max(0, after - before)
-    if DISCOVERY_SOURCES_PROMOTED_TOTAL is not None and promoted:
-        DISCOVERY_SOURCES_PROMOTED_TOTAL.inc(promoted)
+    if metrics_module.DISCOVERY_SOURCES_PROMOTED_TOTAL is not None and promoted:
+        metrics_module.DISCOVERY_SOURCES_PROMOTED_TOTAL.inc(promoted)
     await _refresh_discovery_metrics()
     return {**result, "promoted": promoted}
 
@@ -666,8 +655,8 @@ async def _job_company_seed_careers_finder(payload: dict[str, Any]) -> dict[str,
     from app.services.source_discovery import source_discovery_engine
 
     result = await source_discovery_engine.enqueue_known_seed_sources(limit=int(payload.get("limit") or 50))
-    if DISCOVERY_SOURCES_DISCOVERED_TOTAL is not None and result.get("queued"):
-        DISCOVERY_SOURCES_DISCOVERED_TOTAL.inc(int(result["queued"]))
+    if metrics_module.DISCOVERY_SOURCES_DISCOVERED_TOTAL is not None and result.get("queued"):
+        metrics_module.DISCOVERY_SOURCES_DISCOVERED_TOTAL.inc(int(result["queued"]))
     await _refresh_discovery_metrics()
     return result
 

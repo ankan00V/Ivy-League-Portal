@@ -1,6 +1,8 @@
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock, patch
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
@@ -60,6 +62,38 @@ class TestSignalStrengthCalculator(unittest.TestCase):
 
         self.assertIsInstance(object_id_or_none(valid), PydanticObjectId)
         self.assertIsNone(object_id_or_none("not-an-object-id"))
+
+
+class TestInteractionMetrics(unittest.IsolatedAsyncioTestCase):
+    async def test_log_event_uses_metrics_initialized_after_service_import(self) -> None:
+        service = InteractionService()
+        counter = Mock()
+        counter.labels.return_value = Mock()
+        event = SimpleNamespace(insert=AsyncMock())
+
+        with (
+            patch("app.services.interaction_service.metrics_module.INTERACTION_EVENTS_TOTAL", counter),
+            patch("app.services.interaction_service.OpportunityInteraction", return_value=event),
+            patch.object(service, "_update_journey", new=AsyncMock()),
+            patch("app.services.interaction_service.cache_manager.invalidate_after_user_interaction", new=AsyncMock()),
+        ):
+            await service.log_event(
+                user_id=PydanticObjectId("64f0c85f9f1b2c3d4e5f6789"),
+                opportunity_id=PydanticObjectId("64f0c85f9f1b2c3d4e5f6790"),
+                interaction_type="dismiss",
+                ranking_mode="semantic",
+                experiment_key="ranking_mode",
+                experiment_variant="semantic",
+            )
+
+        counter.labels.assert_called_once_with(
+            interaction_type="dismiss",
+            ranking_mode="semantic",
+            experiment_key="ranking_mode",
+            experiment_variant="semantic",
+            traffic_type="real",
+        )
+        counter.labels.return_value.inc.assert_called_once_with()
 
 
 if __name__ == "__main__":
