@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
-import { Space_Grotesk, Instrument_Serif } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 import { ThemeProvider } from "@/context/ThemeContext";
 import VidyaChat from "@/components/VidyaChat";
@@ -8,17 +8,20 @@ import SessionManager from "@/components/SessionManager";
 import ThemeToggleButton from "@/components/ThemeToggleButton";
 import NonceStyleRuntime from "@/components/NonceStyleRuntime";
 
-const spaceGrotesk = Space_Grotesk({
-  subsets: ["latin"],
-  variable: '--font-sans',
-  weight: ["300", "400", "500", "600", "700"],
+const spaceGrotesk = localFont({
+  src: "../fonts/space-grotesk-latin.woff2",
+  variable: "--font-sans",
+  display: "swap",
+  weight: "300 700",
 });
 
-const instrumentSerif = Instrument_Serif({
-  subsets: ["latin"],
-  variable: '--font-serif',
-  weight: "400",
-  style: ["normal", "italic"],
+const instrumentSerif = localFont({
+  src: [
+    { path: "../fonts/instrument-serif-latin.woff2", weight: "400", style: "normal" },
+    { path: "../fonts/instrument-serif-latin-italic.woff2", weight: "400", style: "italic" },
+  ],
+  variable: "--font-serif",
+  display: "swap",
 });
 
 export const metadata: Metadata = {

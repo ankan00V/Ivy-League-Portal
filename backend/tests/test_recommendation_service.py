@@ -15,6 +15,22 @@ from app.core.time import utc_now
 
 
 class TestRecommendationService(unittest.IsolatedAsyncioTestCase):
+    def test_eligibility_warnings_are_profile_specific_and_advisory(self) -> None:
+        service = RecommendationService()
+        opportunity = SimpleNamespace(batch_years=[2026, 2027], eligibility="Students graduating in 2026 or 2027")
+
+        mismatch = service.eligibility_warnings(
+            profile=SimpleNamespace(graduation_year=2025, passout_year=None),
+            opportunity=opportunity,
+        )
+        match = service.eligibility_warnings(
+            profile=SimpleNamespace(graduation_year=2026, passout_year=None),
+            opportunity=opportunity,
+        )
+
+        self.assertIn("Confirm eligibility", mismatch[0])
+        self.assertIn("matches the listed eligible batches", match[0])
+
     async def test_semantic_ranking_prefers_top_vector_match(self) -> None:
         service = RecommendationService()
         user_id = "user-1"

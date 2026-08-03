@@ -10,11 +10,10 @@ import struct
 from typing import Iterable
 
 import numpy as np
-from openai import AsyncOpenAI
-
 from app.core.cache import cache_get_bytes, cache_key, cache_set_bytes
 from app.core.config import settings
-from app.core.metrics import CACHE_HITS_TOTAL, CACHE_MISSES_TOTAL, EMBEDDING_PROVIDER_HEALTH
+from app.core import metrics as metrics_module
+from app.services.openai_client import create_async_openai_client
 
 TOKEN_PATTERN = re.compile(r"[A-Za-z0-9+#]+")
 logger = logging.getLogger(__name__)
@@ -33,11 +32,7 @@ class EmbeddingService:
         self.openai_base_url = (settings.OPENAI_API_BASE_URL or "").strip() or None
         self._local_model = None
         self._label_dim = 384
-        self._openai_client = (
-            AsyncOpenAI(api_key=settings.OPENAI_API_KEY, base_url=self.openai_base_url)
-            if settings.OPENAI_API_KEY
-            else None
-        )
+        self._openai_client = None
         self._local_model_disabled = False
         self._local_model_failure_logged = False
         self._active_mode = "boot"
@@ -53,10 +48,20 @@ class EmbeddingService:
         norms = np.clip(norms, 1e-12, None)
         return vectors / norms
 
+    def _get_openai_client(self):
+        if not settings.OPENAI_API_KEY:
+            return None
+        if self._openai_client is None:
+            self._openai_client = create_async_openai_client(
+                api_key=settings.OPENAI_API_KEY,
+                base_url=self.openai_base_url,
+            )
+        return self._openai_client
+
     def _report_health(self, *, provider: str, mode: str, healthy: bool) -> None:
         self._active_mode = mode
-        if EMBEDDING_PROVIDER_HEALTH is not None:
-            EMBEDDING_PROVIDER_HEALTH.labels(provider=provider, mode=mode).set(1.0 if healthy else 0.0)
+        if metrics_module.EMBEDDING_PROVIDER_HEALTH is not None:
+            metrics_module.EMBEDDING_PROVIDER_HEALTH.labels(provider=provider, mode=mode).set(1.0 if healthy else 0.0)
 
     def is_degraded(self) -> bool:
         return self._active_mode in {"hash_fallback", "unavailable"}
@@ -163,10 +168,11 @@ class EmbeddingService:
             return np.empty((0, self._label_dim), dtype=np.float32)
 
         async def _embed_openai(values_: list[str]) -> np.ndarray | None:
-            if not self._openai_client:
+            client = self._get_openai_client()
+            if not client:
                 return None
             try:
-                response = await self._openai_client.embeddings.create(
+                response = await client.embeddings.create(
                     model=self.openai_model,
                     input=values_,
                 )
@@ -233,14 +239,14 @@ class EmbeddingService:
                 (dim,) = struct.unpack("<I", cached[:4])
                 vector = np.frombuffer(cached[4:], dtype=np.float32, count=int(dim))
                 if vector.size == int(dim):
-                    if CACHE_HITS_TOTAL is not None:
-                        CACHE_HITS_TOTAL.labels(cache="embedding").inc()
+                    if metrics_module.CACHE_HITS_TOTAL is not None:
+                        metrics_module.CACHE_HITS_TOTAL.labels(cache="embedding").inc()
                     return vector
             except Exception:
                 pass
 
-        if CACHE_MISSES_TOTAL is not None:
-            CACHE_MISSES_TOTAL.labels(cache="embedding").inc()
+        if metrics_module.CACHE_MISSES_TOTAL is not None:
+            metrics_module.CACHE_MISSES_TOTAL.labels(cache="embedding").inc()
 
         vector = await self.embed_text(cleaned)
         try:

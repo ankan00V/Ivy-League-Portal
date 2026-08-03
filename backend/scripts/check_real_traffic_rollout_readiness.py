@@ -34,11 +34,14 @@ def _round(value: Any, digits: int = 6) -> float:
         return 0.0
 
 
-async def _mode_readiness(*, candidate_mode: str, baseline_mode: str, days: int) -> dict[str, Any]:
+async def _mode_readiness(
+    *, candidate_mode: str, baseline_mode: str, days: int, traffic_type: str = "real"
+) -> dict[str, Any]:
     report = await rollout_guardrail_service.compare(
         candidate_mode=candidate_mode,
         baseline_mode=baseline_mode,
         days=days,
+        traffic_type=traffic_type,
     )
     candidate = dict(report.get("candidate") or {})
     baseline = dict(report.get("baseline") or {})
@@ -114,9 +117,27 @@ async def _mode_readiness(*, candidate_mode: str, baseline_mode: str, days: int)
 
 
 def _render_markdown(payload: dict[str, Any]) -> str:
+    traffic_type = str(payload.get("traffic_type") or "real").strip().lower()
+    if traffic_type == "real":
+        title = "Real Traffic Rollout Readiness"
+        provenance = (
+            "Measured against **real** student traffic. These numbers describe the "
+            "product."
+        )
+    else:
+        title = f"Rollout Readiness ({traffic_type} fixture)"
+        provenance = (
+            f"**NOT A PRODUCT MEASUREMENT.** Computed over **{traffic_type}** traffic "
+            "seeded by `backend/scripts/seed_release_ml_gate_fixture.py`. This run "
+            "verifies that the gate machinery computes correctly. It says nothing "
+            "about how real students behave."
+        )
     lines = [
-        "# Real Traffic Rollout Readiness",
+        f"# {title}",
         "",
+        provenance,
+        "",
+        f"- Traffic population: **{traffic_type}**",
         f"- Generated At: **{payload.get('generated_at')}**",
         f"- Window (days): **{payload.get('window_days')}**",
         f"- Overall Ready: **{payload.get('overall_ready')}**",
@@ -158,6 +179,16 @@ async def _main() -> int:
         default="docs/portfolio/real_traffic_rollout_readiness.md",
     )
     parser.add_argument("--fail-on-not-ready", action="store_true")
+    parser.add_argument(
+        "--traffic-type",
+        choices=("real", "simulated"),
+        default="real",
+        help=(
+            "Which traffic population to measure. 'real' is the only value that "
+            "describes the product. Use 'simulated' to verify the gate machinery "
+            "against a seeded CI fixture."
+        ),
+    )
     args = parser.parse_args()
 
     client = AsyncIOMotorClient(settings.MONGODB_URL)
@@ -167,12 +198,24 @@ async def _main() -> int:
     )
     try:
         days = max(1, min(int(args.days), 90))
+        traffic_type = str(args.traffic_type).strip().lower()
         modes = [
-            await _mode_readiness(candidate_mode="semantic", baseline_mode="baseline", days=days),
-            await _mode_readiness(candidate_mode="ml", baseline_mode="baseline", days=days),
+            await _mode_readiness(
+                candidate_mode="semantic",
+                baseline_mode="baseline",
+                days=days,
+                traffic_type=traffic_type,
+            ),
+            await _mode_readiness(
+                candidate_mode="ml",
+                baseline_mode="baseline",
+                days=days,
+                traffic_type=traffic_type,
+            ),
         ]
         payload = {
             "generated_at": utc_now().isoformat(),
+            "traffic_type": traffic_type,
             "window_days": days,
             "overall_ready": all(bool(item.get("ready")) for item in modes),
             "modes": modes,
@@ -195,7 +238,16 @@ async def _main() -> int:
         json_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
         md_path.write_text(_render_markdown(payload), encoding="utf-8")
 
-        print(json.dumps({"status": "ok", "overall_ready": payload["overall_ready"]}, indent=2))
+        print(
+            json.dumps(
+                {
+                    "status": "ok",
+                    "traffic_type": traffic_type,
+                    "overall_ready": payload["overall_ready"],
+                },
+                indent=2,
+            )
+        )
         if args.fail_on_not_ready and not payload["overall_ready"]:
             return 2
         return 0

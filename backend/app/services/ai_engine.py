@@ -2,8 +2,6 @@ import re
 from datetime import datetime
 from app.core.time import utc_now
 
-import spacy
-
 class AIEngine:
     def __init__(self):
         self.nlp = None
@@ -51,12 +49,12 @@ class AIEngine:
     def _ensure_nlp(self):
         """Lazy load spaCy model to prevent startup hangs."""
         if self.nlp is None:
+            import spacy
+
             try:
                 self.nlp = spacy.load("en_core_web_sm")
             except Exception:
-                import os
-                os.system("python -m spacy download en_core_web_sm")
-                self.nlp = spacy.load("en_core_web_sm")
+                self.nlp = spacy.blank("en")
         return self.nlp
 
     def _ensure_classifier(self):

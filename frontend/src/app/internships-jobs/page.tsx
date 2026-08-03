@@ -4,7 +4,7 @@ import AskAIPanel from "@/components/AskAIPanel";
 import { OpportunityCardsSkeleton } from "@/components/LoadingSkeletons";
 import React, { startTransition, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { MapPin, Calendar, Send, Bookmark } from "lucide-react";
+import { MapPin, Calendar, Send, Bookmark, EyeOff } from "lucide-react";
 import Image from "next/image";
 import { apiUrl } from "@/lib/api";
 import { createAuthenticatedFetchInit, getAccessToken } from "@/lib/auth-session";
@@ -40,6 +40,8 @@ interface Opportunity {
     experiment_variant?: string;
     rank_position?: number;
     match_score?: number;
+    match_reasons?: string[];
+    eligibility_warnings?: string[];
     model_version_id?: string;
 }
 
@@ -100,6 +102,7 @@ export default function InternshipsJobsPage() {
     const [notice, setNotice] = useState<string | null>(null);
     const [applyingId, setApplyingId] = useState<string | null>(null);
     const [savedOpportunityIds, setSavedOpportunityIds] = useState<Record<string, boolean>>({});
+    const [hiddenOpportunityIds, setHiddenOpportunityIds] = useState<Record<string, boolean>>({});
     const [imageFallbackMap, setImageFallbackMap] = useState<Record<string, boolean>>({});
     const opportunitiesSignatureRef = useRef<string>("");
     const scraperTriggerAttemptedRef = useRef(false);
@@ -219,7 +222,7 @@ export default function InternshipsJobsPage() {
     });
 
     const logOpportunityEvent = useCallback(
-        async (opportunity: Opportunity, interactionType: "impression" | "click" | "save" | "apply") => {
+        async (opportunity: Opportunity, interactionType: "impression" | "click" | "save" | "apply" | "dismiss") => {
             await logTrackedOpportunityEvent(opportunity, interactionType, {
                 surface: "internships_jobs_page",
                 activeTab,
@@ -262,15 +265,16 @@ export default function InternshipsJobsPage() {
     }, []);
 
     const filtered = useMemo(() => {
-        const source = activeTab === "All"
+        const source = (activeTab === "All"
             ? opportunities
-            : opportunities.filter((o) => o.domain === activeTab);
+            : opportunities.filter((o) => o.domain === activeTab)
+        ).filter((opportunity) => !hiddenOpportunityIds[opportunity.id]);
         const getSortTimestamp = (opportunity: Opportunity) =>
             new Date(opportunity.last_seen_at || opportunity.updated_at || opportunity.created_at || 0).getTime();
         return [...source].sort(
             (a, b) => getSortTimestamp(b) - getSortTimestamp(a)
         );
-    }, [activeTab, opportunities]);
+    }, [activeTab, hiddenOpportunityIds, opportunities]);
 
     const grouped = useMemo(() => {
         const matchesKeyword = (value: string, keywords: string[]) =>
@@ -321,6 +325,11 @@ export default function InternshipsJobsPage() {
     const handleSave = async (opportunity: Opportunity) => {
         setSavedOpportunityIds((current) => ({ ...current, [opportunity.id]: true }));
         await logOpportunityEvent(opportunity, "save");
+    };
+
+    const handleHide = (opportunity: Opportunity) => {
+        setHiddenOpportunityIds((current) => ({ ...current, [opportunity.id]: true }));
+        void logOpportunityEvent(opportunity, "dismiss");
     };
 
     const handleApply = async (opportunity: Opportunity) => {
@@ -471,6 +480,32 @@ export default function InternshipsJobsPage() {
             opp.batch_years && opp.batch_years.length > 0 ? `Batch: ${opp.batch_years.join(", ")}` : null,
             opp.ppo_available ? `PPO: ${opp.ppo_available}` : null,
         ].filter(Boolean) as string[];
+
+    const renderMatchDetails = (opp: Opportunity) => {
+        const matchReasons = (opp.match_reasons || [])
+            .filter((reason) => !/(learned ranker|top model features|staged rollout|fallback)/i.test(reason))
+            .slice(0, 2);
+        const eligibilityWarnings = (opp.eligibility_warnings || []).slice(0, 1);
+        if (matchReasons.length === 0 && eligibilityWarnings.length === 0) {
+            return null;
+        }
+
+        return (
+            <div style={{ display: "grid", gap: "0.4rem", padding: "0.7rem", borderRadius: "var(--radius-sm)", background: "var(--bg-surface-hover)", border: "1px solid var(--border-subtle)" }}>
+                {matchReasons.length > 0 ? (
+                    <div>
+                        <strong style={{ fontSize: "0.82rem" }}>Why this matches you</strong>
+                        <ul style={{ margin: "0.28rem 0 0", paddingLeft: "1.05rem", color: "var(--text-secondary)", fontSize: "0.84rem" }}>
+                            {matchReasons.map((reason) => <li key={reason}>{reason}</li>)}
+                        </ul>
+                    </div>
+                ) : null}
+                {eligibilityWarnings.map((warning) => (
+                    <span key={warning} style={{ color: "var(--text-secondary)", fontSize: "0.82rem", fontWeight: 700 }}>{warning}</span>
+                ))}
+            </div>
+        );
+    };
 
     const renderCompetitiveCard = (opp: Opportunity, idx: number) => {
         const imageUrl = imageFallbackMap[opp.id] ? FALLBACK_IMAGE : getCompetitionImage(opp);
@@ -646,6 +681,7 @@ export default function InternshipsJobsPage() {
                                 ))}
                             </div>
                         ) : null}
+                        {renderMatchDetails(opp)}
                     </div>
 
                     <div
@@ -692,6 +728,15 @@ export default function InternshipsJobsPage() {
                             >
                                 <Bookmark size={14} />
                                 {savedOpportunityIds[opp.id] ? "Saved" : "Save"}
+                            </button>
+                            <button
+                                className="btn-secondary"
+                                type="button"
+                                style={{ padding: "0.7rem 0.95rem", fontSize: "0.9rem", display: "flex", alignItems: "center", gap: "0.3rem", border: "2px solid var(--border-subtle)" }}
+                                onClick={() => handleHide(opp)}
+                                aria-label={`Hide ${opp.title}`}
+                            >
+                                <EyeOff size={14} /> Hide
                             </button>
                         </div>
                     </div>
@@ -879,6 +924,7 @@ export default function InternshipsJobsPage() {
                             ))}
                         </div>
                     ) : null}
+                    {renderMatchDetails(opp)}
 
                     <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap", marginTop: "auto" }}>
                         <button
@@ -898,6 +944,15 @@ export default function InternshipsJobsPage() {
                         >
                             <Bookmark size={14} />
                             {savedOpportunityIds[opp.id] ? "Saved" : "Save"}
+                        </button>
+                        <button
+                            className="btn-secondary"
+                            type="button"
+                            style={{ padding: "0.7rem 0.95rem", fontSize: "0.9rem", display: "flex", alignItems: "center", gap: "0.3rem", border: "2px solid var(--border-subtle)" }}
+                            onClick={() => handleHide(opp)}
+                            aria-label={`Hide ${opp.title}`}
+                        >
+                            <EyeOff size={14} /> Hide
                         </button>
                     </div>
                 </div>

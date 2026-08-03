@@ -20,7 +20,20 @@ ensure_mongo_keyfile() {
 
 is_vidyaverse_backend() {
   local url="$1"
-  /usr/bin/curl -fsS "${url}/health" 2>/dev/null | python3 -c 'import json, sys; payload=json.load(sys.stdin); raise SystemExit(0 if payload.get("service") == "VidyaVerse API" else 1)' >/dev/null 2>&1
+  # Probes /health/ready, not /health. /health is now a static liveness reply
+  # that returns as soon as uvicorn binds, so waiting on it would let the
+  # harness proceed to the smoke test while Mongo, Redis and the model artifacts
+  # were still loading. Readiness is what "the backend is up" has to mean here.
+  /usr/bin/curl -fsS "${url}/health/ready" 2>/dev/null | python3 -c 'import json, sys; payload=json.load(sys.stdin); raise SystemExit(0 if payload.get("service") == "VidyaVerse API" and payload.get("status") == "healthy" else 1)' >/dev/null 2>&1
+}
+
+is_vidyaverse_frontend() {
+  local url="${1%/}"
+  local homepage stylesheet
+  homepage="$(/usr/bin/curl -fsS "${url}/" 2>/dev/null)" || return 1
+  stylesheet="$(printf '%s' "${homepage}" | sed -nE 's/.*href="([^"?]*\.css)(\?[^" ]*)?".*/\1/p' | head -n 1)"
+  [[ -n "${stylesheet}" ]] || return 1
+  /usr/bin/curl -fsS -o /dev/null "${url}${stylesheet}" 2>/dev/null
 }
 
 BACKEND_REUSED=0
@@ -36,11 +49,11 @@ fi
 
 FRONTEND_REUSED=0
 if lsof -nP -iTCP:"${FRONTEND_PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
-  if /usr/bin/curl -fsS "http://127.0.0.1:${FRONTEND_PORT}/" >/dev/null 2>&1; then
+  if is_vidyaverse_frontend "http://127.0.0.1:${FRONTEND_PORT}"; then
     FRONTEND_REUSED=1
-    echo "Reusing healthy frontend already listening on ${FRONTEND_PORT}."
+    echo "Reusing healthy frontend and static assets already listening on ${FRONTEND_PORT}."
   else
-    echo "Frontend port ${FRONTEND_PORT} is already in use, but / is not reachable. Stop it first or set FRONTEND_PORT."
+    echo "Frontend port ${FRONTEND_PORT} is already in use, but its compiled assets are not healthy. Stop it first or set FRONTEND_PORT."
     exit 1
   fi
 fi
@@ -64,6 +77,11 @@ export MLOPS_MODEL_ARTIFACT_S3_REGION="${MLOPS_MODEL_ARTIFACT_S3_REGION:-us-east
 export MLOPS_MODEL_ARTIFACT_S3_ACCESS_KEY_ID="${MLOPS_MODEL_ARTIFACT_S3_ACCESS_KEY_ID:-minioadmin}"
 export MLOPS_MODEL_ARTIFACT_S3_SECRET_ACCESS_KEY="${MLOPS_MODEL_ARTIFACT_S3_SECRET_ACCESS_KEY:-minioadmin}"
 export MODEL_ARTIFACT_BUCKET="${MODEL_ARTIFACT_BUCKET:-vidyaverse-model-artifacts}"
+# Local fallback for the learned ranker. ensure_learned_ranker_artifact_ready
+# tries LEARNED_RANKER_ARTIFACT_URI first and falls back to this path, so the
+# harness still boots with a working ranker when the object store has not been
+# seeded. The checksum is verified either way.
+export LEARNED_RANKER_MODEL_PATH="${LEARNED_RANKER_MODEL_PATH:-${BACKEND_DIR}/models/learned_ranker.lgb.txt}"
 export NEXT_PUBLIC_API_BASE_URL="${NEXT_PUBLIC_API_BASE_URL:-http://127.0.0.1:${BACKEND_PORT}}"
 export BACKEND_INTERNAL_URL="${BACKEND_INTERNAL_URL:-http://127.0.0.1:${BACKEND_PORT}}"
 
@@ -103,7 +121,12 @@ if [[ "${BACKEND_REUSED}" -eq 0 ]]; then
     echo "${BACKEND_PID}" > "${LOG_DIR}/backend.pid"
   fi
 
-  for _ in $(seq 1 90); do
+  # ~5 minutes. The probe now waits for /health/ready rather than /health, and
+  # readiness genuinely exercises Mongo, Redis, ClickHouse, the artifact store
+  # and the learned-ranker load, so first boot on a cold cache legitimately
+  # exceeds the previous 3-minute budget. Timing out early meant the smoke test
+  # ran against a half-started backend and reported failures that were not real.
+  for _ in $(seq 1 150); do
     if is_vidyaverse_backend "http://127.0.0.1:${BACKEND_PORT}"; then
       break
     fi
@@ -143,7 +166,7 @@ if [[ "${FRONTEND_REUSED}" -eq 0 ]]; then
   fi
 
   for _ in $(seq 1 60); do
-    if /usr/bin/curl -fsS "http://127.0.0.1:${FRONTEND_PORT}/" >/dev/null 2>&1; then
+    if is_vidyaverse_frontend "http://127.0.0.1:${FRONTEND_PORT}"; then
       break
     fi
     if [[ -n "${FRONTEND_PID}" ]] && ! kill -0 "${FRONTEND_PID}" >/dev/null 2>&1; then

@@ -268,19 +268,14 @@ class ExperimentAnalyticsService:
         if normalized == "all":
             return {}
         if normalized == "real":
-            return {"$or": [{"traffic_type": "real"}, {"traffic_type": {"$exists": False}}, {"traffic_type": None}]}
+            # Missing/null traffic_type is unknown provenance, not real. Including
+            # it here counted seeded bootstrap rows as genuine student activity.
+            return {"traffic_type": "real"}
         if normalized == "simulated":
-            return {
-                "$or": [
-                    {"traffic_type": "simulated"},
-                    {
-                        "$and": [
-                            {"$or": [{"traffic_type": {"$exists": False}}, {"traffic_type": None}]},
-                            {"experiment_key": {"$regex": "sim", "$options": "i"}},
-                        ]
-                    },
-                ]
-            }
+            # No legacy inference from experiment_key. A row is simulated only if it
+            # says so. Unlabelled rows are unknown provenance and belong to neither
+            # population; run scripts/backfill_traffic_provenance.py to label them.
+            return {"traffic_type": "simulated"}
         return {}
 
     async def _counts_by_variant(

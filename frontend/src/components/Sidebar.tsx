@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import {
   BarChart3,
@@ -9,6 +9,7 @@ import {
   FileText,
   Globe,
   LayoutDashboard,
+  LogOut,
   Menu,
   Moon,
   Sun,
@@ -20,7 +21,7 @@ import {
 import BrandLogo from "@/components/BrandLogo";
 import { useTheme } from "@/context/ThemeContext";
 import { apiUrl } from "@/lib/api";
-import { createAuthenticatedFetchInit, getAccessToken } from "@/lib/auth-session";
+import { clearAccessToken, createAuthenticatedFetchInit, getAccessToken } from "@/lib/auth-session";
 import { formatTopPercent, type RankingSummary } from "@/lib/ranking-summary";
 
 type NavLink = {
@@ -44,6 +45,7 @@ const mobilePrimaryLinks = links.slice(0, 5);
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
   const { theme, toggleTheme } = useTheme();
   const [rankingSummary, setRankingSummary] = useState<RankingSummary | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -132,9 +134,15 @@ export default function Sidebar() {
     return theme === "dark" ? "Light Mode" : "Dark Mode";
   }, [isHydrated, theme]);
 
+  const handleLogout = () => {
+    clearAccessToken();
+    setDrawerOpen(false);
+    router.replace("/login");
+  };
+
   return (
     <>
-      <div className="app-shell-nav-root" aria-hidden>
+      <div className="app-shell-nav-root">
         <aside className="desktop-sidebar">
           <div className="sidebar-top">
             <BrandLogo size="lg" />
@@ -167,6 +175,12 @@ export default function Sidebar() {
               <div className="sidebar-rank-value">{globalRankTitle}</div>
               <div className="sidebar-rank-detail">{globalRankSubtitle}</div>
             </div>
+            <button type="button" onClick={handleLogout} className="sidebar-logout-btn">
+              <span className="sidebar-link-icon">
+                <LogOut size={18} />
+              </span>
+              <span>Logout</span>
+            </button>
           </div>
         </aside>
       </div>
@@ -226,6 +240,12 @@ export default function Sidebar() {
             <div className="sidebar-rank-value">{globalRankTitle}</div>
             <div className="sidebar-rank-detail">{globalRankSubtitle}</div>
           </div>
+          <button type="button" onClick={handleLogout} className="sidebar-logout-btn">
+            <span className="sidebar-link-icon">
+              <LogOut size={18} />
+            </span>
+            <span>Logout</span>
+          </button>
         </div>
       </aside>
 

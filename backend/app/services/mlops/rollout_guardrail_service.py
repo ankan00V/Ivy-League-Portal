@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from app.models.ranking_request_telemetry import RankingRequestTelemetry
+from app.models.traffic import matches_traffic_type
 from app.services.interaction_service import interaction_service
 from app.core.time import utc_now
 
@@ -23,17 +24,12 @@ def _percentile(values: list[float], q: float) -> float:
 
 class RolloutGuardrailService:
     def _matches_traffic_type(self, *, value: str | None, traffic_type: str) -> bool:
-        normalized_filter = (traffic_type or "all").strip().lower()
-        if normalized_filter == "all":
-            return True
-        normalized_value = (value or "").strip().lower()
-        if normalized_filter == "real":
-            return normalized_value in {"", "real"}
-        if normalized_filter == "simulated":
-            return normalized_value == "simulated"
-        return False
+        # Blank traffic_type is unknown provenance, not real. See models/traffic.py.
+        return matches_traffic_type(value, traffic_type)
 
-    async def _mode_request_metrics(self, *, mode: str, days: int) -> dict[str, float]:
+    async def _mode_request_metrics(
+        self, *, mode: str, days: int, traffic_type: str = "real"
+    ) -> dict[str, float]:
         since = utc_now() - timedelta(days=max(1, min(int(days), 365)))
         rows = await RankingRequestTelemetry.find_many(
             RankingRequestTelemetry.created_at >= since,
@@ -44,7 +40,7 @@ class RolloutGuardrailService:
             for row in rows
             if self._matches_traffic_type(
                 value=getattr(row, "traffic_type", None),
-                traffic_type="real",
+                traffic_type=traffic_type,
             )
         ]
         if not rows:
@@ -75,13 +71,26 @@ class RolloutGuardrailService:
         candidate_mode: str,
         baseline_mode: str,
         days: int = 30,
+        traffic_type: str = "real",
     ) -> dict[str, Any]:
-        interaction_rows = await interaction_service.ctr_by_mode(days=days, traffic_type="real")
+        """Compare two ranking modes over one traffic population.
+
+        `traffic_type` decides whose behaviour is being measured. "real" is the only
+        value that says anything about the product; "simulated" measures a seeded
+        fixture and is for verifying that this machinery computes correctly in CI.
+        Callers must carry the value through to whatever they publish, so a reader
+        can never mistake a fixture run for a measurement of real students.
+        """
+        interaction_rows = await interaction_service.ctr_by_mode(days=days, traffic_type=traffic_type)
         interaction_map = {str(row.get("mode") or ""): row for row in interaction_rows}
         candidate_interactions = interaction_map.get(candidate_mode) or {}
         baseline_interactions = interaction_map.get(baseline_mode) or {}
-        candidate_requests = await self._mode_request_metrics(mode=candidate_mode, days=days)
-        baseline_requests = await self._mode_request_metrics(mode=baseline_mode, days=days)
+        candidate_requests = await self._mode_request_metrics(
+            mode=candidate_mode, days=days, traffic_type=traffic_type
+        )
+        baseline_requests = await self._mode_request_metrics(
+            mode=baseline_mode, days=days, traffic_type=traffic_type
+        )
 
         data_complete = bool(
             candidate_interactions
@@ -102,6 +111,9 @@ class RolloutGuardrailService:
         }
         return {
             "days": int(max(1, min(int(days), 365))),
+            # Provenance travels with the numbers. Anything that renders this
+            # payload must surface it, or a fixture run reads as a real result.
+            "traffic_type": (traffic_type or "real").strip().lower(),
             "candidate_mode": candidate_mode,
             "baseline_mode": baseline_mode,
             "candidate": {

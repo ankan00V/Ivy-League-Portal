@@ -405,6 +405,10 @@ class DuplicateDetector:
         _set_field(canonical, "last_seen_at", max(value for value in last_seen_candidates if value is not None))
         _set_field(canonical, "updated_at", now)
 
+        from app.services.opportunity_quality_service import opportunity_quality_scorer
+
+        opportunity_quality_scorer.apply_quality_assessment(canonical)
+
         save = getattr(canonical, "save", None)
         if callable(save):
             await save()

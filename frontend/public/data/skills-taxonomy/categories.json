@@ -1,0 +1,483 @@
+[
+  {
+    "name": "Programming Languages",
+    "subcategories": [
+      "General Purpose",
+      "Systems",
+      "Scripting",
+      "Statistical",
+      "Markup and Query"
+    ],
+    "parent_skill": "Programming Languages",
+    "is_technical": true,
+    "is_soft_skill": false
+  },
+  {
+    "name": "Frontend Development",
+    "subcategories": [
+      "Frameworks",
+      "State Management",
+      "Styling",
+      "Build Tools",
+      "Accessibility"
+    ],
+    "parent_skill": "Web Development",
+    "is_technical": true,
+    "is_soft_skill": false
+  },
+  {
+    "name": "Backend Development",
+    "subcategories": [
+      "Frameworks",
+      "APIs",
+      "Runtime Platforms",
+      "Microservices",
+      "Messaging"
+    ],
+    "parent_skill": "Software Engineering",
+    "is_technical": true,
+    "is_soft_skill": false
+  },
+  {
+    "name": "Mobile Development",
+    "subcategories": [
+      "Android",
+      "iOS",
+      "Cross Platform",
+      "Mobile Testing",
+      "Mobile UI"
+    ],
+    "parent_skill": "Mobile Development",
+    "is_technical": true,
+    "is_soft_skill": false
+  },
+  {
+    "name": "Game Development",
+    "subcategories": [
+      "Engines",
+      "Rendering",
+      "Gameplay Systems",
+      "Physics",
+      "Tools"
+    ],
+    "parent_skill": "Game Development",
+    "is_technical": true,
+    "is_soft_skill": false
+  },
+  {
+    "name": "Cloud Technologies",
+    "subcategories": [
+      "AWS",
+      "Azure",
+      "Google Cloud",
+      "Serverless",
+      "Cloud Architecture"
+    ],
+    "parent_skill": "Cloud Computing",
+    "is_technical": true,
+    "is_soft_skill": false
+  },
+  {
+    "name": "DevOps",
+    "subcategories": [
+      "Containers",
+      "CI/CD",
+      "Infrastructure as Code",
+      "Observability",
+      "Release Engineering"
+    ],
+    "parent_skill": "DevOps",
+    "is_technical": true,
+    "is_soft_skill": false
+  },
+  {
+    "name": "Databases",
+    "subcategories": [
+      "Relational",
+      "NoSQL",
+      "Search",
+      "Graph",
+      "Data Warehousing"
+    ],
+    "parent_skill": "Databases",
+    "is_technical": true,
+    "is_soft_skill": false
+  },
+  {
+    "name": "Data Engineering",
+    "subcategories": [
+      "Pipelines",
+      "Streaming",
+      "Orchestration",
+      "Lakehouse",
+      "ETL"
+    ],
+    "parent_skill": "Data Engineering",
+    "is_technical": true,
+    "is_soft_skill": false
+  },
+  {
+    "name": "Data Science",
+    "subcategories": [
+      "Analytics",
+      "Statistics",
+      "Visualization",
+      "Experimentation",
+      "Modeling"
+    ],
+    "parent_skill": "Data Science",
+    "is_technical": true,
+    "is_soft_skill": false
+  },
+  {
+    "name": "AI & Machine Learning",
+    "subcategories": [
+      "Machine Learning",
+      "Deep Learning",
+      "NLP",
+      "Computer Vision",
+      "Generative AI"
+    ],
+    "parent_skill": "Machine Learning",
+    "is_technical": true,
+    "is_soft_skill": false
+  },
+  {
+    "name": "MLOps",
+    "subcategories": [
+      "Model Registry",
+      "Feature Stores",
+      "Monitoring",
+      "Deployment",
+      "Evaluation"
+    ],
+    "parent_skill": "MLOps",
+    "is_technical": true,
+    "is_soft_skill": false
+  },
+  {
+    "name": "Cybersecurity",
+    "subcategories": [
+      "Application Security",
+      "Network Security",
+      "Identity Security",
+      "Cloud Security",
+      "Security Operations"
+    ],
+    "parent_skill": "Cybersecurity",
+    "is_technical": true,
+    "is_soft_skill": false
+  },
+  {
+    "name": "Networking",
+    "subcategories": [
+      "Protocols",
+      "Routing",
+      "Wireless",
+      "Load Balancing",
+      "Network Automation"
+    ],
+    "parent_skill": "Networking",
+    "is_technical": true,
+    "is_soft_skill": false
+  },
+  {
+    "name": "Operating Systems",
+    "subcategories": [
+      "Linux",
+      "Windows",
+      "macOS",
+      "Unix",
+      "Administration"
+    ],
+    "parent_skill": "Operating Systems",
+    "is_technical": true,
+    "is_soft_skill": false
+  },
+  {
+    "name": "Software Architecture",
+    "subcategories": [
+      "System Design",
+      "Distributed Systems",
+      "Design Patterns",
+      "Scalability",
+      "Reliability"
+    ],
+    "parent_skill": "Software Architecture",
+    "is_technical": true,
+    "is_soft_skill": false
+  },
+  {
+    "name": "Testing & QA",
+    "subcategories": [
+      "Automated Testing",
+      "Manual Testing",
+      "Performance Testing",
+      "Security Testing",
+      "Quality Processes"
+    ],
+    "parent_skill": "Quality Assurance",
+    "is_technical": true,
+    "is_soft_skill": false
+  },
+  {
+    "name": "UI/UX Design",
+    "subcategories": [
+      "User Research",
+      "Interaction Design",
+      "Visual Design",
+      "Prototyping",
+      "Design Systems"
+    ],
+    "parent_skill": "Design",
+    "is_technical": false,
+    "is_soft_skill": false
+  },
+  {
+    "name": "Design & Creative Tools",
+    "subcategories": [
+      "Graphic Design",
+      "CAD",
+      "Animation",
+      "Video",
+      "Audio"
+    ],
+    "parent_skill": "Creative Production",
+    "is_technical": true,
+    "is_soft_skill": false
+  },
+  {
+    "name": "Product Management",
+    "subcategories": [
+      "Discovery",
+      "Roadmapping",
+      "Metrics",
+      "Go-to-Market",
+      "Lifecycle"
+    ],
+    "parent_skill": "Product Management",
+    "is_technical": false,
+    "is_soft_skill": false
+  },
+  {
+    "name": "Project Management",
+    "subcategories": [
+      "Agile",
+      "Planning",
+      "Risk",
+      "Delivery",
+      "Stakeholder Management"
+    ],
+    "parent_skill": "Project Management",
+    "is_technical": false,
+    "is_soft_skill": false
+  },
+  {
+    "name": "Business Analysis",
+    "subcategories": [
+      "Requirements",
+      "Process Modeling",
+      "Documentation",
+      "Decision Analysis",
+      "Operations Analysis"
+    ],
+    "parent_skill": "Business Analysis",
+    "is_technical": false,
+    "is_soft_skill": false
+  },
+  {
+    "name": "Finance",
+    "subcategories": [
+      "Accounting",
+      "Corporate Finance",
+      "Investment",
+      "Banking",
+      "Risk Management"
+    ],
+    "parent_skill": "Finance",
+    "is_technical": false,
+    "is_soft_skill": false
+  },
+  {
+    "name": "Marketing",
+    "subcategories": [
+      "Digital Marketing",
+      "SEO",
+      "Content Marketing",
+      "Branding",
+      "Growth"
+    ],
+    "parent_skill": "Marketing",
+    "is_technical": false,
+    "is_soft_skill": false
+  },
+  {
+    "name": "Sales",
+    "subcategories": [
+      "Prospecting",
+      "Account Management",
+      "Sales Operations",
+      "Negotiation",
+      "Revenue Operations"
+    ],
+    "parent_skill": "Sales",
+    "is_technical": false,
+    "is_soft_skill": false
+  },
+  {
+    "name": "Human Resources",
+    "subcategories": [
+      "Recruitment",
+      "Talent Management",
+      "Learning",
+      "Compensation",
+      "Employee Relations"
+    ],
+    "parent_skill": "Human Resources",
+    "is_technical": false,
+    "is_soft_skill": false
+  },
+  {
+    "name": "Legal",
+    "subcategories": [
+      "Contracts",
+      "Compliance",
+      "Privacy",
+      "Intellectual Property",
+      "Legal Operations"
+    ],
+    "parent_skill": "Legal",
+    "is_technical": false,
+    "is_soft_skill": false
+  },
+  {
+    "name": "Healthcare",
+    "subcategories": [
+      "Clinical Operations",
+      "Healthcare Analytics",
+      "Public Health",
+      "Medical Documentation",
+      "Health Informatics"
+    ],
+    "parent_skill": "Healthcare",
+    "is_technical": false,
+    "is_soft_skill": false
+  },
+  {
+    "name": "Biotechnology",
+    "subcategories": [
+      "Molecular Biology",
+      "Bioinformatics",
+      "Bioprocessing",
+      "Genomics",
+      "Laboratory Methods"
+    ],
+    "parent_skill": "Biotechnology",
+    "is_technical": true,
+    "is_soft_skill": false
+  },
+  {
+    "name": "Engineering",
+    "subcategories": [
+      "Mechanical",
+      "Electrical",
+      "Civil",
+      "Electronics",
+      "Aerospace"
+    ],
+    "parent_skill": "Engineering",
+    "is_technical": true,
+    "is_soft_skill": false
+  },
+  {
+    "name": "Manufacturing",
+    "subcategories": [
+      "Lean",
+      "Quality",
+      "Production",
+      "Maintenance",
+      "Industrial Automation"
+    ],
+    "parent_skill": "Manufacturing",
+    "is_technical": true,
+    "is_soft_skill": false
+  },
+  {
+    "name": "Supply Chain & Logistics",
+    "subcategories": [
+      "Procurement",
+      "Warehousing",
+      "Transportation",
+      "Inventory",
+      "Planning"
+    ],
+    "parent_skill": "Supply Chain",
+    "is_technical": false,
+    "is_soft_skill": false
+  },
+  {
+    "name": "Education",
+    "subcategories": [
+      "Instructional Design",
+      "Assessment",
+      "Curriculum",
+      "EdTech",
+      "Training"
+    ],
+    "parent_skill": "Education",
+    "is_technical": false,
+    "is_soft_skill": false
+  },
+  {
+    "name": "Agriculture",
+    "subcategories": [
+      "Crop Science",
+      "AgriTech",
+      "Soil Science",
+      "Irrigation",
+      "Farm Operations"
+    ],
+    "parent_skill": "Agriculture",
+    "is_technical": true,
+    "is_soft_skill": false
+  },
+  {
+    "name": "Media & Communication",
+    "subcategories": [
+      "Writing",
+      "Editing",
+      "Journalism",
+      "Public Relations",
+      "Translation"
+    ],
+    "parent_skill": "Communication",
+    "is_technical": false,
+    "is_soft_skill": false
+  },
+  {
+    "name": "Soft Skills",
+    "subcategories": [
+      "Communication",
+      "Leadership",
+      "Thinking",
+      "Collaboration",
+      "Personal Effectiveness"
+    ],
+    "parent_skill": "Workplace Competencies",
+    "is_technical": false,
+    "is_soft_skill": true
+  },
+  {
+    "name": "Industry Domain Skills",
+    "subcategories": [
+      "Retail",
+      "Insurance",
+      "Telecommunications",
+      "Hospitality",
+      "Government"
+    ],
+    "parent_skill": "Industry Knowledge",
+    "is_technical": false,
+    "is_soft_skill": false
+  }
+]

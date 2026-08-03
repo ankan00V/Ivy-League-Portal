@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import logging
 import re
+import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 from uuid import uuid4
 
 from beanie import PydanticObjectId
+from beanie.odm.operators.find.comparison import In
 from beanie.exceptions import CollectionWasNotInitialized
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -19,13 +22,17 @@ from app.models.profile import Profile
 from app.models.user import User
 from app.schemas.user import UserResponse
 from app.services.intelligence import calculate_incoscore
+from app.services.resume_review_service import review_resume
 from app.services.username_service import ensure_system_username
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 VALID_ACCOUNT_TYPES = {"candidate", "employer"}
 VALID_USER_TYPES = {"school_student", "college_student", "fresher", "professional"}
 VALID_HIRING_FOR = {"myself", "others"}
+VALID_AVAILABILITY = {"immediately", "within_1_month", "within_3_months", "exploring"}
 RESUME_REQUIRED_USER_TYPES = {"college_student", "fresher", "professional"}
 ALLOWED_RESUME_EXTENSIONS = {".txt", ".pdf", ".docx", ".doc"}
 RESUME_STORAGE_RELATIVE_DIR = Path("storage") / "resumes"
@@ -90,6 +97,7 @@ PROFILE_SIGNAL_METADATA: dict[str, tuple[str, str]] = {
     "preferred_work_mode": ("Preferred Work Mode", "Choose your preferred work setup."),
     "preferred_locations": ("Preferred Locations", "Add preferred locations for matching."),
     "expected_stipend_range": ("Expected Stipend", "Add your expected stipend range."),
+    "availability": ("Availability", "Select when you are available to start."),
     "graduation_year": ("Graduation Year", "Add your graduation year."),
     "work_preferences": ("Work Preferences", "Set your preferred work style, location, or job setup."),
     "education": ("Education", "Add education details."),
@@ -142,6 +150,7 @@ class ProfileUpdate(BaseModel):
     expected_stipend_range: Optional[str] = None
     expected_stipend_min: Optional[int] = Field(default=None, ge=0)
     expected_stipend_max: Optional[int] = Field(default=None, ge=0)
+    availability: Optional[str] = None
     graduation_year: Optional[int] = Field(default=None, ge=1990, le=2100)
     opportunity_types: Optional[list[str] | str] = None
     pan_india: Optional[bool] = None
@@ -171,6 +180,16 @@ class ProfileUpdate(BaseModel):
     permanent_address_pincode: Optional[str] = None
     hobbies: Optional[list[str] | str] = None
     social_links: Optional[dict[str, str]] = None
+
+    @field_validator("availability")
+    @classmethod
+    def validate_availability(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = str(value).strip().lower()
+        if normalized not in VALID_AVAILABILITY:
+            raise ValueError("availability must be a supported candidate availability option")
+        return normalized
     resume_url: Optional[str] = None
     resume_filename: Optional[str] = None
     resume_content_type: Optional[str] = None
@@ -336,6 +355,7 @@ class ProfileResponse(BaseModel):
     expected_stipend_range: Optional[str] = None
     expected_stipend_min: Optional[int] = None
     expected_stipend_max: Optional[int] = None
+    availability: Optional[str] = None
     graduation_year: Optional[int] = None
     opportunity_types: list[str] = Field(default_factory=list)
     pan_india: bool = False
@@ -417,6 +437,27 @@ class ProfileStrengthResponse(BaseModel):
     missing_signal_details: list[ProfileSignalDetail] = Field(default_factory=list)
     recommendation: str
     updated_at: datetime
+
+
+class ResumeReviewCategoryResponse(BaseModel):
+    key: str
+    label: str
+    score: int = Field(ge=0)
+    maximum: int = Field(gt=0)
+    evidence: list[str] = Field(default_factory=list)
+
+
+class ResumeReviewResponse(BaseModel):
+    version: str
+    resume_filename: str
+    score: int = Field(ge=0, le=100)
+    summary: str
+    categories: list[ResumeReviewCategoryResponse]
+    strengths: list[str] = Field(default_factory=list)
+    weaknesses: list[str] = Field(default_factory=list)
+    recommendations: list[str] = Field(default_factory=list)
+    advisory: str
+    reviewed_at: datetime
 
 
 class LeaderboardEntry(BaseModel):
@@ -735,6 +776,7 @@ def _profile_strength_checks(profile: Profile) -> list[tuple[str, bool]]:
                     ("preferred_work_mode", _text_present("preferred_work_mode")),
                     ("preferred_locations", _text_present("preferred_locations")),
                     ("expected_stipend_range", _text_present("expected_stipend_range")),
+                    ("availability", _text_present("availability")),
                     ("graduation_year", _value("graduation_year") is not None or _value("passout_year") is not None),
                 ]
             )
@@ -744,6 +786,7 @@ def _profile_strength_checks(profile: Profile) -> list[tuple[str, bool]]:
                     ("current_job_role", _text_present("current_job_role")),
                     ("total_work_experience", _text_present("total_work_experience")),
                     ("experience_summary", _text_present("experience_summary")),
+                    ("availability", _text_present("availability")),
                 ]
             )
 
@@ -864,6 +907,7 @@ def _apply_profile_patch(*, profile: Profile, user: User, payload: ProfileUpdate
         "expected_stipend_range",
         "expected_stipend_min",
         "expected_stipend_max",
+        "availability",
         "graduation_year",
         "passout_year",
         "opportunity_types",
@@ -1057,7 +1101,16 @@ async def upload_resume(
 
         try:
             parsed_data = ai_system.parse_resume(text)
-        except Exception:
+        except Exception as exc:
+            # Auto-fill is best-effort: a parse failure must not block the upload.
+            # It does have to be visible though - swallowing this silently meant a
+            # total parser outage would look like "users stopped filling profiles".
+            logger.warning(
+                "Resume auto-parse failed for user %s (%s): %s",
+                current_user.id,
+                type(exc).__name__,
+                exc,
+            )
             parsed_data = {}
         if isinstance(parsed_data, dict) and parsed_data:
             _apply_parsed_resume_signals(profile=profile, parsed_data=parsed_data)
@@ -1099,6 +1152,42 @@ async def download_resume(
     )
 
 
+@router.get("/me/resume/review", response_model=ResumeReviewResponse)
+async def get_resume_review(
+    current_user: User = Depends(get_current_active_user),
+) -> ResumeReviewResponse:
+    profile = await _get_or_create_profile_for_user(current_user)
+    if str(profile.account_type or "candidate").strip().lower() != "candidate":
+        raise HTTPException(status_code=403, detail="Resume readiness review is available for candidate profiles only.")
+
+    storage_key = (profile.resume_storage_key or "").strip()
+    filename = (profile.resume_filename or "").strip()
+    if not storage_key or not filename:
+        raise HTTPException(status_code=404, detail="Upload a resume before requesting a review.")
+
+    storage_path = _resume_storage_dir() / storage_key
+    if not storage_path.is_file():
+        raise HTTPException(status_code=404, detail="Stored resume not found.")
+
+    content = await asyncio.to_thread(storage_path.read_bytes)
+    extension = _safe_resume_extension(filename)
+    text = (await asyncio.to_thread(_extract_resume_text, extension=extension, content=content)).strip()
+    try:
+        review = review_resume(
+            text,
+            profile_skills=str(profile.skills or ""),
+            preferred_roles=str(profile.preferred_roles or ""),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return ResumeReviewResponse(
+        **review,
+        resume_filename=filename,
+        reviewed_at=datetime.now(timezone.utc),
+    )
+
+
 @router.delete("/me/resume", response_model=ProfileResponse)
 async def delete_resume(
     current_user: User = Depends(get_current_active_user),
@@ -1126,17 +1215,37 @@ async def delete_resume(
 
 
 @router.get("/leaderboard", response_model=list[LeaderboardEntry])
-async def get_leaderboard(limit: int = 10, search: Optional[str] = None) -> Any:
+async def get_leaderboard(
+    limit: int = 10,
+    search: Optional[str] = None,
+    current_user: User = Depends(get_current_active_user),
+) -> Any:
     """
     Global InCoScore leaderboard used for ranking and smart shortlisting views.
+
+    Requires authentication: this returns real users' names and handles, and
+    `search` matches on name substrings, so leaving it open made it an
+    unauthenticated directory and enumerator over the entire user base.
     """
     safe_limit = max(1, min(limit, 100))
-    profiles = await Profile.find_all().sort("-incoscore").to_list()
     search_term = (search or "").strip().lower().lstrip("@")
+
+    # Bound the scan. This previously loaded every Profile in the collection on
+    # an anonymous endpoint and then issued one User.get() per profile - a full
+    # scan plus N+1 that grows linearly with signups.
+    scan_limit = safe_limit if not search_term else min(1000, max(safe_limit * 20, 200))
+    profiles = await Profile.find_all().sort("-incoscore").limit(scan_limit).to_list()
+
+    # One batched lookup instead of a round trip per profile.
+    user_ids = [profile.user_id for profile in profiles if profile.user_id]
+    users_by_id: dict[Any, User] = {}
+    if user_ids:
+        for user in await User.find(In(User.id, user_ids)).to_list():
+            users_by_id[user.id] = user
 
     leaderboard: list[LeaderboardEntry] = []
     for rank, profile in enumerate(profiles, start=1):
-        user = await User.get(profile.user_id)
+        user = users_by_id.get(profile.user_id)
         if not user:
             continue
         handle = await ensure_system_username(user, profile)

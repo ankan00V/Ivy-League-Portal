@@ -36,6 +36,7 @@ class Profile(Document):
     expected_stipend_range: Optional[str] = None
     expected_stipend_min: Optional[int] = Field(default=None, ge=0)
     expected_stipend_max: Optional[int] = Field(default=None, ge=0)
+    availability: Optional[str] = None
     graduation_year: Optional[int] = None
     opportunity_types: list[str] = Field(default_factory=list)
     pan_india: bool = False

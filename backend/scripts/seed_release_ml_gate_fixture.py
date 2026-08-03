@@ -237,7 +237,7 @@ async def _seed_interactions(
                         "baseline_score": 0.56 + float(index % 5) / 100.0,
                         "behavior_score": 0.20 + float(index % 7) / 100.0,
                     },
-                    traffic_type="real",
+                    traffic_type="simulated",
                     created_at=created_at,
                 )
             )
@@ -254,7 +254,7 @@ async def _seed_interactions(
                         model_version_id=str(targets["model_id"]),
                         rank_position=(index % 20) + 1,
                         match_score=float(targets["score"]),
-                        traffic_type="real",
+                        traffic_type="simulated",
                         created_at=created_at + timedelta(seconds=3),
                     )
                 )
@@ -271,7 +271,7 @@ async def _seed_interactions(
                         model_version_id=str(targets["model_id"]),
                         rank_position=(index % 20) + 1,
                         match_score=float(targets["score"]),
-                        traffic_type="real",
+                        traffic_type="simulated",
                         created_at=created_at + timedelta(seconds=8),
                     )
                 )
@@ -285,7 +285,7 @@ async def _seed_interactions(
                         ranking_mode=mode,
                         experiment_key="release_gate_rollout",
                         experiment_variant=mode,
-                        traffic_type="real",
+                        traffic_type="simulated",
                         rank_position=(index % 20) + 1,
                         match_score=float(targets["score"]),
                         features={"semantic_score": float(targets["score"]), "behavior_score": 0.25},
@@ -316,7 +316,7 @@ async def _seed_interactions(
                     latency_ms=latency_base + float(index % 5),
                     results_count=20,
                     freshness_seconds=freshness_base + float(index % 3),
-                    traffic_type="real",
+                    traffic_type="simulated",
                     created_at=_created_at(index, days=days),
                 )
             )
@@ -333,7 +333,7 @@ async def _seed_interactions(
                 latency_ms=180.0 + float(index % 10),
                 results_count=1,
                 freshness_seconds=10.0,
-                traffic_type="real",
+                traffic_type="simulated",
                 created_at=_created_at(index, days=days),
             )
         )

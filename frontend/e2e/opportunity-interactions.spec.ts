@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 type InteractionPayload = {
   opportunity_id: string;
-  interaction_type: "impression" | "view" | "click" | "apply" | "save";
+  interaction_type: "impression" | "view" | "click" | "apply" | "save" | "dismiss";
   ranking_mode?: string;
   experiment_key?: string;
   experiment_variant?: string;
@@ -27,13 +27,26 @@ const TEST_OPPORTUNITY = {
   experiment_variant: "semantic",
   rank_position: 1,
   match_score: 92.4,
+  match_reasons: ["Matches your AI and NLP interests."],
+  eligibility_warnings: ["Your graduation year (2026) matches the listed eligible batches."],
   model_version_id: "model-test-v1",
   created_at: "2026-04-16T10:00:00.000Z",
   updated_at: "2026-04-16T10:00:00.000Z",
   last_seen_at: "2026-04-16T10:00:00.000Z",
 };
 
-async function stubOpportunityRoutes(page: Page, captured: InteractionPayload[]) {
+const TEST_CAREER_OPPORTUNITY = {
+  ...TEST_OPPORTUNITY,
+  id: "75c75c75c75c75c75c75c75f",
+  title: "Test ML Internship Bangalore",
+  opportunity_type: "Internship",
+};
+
+async function stubOpportunityRoutes(
+  page: Page,
+  captured: InteractionPayload[],
+  opportunities: typeof TEST_OPPORTUNITY[] = [TEST_OPPORTUNITY],
+) {
   await page.route("**/api/v1/opportunities/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -43,7 +56,7 @@ async function stubOpportunityRoutes(page: Page, captured: InteractionPayload[])
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify([TEST_OPPORTUNITY]),
+        body: JSON.stringify(opportunities),
       });
       return;
     }
@@ -52,7 +65,7 @@ async function stubOpportunityRoutes(page: Page, captured: InteractionPayload[])
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify([TEST_OPPORTUNITY]),
+        body: JSON.stringify(opportunities),
       });
       return;
     }
@@ -159,7 +172,7 @@ test.describe("Opportunity interaction contracts", () => {
     });
   });
 
-  test("logs impression and click metadata from opportunity feed", async ({ page }) => {
+  test("@smoke logs impression and click metadata from opportunity feed", async ({ page }) => {
     const captured: InteractionPayload[] = [];
     await stubOpportunityRoutes(page, captured);
 
@@ -193,6 +206,33 @@ test.describe("Opportunity interaction contracts", () => {
         ),
       )
       .toBeTruthy();
+  });
+
+  test("@smoke explains a recommendation and logs hide feedback", async ({ page }) => {
+    const captured: InteractionPayload[] = [];
+    await stubOpportunityRoutes(page, captured);
+
+    await page.goto("/opportunities");
+    await expect(page.getByText("Why this matches you")).toBeVisible();
+    await expect(page.getByText("Matches your AI and NLP interests.")).toBeVisible();
+    await expect(page.getByText("Your graduation year (2026) matches the listed eligible batches.")).toBeVisible();
+
+    await page.getByRole("button", { name: `Hide ${TEST_OPPORTUNITY.title}` }).click();
+    await expect(page.getByRole("heading", { name: TEST_OPPORTUNITY.title })).toHaveCount(0);
+    await expect.poll(() => captured.some((event) => event.interaction_type === "dismiss")).toBeTruthy();
+  });
+
+  test("@smoke keeps matching details and hide feedback in the internships feed", async ({ page }) => {
+    const captured: InteractionPayload[] = [];
+    await stubOpportunityRoutes(page, captured, [TEST_CAREER_OPPORTUNITY]);
+
+    await page.goto("/internships-jobs");
+    await expect(page.getByRole("heading", { name: TEST_CAREER_OPPORTUNITY.title })).toBeVisible();
+    await expect(page.getByText("Why this matches you")).toBeVisible();
+
+    await page.getByRole("button", { name: `Hide ${TEST_CAREER_OPPORTUNITY.title}` }).click();
+    await expect(page.getByRole("heading", { name: TEST_CAREER_OPPORTUNITY.title })).toHaveCount(0);
+    await expect.poll(() => captured.some((event) => event.interaction_type === "dismiss")).toBeTruthy();
   });
 
   test("logs Ask AI impressions and citation clicks with experiment metadata", async ({ page }) => {

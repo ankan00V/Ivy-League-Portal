@@ -77,6 +77,11 @@ class TestUserRankingSummary(unittest.TestCase):
         self.assertIn("resume", summary.missing_signals)
         self.assertIn("resume", summary.recommendation.lower())
 
+    def test_profile_update_validates_candidate_availability(self) -> None:
+        self.assertEqual(users_endpoint.ProfileUpdate(availability="within_1_month").availability, "within_1_month")
+        with self.assertRaises(ValueError):
+            users_endpoint.ProfileUpdate(availability="someday")
+
     def test_profile_strength_employer_counts_company_fields(self) -> None:
         profile = SimpleNamespace(
             account_type="employer",

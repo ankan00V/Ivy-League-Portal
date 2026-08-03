@@ -58,22 +58,29 @@ class TestOtpDeliveryBehavior(unittest.IsolatedAsyncioTestCase):
             account_type="candidate",
         )
 
-        with (
-            patch.object(auth.settings, "ENVIRONMENT", "local"),
-            patch.object(auth.settings, "OTP_ALLOW_DEBUG_FALLBACK", True),
-            patch.object(auth.settings, "OTP_SEND_COOLDOWN_SECONDS", 60),
-            patch.object(auth.secrets, "randbelow", return_value=123456),
-            patch.object(auth, "_validate_user_for_purpose", new=AsyncMock(return_value=None)),
-            patch.object(auth, "get_otp_cooldown_remaining", new=AsyncMock(return_value=0)),
-            patch.object(auth, "set_otp", new=AsyncMock()) as set_otp,
-            patch.object(auth, "send_email_otp", new=AsyncMock(side_effect=RuntimeError("smtp rejected"))),
-            patch.object(auth.auth_security_service, "audit_event", new=AsyncMock()),
-        ):
-            response = await auth.send_otp(request)
+        with self.assertLogs("app.api.api_v1.endpoints.auth", level="WARNING") as captured:
+            with (
+                patch.object(auth.settings, "TURNSTILE_ENABLED", False),
+                patch.object(auth.settings, "ENVIRONMENT", "local"),
+                patch.object(auth.settings, "OTP_ALLOW_DEBUG_FALLBACK", True),
+                patch.object(auth.settings, "OTP_SEND_COOLDOWN_SECONDS", 60),
+                patch.object(auth.secrets, "randbelow", return_value=123456),
+                patch.object(auth, "_validate_user_for_purpose", new=AsyncMock(return_value=None)),
+                patch.object(auth, "get_otp_cooldown_remaining", new=AsyncMock(return_value=0)),
+                patch.object(auth, "set_otp", new=AsyncMock()) as set_otp,
+                patch.object(auth, "send_email_otp", new=AsyncMock(side_effect=RuntimeError("smtp rejected"))),
+                patch.object(auth.auth_security_service, "audit_event", new=AsyncMock()),
+            ):
+                response = await auth.send_otp(request)
 
         self.assertEqual(response.delivery, "debug")
         self.assertEqual(response.debug_otp, "123456")
         set_otp.assert_awaited_once()
+        logs = "\n".join(captured.output)
+        self.assertIn("delivery_id=", logs)
+        self.assertIn("error_class=RuntimeError", logs)
+        self.assertNotIn("student@example.com", logs)
+        self.assertNotIn("123456", logs)
 
     async def test_production_smtp_failure_deletes_otp_and_fails_closed(self) -> None:
         request = auth.OTPSendRequest(
@@ -83,6 +90,7 @@ class TestOtpDeliveryBehavior(unittest.IsolatedAsyncioTestCase):
         )
 
         with (
+            patch.object(auth.settings, "TURNSTILE_ENABLED", False),
             patch.object(auth.settings, "ENVIRONMENT", "production"),
             patch.object(auth.settings, "OTP_ALLOW_DEBUG_FALLBACK", True),
             patch.object(auth.settings, "OTP_SEND_COOLDOWN_SECONDS", 60),

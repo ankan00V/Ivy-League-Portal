@@ -1,7 +1,7 @@
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
@@ -12,6 +12,13 @@ from app.services import email as email_service
 
 
 class TestEmailConfigResolution(unittest.TestCase):
+    def test_recipient_log_id_is_stable_and_redacts_email(self) -> None:
+        delivery_id = email_service.recipient_log_id("Student@Example.com")
+
+        self.assertEqual(delivery_id, email_service.recipient_log_id("student@example.com"))
+        self.assertEqual(len(delivery_id), 12)
+        self.assertNotIn("student", delivery_id)
+
     def test_smtp_from_email_prefers_auth_alias_over_placeholder_default(self) -> None:
         with (
             patch.object(email_service.settings, "SMTP_FROM_EMAIL", "noreply@vidyaverse.com"),
@@ -46,6 +53,29 @@ class TestEmailConfigResolution(unittest.TestCase):
 
 
 class TestEmailDeliveryRetries(unittest.IsolatedAsyncioTestCase):
+    async def test_send_email_otp_records_final_delivery_outcome_without_pii(self) -> None:
+        counter = Mock()
+        counter.labels.return_value = Mock()
+        with (
+            patch.object(email_service.settings, "SMTP_SERVER", "smtp.gmail.com"),
+            patch.object(email_service.settings, "SMTP_HOST", "smtp.gmail.com"),
+            patch.object(email_service.settings, "SMTP_PORT", 587),
+            patch.object(email_service.settings, "SMTP_STARTTLS", True),
+            patch.object(email_service.settings, "SMTP_USE_TLS", False),
+            patch.object(email_service.settings, "SMTP_REQUIRE_AUTH", True),
+            patch.object(email_service.settings, "SMTP_USER", "mailer@example.com"),
+            patch.object(email_service.settings, "SMTP_PASSWORD", "secret"),
+            patch.object(email_service.settings, "SMTP_FROM_EMAIL", "mailer@example.com"),
+            patch.object(email_service.settings, "OTP_EMAIL_MAX_RETRIES", 1),
+            patch("app.services.email.aiosmtplib.send", new=AsyncMock(return_value=True)),
+            patch("app.services.email.metrics.init_metrics"),
+            patch.object(email_service.metrics, "OTP_EMAIL_DELIVERIES_TOTAL", counter),
+        ):
+            await email_service.send_email_otp("student@example.com", "123456")
+
+        counter.labels.assert_called_once_with(outcome="sent")
+        counter.labels.return_value.inc.assert_called_once_with()
+
     async def test_send_email_otp_retries_then_succeeds(self) -> None:
         with (
             patch.object(email_service.settings, "SMTP_SERVER", "smtp.gmail.com"),
@@ -100,6 +130,30 @@ class TestEmailDeliveryRetries(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(mock_send.await_count, 2)
         self.assertEqual(mock_sleep.await_count, 1)
+
+    async def test_delivery_failure_logs_redacted_context(self) -> None:
+        with (
+            patch.object(email_service.settings, "SMTP_SERVER", "smtp.gmail.com"),
+            patch.object(email_service.settings, "SMTP_HOST", "smtp.gmail.com"),
+            patch.object(email_service.settings, "SMTP_PORT", 587),
+            patch.object(email_service.settings, "SMTP_STARTTLS", True),
+            patch.object(email_service.settings, "SMTP_USE_TLS", False),
+            patch.object(email_service.settings, "SMTP_REQUIRE_AUTH", True),
+            patch.object(email_service.settings, "SMTP_USER", "mailer@example.com"),
+            patch.object(email_service.settings, "SMTP_PASSWORD", "secret"),
+            patch.object(email_service.settings, "SMTP_FROM_EMAIL", "mailer@example.com"),
+            patch.object(email_service.settings, "OTP_EMAIL_MAX_RETRIES", 1),
+            patch("app.services.email.aiosmtplib.send", new=AsyncMock(side_effect=RuntimeError("provider unavailable"))),
+        ):
+            with self.assertLogs("app.services.email", level="ERROR") as captured:
+                with self.assertRaises(RuntimeError):
+                    await email_service.send_email_otp("student@example.com", "123456")
+
+        logs = "\n".join(captured.output)
+        self.assertIn("delivery_id=", logs)
+        self.assertIn("error_class=RuntimeError", logs)
+        self.assertNotIn("student@example.com", logs)
+        self.assertNotIn("123456", logs)
 
     async def test_send_email_otp_can_disable_tls_cert_validation(self) -> None:
         with (

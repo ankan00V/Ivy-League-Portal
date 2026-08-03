@@ -130,6 +130,11 @@ class TestDuplicateDetector(unittest.IsolatedAsyncioTestCase):
         self.assertIn("ai", canonical.tags)
         self.assertIn("hackathon", canonical.tags)
         self.assertEqual(canonical.dedup_score, 0.91)
+        self.assertTrue(canonical.quality_review_required)
+        self.assertIn(
+            "Potential duplicate listing requires a source and canonical-record check.",
+            canonical.quality_review_reasons,
+        )
 
 
 if __name__ == "__main__":

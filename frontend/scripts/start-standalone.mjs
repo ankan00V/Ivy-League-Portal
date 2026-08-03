@@ -11,12 +11,15 @@ const sourceStaticDir = path.join(projectRoot, ".next", "static");
 const targetStaticDir = path.join(standaloneRoot, ".next", "static");
 const sourcePublicDir = path.join(projectRoot, "public");
 const targetPublicDir = path.join(standaloneRoot, "public");
+const syncOnly = process.argv.includes("--sync-only");
 
-function syncDir(sourceDir, targetDir) {
+function syncDir(sourceDir, targetDir, { clean = false } = {}) {
   if (!existsSync(sourceDir)) {
     return;
   }
-  rmSync(targetDir, { recursive: true, force: true });
+  if (clean) {
+    rmSync(targetDir, { recursive: true, force: true });
+  }
   mkdirSync(path.dirname(targetDir), { recursive: true });
   cpSync(sourceDir, targetDir, { recursive: true });
 }
@@ -27,7 +30,12 @@ if (!existsSync(standaloneServer)) {
 }
 
 syncDir(sourceStaticDir, targetStaticDir);
-syncDir(sourcePublicDir, targetPublicDir);
+syncDir(sourcePublicDir, targetPublicDir, { clean: true });
+
+if (syncOnly) {
+  console.log("Standalone static assets synchronized.");
+  process.exit(0);
+}
 
 const child = spawn(process.execPath, [standaloneServer], {
   cwd: standaloneRoot,

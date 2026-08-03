@@ -143,6 +143,7 @@ class TestAuthOAuth(unittest.IsolatedAsyncioTestCase):
             account_type="candidate",
         )
         with (
+            patch.object(auth_endpoint.settings, "TURNSTILE_ENABLED", False),
             patch.object(auth_endpoint, "_validate_user_for_purpose", new=AsyncMock(return_value=None)),
             patch.object(auth_endpoint, "_normalize_account_type", return_value="candidate"),
             patch.object(auth_endpoint, "get_otp_cooldown_remaining", new=AsyncMock(return_value=42)),
@@ -161,6 +162,7 @@ class TestAuthOAuth(unittest.IsolatedAsyncioTestCase):
             account_type="candidate",
         )
         with (
+            patch.object(auth_endpoint.settings, "TURNSTILE_ENABLED", False),
             patch.object(auth_endpoint.settings, "OTP_ALLOW_DEBUG_FALLBACK", False),
             patch.object(auth_endpoint.settings, "OTP_SEND_COOLDOWN_SECONDS", 60),
             patch.object(auth_endpoint, "_validate_user_for_purpose", new=AsyncMock(return_value=None)),

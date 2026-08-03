@@ -3,14 +3,16 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
+import html
 import json
 import logging
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
-from typing import Any, Iterable, TypeAlias
+from typing import Any, Awaitable, Iterable, TypeAlias
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 import xml.etree.ElementTree as ET
 
@@ -26,6 +28,7 @@ from app.core.config import settings
 from app.core.time import utc_now
 from app.services.opportunity_trust import apply_trust_assessment, apply_trust_assessment_preserving_review, assess_opportunity_trust
 from app.services.scraper_fetch_bridge import fetch_page_sync
+from app.services.skill_extractor import skill_extractor
 from app.services.source_discovery import FetchedPage
 
 logger = logging.getLogger(__name__)
@@ -922,6 +925,24 @@ EXPERIENCED_ROLE_PATTERNS = [
     r"\bpaid\s+training\b",
 ]
 
+# Ranges anchored at 0 or 1 are early-career even though they name a number
+# above 1. "0-2 years" is the most common fresher phrasing in Indian postings,
+# and the bare [2-9] rule in EXPERIENCED_ROLE_PATTERNS matches inside it.
+EARLY_CAREER_RANGE_PATTERNS = [
+    r"\b[01]\s*(?:-|–|to)\s*\d+\s*\+?\s*years?\b",
+]
+
+# Disqualifiers that stay meaningful anywhere in a posting, including the
+# description. Bare seniority nouns are deliberately NOT in this list: a
+# description routinely names the senior engineers you would work alongside or
+# the manager you would report to without the role itself being senior.
+EXPERIENCE_DEMAND_PATTERNS = [
+    r"(?<![-–\d])\b[2-9]\s*\+\s*years?\b",
+    r"\b(?:minimum|min\.?|at\s+least)\s+[2-9]\s*\+?\s*years?\b",
+    r"\bbootcamp\b",
+    r"\bjob\s+guaranteed\b",
+]
+
 TRACKING_QUERY_KEYS = {
     "_hsenc",
     "_hsmi",
@@ -987,9 +1008,40 @@ WORK_MODE_PATTERNS: list[tuple[str, list[str]]] = [
     ("Onsite", [r"\bon[-\s]?site\b", r"\bin office\b"]),
 ]
 
+# Stipend was populated on 0 of 364 active opportunities. The previous patterns
+# required a currency token immediately before the amount AND anchored it with
+# \b - but "₹" is a non-word character, so \b could never match before it, which
+# alone excluded most Indian postings. They also had no form for
+# amount-then-currency ("10000 INR"), for a labelled bare amount ("stipend of
+# 20000"), for lakh/LPA notation, or for an explicit "unpaid".
+# Require at least one digit: a bare "," must not qualify as an amount.
+_STIPEND_AMOUNT = r"\d[\d,]*(?:\.\d+)?"
+_STIPEND_UNIT = r"(?:\s*(?:k|lpa|lakhs?|cr|crores?))?"
+_STIPEND_PERIOD = r"(?:\s*(?:/|per|a)\s*(?:month|week|year|annum|hour|day))?"
+# A plain \b cannot precede "₹" (it is a non-word character), but "rs"/"inr"
+# genuinely need a boundary or they match inside words - "yea[rs],"" produced a
+# stipend of "rs,". An explicit negative lookbehind covers both cases.
+_STIPEND_CURRENCY = r"(?<![A-Za-z0-9])(?:rs\.?|inr|₹)"
+
 STIPEND_PATTERNS = [
-    r"\b(?:stipend|salary|ctc|pay)\s*[:\-]?\s*((?:rs\.?|inr|₹)\s*[\d,]+(?:\s*-\s*(?:rs\.?|inr|₹)?\s*[\d,]+)?(?:\s*/\s*(?:month|week|year|annum))?)",
-    r"\b((?:rs\.?|inr|₹)\s*[\d,]+(?:\s*-\s*(?:rs\.?|inr|₹)?\s*[\d,]+)?(?:\s*/\s*(?:month|week|year|annum)))",
+    # Labelled, currency-prefixed: "Stipend: Rs. 15,000 per month"
+    rf"(?:stipend|salary|ctc|compensation|remuneration)\s*(?:of|is|:|-|–)?\s*"
+    rf"({_STIPEND_CURRENCY}\s*{_STIPEND_AMOUNT}{_STIPEND_UNIT}"
+    rf"(?:\s*(?:-|–|to)\s*{_STIPEND_CURRENCY}?\s*{_STIPEND_AMOUNT}{_STIPEND_UNIT})?{_STIPEND_PERIOD})",
+    # Currency-prefixed anywhere: "₹25,000/month". No \b - see note above.
+    rf"({_STIPEND_CURRENCY}\s*{_STIPEND_AMOUNT}{_STIPEND_UNIT}"
+    rf"(?:\s*(?:-|–|to)\s*{_STIPEND_CURRENCY}?\s*{_STIPEND_AMOUNT}{_STIPEND_UNIT})?{_STIPEND_PERIOD})",
+    # Amount then currency: "10000 INR monthly", "25,000 rupees"
+    rf"({_STIPEND_AMOUNT}\s*(?:inr|rs\.?|rupees){_STIPEND_PERIOD})",
+    # Labelled lakh/LPA notation without a currency symbol: "CTC 6 LPA"
+    rf"(?:stipend|salary|ctc|compensation)\s*(?:of|is|:|-|–)?\s*"
+    rf"({_STIPEND_AMOUNT}\s*(?:lpa|lakhs?|k)\b{_STIPEND_PERIOD})",
+    # Labelled bare amount. Requires 4+ digits so it cannot latch onto
+    # "salary: 2 years" or similar prose.
+    rf"(?:stipend|salary|ctc|compensation)\s*(?:of|is|:|-|–)?\s*"
+    rf"(\d[\d,]{{3,}}{_STIPEND_PERIOD})",
+    # "Unpaid" is information a student needs, not an absence of information.
+    r"\b(unpaid|no\s+stipend|without\s+stipend)\b",
 ]
 
 BATCH_PATTERNS = [
@@ -1041,6 +1093,26 @@ def _strip_html(value: str | None) -> str:
     if not value:
         return ""
     return BeautifulSoup(value, "html.parser").get_text(" ", strip=True)
+
+
+def _clean_description(value: str | None) -> str:
+    """Normalise a scraped description into readable plain text.
+
+    Sources return raw markup, and the opportunity card prints the value
+    verbatim, so listings showed literal tags to students. Beyond stripping
+    tags this also decodes entities (&amp;nbsp;, &amp;amp;) and drops the boilerplate
+    lead-ins that several ATS templates prepend, which otherwise consume the
+    whole card preview before any information about the role appears.
+    """
+    text = _strip_html(value)
+    if not text:
+        return ""
+    text = html.unescape(text)
+    # A second strip: entity decoding can reveal tags that were encoded once.
+    if "<" in text and ">" in text:
+        text = _strip_html(text)
+    text = text.replace(" ", " ")
+    return _collapse_whitespace(text)
 
 
 def _collapse_whitespace(value: str | None) -> str:
@@ -1154,6 +1226,104 @@ def canonicalize_apply_url(value: str | None) -> str:
 
 def is_valid_apply_url(value: str | None) -> bool:
     return str(value or "").strip().lower().startswith(("http://", "https://"))
+
+
+# Roughly a quarter of the active corpus was not an opportunity at all: listing
+# navigation ("Or see all categories"), help centres, login pages, marketing
+# ("Host a public hackathon"), salary pages, and university newsroom articles
+# about people who had already won awards. Generic anchor extraction harvests a
+# page's chrome alongside its rows, so this rejects the chrome by shape rather
+# than by disabling whole sources.
+_NON_POSTING_PATH_PATTERNS = [
+    r"/(?:login|signin|sign-in|signup|sign-up|register|logout)(?:[/._]|$)",
+    r"/(?:help|support|faq|contact|about|privacy|terms|pricing)(?:[/.]|$)",
+    r"/(?:news|stories|press|blog|guides|resources|newsroom|gazette)(?:/|$)",
+    r"/salaries?(?:/|$)",
+    r"/(?:product|solutions|features|host|employer[s]?/post)(?:/|$)",
+    r"/(?:all|categories|category|browse|explore|directory)(?:/|$)",
+]
+
+_NON_POSTING_HOST_PREFIXES = ("support.", "help.", "info.", "docs.", "blog.", "news.")
+
+# Titles that are page furniture rather than a role.
+_NON_POSTING_TITLE_PATTERNS = [
+    r"^(?:or\s+)?see\s+all\b",
+    r"^(?:view|browse|explore|see)\s+(?:all|more|other)\b",
+    # Trailing arrows and punctuation are common on these links ("Register now
+    # »", "Apply now ->"), so the anchors tolerate them rather than requiring an
+    # exact match.
+    r"^register\s+now\b",
+    r"^apply\s+now\b",
+    r"^learn\s+more\b",
+    r"^read\s+more\b",
+    r"^view\s+details\b",
+    r"^sign\s+(?:up|in)\b",
+    r"^host\s+(?:a|an|your)\b",
+    r"^(?:careers?|jobs?)\s+(?:help|centre|center|faq)\b",
+    r"\bhelp\s+cent(?:re|er)\b",
+    r"^(?:students?|graduates?|freshers?)(?:'s)?\s*(?:corner|faq)?$",
+    r"^(?:employer|recruiter)\s*/\s*post\b",
+    r"^internships?\s+in\s+[a-z\s]+$",
+    r"^post\s+(?:a\s+)?(?:job|internship)\b",
+]
+
+# Newsroom copy: an article *about* an award is not an award you can apply to.
+_NEWS_TITLE_PATTERNS = [
+    r"\b(?:named|awarded|wins?|won|announces?|announced|receives?|honou?red)\b.*\b(?:scholar|scholarship|fellow|grant|award|prize)\b",
+    r"\b(?:scholars?|fellows?)\s+named\b",
+    r"\$[\d.,]+\s*(?:million|billion|m|bn|k)?\b.*\b(?:gift|grant|funding|donation)\b",
+]
+
+
+def is_in_scope_opportunity(record: dict[str, Any]) -> bool:
+    """Reject opportunity types the product does not currently serve.
+
+    Scope is internships and adjacent student opportunities - hackathons,
+    competitions, workshops, conferences. Scholarships, fellowships and
+    standalone research grants are out: pursuing them spent SerpAPI and LLM
+    credit, and every scholarship row the pipeline produced turned out to be a
+    university newsroom article about an award already awarded rather than
+    something a student could apply to.
+    """
+    from app.services.opportunity_visibility import canonical_opportunity_type
+
+    raw_type = record.get("opportunity_type")
+    if not raw_type:
+        return True
+    canonical = canonical_opportunity_type(raw_type) or str(raw_type)
+    allowed = {str(item).strip().lower() for item in (settings.OPPORTUNITY_SCOPE_TYPES or [])}
+    if not allowed:
+        return True
+    return canonical.strip().lower() in allowed
+
+
+def is_probable_opportunity_posting(record: dict[str, Any]) -> bool:
+    """Reject rows that are page furniture rather than an applyable posting."""
+    url = str(record.get("apply_url") or record.get("url") or "").strip()
+    if not is_valid_apply_url(url):
+        return False
+
+    parsed = urlparse(url.lower())
+    host = parsed.netloc.split("@")[-1].split(":")[0]
+    if host.startswith(_NON_POSTING_HOST_PREFIXES):
+        return False
+
+    path = parsed.path or "/"
+    # A bare host with no path cannot identify a specific posting.
+    if path in {"", "/"} and not parsed.query:
+        return False
+    if any(re.search(pattern, path) for pattern in _NON_POSTING_PATH_PATTERNS):
+        return False
+
+    title = _collapse_whitespace(record.get("title")).lower()
+    if not title:
+        return False
+    if any(re.search(pattern, title) for pattern in _NON_POSTING_TITLE_PATTERNS):
+        return False
+    if any(re.search(pattern, title) for pattern in _NEWS_TITLE_PATTERNS):
+        return False
+
+    return True
 
 
 def _record_value(record: dict[str, Any], field_name: str) -> Any:
@@ -1325,13 +1495,52 @@ def _extract_ppo_availability(text: str) -> str | None:
     return None
 
 
+def _merge_skill_tags(existing_tags: Any, metadata_text: str) -> list[str]:
+    if isinstance(existing_tags, str):
+        values = [existing_tags]
+    elif isinstance(existing_tags, (list, tuple, set)):
+        values = [str(value) for value in existing_tags]
+    else:
+        values = []
+
+    values.extend(skill_extractor.extract(metadata_text, max_tags=8))
+    tags: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized = _collapse_whitespace(value).lower()[:80]
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        tags.append(normalized)
+    return tags[:12]
+
+
 def _enrich_metadata(record: dict[str, Any]) -> dict[str, Any]:
-    description = _collapse_whitespace(record.get("description"))
+    # Descriptions arrive as raw markup from most sources. The card renders the
+    # value verbatim, so students were reading literal tags:
+    #   "<div><strong>About Groww:</strong></div> <div>We are a passionate..."
+    # Stripping here rather than in the UI keeps every consumer clean - feed,
+    # RAG context, embeddings and the LLM extractor all read this field.
+    description = _clean_description(record.get("description"))
     title = _collapse_whitespace(record.get("title"))
     university = _collapse_whitespace(record.get("university"))
     metadata_text = " ".join(part for part in [title, description, university] if part)
     enriched = dict(record)
+    enriched["description"] = description
     enriched["url"] = _canonicalize_url(record.get("url"))
+    enriched["tags"] = _merge_skill_tags(record.get("tags"), metadata_text)
+    # Canonicalise the type at ingestion. It was previously normalised only on
+    # the employer and admin write paths, so scraped rows accumulated both
+    # "Hackathon" and "Hackathons" (and Conference/Conferences) as distinct
+    # types. Type filters and portal routing treat those as different, so a
+    # student filtering hackathons saw only part of them.
+    if record.get("opportunity_type"):
+        from app.services.opportunity_visibility import canonical_opportunity_type
+
+        enriched["opportunity_type"] = (
+            canonical_opportunity_type(record.get("opportunity_type"))
+            or record.get("opportunity_type")
+        )
     enriched["location"] = record.get("location") or _extract_location(metadata_text)
     enriched["work_mode"] = record.get("work_mode") or _extract_work_mode(metadata_text)
     enriched["stipend"] = record.get("stipend") or _extract_stipend(metadata_text)
@@ -1482,10 +1691,25 @@ def is_early_career_opportunity(record: dict[str, Any]) -> bool:
     tags_text = _collapse_whitespace(" ".join(tags_signal_parts)).lower()
     description_text = _collapse_whitespace(record.get("description")).lower()
     text = _collapse_whitespace(f"{primary_text} {tags_text} {description_text}").lower()
-    if any(re.search(pattern, text, re.IGNORECASE) for pattern in EXPERIENCED_ROLE_PATTERNS):
-        return False
+
+    # An explicit early-career signal wins outright. This is checked before any
+    # exclusion because a genuine internship posting almost always mentions the
+    # senior staff you would work with, the manager you report to, or a degree
+    # timeline expressed in years - none of which describe the role's own level.
     if any(re.search(pattern, primary_text, re.IGNORECASE) for pattern in EARLY_CAREER_PATTERNS):
         return True
+    if any(re.search(pattern, text, re.IGNORECASE) for pattern in EARLY_CAREER_RANGE_PATTERNS):
+        return True
+
+    # Seniority nouns only describe this role when they appear in the title or
+    # eligibility. Matching them against the description rejected the majority
+    # of legitimate internships.
+    if any(re.search(pattern, primary_text, re.IGNORECASE) for pattern in EXPERIENCED_ROLE_PATTERNS):
+        return False
+
+    # Explicit multi-year demands disqualify wherever they appear.
+    if any(re.search(pattern, text, re.IGNORECASE) for pattern in EXPERIENCE_DEMAND_PATTERNS):
+        return False
     tags = {tag.strip().lower() for tag in re.split(r"[,|]", tags_text) if tag.strip()}
     return bool(tags & {"intern", "internship", "entry level", "entry-level", "new grad", "graduate trainee"})
 
@@ -1968,13 +2192,19 @@ class InternshalaScraper:
     def fetch_live_opportunities(self, max_items: int = 30) -> list[dict]:
         opportunities: list[dict] = []
 
+        # The budget is shared evenly across listings. Filling greedily in
+        # declaration order let the two job listings consume the whole quota,
+        # so the internship listings - the reason this connector exists - were
+        # never requested and this source returned zero internships.
+        listing_count = max(1, len(INTERNSHALA_LISTINGS))
+        per_listing = max(1, -(-max_items // listing_count))
+
         for listing_url, default_type in INTERNSHALA_LISTINGS:
             try:
                 page = _fetch_listing_page(listing_url, render=True)
                 soup = BeautifulSoup(page.text, "html.parser")
-                opportunities.extend(self._extract_cards(soup, listing_url, default_type))
-                if len(opportunities) >= max_items:
-                    break
+                cards = self._extract_cards(soup, listing_url, default_type)
+                opportunities.extend(cards[:per_listing])
             except Exception as exc:
                 logger.debug("[Internshala] Failed fetch from %s: %s", listing_url, exc)
 
@@ -3345,6 +3575,60 @@ def get_scraper_runtime_status() -> dict[str, Any]:
     return snapshot
 
 
+# asyncio.to_thread uses the loop's default executor, which is sized
+# min(32, cpu + 4) - 14 on a 10-core machine. The generic-portal batch alone
+# submits 24 fetches, so ten of them could not start until a slot freed while
+# the batch deadline was already counting down from batch start. Sources
+# declared late in GENERIC_PORTAL_LISTINGS were therefore starved first and
+# reported as timeouts having barely run. These fetches are network-bound, so a
+# dedicated, larger pool costs little.
+_FETCH_EXECUTOR = ThreadPoolExecutor(
+    max_workers=48,
+    thread_name_prefix="scraper-fetch",
+)
+
+
+async def _fetch_in_thread(func: Any, *args: Any) -> Any:
+    """asyncio.to_thread equivalent bound to the dedicated fetch pool.
+
+    Must be a coroutine function, not one that returns the executor Future
+    directly: callers hand the result to asyncio.create_task, which accepts a
+    coroutine and rejects a Future with "a coroutine was expected". Returning
+    the Future failed every scheduled scraper run.
+    """
+    return await asyncio.get_running_loop().run_in_executor(_FETCH_EXECUTOR, func, *args)
+
+
+async def _collect_fetch_batch_results(
+    awaitables: list[Awaitable[Any]],
+    *,
+    batch_name: str,
+    timeout_seconds: float,
+) -> list[Any]:
+    """Return completed fetches while turning slow providers into source errors."""
+    if not awaitables:
+        return []
+
+    tasks = [asyncio.create_task(awaitable) for awaitable in awaitables]
+    timeout = max(1.0, float(timeout_seconds))
+    _, pending = await asyncio.wait(tasks, timeout=timeout)
+    results: list[Any] = []
+    for task in tasks:
+        if task in pending:
+            results.append(TimeoutError(f"{batch_name} fetch timed out after {timeout:g}s"))
+            continue
+        try:
+            results.append(task.result())
+        except Exception as exc:
+            results.append(exc)
+
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+    return results
+
+
 def _new_source_report(source: str) -> dict[str, Any]:
     return {
         "source": source,
@@ -3361,31 +3645,52 @@ def _new_source_report(source: str) -> dict[str, Any]:
     }
 
 
-async def _delete_opportunities(records: Iterable[Any]) -> int:
-    deleted_count = 0
+async def _expire_opportunities(records: Iterable[Any]) -> int:
+    """Retire past-deadline rows by status instead of destroying them.
+
+    Most deadlines in the corpus are synthetic - several connectors stamp
+    `now + 30 days` or `updated_at + 45 days` when the source exposes no real
+    closing date. Hard-deleting on that basis permanently destroyed rows that
+    were never genuinely expired, with no tombstone and no way to audit or
+    recover. `opportunity_status="expired"` already hides a row from every
+    student-facing surface (see opportunity_visibility.is_opportunity_expired).
+    """
+    expired_count = 0
     seen_ids: set[str] = set()
+    now_naive = _to_naive_utc(utc_now())
     for record in records:
         record_id = str(getattr(record, "id", ""))
         if record_id and record_id in seen_ids:
             continue
         if record_id:
             seen_ids.add(record_id)
-        await record.delete()
-        deleted_count += 1
-    return deleted_count
+        current_status = str(getattr(record, "opportunity_status", "") or "").strip().lower()
+        if current_status in {"expired", "filled", "removed"}:
+            continue
+        record.opportunity_status = "expired"
+        record.updated_at = now_naive
+        await record.save()
+        expired_count += 1
+    return expired_count
 
 
 async def _cleanup_inactive_opportunities(Opportunity) -> dict[str, int]:
     now = _to_naive_utc(utc_now())
     cleanup_report = {
+        "expired_marked": 0,
         "expired_deleted": 0,
         "stale_deleted": 0,
         "hard_stale_deleted": 0,
         "total_deleted": 0,
     }
 
-    expired_records = await Opportunity.find_many({"deadline": {"$ne": None, "$lt": now}}).to_list()
-    cleanup_report["expired_deleted"] = await _delete_opportunities(expired_records)
+    expired_records = await Opportunity.find_many(
+        {
+            "deadline": {"$ne": None, "$lt": now},
+            "opportunity_status": {"$nin": ["expired", "filled", "removed"]},
+        }
+    ).to_list()
+    cleanup_report["expired_marked"] = await _expire_opportunities(expired_records)
     cleanup_report["total_deleted"] = (
         cleanup_report["expired_deleted"]
         + cleanup_report["stale_deleted"]
@@ -3413,15 +3718,24 @@ async def _insert_and_broadcast(
     normalized_records: list[dict[str, Any]] = []
     seen_urls: set[str] = set()
     out_of_scope_count = 0
+    non_posting_count = 0
 
     from app.services.opportunity_quality_service import opportunity_quality_scorer
 
     for opp_data in opportunity_rows:
+        # Rejected before the scope check so a nav link or newsroom article is
+        # never counted as an out-of-scope *opportunity*.
+        if not is_probable_opportunity_posting(opp_data):
+            non_posting_count += 1
+            continue
+        if not is_in_scope_opportunity(opp_data):
+            out_of_scope_count += 1
+            continue
         if not is_early_career_opportunity(opp_data):
             out_of_scope_count += 1
             continue
         url = (opp_data.get("url") or "").strip()
-        if not is_valid_apply_url(url) or url in seen_urls:
+        if url in seen_urls:
             continue
         seen_urls.add(url)
         classification = ai_system.classify_opportunity(
@@ -3441,12 +3755,19 @@ async def _insert_and_broadcast(
         quality_score, quality_missing_fields = opportunity_quality_scorer.score_payload(synthetic, quality_updates)
         normalized_payload["quality_score"] = quality_score
         normalized_payload["quality_missing_fields"] = quality_missing_fields
+        quality_review_required, quality_review_reasons = opportunity_quality_scorer.review_status(
+            synthetic,
+            score=quality_score,
+            missing=quality_missing_fields,
+        )
+        normalized_payload["quality_review_required"] = quality_review_required
+        normalized_payload["quality_review_reasons"] = quality_review_reasons
         normalized_payload["last_quality_run_at"] = _to_naive_utc(utc_now())
         normalized_records.append(normalized_payload)
 
     parsed_count = len(normalized_records)
 
-    if len(normalized_records) > 1:
+    if settings.SCRAPER_INTRA_BATCH_SEMANTIC_DEDUP_ENABLED and len(normalized_records) > 1:
         from app.services.embedding_service import embedding_service
 
         semantic_texts = [
@@ -3499,9 +3820,6 @@ async def _insert_and_broadcast(
 
     from app.services.vector_service import opportunity_vector_service
 
-    if normalized_records:
-        await opportunity_vector_service.rebuild()
-
     for normalized_payload in normalized_records:
         url = normalized_payload["url"]
 
@@ -3509,14 +3827,15 @@ async def _insert_and_broadcast(
             now_naive = _to_naive_utc(utc_now())
             canonical_key = str(normalized_payload.get("canonical_key") or "").strip()
             duplicate_cluster_key = str(normalized_payload.get("duplicate_cluster_key") or "").strip()
+            existing_url_match = existing_by_url.get(url)
             existing = (
-                existing_by_url.get(url)
+                existing_url_match
                 or existing_by_key.get(canonical_key)
                 or existing_by_cluster.get(duplicate_cluster_key)
             )
             if existing:
                 changed = False
-                for field in [
+                merge_fields = [
                     "title",
                     "description",
                     "opportunity_type",
@@ -3536,9 +3855,6 @@ async def _insert_and_broadcast(
                     "batch_years",
                     "ppo_available",
                     "tags",
-                    "quality_score",
-                    "quality_missing_fields",
-                    "last_quality_run_at",
                     "canonical_key",
                     "canonical_url_hash",
                     "title_company_location_hash",
@@ -3546,13 +3862,39 @@ async def _insert_and_broadcast(
                     "normalized_title",
                     "normalized_organization",
                     "duration_months",
-                ]:
+                ]
+                # When the match came from canonical_key/duplicate_cluster_key
+                # rather than the URL, the incoming record is a *different*
+                # listing that merely normalised to the same key. Overwriting
+                # the row's title/description/deadline while leaving the old URL
+                # in place produced records whose Apply button led to an
+                # unrelated - often closed - posting. Keep the row internally
+                # consistent by taking the incoming URL too.
+                if existing_url_match is None and str(getattr(existing, "url", "") or "") != url:
+                    merge_fields = merge_fields + ["url"]
+                for field in merge_fields:
                     incoming = normalized_payload.get(field)
                     if incoming is None:
                         continue
                     if getattr(existing, field, None) != incoming:
                         setattr(existing, field, incoming)
                         changed = True
+                before_quality = (
+                    getattr(existing, "quality_score", None),
+                    list(getattr(existing, "quality_missing_fields", []) or []),
+                    bool(getattr(existing, "quality_review_required", False)),
+                    list(getattr(existing, "quality_review_reasons", []) or []),
+                )
+                opportunity_quality_scorer.apply_quality_assessment(existing)
+                existing.last_quality_run_at = now_naive
+                after_quality = (
+                    getattr(existing, "quality_score", None),
+                    list(getattr(existing, "quality_missing_fields", []) or []),
+                    bool(getattr(existing, "quality_review_required", False)),
+                    list(getattr(existing, "quality_review_reasons", []) or []),
+                )
+                if before_quality != after_quality:
+                    changed = True
                 next_assessment = assess_opportunity_trust(existing)
                 if (
                     getattr(existing, "trust_status", None) != next_assessment.trust_status
@@ -3579,12 +3921,14 @@ async def _insert_and_broadcast(
                 f"{normalized_payload.get('title', '')} {normalized_payload.get('description', '')} "
                 f"{normalized_payload.get('opportunity_type', '')}"
             ).strip()
-            semantic_duplicates = await opportunity_vector_service.find_semantic_duplicates(
-                semantic_text,
-                threshold=semantic_threshold,
-                top_k=1,
-                exclude_urls=[url],
-            )
+            semantic_duplicates = []
+            if opportunity_vector_service.is_ready():
+                semantic_duplicates = await opportunity_vector_service.find_semantic_duplicates(
+                    semantic_text,
+                    threshold=semantic_threshold,
+                    top_k=1,
+                    exclude_urls=[url],
+                )
             if semantic_duplicates:
                 duplicate_url = semantic_duplicates[0].get("url")
                 duplicate = await Opportunity.find_one({"url": duplicate_url})
@@ -3608,9 +3952,6 @@ async def _insert_and_broadcast(
                         "batch_years",
                         "ppo_available",
                         "tags",
-                        "quality_score",
-                        "quality_missing_fields",
-                        "last_quality_run_at",
                         "duration_months",
                     ]:
                         incoming = normalized_payload.get(field)
@@ -3619,6 +3960,22 @@ async def _insert_and_broadcast(
                         if getattr(duplicate, field, None) != incoming:
                             setattr(duplicate, field, incoming)
                             changed = True
+                    before_quality = (
+                        getattr(duplicate, "quality_score", None),
+                        list(getattr(duplicate, "quality_missing_fields", []) or []),
+                        bool(getattr(duplicate, "quality_review_required", False)),
+                        list(getattr(duplicate, "quality_review_reasons", []) or []),
+                    )
+                    opportunity_quality_scorer.apply_quality_assessment(duplicate)
+                    duplicate.last_quality_run_at = now_naive
+                    after_quality = (
+                        getattr(duplicate, "quality_score", None),
+                        list(getattr(duplicate, "quality_missing_fields", []) or []),
+                        bool(getattr(duplicate, "quality_review_required", False)),
+                        list(getattr(duplicate, "quality_review_reasons", []) or []),
+                    )
+                    if before_quality != after_quality:
+                        changed = True
                     duplicate.last_seen_at = now_naive
                     if changed:
                         duplicate.updated_at = now_naive
@@ -3664,16 +4021,17 @@ async def _insert_and_broadcast(
             failed_count += 1
             print(f"[ScraperInsert] Failed to upsert '{normalized_payload.get('title', 'unknown')}': {exc}")
 
-    if inserted_count or updated_count:
-        await opportunity_vector_service.rebuild(force=True)
-
     return {
         "inserted": inserted_count,
         "updated": updated_count,
         "failed": failed_count,
         "parsed": parsed_count,
         "out_of_scope": out_of_scope_count,
-        "deduplicated": max(0, len(opportunity_rows) - out_of_scope_count - len(normalized_records)),
+        "non_posting": non_posting_count,
+        "deduplicated": max(
+            0,
+            len(opportunity_rows) - out_of_scope_count - non_posting_count - len(normalized_records),
+        ),
         "avg_trust_score": round(sum(trust_scores) / len(trust_scores), 2) if trust_scores else None,
     }
 
@@ -3712,7 +4070,7 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
         _scraper_runtime_state["last_started_at"] = _iso(started_at)
 
         report_sources: list[dict[str, Any]] = []
-        totals = {"fetched": 0, "inserted": 0, "updated": 0, "failed": 0, "deleted": 0}
+        totals = {"fetched": 0, "inserted": 0, "updated": 0, "failed": 0, "deleted": 0, "expired": 0}
 
         try:
             system_user = await User.find_one({"is_admin": True})
@@ -3742,53 +4100,37 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
                     errors,
                 )
 
-            base_fetch_results = await asyncio.gather(
-                asyncio.to_thread(ivy_connector.fetch_ivy_league_opportunities, 10),
-                fetch_unstop_batch(),
-                asyncio.to_thread(
-                    naukri_scraper.fetch_it_jobs,
-                    max(1, settings.SCRAPER_NAUKRI_MAX_ITEMS),
-                ),
-                asyncio.to_thread(
-                    internshala_scraper.fetch_live_opportunities,
-                    max(1, settings.SCRAPER_INTERNSHALA_MAX_ITEMS),
-                ),
-                asyncio.to_thread(
-                    hack2skill_scraper.fetch_live_opportunities,
-                    max(1, settings.SCRAPER_HACK2SKILL_MAX_ITEMS),
-                ),
-                asyncio.to_thread(
-                    freshersworld_scraper.fetch_live_opportunities,
-                    max(1, settings.SCRAPER_FRESHERSWORLD_MAX_ITEMS),
-                ),
-                asyncio.to_thread(
-                    indeed_india_scraper.fetch_live_opportunities,
-                    max(1, settings.SCRAPER_INDEED_MAX_ITEMS),
-                ),
-                asyncio.to_thread(
-                    greenhouse_scraper.fetch_live_opportunities,
-                    max(1, settings.SCRAPER_GREENHOUSE_MAX_ITEMS),
-                ),
-                return_exceptions=True,
-            )
-            portal_specs: list[tuple[str, str]] = [
-                (
-                    str(config.get("source") or "").strip().lower(),
-                    str(config.get("label") or config.get("source") or "Platform").strip(),
-                )
-                for config in merged_portal_listings()
-                if str(config.get("source") or "").strip() and config.get("enabled", True)
-            ]
-            portal_fetch_results = await asyncio.gather(
-                *[
+            base_fetch_results = await _collect_fetch_batch_results(
+                [
+                    asyncio.to_thread(ivy_connector.fetch_ivy_league_opportunities, 10),
+                    fetch_unstop_batch(),
                     asyncio.to_thread(
-                        generic_portal_scraper.fetch_live_opportunities,
-                        source_name,
-                        max(1, settings.SCRAPER_GENERIC_PORTAL_MAX_ITEMS),
-                    )
-                    for source_name, _ in portal_specs
+                        naukri_scraper.fetch_it_jobs,
+                        max(1, settings.SCRAPER_NAUKRI_MAX_ITEMS),
+                    ),
+                    asyncio.to_thread(
+                        internshala_scraper.fetch_live_opportunities,
+                        max(1, settings.SCRAPER_INTERNSHALA_MAX_ITEMS),
+                    ),
+                    asyncio.to_thread(
+                        hack2skill_scraper.fetch_live_opportunities,
+                        max(1, settings.SCRAPER_HACK2SKILL_MAX_ITEMS),
+                    ),
+                    asyncio.to_thread(
+                        freshersworld_scraper.fetch_live_opportunities,
+                        max(1, settings.SCRAPER_FRESHERSWORLD_MAX_ITEMS),
+                    ),
+                    asyncio.to_thread(
+                        indeed_india_scraper.fetch_live_opportunities,
+                        max(1, settings.SCRAPER_INDEED_MAX_ITEMS),
+                    ),
+                    asyncio.to_thread(
+                        greenhouse_scraper.fetch_live_opportunities,
+                        max(1, settings.SCRAPER_GREENHOUSE_MAX_ITEMS),
+                    ),
                 ],
-                return_exceptions=True,
+                batch_name="primary_sources",
+                timeout_seconds=settings.SCRAPER_FETCH_BATCH_TIMEOUT_SECONDS,
             )
 
             (
@@ -3893,6 +4235,27 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
                 empty_message="No opportunities parsed from Greenhouse.",
             )
 
+            portal_specs: list[tuple[str, str]] = [
+                (
+                    str(config.get("source") or "").strip().lower(),
+                    str(config.get("label") or config.get("source") or "Platform").strip(),
+                )
+                for config in merged_portal_listings()
+                if str(config.get("source") or "").strip() and config.get("enabled", True)
+            ]
+            portal_fetch_results = await _collect_fetch_batch_results(
+                [
+                    _fetch_in_thread(
+                        generic_portal_scraper.fetch_live_opportunities,
+                        source_name,
+                        max(1, settings.SCRAPER_GENERIC_PORTAL_MAX_ITEMS),
+                    )
+                    for source_name, _ in portal_specs
+                ],
+                batch_name="generic_portals",
+                timeout_seconds=settings.SCRAPER_FETCH_BATCH_TIMEOUT_SECONDS,
+            )
+
             for (source_name, source_label), source_result in zip(portal_specs, portal_fetch_results):
                 await _process_source_result(
                     source_key=source_name,
@@ -3989,6 +4352,7 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
                 totals["updated"] += int(source_report["updated"])
                 totals["failed"] += int(source_report["failed"])
             totals["deleted"] = int(cleanup_report["total_deleted"])
+            totals["expired"] = int(cleanup_report["expired_marked"])
 
             any_errors = any(source_report["errors"] for source_report in report_sources)
             any_progress = (totals["fetched"] + totals["inserted"] + totals["updated"]) > 0

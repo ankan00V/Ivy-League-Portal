@@ -42,6 +42,14 @@ from app.models.rag_template_evaluation_run import RAGTemplateEvaluationRun
 from app.models.rag_template_version import RAGTemplateVersion
 from app.models.ranking_model_version import RankingModelVersion
 from app.models.ranking_request_telemetry import RankingRequestTelemetry
+from app.models.recommendation_funnel import (
+    CareerOutcomeEvent,
+    OpportunityVersion,
+    RecommendationExposure,
+    RecommendationFeatureSnapshot,
+    RecommendationFeedback,
+    RecommendationSession,
+)
 from app.models.recruiter_audit_log import RecruiterAuditLog
 from app.models.scraper_run_log import ScraperRunLog
 from app.models.security_event import SecurityEvent
@@ -60,6 +68,12 @@ DOCUMENT_MODELS = [
     Profile,
     Opportunity,
     OpportunityInteraction,
+    RecommendationSession,
+    RecommendationExposure,
+    RecommendationFeatureSnapshot,
+    OpportunityVersion,
+    RecommendationFeedback,
+    CareerOutcomeEvent,
     UserJourney,
     ApplicationOutcome,
     Application,

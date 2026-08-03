@@ -71,6 +71,37 @@ EXPERIENCED_TERMS = {
     "3+ years",
 }
 
+# The sets above were matched with `term in haystack`, i.e. plain substring
+# containment. That made "intern" match "international" and "student" match
+# "students union", so press releases and navigation links were ingested as
+# internships - e.g. "L&T Heavy Engineering Wins Orders in International
+# Markets" (Internship) and "Campus Life" (Job). These word-boundary patterns
+# replace that matching. "campus" and "university" alone are deliberately not
+# qualifying signals; they must name an actual programme.
+_EARLY_CAREER_SIGNAL_RE = re.compile(
+    r"\b(?:"
+    r"intern|interns|internship|internships|co-?op|"
+    r"student\s+(?:programme?s?|role|opportunit\w+)|"
+    r"campus\s+(?:hire|hiring|recruit\w*|programme?s?)|"
+    r"graduate\s+(?:programme?s?|schemes?|roles?|trainee|engineer|analyst|developer)|"
+    r"new\s+grad(?:uate)?s?|entry[-\s]?level|fresher|freshers|"
+    r"trainee|apprentice|apprenticeship|"
+    r"associate\s+software\s+engineer"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_EXPERIENCED_SIGNAL_RE = re.compile(
+    r"\b(?:senior|sr\.?|staff|principal|lead|manager|director|head\s+of|architect|"
+    r"vp|vice\s+president|chief|phd)\b",
+    re.IGNORECASE,
+)
+
+# Ranges anchored at 0 or 1 stay early-career even though they name a higher
+# number ("0-2 years").
+_EARLY_RANGE_RE = re.compile(r"\b[01]\s*(?:-|–|to)\s*\d+\s*\+?\s*years?\b", re.IGNORECASE)
+_EXPERIENCE_DEMAND_RE = re.compile(r"\b(?:[3-9]|\d{2,})\s*\+?\s*years?\b", re.IGNORECASE)
+
 
 @dataclass(frozen=True)
 class AtsEndpoint:
@@ -161,19 +192,30 @@ def _clean_title(value: Any, *, company_name: str | None = None) -> str:
 
 
 def _is_early_career(row: dict[str, Any]) -> bool:
-    haystack = " ".join(
-        [
-            _text(row.get("title")),
-            _text(row.get("description")),
-            _text(row.get("description_preview")),
-            " ".join(str(tag) for tag in list(row.get("tags") or [])),
-        ]
-    ).lower()
-    if not haystack:
+    title = _text(row.get("title"))
+    tags = " ".join(str(tag) for tag in list(row.get("tags") or []))
+    body = " ".join(
+        [_text(row.get("description")), _text(row.get("description_preview"))]
+    )
+
+    # The qualifying signal must appear in the title or tags. Searching the
+    # description as well meant a careers page whose boilerplate mentions
+    # universities or graduate programmes qualified every role on it, which is
+    # how senior and non-student postings reached the student feed.
+    signal_text = f"{title} {tags}".strip()
+    if not signal_text or not _EARLY_CAREER_SIGNAL_RE.search(signal_text):
         return False
-    if any(term in haystack for term in EARLY_CAREER_TERMS):
-        return not any(term in haystack for term in EXPERIENCED_TERMS)
-    return False
+
+    # Seniority words only describe this role when they are in the title/tags.
+    if _EXPERIENCED_SIGNAL_RE.search(signal_text):
+        return False
+
+    # An explicit multi-year demand disqualifies wherever it appears, unless it
+    # is a range starting at 0 or 1.
+    if _EXPERIENCE_DEMAND_RE.search(body) and not _EARLY_RANGE_RE.search(body):
+        return False
+
+    return True
 
 
 def _stable_source_id(*parts: str) -> str:

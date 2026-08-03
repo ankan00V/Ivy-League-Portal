@@ -11,6 +11,7 @@ from beanie.odm.operators.find.comparison import In
 from app.core.config import settings
 from app.models.opportunity import Opportunity
 from app.models.opportunity_interaction import OpportunityInteraction
+from app.models.traffic import matches_traffic_type
 from app.models.profile import Profile
 from app.core.time import as_utc_aware, utc_now
 from app.services.experiment_service import experiment_service
@@ -46,6 +47,7 @@ def _profile_query(profile: Profile) -> str:
         getattr(profile, "preferred_locations", "") or "",
         getattr(profile, "preferred_work_mode", "") or "",
         getattr(profile, "expected_stipend_range", "") or "",
+        str(getattr(profile, "availability", "") or "").replace("_", " "),
         getattr(profile, "user_type", "") or "",
     ]
     values.extend(getattr(profile, "domains_of_interest", []) or [])
@@ -58,6 +60,26 @@ def _profile_query(profile: Profile) -> str:
 
 
 class RecommendationService:
+    def eligibility_warnings(self, *, profile: Profile, opportunity: Opportunity) -> list[str]:
+        batch_years = sorted({int(year) for year in list(getattr(opportunity, "batch_years", []) or []) if str(year).isdigit()})
+        profile_year = getattr(profile, "graduation_year", None) or getattr(profile, "passout_year", None)
+        try:
+            graduation_year = int(profile_year) if profile_year is not None else None
+        except (TypeError, ValueError):
+            graduation_year = None
+
+        if batch_years:
+            batch_label = ", ".join(str(year) for year in batch_years)
+            if graduation_year is None:
+                return [f"This listing specifies batches {batch_label}. Add your graduation year to verify fit."]
+            if graduation_year not in batch_years:
+                return [f"This listing specifies batches {batch_label}; your profile lists {graduation_year}. Confirm eligibility with the organizer."]
+            return [f"Your graduation year ({graduation_year}) matches the listed eligible batches."]
+
+        if not str(getattr(opportunity, "eligibility", "") or "").strip():
+            return ["Eligibility criteria are not published. Verify requirements with the organizer before applying."]
+        return []
+
     def _source_key(self, opportunity: Opportunity) -> str:
         return str(getattr(opportunity, "source", "") or "").strip().lower() or "unknown"
 
@@ -133,7 +155,9 @@ class RecommendationService:
 
         positive_map: dict[str, list[datetime]] = {}
         for item in interactions:
-            if (getattr(item, "traffic_type", "real") or "real").strip().lower() not in {"", "real"}:
+            # Only a real student's own behaviour should move their threshold.
+            # Blank provenance is unknown, so it is excluded rather than assumed.
+            if not matches_traffic_type(getattr(item, "traffic_type", None), "real"):
                 continue
             mode = (getattr(item, "ranking_mode", "") or "").strip().lower()
             if mode and mode not in target_modes:
@@ -153,7 +177,9 @@ class RecommendationService:
         positives: list[float] = []
         negatives: list[float] = []
         for item in interactions:
-            if (getattr(item, "traffic_type", "real") or "real").strip().lower() not in {"", "real"}:
+            # Only a real student's own behaviour should move their threshold.
+            # Blank provenance is unknown, so it is excluded rather than assumed.
+            if not matches_traffic_type(getattr(item, "traffic_type", None), "real"):
                 continue
             mode = (getattr(item, "ranking_mode", "") or "").strip().lower()
             if mode and mode not in target_modes:
@@ -649,6 +675,7 @@ class RecommendationService:
                     "opportunity": opportunity,
                     "match_score": round(final_score, 3),
                     "match_reasons": reasons,
+                    "eligibility_warnings": self.eligibility_warnings(profile=profile, opportunity=opportunity),
                     "baseline_score": candidate["baseline_score"],
                     "semantic_score": candidate["semantic_score"],
                     "behavior_score": candidate["behavior_score"],

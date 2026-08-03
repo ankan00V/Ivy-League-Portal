@@ -58,6 +58,9 @@ jobs:
       - name: Build frontend
         run: npm run build
 
+      - name: Verify standalone asset delivery
+        run: npm run verify:standalone
+
   e2e-smoke:
     name: Playwright Smoke
     runs-on: ubuntu-latest

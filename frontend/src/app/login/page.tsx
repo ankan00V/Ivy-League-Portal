@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import React, { useEffect, useMemo, useState } from "react";
 
 import BrandLogo from "@/components/BrandLogo";
@@ -59,8 +59,25 @@ const LOGIN_VISUALS = {
   },
 };
 
+/**
+ * Where to send the user after a successful sign-in.
+ *
+ * A protected page that 401s redirects here with ?next=<path>, so an expired
+ * session returns the user to the page they were on rather than dropping them
+ * on the dashboard. Only same-origin paths are accepted - an absolute or
+ * protocol-relative value would make this an open redirect.
+ */
+function resolveNextParam(raw: string | null): string | null {
+  const value = (raw || "").trim();
+  if (!value.startsWith("/") || value.startsWith("//")) {
+    return null;
+  }
+  return value;
+}
+
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const defaultOtpCooldownSeconds = 60;
   const [accountType, setAccountType] = useState<AccountType>("candidate");
   const [step, setStep] = useState<AuthStep>("email");
@@ -262,7 +279,8 @@ export default function LoginPage() {
         throw new Error("Auth token missing from response");
       }
       setAccessToken(token);
-      const nextRoute = await resolvePostAuthRoute(token);
+      const requestedNext = resolveNextParam(searchParams.get("next"));
+      const nextRoute = requestedNext ?? (await resolvePostAuthRoute(token));
       router.push(nextRoute);
     } catch (err) {
       setError(getUnknownErrorMessage(err, "Unable to verify OTP"));
@@ -327,7 +345,8 @@ export default function LoginPage() {
         throw new Error("Auth token missing from response");
       }
       setAccessToken(token);
-      const nextRoute = await resolvePostAuthRoute(token);
+      const requestedNext = resolveNextParam(searchParams.get("next"));
+      const nextRoute = requestedNext ?? (await resolvePostAuthRoute(token));
       router.push(nextRoute);
     } catch (err) {
       setError(getUnknownErrorMessage(err, "Unable to login"));

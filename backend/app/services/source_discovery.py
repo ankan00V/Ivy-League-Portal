@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+import time
 import csv
 import hashlib
 import json
@@ -19,6 +21,9 @@ from bs4 import BeautifulSoup
 from pydantic import BaseModel, Field
 from pymongo.errors import DuplicateKeyError
 
+from app.core.async_limits import LoopLocalLockMap, LoopLocalSemaphore
+from app.core.url_guard import BlockedTargetURL, assert_public_http_url
+from app.services.scrapling_client import scrapling_client
 from app.core.config import settings
 from app.core.redis import get_redis
 from app.core.time import utc_now
@@ -42,6 +47,7 @@ from app.services.browser_use_client import BrowserUseClient, BrowserUseUnavaila
 from app.services.crawlee_client import CrawleeClient, CrawleeUnavailableError, crawlee_client
 from app.services.firecrawl_client import FirecrawlClient, FirecrawlUnavailableError, firecrawl_client
 from app.services.opportunity_trust import apply_trust_assessment, assess_opportunity_trust
+from app.services.skill_extractor import skill_extractor
 
 try:  # pragma: no cover - dependency availability is environment-specific
     import httpx
@@ -177,9 +183,7 @@ THIRD_PARTY_PLATFORM_TERMS = {
     "internship platform",
     "opportunity platform",
     "hackathon",
-    "fellowship",
     "research internship",
-    "scholarship",
     "early careers",
     "off campus",
     "fresher",
@@ -204,7 +208,6 @@ SOURCE_TYPE_PRIORITY = {
     "hackathon_platform": 12,
     "research_portal": 10,
     "university_portal": 8,
-    "scholarship_portal": 7,
 }
 
 PRIORITY_TIER_SCORE = {
@@ -214,6 +217,49 @@ PRIORITY_TIER_SCORE = {
     "tier_2": 12,
     "high": 10,
 }
+
+
+class _SerpApiBudget:
+    """Caps SerpAPI calls per UTC day.
+
+    SerpAPI's free tier is roughly 250 searches a month and there is no
+    server-side guard on the account. Autonomous discovery runs on a schedule
+    and calls the search path once per candidate domain, so an unattended day
+    could drain the month's quota. Counted in-process, which is approximate
+    across multiple workers but bounds the worst case instead of leaving it
+    unbounded.
+    """
+
+    def __init__(self) -> None:
+        self._day = ""
+        self._used = 0
+
+    def _today(self) -> str:
+        return utc_now().strftime("%Y-%m-%d")
+
+    def try_consume(self) -> bool:
+        limit = int(getattr(settings, "SERPAPI_MAX_SEARCHES_PER_DAY", 20) or 0)
+        if limit <= 0:
+            return True
+        today = self._today()
+        if today != self._day:
+            self._day, self._used = today, 0
+        if self._used >= limit:
+            logger.warning(
+                "SerpAPI daily budget exhausted (%d/%d); skipping search this cycle",
+                self._used,
+                limit,
+            )
+            return False
+        self._used += 1
+        return True
+
+    @property
+    def used_today(self) -> int:
+        return self._used if self._day == self._today() else 0
+
+
+serpapi_budget = _SerpApiBudget()
 
 
 class DiscoveryRunSummary(BaseModel):
@@ -331,8 +377,6 @@ def infer_source_type(url: str, html_title: str | None = None, text: str | None 
     domain = normalize_domain(parsed.netloc)
     if "hackathon" in haystack:
         return "hackathon_platform"
-    if "scholarship" in haystack:
-        return "scholarship_portal"
     if "research" in haystack and (domain.endswith(".edu") or domain.endswith(".ac.in") or "institute" in haystack):
         return "research_portal"
     if domain.endswith(".edu") or domain.endswith(".ac.in"):
@@ -442,10 +486,19 @@ class SourceHttpClient:
         self.firecrawl = firecrawl or firecrawl_client
         self.browser_use = browser_use or browser_use_client
         self.crawlee = crawlee or crawlee_client
-        self._global_semaphore = asyncio.Semaphore(
-            max(1, int(getattr(settings, "SOURCE_DISCOVERY_MAX_CONCURRENT", 5)))
+        # scraper_fetch_bridge caches one SourceHttpClient for the process but
+        # runs asyncio.run() per fetch, so these primitives are used from a new
+        # event loop every call. Plain asyncio.Semaphore/Lock bind to the first
+        # loop that queues a waiter and reject every loop after that, which
+        # silently killed every render-backed source.
+        self._global_semaphore = LoopLocalSemaphore(
+            lambda: getattr(settings, "SOURCE_DISCOVERY_MAX_CONCURRENT", 5)
         )
-        self._domain_locks: dict[str, asyncio.Lock] = {}
+        self._domain_locks = LoopLocalLockMap()
+        # Guarded by a threading lock rather than the per-loop asyncio lock:
+        # per-domain politeness has to hold across loops and threads, and the
+        # asyncio locks above only order callers within a single loop.
+        self._domain_request_guard = threading.Lock()
         self._last_domain_request: dict[str, float] = {}
 
     @staticmethod
@@ -511,16 +564,35 @@ class SourceHttpClient:
         if httpx is None:
             raise RuntimeError("httpx is required for source discovery HTTP fetches")
         normalized = normalize_url(url)
+        # Guard before any provider runs. normalize_url only checks scheme and a
+        # non-empty netloc, so user-submitted sources reached the network
+        # unvalidated: http://169.254.169.254/ read cloud instance metadata and
+        # http://10.0.0.5:8080/ made the qualification pipeline an internal port
+        # scanner whose reachability result was returned to the submitter.
+        #
+        # Applied here rather than only in _fetch_direct so the render providers
+        # are covered by the same check; theirs inspects literal IPs only, which
+        # a hostname resolving to a private address walks straight past.
+        normalized = assert_public_http_url(normalized)
         domain = normalize_domain(urlparse(normalized).netloc)
-        lock = self._domain_locks.setdefault(domain, asyncio.Lock())
+        lock = self._domain_locks.get(domain)
         async with self._global_semaphore:
             async with lock:
                 min_gap = 1.0 / max(0.1, float(getattr(settings, "SOURCE_FETCH_RATE_LIMIT", 1)))
+                # time.monotonic rather than loop.time(): each fetch may run on
+                # its own event loop, and loop clocks are not comparable across
+                # loops, so per-domain politeness silently degraded.
                 loop = asyncio.get_running_loop()
-                now = loop.time()
-                last = self._last_domain_request.get(domain, 0.0)
-                if now - last < min_gap:
-                    await asyncio.sleep(min_gap - (now - last))
+                now = time.monotonic()
+                with self._domain_request_guard:
+                    last = self._last_domain_request.get(domain, 0.0)
+                    wait_for = max(0.0, min_gap - (now - last))
+                    # Reserve the slot before sleeping so concurrent loops
+                    # stagger instead of all reading the same stale timestamp
+                    # and hitting the domain together.
+                    self._last_domain_request[domain] = now + wait_for
+                if wait_for > 0:
+                    await asyncio.sleep(wait_for)
                 timeout = timeout_seconds or self.timeout_seconds
 
                 if render:
@@ -532,7 +604,7 @@ class SourceHttpClient:
                         phase="Preferred",
                     )
                     if preferred_page is not None:
-                        self._last_domain_request[domain] = loop.time()
+                        self._last_domain_request[domain] = time.monotonic()
                         return preferred_page
 
                 direct_error: Exception | None = None
@@ -541,6 +613,17 @@ class SourceHttpClient:
                     direct_page = await self._fetch_direct(normalized, timeout)
                 except Exception as exc:
                     direct_error = exc
+
+                # Scrapling before the paid providers: it is local and free, and
+                # its stealth headers clear sources a plain GET cannot. Measured
+                # 403 -> 200 on news.columbia.edu and wellfound.com/jobs, both of
+                # which were otherwise dead. Only attempted when the direct fetch
+                # actually failed or came back blocked, so healthy sources are
+                # untouched.
+                if direct_page is None or int(getattr(direct_page, "status_code", 0)) in {401, 403, 429}:
+                    scrapling_page = await self._try_scrapling(normalized, timeout)
+                    if scrapling_page is not None:
+                        direct_page, direct_error = scrapling_page, None
 
                 should_fallback = render and (
                     direct_page is None or self._needs_rendered_fallback(direct_page)
@@ -554,25 +637,60 @@ class SourceHttpClient:
                         phase="Fallback",
                     )
                     if rendered_page is not None:
-                        self._last_domain_request[domain] = loop.time()
+                        self._last_domain_request[domain] = time.monotonic()
                         return rendered_page
 
-                self._last_domain_request[domain] = loop.time()
+                self._last_domain_request[domain] = time.monotonic()
                 if direct_page is not None:
                     return direct_page
                 assert direct_error is not None
                 raise direct_error
 
+    async def _try_scrapling(self, url: str, timeout_seconds: float) -> FetchedPage | None:
+        """Best-effort local anti-bot fetch. Never raises into the chain."""
+        if not scrapling_client.configured:
+            return None
+        if str(settings.SCRAPLING_MODE or "fallback").strip().lower() == "disabled":
+            return None
+        try:
+            result = await scrapling_client.scrape(url, timeout_seconds=timeout_seconds)
+        except Exception as exc:
+            logger.debug("scrapling fetch unavailable for %s: %s", url, exc)
+            return None
+        logger.info("scrapling recovered %s (status %s)", url, result.status_code)
+        return FetchedPage(
+            url=url,
+            final_url=result.final_url,
+            status_code=result.status_code,
+            text=result.html,
+            elapsed_seconds=result.elapsed_seconds,
+            content_type="text/html",
+            provider="scrapling",
+        )
+
     async def _fetch_direct(self, url: str, timeout_seconds: float) -> FetchedPage:
         loop = asyncio.get_running_loop()
         started = loop.time()
+        # Redirects are followed manually so every hop is re-validated. With
+        # follow_redirects=True a public, allowlisted domain could 302 into
+        # 169.254.169.254 and the guard on the initial URL would never see it.
+        max_hops = 3
         async with httpx.AsyncClient(
-            follow_redirects=True,
+            follow_redirects=False,
             timeout=timeout_seconds,
             headers=DEFAULT_HEADERS,
-            max_redirects=3,
         ) as client:
-            response = await client.get(url)
+            target = assert_public_http_url(url)
+            for _hop in range(max_hops + 1):
+                response = await client.get(target)
+                if response.status_code not in {301, 302, 303, 307, 308}:
+                    break
+                location = response.headers.get("location")
+                if not location:
+                    break
+                target = assert_public_http_url(str(httpx.URL(target).join(location)))
+            else:
+                raise BlockedTargetURL(f"target_redirect_limit_exceeded:{url}")
         return FetchedPage(
             url=url,
             final_url=str(response.url),
@@ -1017,7 +1135,9 @@ class CareersPageFinder:
     async def _search_for_careers_page(self, domain: str) -> Optional[str]:
         key = (getattr(settings, "SERPAPI_KEY", "") or "").strip()
         query = f"site:{domain} careers OR jobs internship"
-        if key and httpx is not None:
+        # Budgeted: this runs once per candidate domain during a discovery
+        # sweep, which is the path most likely to drain the monthly quota.
+        if key and httpx is not None and serpapi_budget.try_consume():
             params = {
                 "engine": "google",
                 "q": query,
@@ -1120,16 +1240,17 @@ class SourceDiscoveryEngine:
         try:
             for query in queries:
                 query_rows: list[tuple[str, str | None]] = []
-                prefer_firecrawl = (
-                    firecrawl_search
-                    and str(settings.FIRECRAWL_MODE or "fallback").strip().lower() == "preferred"
-                )
-                if prefer_firecrawl:
+                # Firecrawl leads unconditionally now, so FIRECRAWL_MODE no
+                # longer decides ordering here. It has no per-search quota, whereas
+                # SerpAPI's free tier is ~250 searches a month and autonomous
+                # discovery runs unattended on a schedule. Leading with SerpAPI
+                # meant discovery stalled entirely once the daily budget was
+                # spent; leading with Firecrawl keeps expansion running and
+                # leaves SerpAPI as the fallback for queries Firecrawl misses.
+                if firecrawl_search:
                     query_rows = await self._search_firecrawl(query, run)
-                if not query_rows and client is not None:
+                if not query_rows and client is not None and serpapi_budget.try_consume():
                     query_rows = await self._search_serpapi(client, query, key, run)
-                if not query_rows and firecrawl_search and not prefer_firecrawl:
-                    query_rows = await self._search_firecrawl(query, run)
                 for link, title in query_rows:
                     candidates.append(
                         DiscoveryCandidate(
@@ -2212,7 +2333,7 @@ class TrustScoringEngine:
                 score += per_item * 0.45
             if "₹" in haystack or "inr" in haystack or "student" in haystack or "fresher" in haystack:
                 score += per_item * 0.25
-            if str(row.get("opportunity_type") or "").lower() in {"internship", "job", "hackathon", "scholarship", "research"}:
+            if str(row.get("opportunity_type") or "").lower() in {"internship", "job", "hackathon", "competition", "workshop", "conference"}:
                 score += per_item * 0.30
         return round(min(20, score), 2)
 
@@ -2291,26 +2412,52 @@ class TrustScoringEngine:
             registration.updated_at = utc_now()
             await registration.save()
 
+        # Imported here rather than at module scope: scraper.py imports
+        # FetchedPage from this module, so a top-level import would be circular.
+        from app.services.scraper import _enrich_metadata, _to_naive_utc
+
         probation_rows = await ProbationOpportunity.find_many(ProbationOpportunity.discovered_source_id == source.id).to_list()
         inserted = 0
         for row in probation_rows:
             if await Opportunity.find_one(Opportunity.url == row.url):
                 continue
             payload = row.raw_payload or {}
+            # The scraper persists these as naive UTC. Writing aware datetimes
+            # here left the collection with both, and comparing the two raises
+            # TypeError - the same mismatch that killed every scraper run for
+            # 40 days via refresh_freshness_metrics.
+            flushed_at = _to_naive_utc(utc_now())
+            record = {
+                "title": row.title,
+                "description": str(
+                    payload.get("description_preview") or payload.get("description") or row.title
+                ),
+                "url": row.url,
+                "university": row.company or source.name or source.domain,
+                "source": source.name or source.domain,
+                "source_id": str(source.id),
+                "domain": source.domain,
+                "location": payload.get("location"),
+                "work_mode": payload.get("work_mode"),
+                "stipend": payload.get("stipend_text") or payload.get("stipend"),
+                "tags": payload.get("tags") or [],
+                "opportunity_type": str(payload.get("opportunity_type") or "Job").title(),
+            }
+            # Promoted rows previously bypassed enrichment entirely, so they
+            # landed without canonical_key or duplicate_cluster_key and were
+            # therefore invisible to the deduplication path.
+            enriched = _enrich_metadata(dict(record))
             opportunity = Opportunity(
-                title=row.title,
-                description=str(payload.get("description_preview") or payload.get("description") or row.title),
-                url=row.url,
-                university=row.company or source.name or source.domain,
-                source=source.name or source.domain,
-                source_id=str(source.id),
-                domain=source.domain,
-                location=payload.get("location"),
-                work_mode=payload.get("work_mode"),
-                stipend=payload.get("stipend_text") or payload.get("stipend"),
-                opportunity_type=str(payload.get("opportunity_type") or "Job").title(),
-                last_seen_at=utc_now(),
-                updated_at=utc_now(),
+                **record,
+                normalized_title=enriched.get("normalized_title"),
+                normalized_organization=enriched.get("normalized_organization"),
+                canonical_key=enriched.get("canonical_key"),
+                canonical_url_hash=enriched.get("canonical_url_hash"),
+                duplicate_cluster_key=enriched.get("duplicate_cluster_key"),
+                title_company_location_hash=enriched.get("title_company_location_hash"),
+                tags=enriched.get("tags") or [],
+                last_seen_at=flushed_at,
+                updated_at=flushed_at,
             )
             apply_trust_assessment(opportunity, assess_opportunity_trust(opportunity))
             try:
@@ -2552,17 +2699,40 @@ class ProbationManager:
                 quality_score = self._quality_score(row)
                 if quality_score > 40:
                     passed_quality += 1
+                item_url = str(row.get("apply_url") or row.get("url") or "")
                 try:
-                    await ProbationOpportunity(
-                        discovered_source_id=source.id,
-                        scraper_key=registration.scraper_key,
-                        title=str(row.get("title") or "")[:300],
-                        company=str(row.get("company") or registration.source_name),
-                        url=str(row.get("apply_url") or row.get("url")),
-                        raw_payload=row,
-                        quality_score=quality_score,
-                        run_number=run_number,
-                    ).insert()
+                    # Upsert on (source, url). This used to insert
+                    # unconditionally, so every probation run duplicated the
+                    # source's entire result set - the live collection held
+                    # 3,497 rows for 249 distinct URLs.
+                    existing_probation = (
+                        await ProbationOpportunity.find_one(
+                            ProbationOpportunity.discovered_source_id == source.id,
+                            ProbationOpportunity.url == item_url,
+                        )
+                        if item_url
+                        else None
+                    )
+                    if existing_probation is not None:
+                        existing_probation.title = str(row.get("title") or "")[:300]
+                        existing_probation.company = str(
+                            row.get("company") or registration.source_name
+                        )
+                        existing_probation.raw_payload = row
+                        existing_probation.quality_score = quality_score
+                        existing_probation.run_number = run_number
+                        await existing_probation.save()
+                    else:
+                        await ProbationOpportunity(
+                            discovered_source_id=source.id,
+                            scraper_key=registration.scraper_key,
+                            title=str(row.get("title") or "")[:300],
+                            company=str(row.get("company") or registration.source_name),
+                            url=item_url,
+                            raw_payload=row,
+                            quality_score=quality_score,
+                            run_number=run_number,
+                        ).insert()
                 except Exception as exc:
                     source.probation_failures.append(f"probation_item_insert:{exc}")
             source.probation_runs = run_number
@@ -2827,9 +2997,7 @@ def _extract_work_mode_hint(text: str) -> Optional[str]:
 
 
 def _extract_skill_tags(text: str) -> list[str]:
-    known = ["python", "java", "javascript", "typescript", "react", "node", "sql", "aws", "machine learning", "data science"]
-    lower = str(text or "").lower()
-    return [item for item in known if item in lower][:8]
+    return skill_extractor.extract(text, max_tags=8)
 
 
 source_discovery_engine = SourceDiscoveryEngine()

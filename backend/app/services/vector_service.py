@@ -15,7 +15,7 @@ from app.models.vector_index_entry import VectorIndexEntry
 from app.services.embedding_pipeline import embedding_pipeline
 from app.services.embedding_service import embedding_service
 from app.core.config import settings
-from app.core.metrics import CACHE_HITS_TOTAL, CACHE_MISSES_TOTAL
+from app.core import metrics as metrics_module
 from app.core.time import as_utc_aware, utc_now
 
 try:
@@ -48,6 +48,10 @@ class OpportunityVectorService:
         if faiss is not None:
             return "faiss"
         return "numpy_flat"
+
+    def is_ready(self) -> bool:
+        """Whether this process already has a usable in-memory opportunity index."""
+        return self._last_build_at is not None
 
     def _score_to_similarity(self, score: float) -> float:
         return float(max(-1.0, min(1.0, score)))
@@ -482,11 +486,11 @@ class OpportunityVectorService:
         if cache_enabled:
             cached = await cache_get_json(cache_key_value)
             if cached and isinstance(cached.get("results"), list):
-                if CACHE_HITS_TOTAL is not None:
-                    CACHE_HITS_TOTAL.labels(cache="vector_search").inc()
+                if metrics_module.CACHE_HITS_TOTAL is not None:
+                    metrics_module.CACHE_HITS_TOTAL.labels(cache="vector_search").inc()
                 return list(cached["results"])
-            if CACHE_MISSES_TOTAL is not None:
-                CACHE_MISSES_TOTAL.labels(cache="vector_search").inc()
+            if metrics_module.CACHE_MISSES_TOTAL is not None:
+                metrics_module.CACHE_MISSES_TOTAL.labels(cache="vector_search").inc()
 
         query_vector = await embedding_service.embed_query(query)
         results = await self.search_by_vector(query_vector, top_k=safe_top_k, filters=filters)

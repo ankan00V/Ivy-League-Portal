@@ -43,7 +43,11 @@ class Settings(BaseSettings):
     AUTH_SESSION_ACTIVITY_UPDATE_INTERVAL_SECONDS: int = 60
     AUTH_COOKIE_ONLY_MODE: bool = False
     ADMIN_BOOTSTRAP_ENABLED: bool = True
-    ADMIN_BOOTSTRAP_EMAIL: str = "ghoshankan005@gmail.com"
+    # Deliberately empty. This identity is reserved for the hidden admin control
+    # plane, so baking a real address into source shipped one maintainer's
+    # personal email to every clone of the repository and made it the admin
+    # account by default. Supply it via the environment.
+    ADMIN_BOOTSTRAP_EMAIL: str = ""
     ADMIN_BOOTSTRAP_PASSWORD: Optional[str] = None
     ADMIN_TOTP_SECRET: Optional[str] = None
     ADMIN_TOTP_ISSUER: str = "Vidyaverse"
@@ -84,6 +88,8 @@ class Settings(BaseSettings):
     SCRAPER_TIMEOUT_SECONDS: int = 20
     SCRAPER_HTTP_RETRIES: int = 4
     SCRAPER_RETRY_BACKOFF: float = 0.8
+    SCRAPER_FETCH_BATCH_TIMEOUT_SECONDS: float = 180.0
+    SCRAPER_INTRA_BATCH_SEMANTIC_DEDUP_ENABLED: bool = False
     SCRAPER_UNSTOP_MAX_ITEMS: int = 60
     SCRAPER_NAUKRI_MAX_ITEMS: int = 25
     SCRAPER_NAUKRI_ENABLE_PLAYWRIGHT_FALLBACK: bool = False
@@ -125,6 +131,29 @@ class Settings(BaseSettings):
     BROWSER_USE_CIRCUIT_FAILURE_THRESHOLD: int = 3
     BROWSER_USE_CIRCUIT_RECOVERY_SECONDS: float = 120.0
 
+    # Detail-page description enrichment. Listing cards carry a title and a line
+    # of chrome; the role's requirements live on the detail page. Measured on the
+    # live corpus: only 47% of active rows had a usable description. Budgeted
+    # because it costs one fetch per opportunity and can fall through to a paid
+    # provider.
+    DESCRIPTION_ENRICHMENT_ENABLED: bool = True
+    DESCRIPTION_ENRICHMENT_MAX_PER_RUN: int = 25
+    DESCRIPTION_ENRICHMENT_TIMEOUT_SECONDS: float = 25.0
+    DESCRIPTION_ENRICHMENT_MAX_CHARS: int = 4000
+    DESCRIPTION_ENRICHMENT_INTERVAL_MINUTES: int = 60
+
+    # Scrapling: local, BSD-3, no per-call cost. Stealth headers and TLS
+    # impersonation clear sources a plain GET cannot, so it is tried before the
+    # paid providers. Measured: news.columbia.edu 403 -> 200, wellfound 403 ->
+    # 200. Only its HTTP fetcher is used; rendering stays with Crawlee/Browser
+    # Use rather than adding a third headless browser.
+    SCRAPLING_ENABLED: bool = True
+    SCRAPLING_MODE: str = "fallback"  # fallback | preferred | disabled
+    SCRAPLING_TIMEOUT_SECONDS: float = 40.0
+    SCRAPLING_MAX_CONCURRENT: int = 4
+    SCRAPLING_CIRCUIT_FAILURE_THRESHOLD: int = 4
+    SCRAPLING_CIRCUIT_RECOVERY_SECONDS: float = 120.0
+
     # Crawlee local crawler fallback (BeautifulSoup + optional Playwright).
     CRAWLEE_ENABLED: bool = False
     CRAWLEE_MODE: str = "fallback"  # fallback | preferred | disabled
@@ -137,9 +166,41 @@ class Settings(BaseSettings):
     CRAWLEE_CIRCUIT_FAILURE_THRESHOLD: int = 3
     CRAWLEE_CIRCUIT_RECOVERY_SECONDS: float = 120.0
 
+    # Apify managed actors. Used for sources whose own markup yields little -
+    # Unstop's actor returns real deadlines, structured eligibility and a
+    # registration fee, none of which the HTML scraper can recover.
+    APIFY_API_TOKEN: Optional[str] = None
+    APIFY_ENABLED: bool = True
+    APIFY_UNSTOP_ACTOR: str = "solidcode/unstop-scraper"
+    APIFY_UNSTOP_MAX_RESULTS: int = 60
+    APIFY_TIMEOUT_SECONDS: float = 180.0
+    # Apify bills per compute unit, so ingestion must not call it on every
+    # scraper cycle. This is the minimum gap between runs.
+    APIFY_MIN_INTERVAL_MINUTES: int = 360
+
+    # Product scope. The platform currently serves internships and adjacent
+    # student opportunities only. Scholarships, fellowships and standalone
+    # research grants are deliberately out of scope: chasing them cost SerpAPI
+    # and LLM credit, and every scholarship row the pipeline ever produced was
+    # a university newsroom article about an award someone had already won,
+    # not something a student could apply to.
+    OPPORTUNITY_SCOPE_TYPES: list[str] = [
+        "Internship",
+        "Job",
+        "Hackathon",
+        "Competition",
+        "Workshop",
+        "Conference",
+        "Hiring Challenge",
+        "Opportunity",
+    ]
+
     # Source discovery pipeline
     DISCOVERY_ENABLED: bool = True
     SERPAPI_KEY: Optional[str] = None
+    # SerpAPI has no per-plan guard in code and the free tier is ~250 searches
+    # a month, which autonomous discovery can drain in a day.
+    SERPAPI_MAX_SEARCHES_PER_DAY: int = 20
     GOOGLE_SEARCH_API_KEY: Optional[str] = None
     CLAUDE_API_KEY: Optional[str] = None
     CLAUDE_MODEL: str = "claude-3-5-sonnet-20241022"
@@ -367,6 +428,10 @@ class Settings(BaseSettings):
     EMBEDDING_REBUILD_INTERVAL_MINUTES: int = 60
     USER_EMBEDDING_INTERACTION_THRESHOLD: int = 5
     USER_EMBEDDING_HALF_LIFE_DAYS: int = 7
+
+    SKILL_EXTRACTOR_ENABLED: bool = True
+    SKILL_EXTRACTOR_MODEL_PATH: str = str(ENV_FILE.parent / "models" / "skill_extractor.joblib")
+    SKILL_EXTRACTOR_MIN_CONFIDENCE: float = 0.6
 
     # Learned ranker (LightGBM/XGBoost) for real personalization
     LEARNED_RANKER_ENABLED: bool = False

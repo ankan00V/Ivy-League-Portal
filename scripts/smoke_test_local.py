@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urljoin
 
 
 @dataclass
@@ -44,6 +46,16 @@ def _get_status(url: str, *, timeout: float) -> tuple[int, str]:
         return 0, f"{exc.__class__.__name__}: {exc}"
 
 
+def _get_text(url: str, *, timeout: float) -> tuple[int, str, str]:
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            return int(response.status), response.read().decode("utf-8", errors="replace"), ""
+    except urllib.error.HTTPError as exc:
+        return int(exc.code), exc.read().decode("utf-8", errors="replace"), ""
+    except Exception as exc:
+        return 0, "", f"{exc.__class__.__name__}: {exc}"
+
+
 def run_smoke(
     *,
     backend_url: str,
@@ -56,14 +68,26 @@ def run_smoke(
     frontend = frontend_url.rstrip("/")
     results: list[SmokeResult] = []
 
-    status, health, error = _get_json(f"{backend}/health", timeout=timeout)
-    health_payload = health if isinstance(health, dict) else {}
-    service_name = str(health_payload.get("service") or "")
+    status, liveness, error = _get_json(f"{backend}/health", timeout=timeout)
+    liveness_payload = liveness if isinstance(liveness, dict) else {}
+    service_name = str(liveness_payload.get("service") or "")
     results.append(
         SmokeResult(
             "backend /health identifies VidyaVerse",
-            status == 200 and isinstance(health, dict) and service_name == "VidyaVerse API",
+            status == 200 and service_name == "VidyaVerse API",
             f"status={status}, service={service_name or 'missing'} {error}".strip(),
+        )
+    )
+
+    # /health is a static liveness probe; the dependency fan-out moved to
+    # /health/ready, which is admin-authenticated outside local environments.
+    ready_status, health, ready_error = _get_json(f"{backend}/health/ready", timeout=timeout)
+    health_payload = health if isinstance(health, dict) else {}
+    results.append(
+        SmokeResult(
+            "backend /health/ready reachable",
+            ready_status == 200 and isinstance(health, dict),
+            f"status={ready_status} {ready_error}".strip(),
         )
     )
 
@@ -144,6 +168,21 @@ def run_smoke(
                 f"status={status} {error}".strip(),
             )
         )
+
+    status, homepage, error = _get_text(f"{frontend}/", timeout=timeout)
+    stylesheet_match = re.search(r'href="([^"?]+\.css)(?:\?[^\"]*)?"', homepage)
+    stylesheet_url = urljoin(f"{frontend}/", stylesheet_match.group(1)) if stylesheet_match else ""
+    stylesheet_status, stylesheet_error = _get_status(stylesheet_url, timeout=timeout) if stylesheet_url else (0, "missing stylesheet reference")
+    results.append(
+        SmokeResult(
+            "frontend compiled stylesheet reachable",
+            status == 200 and stylesheet_status == 200,
+            (
+                f"homepage_status={status}, stylesheet_status={stylesheet_status}, "
+                f"stylesheet={stylesheet_url or 'missing'} {error or stylesheet_error}"
+            ).strip(),
+        )
+    )
 
     return results
 

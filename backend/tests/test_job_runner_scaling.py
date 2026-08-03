@@ -94,5 +94,61 @@ class TestJobRunnerScaling(unittest.IsolatedAsyncioTestCase):
                 await runner.enqueue(job_type="test.queue")
 
 
+class TestAbandonedJobReclamation(unittest.IsolatedAsyncioTestCase):
+    """A worker that dies mid-job must not leak its queue slot forever.
+
+    `running` rows were previously unclaimable while still counting toward
+    JOBS_MAX_PENDING_PER_TYPE and blocking their dedupe_key, so repeated
+    restarts wedged the queue permanently.
+    """
+
+    class _CapturingCollection:
+        def __init__(self) -> None:
+            self.query: dict = {}
+
+        async def find_one_and_update(self, query, update, **kwargs):
+            self.query = query
+            return None
+
+    async def _claim_query(self) -> dict:
+        runner = JobRunner()
+        collection = self._CapturingCollection()
+        with patch.object(job_runner_module, "_get_collection", return_value=collection):
+            await runner._claim_next()
+        return collection.query
+
+    async def test_claim_query_includes_abandoned_running_jobs(self) -> None:
+        query = await self._claim_query()
+
+        branches = query.get("$or") or []
+        running_branches = [b for b in branches if b.get("status") == "running"]
+        self.assertTrue(
+            running_branches,
+            "claim query must be able to reclaim abandoned 'running' jobs",
+        )
+        self.assertIn("locked_at", running_branches[0])
+
+    async def test_reclaim_cutoff_clears_the_handler_timeout(self) -> None:
+        """Reclaiming at the lock timeout alone would double-run a healthy job.
+
+        JOBS_LOCK_TIMEOUT_SECONDS (600) is shorter than
+        JOBS_HANDLER_TIMEOUT_SECONDS (900), so a live job can outlive its lock.
+        """
+        with patch.object(settings, "JOBS_LOCK_TIMEOUT_SECONDS", 600), patch.object(
+            settings, "JOBS_HANDLER_TIMEOUT_SECONDS", 900.0
+        ):
+            query = await self._claim_query()
+
+        branches = query.get("$or") or []
+        running = next(b for b in branches if b.get("status") == "running")
+        pending = next(b for b in branches if b.get("status") != "running")
+
+        reclaim_cutoff = running["locked_at"]["$lte"]
+        lock_cutoff = pending["$or"][1]["locked_at"]["$lte"]
+
+        # The abandoned cutoff must be strictly older than the lock cutoff.
+        self.assertLess(reclaim_cutoff, lock_cutoff)
+
+
 if __name__ == "__main__":
     unittest.main()

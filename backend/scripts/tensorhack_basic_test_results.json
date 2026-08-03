@@ -1,0 +1,157 @@
+{
+  "url": "https://tensorhack.com",
+  "success": true,
+  "error": null,
+  "response": {
+    "status_code": 200,
+    "final_url": "https://tensorhack.com/",
+    "headers": {
+      "Age": "3567",
+      "Cache-Control": "public, max-age=0, must-revalidate",
+      "Content-Encoding": "br",
+      "Content-Security-Policy": "default-src 'self'; img-src 'self' data: https:; media-src 'self' https:; connect-src 'self' https://*.supabase.co https://www.google-analytics.com; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' https://www.googletagmanager.com; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'",
+      "Content-Type": "text/html; charset=utf-8",
+      "Date": "Thu, 09 Jul 2026 00:09:10 GMT",
+      "Etag": "W/\"147e7df984c2sdw\"",
+      "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+      "Referrer-Policy": "strict-origin-when-cross-origin",
+      "Server": "Vercel",
+      "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
+      "Vary": "rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch",
+      "X-Content-Type-Options": "nosniff",
+      "X-Frame-Options": "DENY",
+      "X-Matched-Path": "/",
+      "X-Nextjs-Prerender": "1",
+      "X-Nextjs-Stale-Time": "300",
+      "X-Vercel-Cache": "HIT",
+      "X-Vercel-Id": "bom1::iad1::7wx9k-1783566763812-f721056bf8ee",
+      "Transfer-Encoding": "chunked"
+    },
+    "content_length": 130309,
+    "content_type": "text/html; charset=utf-8",
+    "encoding": "utf-8"
+  },
+  "analysis": {
+    "url": "https://tensorhack.com",
+    "html_length": 130092,
+    "has_content": true,
+    "keywords": {
+      "opportunity_terms": {
+        "internship": 0,
+        "intern": 8,
+        "hackathon": 323,
+        "fellowship": 0,
+        "opportunity": 0,
+        "competition": 0,
+        "challenge": 29
+      },
+      "total_opportunity_mentions": 360,
+      "application_terms": {
+        "apply": 1,
+        "application": 6,
+        "deadline": 294,
+        "eligibility": 0,
+        "register": 0,
+        "registration": 21,
+        "submit": 10
+      },
+      "total_application_mentions": 332
+    },
+    "structure": {
+      "has_json_ld": true,
+      "has_schema_org": true,
+      "has_microdata": false,
+      "div_count": 114,
+      "article_count": 0,
+      "section_count": 9,
+      "potential_listing_count": 31
+    },
+    "opportunities_found": [
+      {
+        "tag": "div",
+        "class": [
+          "nav-inner"
+        ],
+        "text_preview": "HackathonsJobsOpportunitiesCalendarManav's picksTENSORHACKaboutBrowse hackathonssubmit( menu )"
+      },
+      {
+        "tag": "section",
+        "class": [
+          "hero-v"
+        ],
+        "text_preview": "human-curated\u00b7 136 open\u00b7 $4.2M in prizes\u00b7 updated dailyHackathons worth your weekend.The curated index of AI hackathons, jobs and grants. Real prize"
+      },
+      {
+        "tag": "div",
+        "class": [
+          "wrap",
+          "hero-v-inner"
+        ],
+        "text_preview": "human-curated\u00b7 136 open\u00b7 $4.2M in prizes\u00b7 updated dailyHackathons worth your weekend.The curated index of AI hackathons, jobs and grants. Real prize"
+      },
+      {
+        "tag": "div",
+        "class": [
+          "hero-v-left"
+        ],
+        "text_preview": "human-curated\u00b7 136 open\u00b7 $4.2M in prizes\u00b7 updated dailyHackathons worth your weekend.The curated index of AI hackathons, jobs and grants. Real prize"
+      },
+      {
+        "tag": "div",
+        "class": [
+          "hero-v-right",
+          "bfu"
+        ],
+        "text_preview": "now featuredCroo Agent HackathonDoraHacks host \u00b7 $10K \u00b7 4d left\u219001/05\u2192"
+      },
+      {
+        "tag": "div",
+        "class": [
+          "hero-v-feat"
+        ],
+        "text_preview": "now featuredCroo Agent HackathonDoraHacks host \u00b7 $10K \u00b7 4d left"
+      },
+      {
+        "tag": "section",
+        "class": [
+          "section",
+          "section-cream",
+          "seo-copy"
+        ],
+        "text_preview": "ai hackathons: as of july 9, 2026, tensor hack tracks 136 open hackathons with $4.2M in verified prize money. next deadline: GLOBAL AI HACKATHON SERIE"
+      },
+      {
+        "tag": "div",
+        "class": [
+          "wrap",
+          "seo-copy-wrap"
+        ],
+        "text_preview": "ai hackathons: as of july 9, 2026, tensor hack tracks 136 open hackathons with $4.2M in verified prize money. next deadline: GLOBAL AI HACKATHON SERIE"
+      },
+      {
+        "tag": "div",
+        "class": [
+          "seo-intro"
+        ],
+        "text_preview": "ai hackathons: as of july 9, 2026, tensor hack tracks 136 open hackathons with $4.2M in verified prize money. next deadline: GLOBAL AI HACKATHON SERIE"
+      },
+      {
+        "tag": "section",
+        "class": [
+          "section",
+          "section-ink",
+          "statement"
+        ],
+        "text_preview": "The problemAnyone can post a hackathon. Knowing which ones are real is the entire job. Live deadline, verified prize, read by a human.so a human reads"
+      }
+    ],
+    "technical_details": {
+      "uses_react": true,
+      "uses_vue": false,
+      "uses_angular": false,
+      "is_spa": false,
+      "page_title": "AI Hackathons 2026 with Verified Prize Money \u00b7 Tensor Hack",
+      "meta_description": "The curated index of AI, web3 and student hackathons with verified prize money, hard deadlines and daily updates, plus a human-curated AI/ML jobs board."
+    }
+  }
+}

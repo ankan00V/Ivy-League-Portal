@@ -40,16 +40,26 @@ TECH_SKILLS = {
 }
 
 QUALITY_WEIGHTS = {
-    "title": 15,
-    "company": 15,
+    "title": 10,
+    "company": 12,
     "apply_url": 20,
     "description": 15,
     "location": 10,
     "work_mode": 8,
     "stipend": 7,
-    "deadline": 5,
-    "tags": 5,
+    "deadline": 7,
+    "eligibility": 8,
+    "tags": 3,
 }
+
+QUALITY_REVIEW_FIELDS = {
+    "deadline": "Application deadline is unavailable.",
+    "location": "Location or work mode is unavailable.",
+    "eligibility": "Candidate eligibility is unavailable.",
+    "stipend": "Stipend or compensation disclosure is unavailable.",
+}
+QUALITY_REVIEW_REQUIRED_FIELDS = {"deadline", "location", "eligibility"}
+QUALITY_REVIEW_SCORE_THRESHOLD = 60.0
 
 REMOTE_LOCATION_PATTERNS = {
     "wfh",
@@ -195,6 +205,8 @@ class OpportunityQualityScorer:
                 return bool(_text(getattr(opportunity, "url", None)).startswith(("http://", "https://")))
             if field == "description":
                 return len(_text(getattr(opportunity, "description", None))) >= 40
+            if field == "eligibility":
+                return bool(_text(getattr(opportunity, "eligibility", None)) or getattr(opportunity, "batch_years", None))
             if field == "tags":
                 return bool(normalized.get("tags") or getattr(opportunity, "tags", None))
             value = normalized.get(field, getattr(opportunity, field, None))
@@ -209,14 +221,42 @@ class OpportunityQualityScorer:
                 missing.append(field)
         return round(max(0.0, min(100.0, score)), 2), missing
 
-    async def score_and_update(self, opportunity: Opportunity) -> Opportunity:
+    def review_status(self, opportunity: Any, *, score: float, missing: list[str]) -> tuple[bool, list[str]]:
+        missing_set = set(missing)
+        missing_required = sorted(missing_set & QUALITY_REVIEW_REQUIRED_FIELDS)
+        duplicate_count = int(getattr(opportunity, "duplicate_count", 0) or 0)
+        duplicate_cluster_key = _text(getattr(opportunity, "duplicate_cluster_key", None))
+        review_required = (
+            len(missing_required) >= 2
+            or float(score) < QUALITY_REVIEW_SCORE_THRESHOLD
+            or duplicate_count > 0
+            or bool(duplicate_cluster_key)
+        )
+        if not review_required:
+            return False, []
+
+        reasons = [QUALITY_REVIEW_FIELDS[field] for field in QUALITY_REVIEW_FIELDS if field in missing_set]
+        if float(score) < QUALITY_REVIEW_SCORE_THRESHOLD:
+            reasons.append(f"Quality score is below the review threshold ({round(float(score), 2)}/100).")
+        if duplicate_count > 0 or duplicate_cluster_key:
+            reasons.append("Potential duplicate listing requires a source and canonical-record check.")
+        return True, reasons
+
+    def apply_quality_assessment(self, opportunity: Any) -> tuple[float, list[str], bool, list[str]]:
         normalized = self.normalize_payload(opportunity)
         score, missing = self.score_payload(opportunity, normalized)
         for field, value in normalized.items():
             if value is not None:
                 setattr(opportunity, field, value)
+        review_required, review_reasons = self.review_status(opportunity, score=score, missing=missing)
         opportunity.quality_score = score
         opportunity.quality_missing_fields = missing
+        opportunity.quality_review_required = review_required
+        opportunity.quality_review_reasons = review_reasons
+        return score, missing, review_required, review_reasons
+
+    async def score_and_update(self, opportunity: Opportunity) -> Opportunity:
+        self.apply_quality_assessment(opportunity)
         opportunity.last_quality_run_at = utc_now()
         opportunity.updated_at = utc_now()
         await opportunity.save()

@@ -121,6 +121,15 @@ async def _main() -> int:
         default="docs/portfolio/champion_challenger_gate.md",
     )
     parser.add_argument("--fail-on-not-ready", action="store_true")
+    parser.add_argument(
+        "--traffic-type",
+        choices=("real", "simulated"),
+        default="real",
+        help=(
+            "Which traffic population to measure. 'real' describes the product; "
+            "'simulated' verifies the gate machinery against a seeded CI fixture."
+        ),
+    )
     args = parser.parse_args()
 
     days = max(1, min(int(args.days), 90))
@@ -147,6 +156,7 @@ async def _main() -> int:
         required_auc_delta = _to_float(settings.MLOPS_AUTO_ACTIVATE_MIN_AUC_GAIN)
 
         parity = await rollout_guardrail_service.compare(
+            traffic_type=str(args.traffic_type).strip().lower(),
             candidate_mode="ml",
             baseline_mode=baseline_mode,
             days=days,

@@ -243,6 +243,33 @@
         }
       ],
       "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] }
+    },
+    {
+      "id": 18,
+      "type": "timeseries",
+      "title": "OTP Delivery Failure Rate",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 56 },
+      "targets": [
+        {
+          "expr": "sum(rate(auth_otp_email_deliveries_total{outcome=\"failed\"}[15m])) / clamp_min(sum(rate(auth_otp_email_deliveries_total[15m])), 1e-9)",
+          "legendFormat": "failure_rate",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] }
+    },
+    {
+      "id": 19,
+      "type": "timeseries",
+      "title": "Recommendation Engagement Funnel",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 56 },
+      "targets": [
+        {
+          "expr": "sum by (interaction_type) (increase(opportunity_interaction_events_total{traffic_type=\"real\",interaction_type=~\"impression|click|save|apply|dismiss\"}[30m]))",
+          "legendFormat": "{{interaction_type}}",
+          "refId": "A"
+        }
+      ]
     }
   ],
   "templating": { "list": [] },

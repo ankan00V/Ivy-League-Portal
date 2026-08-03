@@ -4,7 +4,7 @@ from typing import Optional
 
 from beanie import PydanticObjectId
 
-from app.core.metrics import RANKING_REQUESTS_TOTAL, RANKING_REQUEST_LATENCY_MS
+from app.core import metrics as metrics_module
 from app.models.ranking_request_telemetry import RankingRequestTelemetry
 from app.models.traffic import TrafficType
 
@@ -43,8 +43,8 @@ class RankingRequestTelemetryService:
         normalized_kind = (request_kind or "unknown").strip().lower() or "unknown"
         normalized_success = "true" if bool(success) else "false"
         safe_latency_ms = max(0.0, float(latency_ms))
-        if RANKING_REQUESTS_TOTAL is not None:
-            RANKING_REQUESTS_TOTAL.labels(
+        if metrics_module.RANKING_REQUESTS_TOTAL is not None:
+            metrics_module.RANKING_REQUESTS_TOTAL.labels(
                 request_kind=normalized_kind,
                 ranking_mode=normalized_mode,
                 experiment_key=normalized_key,
@@ -52,8 +52,8 @@ class RankingRequestTelemetryService:
                 success=normalized_success,
                 traffic_type=normalized_traffic,
             ).inc()
-        if RANKING_REQUEST_LATENCY_MS is not None:
-            RANKING_REQUEST_LATENCY_MS.labels(
+        if metrics_module.RANKING_REQUEST_LATENCY_MS is not None:
+            metrics_module.RANKING_REQUEST_LATENCY_MS.labels(
                 request_kind=normalized_kind,
                 ranking_mode=normalized_mode,
                 experiment_key=normalized_key,

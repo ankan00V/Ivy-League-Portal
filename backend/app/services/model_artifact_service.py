@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,6 +13,8 @@ from app.core.config import settings
 from app.core.time import utc_now
 from app.models.model_artifact_version import ModelArtifactVersion
 from app.models.ranking_model_version import RankingModelVersion
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -343,14 +346,66 @@ class ModelArtifactService:
         if row is None:
             raise RuntimeError(f"Model version {model.id} artifact is not approved for activation.")
 
+    def learned_ranker_uri_candidates(self) -> list[str]:
+        """Artifact locations to try, most authoritative first.
+
+        A single mistyped or stale LEARNED_RANKER_ARTIFACT_URI used to disable
+        the ranker outright, even with a verified artifact sitting on disk -
+        observed locally where the URI named an empty bucket while the correct
+        artifact was present at LEARNED_RANKER_MODEL_PATH.
+
+        Falling back cannot load an unintended model: every candidate is
+        checksum-verified by sync_artifact against expected_checksum().
+        """
+        candidates: list[str] = []
+
+        explicit = str(settings.LEARNED_RANKER_ARTIFACT_URI or "").strip()
+        if explicit:
+            candidates.append(explicit)
+
+        model_path = str(settings.LEARNED_RANKER_MODEL_PATH or "").strip()
+        if model_path:
+            path = Path(model_path).expanduser()
+            resolved = path if path.is_absolute() else path.resolve()
+            uri = resolved.as_uri()
+            if uri not in candidates:
+                candidates.append(uri)
+
+        return candidates
+
     def ensure_learned_ranker_artifact_ready(self) -> None:
         if not getattr(settings, "LEARNED_RANKER_ENABLED", False):
             return
         if not bool(settings.LEARNED_RANKER_REQUIRE_ARTIFACT_IN_PRODUCTION):
             return
-        self.sync_artifact(
-            uri=self.resolve_learned_ranker_uri(),
-            expected_sha256=self.expected_checksum(),
+
+        candidates = self.learned_ranker_uri_candidates()
+        if not candidates:
+            raise RuntimeError(
+                "Learned ranker is enabled but neither LEARNED_RANKER_ARTIFACT_URI "
+                "nor LEARNED_RANKER_MODEL_PATH is configured."
+            )
+
+        expected = self.expected_checksum()
+        failures: list[str] = []
+        for index, uri in enumerate(candidates):
+            try:
+                self.sync_artifact(uri=uri, expected_sha256=expected)
+            except Exception as exc:
+                failures.append(f"{uri}: {exc}")
+                continue
+            if index > 0:
+                logger.warning(
+                    "Learned ranker artifact loaded from fallback %s after %s failed: %s",
+                    uri,
+                    candidates[0],
+                    failures[0],
+                )
+            return
+
+        raise RuntimeError(
+            "Learned ranker artifact could not be resolved from any configured "
+            f"location: {'; '.join(failures)}"
         )
 
     def _attach_artifact_to_model(

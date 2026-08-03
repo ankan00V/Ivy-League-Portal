@@ -26,11 +26,15 @@ def _source_summary(row: DiscoveredSource) -> dict[str, Any]:
         "name": row.name,
         "source_type": row.source_type,
         "status": row.status,
+        # qualification_score, extraction_confidence and rejection_reason are
+        # deliberately withheld from the submitter. They describe what the
+        # server saw when it fetched the URL - reachability distinguished an open
+        # port from a closed one (54.5 vs 32.5) and source_type was inferred from
+        # the fetched page's title - which together formed a content oracle for
+        # whatever the submitter pointed the server at. Admins still see the full
+        # record through the admin discovery routes.
         "trust_score": row.trust_score,
-        "qualification_score": row.qualification_score,
-        "extraction_confidence": row.extraction_confidence,
         "requires_admin_review": bool(row.requires_admin_review),
-        "rejection_reason": row.rejection_reason,
         "discovered_at": row.discovered_at,
         "promoted_at": row.promoted_at,
     }

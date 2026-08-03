@@ -27,7 +27,7 @@ async function stubTurnstile(page: Page) {
   });
 }
 
-test("login OTP request enforces 60s cooldown in UI", async ({ page }) => {
+test("@smoke login OTP request enforces 60s cooldown in UI", async ({ page }) => {
   await stubOAuthProviders(page);
   await stubTurnstile(page);
 
@@ -48,7 +48,7 @@ test("login OTP request enforces 60s cooldown in UI", async ({ page }) => {
   await expect(page.getByRole("button", { name: /Resend OTP in (59|60)s/i })).toBeVisible();
 });
 
-test("unauthenticated users can view dashboard preview without forced login redirect", async ({ page }) => {
+test("@smoke unauthenticated users can view dashboard preview without forced login redirect", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.removeItem("auth_session_present");
     localStorage.removeItem("access_token");
@@ -60,6 +60,48 @@ test("unauthenticated users can view dashboard preview without forced login redi
   await expect(page).toHaveURL(/\/dashboard$/);
   await expect(page.getByRole("heading", { name: /Dashboard Preview/i })).toBeVisible();
   await expect(page.getByRole("button", { name: "Sign In", exact: true })).toBeVisible();
+});
+
+test("@smoke sidebar logout clears the local session and returns to login", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("auth_session_present", "1");
+    localStorage.setItem("access_token_expires_at", String(Date.now() + 60 * 60 * 1000));
+  });
+
+  await page.route("**/api/v1/users/me/ranking-summary", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ rank: 10, total_users: 1000, top_percent: 1 }),
+    });
+  });
+  let logoutRequestCount = 0;
+  await page.route("**/api/v1/auth/logout", async (route) => {
+    logoutRequestCount += 1;
+    await route.fulfill({ status: 204 });
+  });
+  await page.route("**/api/v1/opportunities/**", async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) });
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ status: "ok" }) });
+  });
+  await stubOAuthProviders(page);
+
+  await page.goto("/opportunities");
+  await page.getByRole("button", { name: "Logout", exact: true }).first().click();
+
+  await expect(page).toHaveURL(/\/login$/);
+  await expect.poll(() => logoutRequestCount).toBe(1);
+  await expect
+    .poll(() =>
+      page.evaluate(() => ({
+        marker: localStorage.getItem("auth_session_present"),
+        expiry: localStorage.getItem("access_token_expires_at"),
+      })),
+    )
+    .toEqual({ marker: null, expiry: null });
 });
 
 test("completed onboarding redirects users away from onboarding page", async ({ page }) => {

@@ -6,7 +6,7 @@ from datetime import date, datetime, timezone
 from typing import Any
 
 from app.core.config import analytics_bi_tool_url, settings
-from app.core.metrics import WAREHOUSE_EXPORTS_TOTAL
+from app.core import metrics as metrics_module
 from app.core.time import utc_now
 from app.models.analytics_cohort_aggregate import AnalyticsCohortAggregate
 from app.models.analytics_daily_aggregate import AnalyticsDailyAggregate
@@ -189,8 +189,8 @@ class WarehouseExportService:
                     table_names=[name for name in exported_tables if name.startswith("mart_")],
                 )
 
-            if WAREHOUSE_EXPORTS_TOTAL is not None:
-                WAREHOUSE_EXPORTS_TOTAL.labels(format=export_format, status="ok").inc()
+            if metrics_module.WAREHOUSE_EXPORTS_TOTAL is not None:
+                metrics_module.WAREHOUSE_EXPORTS_TOTAL.labels(format=export_format, status="ok").inc()
 
             run = WarehouseExportRun(
                 traffic_type=traffic_type,
@@ -222,8 +222,8 @@ class WarehouseExportService:
                 "clickhouse_tables": clickhouse_tables,
             }
         except Exception as exc:
-            if WAREHOUSE_EXPORTS_TOTAL is not None:
-                WAREHOUSE_EXPORTS_TOTAL.labels(format=export_format, status="error").inc()
+            if metrics_module.WAREHOUSE_EXPORTS_TOTAL is not None:
+                metrics_module.WAREHOUSE_EXPORTS_TOTAL.labels(format=export_format, status="error").inc()
             run = WarehouseExportRun(
                 traffic_type=traffic_type,
                 export_format=export_format,
@@ -308,6 +308,19 @@ class WarehouseExportService:
             return safe_name
         return f"{prefix}{safe_name}" if prefix and not safe_name.startswith(prefix) else safe_name
 
+    def _column_sample(self, rows: list[Any], index: int) -> Any:
+        """First non-null value in a column, for schema inference.
+
+        The schema used to be inferred from rows[0] alone. A column that was
+        null in the first row was therefore typed String, and the first real
+        date in any later row failed to encode into it.
+        """
+        for row in rows:
+            value = row[index]
+            if value is not None:
+                return value
+        return ""
+
     def _clickhouse_type(self, value: Any) -> str:
         if isinstance(value, bool):
             return "UInt8"
@@ -384,17 +397,22 @@ class WarehouseExportService:
                 if not columns:
                     continue
 
-                sample = rows[0] if rows else tuple("" for _ in columns)
                 column_defs = [
-                    f"`{column}` {self._clickhouse_type(sample[index])}"
+                    f"`{column}` {self._clickhouse_type(self._column_sample(rows, index))}"
                     for index, column in enumerate(columns)
                 ]
                 order_by = self._clickhouse_order_by(table_name=target_table, columns=columns)
+                # This export is a full refresh, so the table is rebuilt rather
+                # than reused. CREATE TABLE IF NOT EXISTS made an incorrectly
+                # inferred schema permanent: once a column had been created as
+                # String it stayed String on every later run, and inserting a
+                # real date into it failed with "'datetime.date' object has no
+                # attribute 'encode'".
+                client.command(f"DROP TABLE IF EXISTS `{target_table}`")
                 client.command(
-                    f"CREATE TABLE IF NOT EXISTS `{target_table}` ({', '.join(column_defs)}) "
+                    f"CREATE TABLE `{target_table}` ({', '.join(column_defs)}) "
                     f"ENGINE = MergeTree {order_by}"
                 )
-                client.command(f"TRUNCATE TABLE `{target_table}`")
                 if rows:
                     client.insert(
                         target_table,

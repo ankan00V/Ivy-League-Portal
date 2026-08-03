@@ -207,6 +207,7 @@ async def lifespan(app: FastAPI):
         or settings.MLOPS_AUTORUN_ENABLED
         or settings.ANALYTICS_WAREHOUSE_AUTORUN_ENABLED
         or settings.EMBEDDING_AUTORUN_ENABLED
+        or settings.DESCRIPTION_ENRICHMENT_ENABLED
         or settings.DISCOVERY_ENABLED
         or settings.EXPERIMENT_AUTO_GRADUATION_ENABLED
         or settings.OPPORTUNITY_STATUS_AUTORUN_ENABLED
@@ -388,6 +389,25 @@ async def lifespan(app: FastAPI):
                 next_run_time=datetime.now(timezone.utc),
             )
 
+        if settings.DESCRIPTION_ENRICHMENT_ENABLED:
+
+            async def _enqueue_description_enrichment() -> None:
+                await job_runner.enqueue(
+                    job_type="opportunities.enrich_descriptions",
+                    payload={},
+                    max_attempts=2,
+                    dedupe_key="opportunities.enrich_descriptions",
+                )
+
+            scheduler.add_job(
+                _enqueue_description_enrichment,
+                "interval",
+                minutes=max(10, int(settings.DESCRIPTION_ENRICHMENT_INTERVAL_MINUTES)),
+                id="description_enrichment_job",
+                replace_existing=True,
+                next_run_time=datetime.now(timezone.utc),
+            )
+
         if settings.DISCOVERY_ENABLED:
 
             async def _enqueue_company_seed_careers_finder() -> None:
@@ -534,16 +554,20 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
+    warmup_task: asyncio.Task[None] | None = None
     if settings.RAG_WARMUP_ON_STARTUP:
-        warmup_started_at = time.perf_counter()
-        try:
-            await asyncio.wait_for(
-                _warmup_rag_components(),
-                timeout=max(10.0, float(settings.RAG_WARMUP_TIMEOUT_SECONDS)),
-            )
-            logger.info("RAG warmup completed in %.2fs", time.perf_counter() - warmup_started_at)
-        except Exception as exc:
-            logger.warning("RAG warmup skipped/failed: %s", exc)
+        async def _run_rag_warmup() -> None:
+            warmup_started_at = time.perf_counter()
+            try:
+                await asyncio.wait_for(
+                    _warmup_rag_components(),
+                    timeout=max(10.0, float(settings.RAG_WARMUP_TIMEOUT_SECONDS)),
+                )
+                logger.info("RAG warmup completed in %.2fs", time.perf_counter() - warmup_started_at)
+            except Exception as exc:
+                logger.warning("RAG warmup skipped/failed: %s", exc)
+
+        warmup_task = asyncio.create_task(_run_rag_warmup())
 
     freshness_task: asyncio.Task[None] | None = None
     if settings.METRICS_ENABLED:
@@ -564,6 +588,8 @@ async def lifespan(app: FastAPI):
         scheduler.shutdown()
     if freshness_task is not None:
         freshness_task.cancel()
+    if warmup_task is not None:
+        warmup_task.cancel()
     await job_runner.stop()
     await close_redis()
     client.close()
@@ -575,11 +601,17 @@ async def _warmup_rag_components() -> None:
     await nlp_service.classify_intent("data science internships")
     await opportunity_vector_service.rebuild(force=False)
 
+# Compared on a stripped, lowercased value. Every production guard in this file
+# normalises before comparing, but these three did not - so ENVIRONMENT set to
+# "Production" or " production" tripped all the guards while still publishing
+# the API schema, /docs and /redoc.
+_IS_PRODUCTION = str(settings.ENVIRONMENT or "").strip().lower() == "production"
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    openapi_url=f"{settings.API_V1_STR}/openapi.json" if settings.ENVIRONMENT != "production" else None,
-    docs_url="/docs" if settings.ENVIRONMENT != "production" else None,
-    redoc_url="/redoc" if settings.ENVIRONMENT != "production" else None,
+    openapi_url=f"{settings.API_V1_STR}/openapi.json" if not _IS_PRODUCTION else None,
+    docs_url="/docs" if not _IS_PRODUCTION else None,
+    redoc_url="/redoc" if not _IS_PRODUCTION else None,
     lifespan=lifespan,
 )
 
@@ -778,9 +810,50 @@ async def _metrics_dependency(request: Request) -> Any:
     return current_user
 
 
+_LOCAL_ENVIRONMENTS = {"local", "dev", "development", "test"}
+
+
+def _readiness_is_open() -> bool:
+    """Detailed readiness is unauthenticated only outside production.
+
+    Compared case-insensitively on a stripped value: elsewhere in this file the
+    production guards normalise, while the docs exposure check compared raw, so
+    ENVIRONMENT="Production" fired the guards *and* published /docs.
+    """
+    return str(settings.ENVIRONMENT or "").strip().lower() in _LOCAL_ENVIRONMENTS
+
+
+async def _readiness_dependency(request: Request) -> Any:
+    """Gate the dependency fan-out behind auth in production.
+
+    The detailed payload runs a Mongo ping, a Redis ping, a ClickHouse query, an
+    S3 head_bucket and two count_documents on every call, and the endpoint is
+    exempt from rate limiting so load balancers are never throttled. Left open
+    it was both an unauthenticated DoS amplifier against paid dependencies and a
+    disclosure of environment, PID, uptime, database and bucket names.
+    """
+    if _readiness_is_open():
+        return None
+    auth_header = (request.headers.get("authorization") or "").strip()
+    token = None
+    if auth_header.lower().startswith("bearer "):
+        token = auth_header.split(" ", 1)[1].strip() or None
+    return await get_current_admin_user(request=request, token=token)
+
+
 @app.get("/health", tags=["system"])
-async def health_check(request: Request):
-    """Health check endpoint for load balancers."""
+async def health_check():
+    """Liveness probe for load balancers.
+
+    Deliberately static and cheap: no dependency calls, no environment or
+    process detail. Use /health/ready for the dependency fan-out.
+    """
+    return {"status": "ok", "service": settings.PROJECT_NAME}
+
+
+@app.get("/health/ready", tags=["system"])
+async def readiness_check(request: Request, _auth: Any = Depends(_readiness_dependency)):
+    """Full dependency readiness. Admin-authenticated outside local environments."""
     init_metrics()
     checks = {
         "mongodb": await _run_check("mongodb", lambda: _mongo_health(request), required=True),

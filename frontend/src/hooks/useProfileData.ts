@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from "react";
 
 import { apiUrl } from "@/lib/api";
-import { createAuthenticatedFetchInit, getAccessToken } from "@/lib/auth-session";
+import { clearAccessToken, createAuthenticatedFetchInit, getAccessToken } from "@/lib/auth-session";
 import { getApiErrorMessage, getUnknownErrorMessage } from "@/lib/error-utils";
 
 type UseProfileDataArgs<TProfile, TUpdatePayload> = {
@@ -97,6 +97,21 @@ export function useProfileData<TProfile, TUpdatePayload>({
         let userError: string | null = null;
         let profileError: string | null = null;
         let hasFreshProfile = false;
+
+        // An expired or invalid session is not a profile error. Rendering the
+        // raw API text left the user on a form that looked broken - every field
+        // blank, completion 0%, and "Could not validate credentials" above it -
+        // with no indication that signing in again was the fix. Tokens last 24
+        // hours, so this is a routine state, not an exceptional one.
+        const unauthorized =
+          (userResult.status === "fulfilled" && userResult.value.status === 401) ||
+          (profileResult.status === "fulfilled" && profileResult.value.status === 401);
+        if (unauthorized) {
+          clearAccessToken("expired");
+          const returnTo = typeof window !== "undefined" ? window.location.pathname : "";
+          router.replace(returnTo ? `/login?next=${encodeURIComponent(returnTo)}` : "/login");
+          return;
+        }
 
         if (userResult.status === "fulfilled") {
           const userRes = userResult.value;

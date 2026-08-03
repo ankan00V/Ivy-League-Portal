@@ -344,10 +344,21 @@ export default function DashboardPage() {
         return () => window.clearTimeout(timeout);
     }, [recommendationsLoading]);
 
-    const getMatchPercent = (seed: string) => {
-        let hash = 0;
-        for (let i = 0; i < seed.length; i++) hash = seed.charCodeAt(i) + ((hash << 5) - hash);
-        return 85 + (Math.abs(hash) % 15);
+    // Renders the ranker's actual match score. This previously hashed the
+    // opportunity's domain string into a number between 85 and 99, so every
+    // item in a domain showed the same figure and it reflected neither the
+    // viewer nor the opportunity. Signed-out visitors have no profile to match
+    // against, so there is no honest number to show and the badge is omitted.
+    const getMatchPercent = (matchScore: number | null | undefined): number | null => {
+        if (typeof matchScore !== "number" || Number.isNaN(matchScore)) {
+            return null;
+        }
+        // The API reports match_score on a 0-1 scale; older rows use 0-100.
+        const normalized = matchScore <= 1 ? matchScore * 100 : matchScore;
+        if (normalized <= 0) {
+            return null;
+        }
+        return Math.min(100, Math.round(normalized));
     };
 
     const logDashboardOpportunityEvent = useCallback(
@@ -718,9 +729,17 @@ export default function DashboardPage() {
                                         </div>
                                     </div>
                                     <div style={{ textAlign: 'right' }}>
-                                        <div style={{ color: '#000000', fontWeight: 700, padding: '0.25rem 0.75rem', background: 'var(--brand-accent)', border: '2px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', fontSize: '0.85rem', whiteSpace: 'nowrap' }}>
-                                            {getMatchPercent(opp.domain || 'x')}% Match
-                                        </div>
+                                        {(() => {
+                                            const matchPercent = isAuthenticated ? getMatchPercent(opp.match_score) : null;
+                                            if (matchPercent === null) {
+                                                return null;
+                                            }
+                                            return (
+                                                <div style={{ color: '#000000', fontWeight: 700, padding: '0.25rem 0.75rem', background: 'var(--brand-accent)', border: '2px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', fontSize: '0.85rem', whiteSpace: 'nowrap' }}>
+                                                    {matchPercent}% Match
+                                                </div>
+                                            );
+                                        })()}
                                         {!isAuthenticated ? (
                                             <div style={{ fontSize: "0.75rem", marginTop: "0.4rem", color: "var(--text-muted)", fontWeight: 700 }}>
                                                 Sign in to access

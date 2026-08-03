@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 from urllib.parse import quote, urlparse
 
+from app.core.async_limits import LoopLocalSemaphore
 from app.core.config import settings
 from app.core import metrics
 
@@ -38,7 +39,7 @@ class BrowserUseClient:
 
     def __init__(self, *, monotonic: Callable[[], float] = time.monotonic) -> None:
         self._monotonic = monotonic
-        self._semaphore = asyncio.Semaphore(max(1, int(settings.BROWSER_USE_MAX_CONCURRENT)))
+        self._semaphore = LoopLocalSemaphore(lambda: settings.BROWSER_USE_MAX_CONCURRENT)
         self._consecutive_failures = 0
         self._circuit_open_until = 0.0
 

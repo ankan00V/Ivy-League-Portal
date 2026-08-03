@@ -25,14 +25,29 @@ import {
 
 import { CenteredPageSkeleton } from "@/components/LoadingSkeletons";
 import Sidebar from "@/components/Sidebar";
+import ResumeReadinessReview from "@/components/ResumeReadinessReview";
+import SkillAutocompleteInput from "@/components/skills/SkillAutocompleteInput";
 import FormSection from "@/components/ui/FormSection";
 import PillGroup from "@/components/ui/PillGroup";
 import SelectField from "@/components/ui/SelectField";
 import TextareaField from "@/components/ui/TextareaField";
 import TextField from "@/components/ui/TextField";
+import TaxonomyMultiSelect from "@/components/ui/TaxonomyMultiSelect";
 import ToggleRow from "@/components/ui/ToggleRow";
 import { useProfileData } from "@/hooks/useProfileData";
 import { INDIAN_INSTITUTION_OPTIONS, OTHER_INSTITUTION_LABEL } from "@/lib/indian-institutions";
+import {
+  EDUCATION_PROGRAM_GROUPS,
+  EDUCATION_PROGRAM_OPTIONS,
+  getFieldOfStudyOptions,
+} from "@/lib/education-taxonomy";
+import { ROLE_GROUPS, ROLE_OPTIONS, findKnownRole, joinRoles, splitRoles } from "@/lib/role-taxonomy";
+import {
+  LOCATION_GROUPS,
+  LOCATION_OPTIONS,
+  joinLocations,
+  splitLocations,
+} from "@/lib/location-taxonomy";
 
 type AccountType = "candidate" | "employer";
 type UserType = "school_student" | "college_student" | "fresher" | "professional";
@@ -74,6 +89,8 @@ type ProfilePayload = {
   preferred_roles: string;
   preferred_locations: string;
   work_preferences: string[];
+  expected_stipend_range: string;
+  availability: string;
   pan_india: boolean;
   prefer_wfh: boolean;
   consent_data_processing: boolean;
@@ -132,6 +149,8 @@ type ProfileUpdatePayload = {
   preferred_roles?: string;
   preferred_locations?: string;
   work_preferences?: string[];
+  expected_stipend_range?: string;
+  availability?: string;
   pan_india: boolean;
   prefer_wfh: boolean;
   consent_data_processing: boolean;
@@ -181,30 +200,32 @@ const GOAL_OPTIONS = ["To find a Job", "Compete & Upskill", "To Host an Event", 
 const PRONOUN_OPTIONS = ["He/Him", "She/Her", "They/Them", "Prefer not to say"];
 const GENDER_OPTIONS = ["Male", "Female", "Non-binary", "Prefer not to say"];
 const OTHER_UNIVERSITY_VALUE = "__other__";
+const OTHER_COURSE_VALUE = "__other_course__";
+const OTHER_SPECIALIZATION_VALUE = "__other_specialization__";
+const OTHER_ROLE_VALUE = "__other_role__";
 const UNIVERSITY_OPTION_VALUES = new Set<string>(INDIAN_INSTITUTION_OPTIONS.map((item) => item.label));
 const UNIVERSITY_OPTIONS = Array.from(UNIVERSITY_OPTION_VALUES);
 const UNIVERSITY_OPTION_BY_UPPERCASE = new Map<string, string>(
   UNIVERSITY_OPTIONS.map((item) => [item.toLocaleUpperCase("en-IN"), item]),
 );
 
+/* Free-text fields that get shouted for visual consistency.
+   Taxonomy-backed fields are deliberately NOT in here. Uppercasing them broke
+   every control that compares a stored value against a canonical option:
+   a Domain pill compared "ENGINEERING" against "Engineering" and never lit up,
+   and a <select> holding "B.TECH (BACHELOR OF TECHNOLOGY)" matched no <option
+   value> and rendered blank. Those fields now store the canonical label, and
+   the display-uppercasing is done in CSS where it belongs. */
 const UPPERCASE_TEXT_FIELDS = new Set<keyof ProfilePayload>([
   "first_name",
   "last_name",
-  "domain",
-  "course",
-  "course_specialization",
-  "current_job_role",
   "total_work_experience",
   "experience_summary",
   "college_name",
   "company_name",
   "company_size",
   "company_description",
-  "preferred_roles",
-  "preferred_locations",
   "bio",
-  "skills",
-  "interests",
   "achievements",
   "education",
   "certificates",
@@ -339,6 +360,8 @@ function hydrateProfilePayload(profilePayload: Record<string, unknown>): Profile
     preferred_roles: toText(profilePayload.preferred_roles),
     preferred_locations: toText(profilePayload.preferred_locations),
     work_preferences: toStringArray(profilePayload.work_preferences),
+    expected_stipend_range: toText(profilePayload.expected_stipend_range),
+    availability: toText(profilePayload.availability),
     pan_india: Boolean(profilePayload.pan_india),
     prefer_wfh: Boolean(profilePayload.prefer_wfh),
     consent_data_processing: Boolean(profilePayload.consent_data_processing),
@@ -427,6 +450,8 @@ function buildProfileUpdatePayload(profile: ProfilePayload): ProfileUpdatePayloa
   assignOptionalText(payload, "company_description", profile.company_description);
   assignOptionalText(payload, "preferred_roles", profile.preferred_roles);
   assignOptionalText(payload, "preferred_locations", profile.preferred_locations);
+  assignOptionalText(payload, "expected_stipend_range", profile.expected_stipend_range);
+  assignOptionalText(payload, "availability", profile.availability);
   assignOptionalText(payload, "bio", profile.bio);
   assignOptionalText(payload, "skills", profile.skills);
   assignOptionalText(payload, "interests", profile.interests);
@@ -555,6 +580,8 @@ export default function ProfilePage() {
     preferred_roles: "",
     preferred_locations: "",
     work_preferences: [],
+    expected_stipend_range: "",
+    availability: "",
     pan_india: false,
     prefer_wfh: false,
     consent_data_processing: false,
@@ -780,6 +807,198 @@ export default function ProfilePage() {
     </>
   );
 
+  /* Onboarding has always picked the degree from EDUCATION_PROGRAM_OPTIONS while
+     Edit Profile left it as free text, so a student who chose "B.Tech (Bachelor
+     of Technology)" during signup came back to an unconstrained box and could
+     save a variant spelling over it. Same field, same taxonomy, both places.
+     Anything already stored that is not in the taxonomy selects Others and stays
+     editable, so no existing value is silently dropped. */
+  // A <select> only shows a value that matches an <option value> exactly, so a
+  // stored "B.TECH (BACHELOR OF TECHNOLOGY)" has to be resolved back to the
+  // canonical "B.Tech (Bachelor of Technology)" or the control renders blank.
+  const canonicalCourse = !profile.course
+    ? ""
+    : (EDUCATION_PROGRAM_OPTIONS.find(
+        (option) => option.label.toLowerCase() === profile.course.trim().toLowerCase(),
+      )?.label ?? "");
+  const courseSelectValue = !profile.course ? "" : canonicalCourse || OTHER_COURSE_VALUE;
+
+  const specializationOptions = getFieldOfStudyOptions(canonicalCourse || profile.course, profile.domain);
+  const canonicalSpecialization =
+    specializationOptions.find(
+      (option) => option.toLowerCase() === profile.course_specialization.trim().toLowerCase(),
+    ) ?? "";
+  const specializationSelectValue = !profile.course_specialization
+    ? ""
+    : canonicalSpecialization || OTHER_SPECIALIZATION_VALUE;
+
+  const renderCourseField = () => (
+    <>
+      <SelectField
+        wrapperClassName="profile-field"
+        label="Course"
+        value={courseSelectValue}
+        onChange={(event) => {
+          const selected = event.target.value;
+          if (selected === OTHER_COURSE_VALUE) {
+            // Clear only a taxonomy value, so a manual entry survives reselecting Other.
+            if (canonicalCourse) {
+              updateProfile("course", "");
+            }
+            return;
+          }
+          updateProfile("course", selected);
+          // The specialization list is derived from the course, so a stale value
+          // from the previous course must not survive the switch.
+          const nextOptions = getFieldOfStudyOptions(selected, profile.domain);
+          if (profile.course_specialization && !nextOptions.includes(profile.course_specialization)) {
+            updateProfile("course_specialization", "");
+          }
+        }}
+      >
+        <option value="">Select your course</option>
+        {EDUCATION_PROGRAM_GROUPS.map((group) => (
+          <optgroup key={group} label={group}>
+            {EDUCATION_PROGRAM_OPTIONS.filter((option) => option.group === group).map((option) => (
+              <option key={option.value} value={option.label}>
+                {option.label}
+              </option>
+            ))}
+          </optgroup>
+        ))}
+        <option value={OTHER_COURSE_VALUE}>Other course (enter manually)</option>
+      </SelectField>
+      {courseSelectValue === OTHER_COURSE_VALUE ? (
+        <TextField
+          wrapperClassName="profile-field"
+          label="Enter Course"
+          value={profile.course}
+          onChange={(event) => updateProfile("course", event.target.value)}
+          placeholder="Degree or course"
+        />
+      ) : null}
+    </>
+  );
+
+  const canonicalCurrentRole = findKnownRole(profile.current_job_role);
+  const currentRoleSelectValue = !profile.current_job_role
+    ? ""
+    : canonicalCurrentRole || OTHER_ROLE_VALUE;
+
+  const renderCurrentRoleField = (placeholder: string) => (
+    <>
+      <SelectField
+        wrapperClassName="profile-field"
+        label="Current Role"
+        value={currentRoleSelectValue}
+        onChange={(event) => {
+          const selected = event.target.value;
+          if (selected === OTHER_ROLE_VALUE) {
+            if (canonicalCurrentRole) {
+              updateProfile("current_job_role", "");
+            }
+            return;
+          }
+          updateProfile("current_job_role", selected);
+        }}
+      >
+        <option value="">Select your current role</option>
+        {ROLE_GROUPS.map((group) => (
+          <optgroup key={group} label={group}>
+            {ROLE_OPTIONS.filter((option) => option.group === group).map((option) => (
+              <option key={option.label} value={option.label}>
+                {option.label}
+              </option>
+            ))}
+          </optgroup>
+        ))}
+        <option value={OTHER_ROLE_VALUE}>Other role (enter manually)</option>
+      </SelectField>
+      {currentRoleSelectValue === OTHER_ROLE_VALUE ? (
+        <TextField
+          wrapperClassName="profile-field"
+          label="Enter Current Role"
+          value={profile.current_job_role}
+          onChange={(event) => updateProfile("current_job_role", event.target.value)}
+          placeholder={placeholder}
+        />
+      ) : null}
+    </>
+  );
+
+  /* Preferred roles and preferred locations are both comma-separated lists, so
+     they share one add-and-remove control over two different vocabularies. */
+  const renderPreferredRolesField = () => (
+    <TaxonomyMultiSelect
+      wrapperClassName="profile-field"
+      label="Preferred Roles"
+      helper="Pick the roles you want to be matched with. Add as many as apply."
+      value={profile.preferred_roles}
+      onChange={(next) => updateProfile("preferred_roles", next)}
+      options={ROLE_OPTIONS}
+      groups={ROLE_GROUPS}
+      split={splitRoles}
+      join={joinRoles}
+      addLabel="+ Add a preferred role"
+      icon={Workflow}
+    />
+  );
+
+  const renderPreferredLocationsField = () => (
+    <TaxonomyMultiSelect
+      wrapperClassName="profile-field"
+      label="Preferred Work Locations"
+      helper="Add cities, states or a work mode like Remote. Bangalore and Bengaluru count as one."
+      value={profile.preferred_locations}
+      onChange={(next) => updateProfile("preferred_locations", next)}
+      options={LOCATION_OPTIONS}
+      groups={LOCATION_GROUPS}
+      split={splitLocations}
+      join={joinLocations}
+      addLabel="+ Add a preferred location"
+      icon={MapPinned}
+    />
+  );
+
+  const renderSpecializationField = () => (
+    <>
+      <SelectField
+        wrapperClassName="profile-field"
+        label="Course Specialization"
+        value={specializationSelectValue}
+        onChange={(event) => {
+          const selected = event.target.value;
+          if (selected === OTHER_SPECIALIZATION_VALUE) {
+            if (canonicalSpecialization) {
+              updateProfile("course_specialization", "");
+            }
+            return;
+          }
+          updateProfile("course_specialization", selected);
+        }}
+      >
+        <option value="">
+          {specializationOptions.length > 0 ? "Select your specialization" : "Select a course first"}
+        </option>
+        {specializationOptions.map((option) => (
+          <option key={option} value={option}>
+            {option}
+          </option>
+        ))}
+        <option value={OTHER_SPECIALIZATION_VALUE}>Other specialization (enter manually)</option>
+      </SelectField>
+      {specializationSelectValue === OTHER_SPECIALIZATION_VALUE ? (
+        <TextField
+          wrapperClassName="profile-field"
+          label="Enter Specialization"
+          value={profile.course_specialization}
+          onChange={(event) => updateProfile("course_specialization", event.target.value)}
+          placeholder="Your specialization"
+        />
+      ) : null}
+    </>
+  );
+
   const renderBasicSection = () => (
     <>
       {renderSectionHeader("Basic Details", "Identity, user type, and role preferences")}
@@ -851,7 +1070,12 @@ export default function ProfilePage() {
                 <button
                   key={item}
                   type="button"
-                  className={`profile-pill ${profile.domain === item ? "active" : ""}`}
+                  // Compared case-insensitively so values stored uppercase by the
+                  // old normaliser still light their pill instead of reading as
+                  // nothing-selected.
+                  className={`profile-pill ${
+                    profile.domain.trim().toLowerCase() === item.toLowerCase() ? "active" : ""
+                  }`}
                   onClick={() => updateProfile("domain", item)}
                 >
                   {item}
@@ -861,20 +1085,8 @@ export default function ProfilePage() {
           </FormSection>
 
           <div className="profile-field-grid two">
-            <TextField
-              wrapperClassName="profile-field"
-              label="Course"
-              value={profile.course}
-              onChange={(event) => updateProfile("course", event.target.value)}
-              placeholder="B.Tech / MBA / BA ..."
-            />
-            <TextField
-              wrapperClassName="profile-field"
-              label="Course Specialization"
-              value={profile.course_specialization}
-              onChange={(event) => updateProfile("course_specialization", event.target.value)}
-              placeholder="Computer Science / Finance / Marketing ..."
-            />
+            {renderCourseField()}
+            {renderSpecializationField()}
           </div>
 
           <div className="profile-field-grid two">
@@ -897,13 +1109,7 @@ export default function ProfilePage() {
           </div>
 
           <div className="profile-field-grid two">
-            <TextField
-              wrapperClassName="profile-field"
-              label="Current Role"
-              value={profile.current_job_role}
-              onChange={(event) => updateProfile("current_job_role", event.target.value)}
-              placeholder="Student / Analyst / Developer"
-            />
+            {renderCurrentRoleField("Student / Analyst / Developer")}
             <TextField
               wrapperClassName="profile-field"
               label="Total Work Experience"
@@ -941,20 +1147,30 @@ export default function ProfilePage() {
           </FormSection>
 
           <div className="profile-field-grid two">
+            {renderPreferredRolesField()}
+            {renderPreferredLocationsField()}
+          </div>
+
+          <div className="profile-field-grid two">
             <TextField
               wrapperClassName="profile-field"
-              label="Preferred Roles"
-              value={profile.preferred_roles}
-              onChange={(event) => updateProfile("preferred_roles", event.target.value)}
-              placeholder="Data Scientist, Software Engineer"
+              label="Expected Stipend"
+              value={profile.expected_stipend_range}
+              onChange={(event) => updateProfile("expected_stipend_range", event.target.value)}
+              placeholder="₹20,000–₹35,000 per month"
             />
-            <TextField
+            <SelectField
               wrapperClassName="profile-field"
-              label="Preferred Work Locations"
-              value={profile.preferred_locations}
-              onChange={(event) => updateProfile("preferred_locations", event.target.value)}
-              placeholder="Bangalore, Hyderabad, Remote"
-            />
+              label="Availability"
+              value={profile.availability}
+              onChange={(event) => updateProfile("availability", event.target.value)}
+            >
+              <option value="">Select availability</option>
+              <option value="immediately">Available immediately</option>
+              <option value="within_1_month">Available within 1 month</option>
+              <option value="within_3_months">Available within 3 months</option>
+              <option value="exploring">Exploring opportunities</option>
+            </SelectField>
           </div>
 
           <div className="profile-inline-group">
@@ -976,13 +1192,7 @@ export default function ProfilePage() {
               onChange={(event) => updateProfile("company_name", event.target.value)}
               placeholder="Your organization"
             />
-            <TextField
-              wrapperClassName="profile-field"
-              label="Current Role"
-              value={profile.current_job_role}
-              onChange={(event) => updateProfile("current_job_role", event.target.value)}
-              placeholder="Founder / Recruiter / HR"
-            />
+            {renderCurrentRoleField("Founder / Recruiter / HR")}
           </div>
 
           <div className="profile-field-grid two">
@@ -1082,6 +1292,9 @@ export default function ProfilePage() {
           />
         </label>
         <p className="profile-section-footnote">Supported formats: .txt, .pdf, .doc, .docx (max 8 MB).</p>
+        {profile.account_type === "candidate" && profile.resume_filename ? (
+          <ResumeReadinessReview resumeFilename={profile.resume_filename} />
+        ) : null}
       </div>
     </>
   );
@@ -1109,23 +1322,13 @@ export default function ProfilePage() {
       {renderSectionHeader("Skills", "Highlight your skills and areas of interest")}
       <div className="profile-field-grid two">
         <div>
-          <TextareaField
+          <SkillAutocompleteInput
             wrapperClassName="profile-field"
             label="Skills *"
-            rows={5}
             value={profile.skills}
-            onChange={(event) => updateProfile("skills", event.target.value)}
+            onChange={(nextValue) => updateProfile("skills", nextValue)}
             placeholder="Python, Data Analysis, C++, SQL, Communication"
           />
-          {splitCommaValues(profile.skills).length > 0 ? (
-            <div className="profile-tag-row">
-              {splitCommaValues(profile.skills).map((skill) => (
-                <span key={skill} className="profile-tag">
-                  {skill}
-                </span>
-              ))}
-            </div>
-          ) : null}
         </div>
         <div>
           <TextareaField
@@ -1165,13 +1368,7 @@ export default function ProfilePage() {
                 placeholder="College / University"
               />
             )}
-        <TextField
-          wrapperClassName="profile-field"
-          label="Course"
-          value={profile.course}
-          onChange={(event) => updateProfile("course", event.target.value)}
-          placeholder="Degree or course"
-        />
+        {renderCourseField()}
       </div>
       <TextareaField
         wrapperClassName="profile-field"

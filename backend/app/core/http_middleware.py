@@ -187,14 +187,23 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         ip = _client_ip(request)
         action = _route_label(request)
         limit = int(settings.RATE_LIMIT_REQUESTS_PER_MINUTE)
+        # Credential endpoints fail closed: if the limiter's backing store is
+        # unreachable, briefly rejecting sign-in attempts is far better than
+        # silently serving unlimited brute-force attempts, which is what
+        # returning "allowed" on a Redis outage amounted to.
+        fail_closed = False
         if path.startswith(f"{settings.API_V1_STR}/auth/"):
             limit = int(settings.RATE_LIMIT_AUTH_REQUESTS_PER_MINUTE)
+            fail_closed = True
         elif path.startswith(f"{settings.API_V1_STR}/admin/"):
             limit = int(settings.RATE_LIMIT_ADMIN_REQUESTS_PER_MINUTE)
+            fail_closed = True
         elif path.startswith(f"{settings.API_V1_STR}/opportunities/feed"):
             limit = int(settings.RATE_LIMIT_FEED_REQUESTS_PER_MINUTE)
 
-        decision = await check_rate_limit(subject=ip, action=action, limit_per_minute=limit)
+        decision = await check_rate_limit(
+            subject=ip, action=action, limit_per_minute=limit, fail_closed=fail_closed
+        )
         if decision is not None and not decision.allowed:
             headers = {
                 "Retry-After": str(max(1, decision.retry_after_seconds)),

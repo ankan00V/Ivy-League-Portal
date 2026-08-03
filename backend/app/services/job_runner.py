@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
 from datetime import datetime, timedelta
 from typing import Any, Awaitable, Callable, Optional
@@ -9,21 +10,12 @@ from pymongo import ReturnDocument
 from beanie.odm.operators.find.comparison import In
 
 from app.core.config import settings
-from app.core.metrics import (
-    JOBS_DEAD_TOTAL,
-    JOBS_ENQUEUED_TOTAL,
-    JOBS_FAILED_TOTAL,
-    JOBS_SUCCEEDED_TOTAL,
-    SCRAPER_RUNS_TOTAL,
-    SCRAPER_SOURCE_TOTAL,
-    DISCOVERY_PROBATION_SOURCES,
-    DISCOVERY_SOURCES_DISCOVERED_TOTAL,
-    DISCOVERY_SOURCES_IN_PIPELINE,
-    DISCOVERY_SOURCES_PROMOTED_TOTAL,
-)
+from app.core import metrics as metrics_module
 from app.models.background_job import BackgroundJob
 from app.core.time import utc_now
 
+
+logger = logging.getLogger(__name__)
 
 JobHandler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 
@@ -88,8 +80,8 @@ class JobRunner:
             updated_at=now,
         )
         await job.insert()
-        if JOBS_ENQUEUED_TOTAL is not None:
-            JOBS_ENQUEUED_TOTAL.labels(job_type=job_type).inc()
+        if metrics_module.JOBS_ENQUEUED_TOTAL is not None:
+            metrics_module.JOBS_ENQUEUED_TOTAL.labels(job_type=job_type).inc()
         return job
 
     async def _claim_next(self) -> Optional[BackgroundJob]:
@@ -97,12 +89,33 @@ class JobRunner:
         now = utc_now()
         cutoff = now - lock_timeout
 
+        # A worker that dies mid-job (deploy, crash, OOM, scale-down) leaves the
+        # row in "running" forever: it was never claimable again, yet it still
+        # counted toward JOBS_MAX_PENDING_PER_TYPE and blocked its dedupe_key.
+        # Enough restarts and the queue wedges permanently.
+        #
+        # Reclaim only once the job cannot still be running legitimately. The
+        # handler timeout bounds a live job's runtime and may exceed the lock
+        # timeout, so reclaiming at the lock timeout alone would execute a slow
+        # but healthy job twice.
+        abandoned_cutoff = now - timedelta(
+            seconds=max(
+                float(max(30, int(settings.JOBS_LOCK_TIMEOUT_SECONDS))),
+                float(settings.JOBS_HANDLER_TIMEOUT_SECONDS) * 2.0,
+            )
+        )
+
         collection = _get_collection(BackgroundJob)
         doc = await collection.find_one_and_update(
             {
-                "status": {"$in": ["pending", "retry"]},
-                "run_after": {"$lte": now},
-                "$or": [{"locked_at": None}, {"locked_at": {"$lte": cutoff}}],
+                "$or": [
+                    {
+                        "status": {"$in": ["pending", "retry"]},
+                        "run_after": {"$lte": now},
+                        "$or": [{"locked_at": None}, {"locked_at": {"$lte": cutoff}}],
+                    },
+                    {"status": "running", "locked_at": {"$lte": abandoned_cutoff}},
+                ]
             },
             {
                 "$set": {
@@ -142,8 +155,8 @@ class JobRunner:
                 }
             }
         )
-        if JOBS_SUCCEEDED_TOTAL is not None:
-            JOBS_SUCCEEDED_TOTAL.labels(job_type=job.job_type).inc()
+        if metrics_module.JOBS_SUCCEEDED_TOTAL is not None:
+            metrics_module.JOBS_SUCCEEDED_TOTAL.labels(job_type=job.job_type).inc()
 
     async def _mark_failure(self, job: BackgroundJob, error: str) -> None:
         now = utc_now()
@@ -165,8 +178,8 @@ class JobRunner:
                     }
                 }
             )
-            if JOBS_DEAD_TOTAL is not None:
-                JOBS_DEAD_TOTAL.labels(job_type=job.job_type).inc()
+            if metrics_module.JOBS_DEAD_TOTAL is not None:
+                metrics_module.JOBS_DEAD_TOTAL.labels(job_type=job.job_type).inc()
             return
 
         delay = self._backoff(attempts=attempts - 1)
@@ -184,8 +197,8 @@ class JobRunner:
                 }
             }
         )
-        if JOBS_FAILED_TOTAL is not None:
-            JOBS_FAILED_TOTAL.labels(job_type=job.job_type).inc()
+        if metrics_module.JOBS_FAILED_TOTAL is not None:
+            metrics_module.JOBS_FAILED_TOTAL.labels(job_type=job.job_type).inc()
 
     async def _run_job(self, job: BackgroundJob) -> None:
         handler = self._handlers.get(job.job_type)
@@ -204,13 +217,33 @@ class JobRunner:
 
     async def _loop(self) -> None:
         poll = max(0.2, float(settings.JOBS_POLL_INTERVAL_SECONDS))
+        logger.info("job runner started worker_id=%s poll=%.2fs", self._worker_id, poll)
+        consecutive_errors = 0
+        saturated_since: datetime | None = None
         while not self._stop_event.is_set():
             try:
                 max_concurrency = max(1, int(settings.JOBS_MAX_CONCURRENCY))
                 if len(self._inflight) >= max_concurrency:
+                    # Saturation is normal briefly, but a permanently full
+                    # in-flight set means the queue has silently stopped
+                    # draining - the failure mode that hid a 40-day ingestion
+                    # outage. Surface it instead of spinning quietly.
+                    now = utc_now()
+                    if saturated_since is None:
+                        saturated_since = now
+                    elif (now - saturated_since).total_seconds() >= 300:
+                        logger.warning(
+                            "job runner saturated for %.0fs: %d/%d in-flight, not claiming new work",
+                            (now - saturated_since).total_seconds(),
+                            len(self._inflight),
+                            max_concurrency,
+                        )
+                        saturated_since = now
                     await asyncio.sleep(poll)
                     continue
+                saturated_since = None
                 job = await self._claim_next()
+                consecutive_errors = 0
                 if job is None:
                     await asyncio.sleep(poll)
                     continue
@@ -220,7 +253,15 @@ class JobRunner:
             except asyncio.CancelledError:
                 break
             except Exception:
+                # A persistently failing poll used to be indistinguishable from
+                # an idle queue: the exception was swallowed with no log, so the
+                # runner looked healthy while claiming nothing.
+                consecutive_errors += 1
+                logger.exception(
+                    "job runner poll failed (consecutive=%d); retrying", consecutive_errors
+                )
                 await asyncio.sleep(min(2.0, poll))
+        logger.info("job runner stopped worker_id=%s", self._worker_id)
 
     def start(self) -> None:
         if not settings.JOBS_ENABLED:
@@ -255,13 +296,13 @@ async def _job_scraper(_: dict[str, Any]) -> dict[str, Any]:
     report = await run_scheduled_scrapers(force=True)
     status = str(report.get("status") or "unknown")
 
-    if SCRAPER_RUNS_TOTAL is not None:
-        SCRAPER_RUNS_TOTAL.labels(status=status).inc()
-    if SCRAPER_SOURCE_TOTAL is not None:
+    if metrics_module.SCRAPER_RUNS_TOTAL is not None:
+        metrics_module.SCRAPER_RUNS_TOTAL.labels(status=status).inc()
+    if metrics_module.SCRAPER_SOURCE_TOTAL is not None:
         for source in report.get("sources", []) or []:
             name = str(source.get("source") or "unknown")
             source_status = "error" if (source.get("errors") or []) else "ok"
-            SCRAPER_SOURCE_TOTAL.labels(source=name, status=source_status).inc()
+            metrics_module.SCRAPER_SOURCE_TOTAL.labels(source=name, status=source_status).inc()
 
     await refresh_freshness_metrics()
 
@@ -380,6 +421,17 @@ async def _job_embeddings_rebuild(payload: dict[str, Any]) -> dict[str, Any]:
     from app.services.embedding_pipeline import embedding_pipeline
 
     return await embedding_pipeline.rebuild_vector_index_if_stale(force=bool(payload.get("force") or False))
+
+
+async def _job_description_enrichment(payload: dict[str, Any]) -> dict[str, Any]:
+    """Improve unusable descriptions from the opportunity's own detail page.
+
+    Kept off the ingestion critical path: it re-fetches one page per row and can
+    fall through to a paid provider, so it runs on its own budgeted schedule.
+    """
+    from app.services.description_enrichment import enrich_opportunity_descriptions
+
+    return await enrich_opportunity_descriptions(limit=payload.get("limit"))
 
 
 async def _job_mlops_retrain(payload: dict[str, Any]) -> dict[str, Any]:
@@ -539,14 +591,14 @@ async def _job_opportunity_trust_backfill(payload: dict[str, Any]) -> dict[str, 
 async def _refresh_discovery_metrics() -> None:
     from app.models.source_discovery import DiscoveredSource, SourceStatus
 
-    if DISCOVERY_SOURCES_IN_PIPELINE is not None or DISCOVERY_PROBATION_SOURCES is not None:
+    if metrics_module.DISCOVERY_SOURCES_IN_PIPELINE is not None or metrics_module.DISCOVERY_PROBATION_SOURCES is not None:
         rows = await DiscoveredSource.find_many().to_list()
         for status in SourceStatus:
             count = sum(1 for row in rows if row.status == status)
-            if DISCOVERY_SOURCES_IN_PIPELINE is not None:
-                DISCOVERY_SOURCES_IN_PIPELINE.labels(status=status.value).set(count)
-            if status == SourceStatus.probation and DISCOVERY_PROBATION_SOURCES is not None:
-                DISCOVERY_PROBATION_SOURCES.set(count)
+            if metrics_module.DISCOVERY_SOURCES_IN_PIPELINE is not None:
+                metrics_module.DISCOVERY_SOURCES_IN_PIPELINE.labels(status=status.value).set(count)
+            if status == SourceStatus.probation and metrics_module.DISCOVERY_PROBATION_SOURCES is not None:
+                metrics_module.DISCOVERY_PROBATION_SOURCES.set(count)
 
 
 async def _job_source_discovery_run(payload: dict[str, Any]) -> dict[str, Any]:
@@ -555,8 +607,8 @@ async def _job_source_discovery_run(payload: dict[str, Any]) -> dict[str, Any]:
     summary = await source_discovery_engine.run_discovery(
         triggered_by=str(payload.get("triggered_by") or "scheduler")
     )
-    if DISCOVERY_SOURCES_DISCOVERED_TOTAL is not None and summary.urls_discovered:
-        DISCOVERY_SOURCES_DISCOVERED_TOTAL.inc(summary.urls_discovered)
+    if metrics_module.DISCOVERY_SOURCES_DISCOVERED_TOTAL is not None and summary.urls_discovered:
+        metrics_module.DISCOVERY_SOURCES_DISCOVERED_TOTAL.inc(summary.urls_discovered)
     await _refresh_discovery_metrics()
     return summary.model_dump(mode="json")
 
@@ -585,8 +637,8 @@ async def _job_probation_scrape_run(payload: dict[str, Any]) -> dict[str, Any]:
     result = await probation_manager.run_all_probation_sources(limit=int(payload.get("limit") or 100))
     after = await DiscoveredSource.find_many(DiscoveredSource.status == SourceStatus.promoted).count()
     promoted = max(0, after - before)
-    if DISCOVERY_SOURCES_PROMOTED_TOTAL is not None and promoted:
-        DISCOVERY_SOURCES_PROMOTED_TOTAL.inc(promoted)
+    if metrics_module.DISCOVERY_SOURCES_PROMOTED_TOTAL is not None and promoted:
+        metrics_module.DISCOVERY_SOURCES_PROMOTED_TOTAL.inc(promoted)
     await _refresh_discovery_metrics()
     return {**result, "promoted": promoted}
 
@@ -603,8 +655,8 @@ async def _job_company_seed_careers_finder(payload: dict[str, Any]) -> dict[str,
     from app.services.source_discovery import source_discovery_engine
 
     result = await source_discovery_engine.enqueue_known_seed_sources(limit=int(payload.get("limit") or 50))
-    if DISCOVERY_SOURCES_DISCOVERED_TOTAL is not None and result.get("queued"):
-        DISCOVERY_SOURCES_DISCOVERED_TOTAL.inc(int(result["queued"]))
+    if metrics_module.DISCOVERY_SOURCES_DISCOVERED_TOTAL is not None and result.get("queued"):
+        metrics_module.DISCOVERY_SOURCES_DISCOVERED_TOTAL.inc(int(result["queued"]))
     await _refresh_discovery_metrics()
     return result
 
@@ -651,6 +703,7 @@ def register_default_jobs() -> None:
     job_runner.register("opportunities.quality_pipeline", _job_opportunity_quality)
     job_runner.register("opportunities.dedup_scan", _job_opportunities_dedup_scan)
     job_runner.register("embeddings.rebuild", _job_embeddings_rebuild)
+    job_runner.register("opportunities.enrich_descriptions", _job_description_enrichment)
     job_runner.register("mlops.retrain", _job_mlops_retrain)
     job_runner.register("mlops.drift", _job_mlops_drift)
     job_runner.register("mlops.alert", _job_mlops_alert)

@@ -187,6 +187,16 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:3000/api/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))\"",
+        ]
+      interval: 20s
+      timeout: 8s
+      retries: 12
+      start_period: 30s
     ports:
       - "3000:3000"
 

@@ -7,7 +7,7 @@ import uuid
 
 from beanie import PydanticObjectId
 
-from app.core.metrics import INTERACTION_EVENTS_TOTAL
+from app.core import metrics as metrics_module
 from app.core.cache import cache_manager
 from app.models.opportunity_interaction import OpportunityInteraction
 from app.models.traffic import TrafficType
@@ -125,8 +125,10 @@ class InteractionService:
 
         normalized_value = (event_traffic_type or "").strip().lower()
         if normalized_filter == "real":
-            # Backward-compatible: missing traffic_type is treated as real.
-            return normalized_value in {"", "real"}
+            # Blank is unknown provenance, not real. Treating it as real counted
+            # every bootstrap-seeded row as genuine student activity, which is what
+            # made the rollout readiness gate report a win that never happened.
+            return normalized_value == "real"
 
         if normalized_filter == "simulated":
             if normalized_value == "simulated":
@@ -169,8 +171,8 @@ class InteractionService:
             scroll_depth=scroll_depth,
         )
         normalized_traffic = self.normalize_traffic_type(traffic_type)
-        if INTERACTION_EVENTS_TOTAL is not None:
-            INTERACTION_EVENTS_TOTAL.labels(
+        if metrics_module.INTERACTION_EVENTS_TOTAL is not None:
+            metrics_module.INTERACTION_EVENTS_TOTAL.labels(
                 interaction_type=event_type,
                 ranking_mode=normalized_mode or "unknown",
                 experiment_key=normalized_key,

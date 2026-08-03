@@ -1,5 +1,9 @@
+import asyncio
+import re
 import unittest
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+from unittest.mock import patch
 import sys
 from pathlib import Path
 
@@ -10,7 +14,11 @@ if str(BACKEND_ROOT) not in sys.path:
 from app.services.scraper import (
     GenericOpportunityPortalScraper,
     GreenhouseScraper,
+    _clean_description,
+    _collect_fetch_batch_results,
     _dedupe_by_url,
+    _enrich_metadata,
+    _expire_opportunities,
     _extract_batch_years,
     _extract_deadline_from_text,
     _extract_stipend,
@@ -18,6 +26,7 @@ from app.services.scraper import (
     _parse_datetime,
     is_valid_apply_url,
     is_early_career_opportunity,
+    is_probable_opportunity_posting,
     is_opportunity_active,
 )
 from app.core.time import utc_now
@@ -165,6 +174,66 @@ class TestScraperIngestionHelpers(unittest.TestCase):
                 }
             )
         )
+
+    def test_early_career_gate_ignores_seniority_words_in_description(self) -> None:
+        """Descriptions routinely name senior colleagues without the role being senior.
+
+        Matching seniority nouns against the description rejected the majority of
+        legitimate internships, so the exclusion is scoped to title/eligibility.
+        """
+        for description in (
+            "You will work alongside senior engineers on production services.",
+            "Graduate trainee reporting to the engineering manager.",
+            "Software development intern - you will lead small projects.",
+            "Cloud intern working with our solution architect team.",
+            "Join our staff of 200 engineers.",
+        ):
+            with self.subTest(description=description):
+                self.assertTrue(
+                    is_early_career_opportunity(
+                        {
+                            "title": "Software Engineering Intern",
+                            "description": description,
+                            "opportunity_type": "Job",
+                        }
+                    )
+                )
+
+    def test_early_career_gate_accepts_zero_and_one_anchored_year_ranges(self) -> None:
+        """`0-2 years` is the most common fresher phrasing and must not be rejected."""
+        for description in (
+            "Experience: 0-2 years",
+            "Looking for candidates with 0 to 3 years of experience.",
+            "1-2 years experience welcome.",
+            "Experience: 0 - 2 years",
+        ):
+            with self.subTest(description=description):
+                self.assertTrue(
+                    is_early_career_opportunity(
+                        {
+                            "title": "Software Engineer Trainee",
+                            "description": description,
+                            "opportunity_type": "Job",
+                        }
+                    )
+                )
+
+    def test_early_career_gate_still_rejects_explicit_multi_year_demands(self) -> None:
+        for description in (
+            "We need 5+ years of backend experience.",
+            "At least 4 years building distributed systems.",
+            "Guaranteed placement bootcamp with paid enrollment.",
+        ):
+            with self.subTest(description=description):
+                self.assertFalse(
+                    is_early_career_opportunity(
+                        {
+                            "title": "Backend Developer",
+                            "description": description,
+                            "opportunity_type": "Job",
+                        }
+                    )
+                )
 
     def test_greenhouse_scraper_parses_public_jobs_api(self) -> None:
         session = DummySession(
@@ -342,5 +411,431 @@ class TestScraperIngestionHelpers(unittest.TestCase):
         self.assertGreaterEqual(assessment.risk_score, 45)
 
 
+class TestScraperFetchBatchTimeout(unittest.IsolatedAsyncioTestCase):
+    async def test_completed_results_are_preserved_when_a_sibling_times_out(self) -> None:
+        started = asyncio.Event()
+
+        async def completed() -> list[str]:
+            return ["fresh"]
+
+        async def blocked() -> list[str]:
+            started.set()
+            await asyncio.Event().wait()
+            return []
+
+        results = await _collect_fetch_batch_results(
+            [completed(), blocked()],
+            batch_name="test_sources",
+            timeout_seconds=0.01,
+        )
+
+        self.assertTrue(started.is_set())
+        self.assertEqual(results[0], ["fresh"])
+        self.assertIsInstance(results[1], TimeoutError)
+        self.assertIn("test_sources fetch timed out", str(results[1]))
+
+
+class TestPaymentPatternPrecision(unittest.TestCase):
+    """Fee-scam detection must not fire on ordinary posting language.
+
+    `\\bwallet|upi|...\\b` anchored only its first and last alternatives, so a
+    bare "upi" matched inside words like "occupied"; and `pay\\s+\\d+` matched
+    legitimate stipend disclosures. Both scored +55 risk and hid the posting.
+    """
+
+    def _flagged(self, text: str) -> bool:
+        from app.services.opportunity_trust import PAYMENT_PATTERNS
+
+        return any(re.search(pattern, text, re.IGNORECASE) for pattern in PAYMENT_PATTERNS)
+
+    def test_legitimate_postings_are_not_flagged(self) -> None:
+        for text in (
+            "The role is currently occupied by a contractor.",
+            "We pay 25000 per month stipend.",
+            "Stipend: pay 15000 INR monthly.",
+            "Laptop and equipment provided at no cost.",
+        ):
+            with self.subTest(text=text):
+                self.assertFalse(self._flagged(text))
+
+    def test_fee_scam_signals_are_still_flagged(self) -> None:
+        for text in (
+            "Send money to our paytm wallet.",
+            "Pay Rs 500 registration fee.",
+            "pay 500 to apply for this role",
+            "A non-refundable deposit is required.",
+            "Application fee of 200.",
+            "transfer via upi to confirm your seat",
+        ):
+            with self.subTest(text=text):
+                self.assertTrue(self._flagged(text))
+
+
+class TestInternshalaListingBudget(unittest.TestCase):
+    """Every configured Internshala listing must be requested.
+
+    The two job listings are declared first; filling the item budget greedily in
+    order meant the internship listings were never fetched, so India's largest
+    internship board contributed zero internships.
+    """
+
+    def test_all_listings_are_requested_including_internships(self) -> None:
+        import app.services.scraper as scraper_module
+
+        requested: list[str] = []
+
+        def fake_fetch(url: str, *, render: bool = True):
+            requested.append(url)
+            cards = "".join(
+                f'<div class="internship_meta"><h3><a href="/x/{i}">Role {i}</a></h3>'
+                f'<div class="company_name">Acme</div></div>'
+                for i in range(40)
+            )
+            return SimpleNamespace(text=f"<html><body>{cards}</body></html>",
+                                   status_code=200, final_url=url)
+
+        original = scraper_module._fetch_listing_page
+        scraper_module._fetch_listing_page = fake_fetch
+        try:
+            scraper_module.internshala_scraper.fetch_live_opportunities(max_items=30)
+        finally:
+            scraper_module._fetch_listing_page = original
+
+        self.assertEqual(len(requested), len(scraper_module.INTERNSHALA_LISTINGS))
+        internship_listings = [
+            url for url, kind in scraper_module.INTERNSHALA_LISTINGS if kind == "Internship"
+        ]
+        self.assertTrue(internship_listings, "config should declare internship listings")
+        for url in internship_listings:
+            self.assertIn(url, requested)
+
+
+class TestExpiryIsNonDestructive(unittest.IsolatedAsyncioTestCase):
+    """Past-deadline rows must be retired by status, never hard-deleted.
+
+    Most deadlines in the corpus are synthetic (`now + 30 days`), so deleting on
+    that basis destroyed rows that had not genuinely closed.
+    """
+
+    class _FakeOpportunity:
+        def __init__(self, status: str = "active") -> None:
+            self.id = "fake-id"
+            self.opportunity_status = status
+            self.updated_at = None
+            self.saved = False
+            self.deleted = False
+
+        async def save(self) -> None:
+            self.saved = True
+
+        async def delete(self) -> None:  # pragma: no cover - must never run
+            self.deleted = True
+            raise AssertionError("expiry must not hard-delete opportunities")
+
+    async def test_past_deadline_row_is_marked_expired_not_deleted(self) -> None:
+        record = self._FakeOpportunity()
+
+        marked = await _expire_opportunities([record])
+
+        self.assertEqual(marked, 1)
+        self.assertEqual(record.opportunity_status, "expired")
+        self.assertTrue(record.saved)
+        self.assertFalse(record.deleted)
+
+    async def test_already_retired_rows_are_not_rewritten(self) -> None:
+        for status in ("expired", "filled", "removed"):
+            with self.subTest(status=status):
+                record = self._FakeOpportunity(status=status)
+                marked = await _expire_opportunities([record])
+                self.assertEqual(marked, 0)
+                self.assertFalse(record.saved)
+
+    async def test_duplicate_records_are_only_counted_once(self) -> None:
+        record = self._FakeOpportunity()
+
+        marked = await _expire_opportunities([record, record])
+
+        self.assertEqual(marked, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestStipendExtraction(unittest.TestCase):
+    """Stipend was populated on 0 of 364 active opportunities.
+
+    The old patterns anchored the currency with \\b, but "₹" is a non-word
+    character so \\b could never match before it - excluding most Indian
+    postings outright. There was also no form for amount-then-currency, a
+    labelled bare amount, lakh/LPA notation, or an explicit "unpaid".
+    """
+
+    def test_extracts_common_indian_stipend_formats(self) -> None:
+        for text, expected_fragment in (
+            ("Stipend: Rs. 15000 per month", "15000"),
+            ("₹25,000/month stipend", "25,000"),
+            ("Stipend 10000 INR monthly", "10000"),
+            ("Paid internship with stipend of 20000", "20000"),
+            ("CTC 6 LPA for selected candidates", "6 LPA"),
+            ("Salary: ₹4,00,000 - ₹6,00,000 per annum", "4,00,000"),
+            ("Stipend 20k/month", "20k"),
+            ("25,000 rupees per month", "25,000"),
+        ):
+            with self.subTest(text=text):
+                extracted = _extract_stipend(text)
+                self.assertIsNotNone(extracted, f"no stipend extracted from {text!r}")
+                self.assertIn(expected_fragment.lower(), str(extracted).lower())
+
+    def test_records_explicitly_unpaid_roles(self) -> None:
+        for text in ("This is an unpaid internship", "No stipend will be provided"):
+            with self.subTest(text=text):
+                self.assertIsNotNone(_extract_stipend(text))
+
+    def test_does_not_invent_a_stipend_from_prose(self) -> None:
+        for text in (
+            "competitive salary",
+            "salary: 2 years experience required",
+            "We offer growth and mentorship",
+            "apply within 3 days",
+        ):
+            with self.subTest(text=text):
+                self.assertIsNone(_extract_stipend(text))
+
+
+class TestOpportunityTypeCanonicalisation(unittest.TestCase):
+    """Plurals were stored as distinct types, splitting filters and portals.
+
+    The corpus held Hackathon (31) and Hackathons (18) separately, so a student
+    filtering hackathons saw roughly half of them.
+    """
+
+    def test_plurals_collapse_to_one_spelling(self) -> None:
+        from app.services.opportunity_visibility import canonical_opportunity_type
+
+        for raw, expected in (
+            ("Hackathons", "Hackathon"),
+            ("hackathon", "Hackathon"),
+            ("Conferences", "Conference"),
+            ("Internships", "Internship"),
+            ("jobs", "Job"),
+            ("Scholarships", "Scholarship"),
+        ):
+            with self.subTest(raw=raw):
+                self.assertEqual(canonical_opportunity_type(raw), expected)
+
+    def test_ingestion_canonicalises_the_type(self) -> None:
+        enriched = _enrich_metadata(
+            {
+                "title": "Some Event",
+                "university": "Acme",
+                "url": "https://acme.example/1",
+                "opportunity_type": "Hackathons",
+                "description": "d",
+            }
+        )
+        self.assertEqual(enriched["opportunity_type"], "Hackathon")
+
+    def test_currency_token_must_not_match_inside_a_word(self) -> None:
+        """"yea[rs]," previously yielded a stipend of "rs,".
+
+        Dropping \\b to support "₹" (a non-word character) let "rs" match inside
+        ordinary words, so a negative lookbehind guards the currency instead.
+        """
+        for text in (
+            "3 years, strong communication skills",
+            "Requires 2 years, a degree, and initiative",
+            "Team Leader with 5 years, experience",
+        ):
+            with self.subTest(text=text):
+                self.assertIsNone(_extract_stipend(text))
+
+
+class TestNonPostingGate(unittest.TestCase):
+    """About a quarter of the active corpus was not an opportunity at all.
+
+    Generic anchor extraction harvests a listing page's chrome alongside its
+    rows, so nav links, help centres, login pages, marketing and university
+    newsroom articles were ingested and shown to students as opportunities.
+    """
+
+    def test_rejects_navigation_and_marketing_chrome(self) -> None:
+        for title, url in (
+            ("Or see all categories", "https://www.wayup.com/s/internships/all"),
+            ("Careers help center", "https://support.joinhandshake.com/hc/en-us"),
+            ("intern salaries in Coimbatore", "https://www.glassdoor.co.in/Salaries/x.htm"),
+            ("Employer/Post Internship", "https://internship.aicte-india.org/login_new.php"),
+            ("Host a public hackathon", "https://info.devpost.com/product/public-hackathons"),
+            ("Register Now", "https://hack2skill.com/event/x"),
+            ("Internship in Delhi", "https://internshala.com/internship/internship-in-delhi"),
+            ("Students's Corner", "https://www.barc.gov.in/students/index.html"),
+        ):
+            with self.subTest(title=title):
+                self.assertFalse(is_probable_opportunity_posting({"title": title, "url": url}))
+
+    def test_rejects_newsroom_articles_about_past_awards(self) -> None:
+        """An article about someone who already won an award is not applyable."""
+        for title, url in (
+            (
+                "Lilia Burtonpatel and Ram Narayanan named Goldwater Scholars",
+                "https://www.princeton.edu/news/2026/05/26/x",
+            ),
+            (
+                "Cornell Atkinson announces $1.24M in joint EDF grants",
+                "https://news.cornell.edu/stories/2026/04/x",
+            ),
+            (
+                "Graduate Hooding 2026: 'Your bold scholarship'",
+                "https://www.princeton.edu/news/2026/05/26/y",
+            ),
+        ):
+            with self.subTest(title=title):
+                self.assertFalse(is_probable_opportunity_posting({"title": title, "url": url}))
+
+    def test_keeps_genuine_postings(self) -> None:
+        for title, url in (
+            ("Software Engineering Intern", "https://job-boards.greenhouse.io/cloudflare/jobs/8013562"),
+            ("Software Engineer, New Grad", "https://jobs.lever.co/notion/abc-123"),
+            ("Governance, Risk, and Compliance Intern", "https://jobs.ashbyhq.com/notion/xyz"),
+            ("R&D Engineer Intern", "https://internshala.com/internship/detail/rd-intern-12345"),
+            ("Agentic Commerce Hackathon", "https://devfolio.co/hackathons/agentic-commerce"),
+            ("Python Internship", "https://in.indeed.com/rc/clk?jk=abc123"),
+        ):
+            with self.subTest(title=title):
+                self.assertTrue(is_probable_opportunity_posting({"title": title, "url": url}))
+
+    def test_rejects_bare_host_with_no_path(self) -> None:
+        self.assertFalse(
+            is_probable_opportunity_posting({"title": "Acme Careers", "url": "https://acme.com"})
+        )
+
+
+class TestStipendExtractionAgainstRealIndianFormats(unittest.TestCase):
+    """Validated against 8,483 real Internshala-style stipend strings.
+
+    Source: Kaggle `jayaantanaath/internship-opportunities-in-india-2025`. The
+    extractor recovered 8,147 of 8,483 (96.0%); every one of the 336 misses was
+    the literal "Not Available", i.e. 100% of rows that actually carry a
+    stipend. These cases are one representative per distinct shape found in
+    that corpus, so the fixture stays small without losing coverage.
+    """
+
+    REAL_FORMATS = [
+        "₹ 10,000 - 15,000 /month",
+        "₹ 5,000 /month",
+        "₹ 1,00,000 - 1,20,000 /month",
+        "₹ 12,000-18,000 /month",
+        "₹ 1,000 - 1,500 /week",
+        "₹ 10,000 /week",
+        "₹ 1,000 - 1,100 lump sum",
+        "₹ 1,000 lump sum",
+    ]
+
+    def test_every_real_stipend_shape_is_extracted(self) -> None:
+        for value in self.REAL_FORMATS:
+            with self.subTest(value=value):
+                self.assertIsNotNone(
+                    _extract_stipend(value), f"failed to extract stipend from {value!r}"
+                )
+
+    def test_unpaid_is_recorded_rather_than_dropped(self) -> None:
+        self.assertIsNotNone(_extract_stipend("Unpaid"))
+
+    def test_absent_stipend_yields_nothing(self) -> None:
+        """"Not Available" carries no amount and must not fabricate one."""
+        self.assertIsNone(_extract_stipend("Not Available"))
+
+
+class TestFetchInThreadIsAwaitableAsATask(unittest.IsolatedAsyncioTestCase):
+    """_fetch_in_thread must be a coroutine function, not a Future factory.
+
+    _collect_fetch_batch_results wraps every entry in asyncio.create_task, which
+    rejects a Future with "a coroutine was expected, got <Future pending ...>".
+    Returning loop.run_in_executor(...) directly therefore failed every
+    scheduled scraper run while each source still scraped fine in isolation -
+    which made it look like a source problem rather than a plumbing one.
+    """
+
+    def test_is_a_coroutine_function(self) -> None:
+        import inspect
+
+        from app.services.scraper import _fetch_in_thread
+
+        self.assertTrue(inspect.iscoroutinefunction(_fetch_in_thread))
+
+    async def test_survives_the_real_batch_collector(self) -> None:
+        from app.services.scraper import _collect_fetch_batch_results, _fetch_in_thread
+
+        results = await _collect_fetch_batch_results(
+            [_fetch_in_thread(lambda value: value * 2, 21), _fetch_in_thread(str.upper, "ok")],
+            batch_name="unit_test_sources",
+            timeout_seconds=10,
+        )
+        self.assertEqual(results, [42, "OK"])
+
+
+class TestDescriptionCleaning(unittest.TestCase):
+    """Descriptions were rendered verbatim, so students read literal markup.
+
+    A real card showed:
+      "<div><strong>About Groww:</strong></div> <div>We are a passionate..."
+
+    Stripping at ingestion rather than in the UI keeps every consumer clean:
+    the feed, RAG context, embeddings and the LLM extractor all read this field.
+    """
+
+    def test_strips_tags_from_real_ats_markup(self) -> None:
+        cleaned = _clean_description(
+            "<div><strong>About Groww:</strong></div> <div>We are a passionate group "
+            "of people focused on making financial services accessible.</div>"
+        )
+        self.assertNotIn("<", cleaned)
+        self.assertNotIn(">", cleaned)
+        self.assertTrue(cleaned.startswith("About Groww:"))
+
+    def test_decodes_entities_including_double_encoded_markup(self) -> None:
+        self.assertEqual(_clean_description("&lt;p&gt;Encoded once&lt;/p&gt; then decoded"),
+                         "Encoded once then decoded")
+        self.assertEqual(_clean_description("Spaced&nbsp;&nbsp;out&nbsp;text"), "Spaced out text")
+
+    def test_plain_text_is_left_alone(self) -> None:
+        self.assertEqual(
+            _clean_description("Plain text description with no markup."),
+            "Plain text description with no markup.",
+        )
+
+    def test_empty_input_yields_empty_string(self) -> None:
+        self.assertEqual(_clean_description(None), "")
+        self.assertEqual(_clean_description(""), "")
+
+    def test_enrichment_applies_the_cleaning(self) -> None:
+        enriched = _enrich_metadata(
+            {
+                "title": "Video Editor Intern",
+                "university": "Groww",
+                "url": "https://groww.in/careers/1",
+                "opportunity_type": "Internship",
+                "description": "<p><strong>About Groww:</strong></p><p>Financial services.</p>",
+            }
+        )
+        self.assertNotIn("<", enriched["description"])
+        self.assertIn("About Groww:", enriched["description"])
+
+    def test_enrichment_merges_extracted_skills_with_source_tags(self) -> None:
+        record = {
+            "title": "Backend Intern",
+            "university": "Acme",
+            "url": "https://acme.example/careers/backend-intern",
+            "opportunity_type": "Internship",
+            "description": "Build services with Python and PostgreSQL.",
+            "tags": ["Engineering", "python"],
+        }
+
+        with patch("app.services.scraper.skill_extractor.extract", return_value=["python", "postgresql"]) as extract:
+            enriched = _enrich_metadata(record)
+
+        self.assertEqual(enriched["tags"], ["engineering", "python", "postgresql"])
+        extract.assert_called_once_with(
+            "Backend Intern Build services with Python and PostgreSQL. Acme",
+            max_tags=8,
+        )

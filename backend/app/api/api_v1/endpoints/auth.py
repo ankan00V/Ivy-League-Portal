@@ -26,7 +26,7 @@ from app.models.user import User
 from app.schemas.user import Token, UserCreate, UserResponse
 from app.services.admin_identity_service import is_reserved_admin_email
 from app.services.auth_security_service import auth_security_service
-from app.services.email import send_email_otp
+from app.services.email import recipient_log_id, send_email_otp
 from app.services.session_security_service import session_security_service
 from app.services.totp_service import decrypt_secret, provisioning_uri, verify_totp
 from app.services.username_service import ensure_system_username
@@ -291,9 +291,19 @@ def _verify_turnstile_or_raise(token: Optional[str], *, request: Optional[Reques
 
 def _reject_reserved_admin_identity_for_public_auth(email: str) -> None:
     if is_reserved_admin_email(email):
+        # Responds exactly as it would for an address with no account. The
+        # previous message ("This identity uses the dedicated admin
+        # authentication flow") confirmed which address owns the hidden control
+        # plane, turning the public auth surface into an admin-enumeration
+        # oracle for anyone willing to probe addresses.
+        #
+        # The consequence is that the admin sees a "no account" message on the
+        # public login page; the control-plane entry point is documented in
+        # docs/runbooks/hidden-admin-security-architecture.md rather than
+        # advertised here.
         raise HTTPException(
-            status_code=403,
-            detail="This identity uses the dedicated admin authentication flow.",
+            status_code=404,
+            detail="No account found for this email",
         )
 
 
@@ -1438,11 +1448,10 @@ async def send_password_reset_otp(
                 delivery = "debug"
                 debug_otp = otp
                 logger.warning(
-                    "Password reset OTP delivery unavailable in %s; using debug fallback for %s: %s (%s)",
+                    "Password reset OTP delivery unavailable environment=%s delivery_id=%s error_class=%s; using local debug fallback",
                     environment,
-                    normalized_email,
-                    otp,
-                    exc,
+                    recipient_log_id(normalized_email),
+                    exc.__class__.__name__,
                 )
             else:
                 await delete_otp(normalized_email, purpose="password_reset")
@@ -1915,7 +1924,13 @@ async def send_otp(request: OTPSendRequest, http_request: Request = None):  # ty
     """
     normalized_email = str(request.email).strip().lower()
     ip_address, user_agent = _request_context(http_request)
-    if request.purpose == "signin" and not is_reserved_admin_email(normalized_email):
+    # Verified for every purpose, not just signin. Gating on signin alone left
+    # purpose="signup" as an unauthenticated, captcha-free endpoint that sends
+    # real mail to any address supplied - the 60s cooldown is per-email, so an
+    # attacker rotates addresses freely and burns SMTP quota and sender
+    # reputation. The per-IP limit is not a backstop while X-Forwarded-For is
+    # trusted unconditionally.
+    if not is_reserved_admin_email(normalized_email):
         _verify_turnstile_or_raise(request.turnstile_token, request=http_request)
     existing_user = await _validate_user_for_purpose(normalized_email, request.purpose)
     requested_account_type = _normalize_account_type(request.account_type, default="candidate")
@@ -1981,17 +1996,17 @@ async def send_otp(request: OTPSendRequest, http_request: Request = None):  # ty
             delivery = "debug"
             debug_otp = otp
             logger.warning(
-                "OTP email delivery unavailable in %s environment; using debug fallback for %s: %s (%s)",
+                "OTP email delivery unavailable environment=%s delivery_id=%s error_class=%s; using local debug fallback",
                 environment,
-                normalized_email,
-                otp,
-                exc,
+                recipient_log_id(normalized_email),
+                exc.__class__.__name__,
             )
         else:
-            logger.exception(
-                "OTP email delivery failed in %s environment for %s",
+            logger.warning(
+                "OTP email delivery failed environment=%s delivery_id=%s error_class=%s",
                 environment,
-                normalized_email,
+                recipient_log_id(normalized_email),
+                exc.__class__.__name__,
             )
             await delete_otp(normalized_email, purpose=request.purpose)
             await auth_security_service.audit_event(
