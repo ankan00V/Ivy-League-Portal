@@ -13,6 +13,8 @@ InteractionType = Literal[
     "view",
     "click",
     "expand",
+    "hover",
+    "ignore",
     "save",
     "apply",
     "apply_start",
@@ -37,6 +39,12 @@ class OpportunityInteraction(Document):
     scroll_depth: Optional[float] = Field(default=None, ge=0.0, le=100.0)
     referrer_rank: Optional[int] = Field(default=None, ge=1)
     session_id: Optional[str] = Field(default=None, json_schema_extra={"index": True})
+    exposure_id: Optional[str] = Field(default=None, json_schema_extra={"index": True})
+    feature_snapshot_id: Optional[str] = Field(default=None, json_schema_extra={"index": True})
+    opportunity_version_id: Optional[str] = Field(default=None, json_schema_extra={"index": True})
+    feedback_reason: Optional[str] = Field(default=None, max_length=64)
+    randomized_exposure: bool = False
+    exploration_probability: float = Field(default=0.0, ge=0.0, le=1.0)
     cold_start: bool = Field(default=False, json_schema_extra={"index": True})
     ranking_mode: Optional[RankingMode] = None
     experiment_key: Optional[str] = Field(default=None, json_schema_extra={"index": True})
@@ -57,6 +65,10 @@ class OpportunityInteraction(Document):
             "interaction_type",
             "event_type",
             "session_id",
+            "exposure_id",
+            "feature_snapshot_id",
+            "opportunity_version_id",
+            "feedback_reason",
             "cold_start",
             "reward",
             "ranking_mode",
