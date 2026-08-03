@@ -11,6 +11,7 @@ from beanie.odm.operators.find.comparison import In
 from app.core.config import settings
 from app.models.opportunity import Opportunity
 from app.models.opportunity_interaction import OpportunityInteraction
+from app.models.traffic import matches_traffic_type
 from app.models.profile import Profile
 from app.core.time import as_utc_aware, utc_now
 from app.services.experiment_service import experiment_service
@@ -154,7 +155,9 @@ class RecommendationService:
 
         positive_map: dict[str, list[datetime]] = {}
         for item in interactions:
-            if (getattr(item, "traffic_type", "real") or "real").strip().lower() not in {"", "real"}:
+            # Only a real student's own behaviour should move their threshold.
+            # Blank provenance is unknown, so it is excluded rather than assumed.
+            if not matches_traffic_type(getattr(item, "traffic_type", None), "real"):
                 continue
             mode = (getattr(item, "ranking_mode", "") or "").strip().lower()
             if mode and mode not in target_modes:
@@ -174,7 +177,9 @@ class RecommendationService:
         positives: list[float] = []
         negatives: list[float] = []
         for item in interactions:
-            if (getattr(item, "traffic_type", "real") or "real").strip().lower() not in {"", "real"}:
+            # Only a real student's own behaviour should move their threshold.
+            # Blank provenance is unknown, so it is excluded rather than assumed.
+            if not matches_traffic_type(getattr(item, "traffic_type", None), "real"):
                 continue
             mode = (getattr(item, "ranking_mode", "") or "").strip().lower()
             if mode and mode not in target_modes:

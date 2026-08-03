@@ -14,6 +14,7 @@ from app.models.opportunity import Opportunity
 from app.models.opportunity_interaction import OpportunityInteraction
 from app.models.profile import Profile
 from app.models.ranking_model_version import RankingModelVersion
+from app.models.traffic import normalize_traffic_type
 from app.models.ranking_request_telemetry import RankingRequestTelemetry
 from app.models.feature_store_row import FeatureStoreRow
 from app.services.interaction_service import funnel_event_type
@@ -74,11 +75,13 @@ class DataScienceObservabilityService:
             metrics_module.MODEL_INPUT_DRIFT_VALUE.labels(metric="alert").set(1.0 if payload[0].get("alert") else 0.0)
         return payload
 
-    async def parity_scorecard(self, *, lookback_days: int = 30) -> dict[str, Any]:
+    async def parity_scorecard(
+        self, *, lookback_days: int = 30, traffic_type: str = "real"
+    ) -> dict[str, Any]:
         since = utc_now() - timedelta(days=max(1, min(int(lookback_days), 365)))
         interactions = await OpportunityInteraction.find_many(
             OpportunityInteraction.created_at >= since,
-            OpportunityInteraction.traffic_type == "real",
+            OpportunityInteraction.traffic_type == normalize_traffic_type(traffic_type),
         ).to_list()
         latest_model = await RankingModelVersion.find_many().sort("-created_at").limit(1).to_list()
         model_metrics = dict(latest_model[0].metrics or {}) if latest_model else {}
@@ -116,11 +119,13 @@ class DataScienceObservabilityService:
                     metrics_module.PARITY_SCORECARD_VALUE.labels(mode=str(mode), metric=str(metric)).set(float(value or 0.0))
         return payload
 
-    async def ranking_slice_metrics(self, *, lookback_days: int = 30, limit: int = 5) -> dict[str, Any]:
+    async def ranking_slice_metrics(
+        self, *, lookback_days: int = 30, limit: int = 5, traffic_type: str = "real"
+    ) -> dict[str, Any]:
         since = utc_now() - timedelta(days=max(1, min(int(lookback_days), 365)))
         interactions = await OpportunityInteraction.find_many(
             OpportunityInteraction.created_at >= since,
-            OpportunityInteraction.traffic_type == "real",
+            OpportunityInteraction.traffic_type == normalize_traffic_type(traffic_type),
         ).to_list()
         opportunity_ids = list({row.opportunity_id for row in interactions if row.opportunity_id is not None})
         user_ids = list({row.user_id for row in interactions if row.user_id is not None})
@@ -272,14 +277,19 @@ class DataScienceObservabilityService:
                 ).set(1.0 if row.is_active else 0.0)
         return payload
 
-    async def operating_loop_snapshot(self, *, lookback_days: int = 30) -> dict[str, Any]:
+    async def operating_loop_snapshot(
+        self, *, lookback_days: int = 30, traffic_type: str = "real"
+    ) -> dict[str, Any]:
         return {
             "generated_at": utc_now(),
             "lookback_days": int(lookback_days),
+            "traffic_type": normalize_traffic_type(traffic_type),
             "feature_freshness": await self.feature_freshness_summary(),
             "drift": await self.drift_summary(limit=10),
-            "parity": await self.parity_scorecard(lookback_days=lookback_days),
-            "slice_metrics": await self.ranking_slice_metrics(lookback_days=lookback_days, limit=20),
+            "parity": await self.parity_scorecard(lookback_days=lookback_days, traffic_type=traffic_type),
+            "slice_metrics": await self.ranking_slice_metrics(
+                lookback_days=lookback_days, limit=20, traffic_type=traffic_type
+            ),
             "assistant_quality": await self.assistant_quality_summary(lookback_days=min(lookback_days, 90)),
             "model_promotions": await self.model_promotion_history(limit=20),
         }

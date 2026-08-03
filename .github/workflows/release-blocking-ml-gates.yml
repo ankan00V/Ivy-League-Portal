@@ -38,17 +38,22 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
 
+      # This job verifies that the gate machinery computes correctly. It seeds its
+      # own deterministic data, so every gate below runs over SIMULATED traffic and
+      # proves nothing about how real students behave. The real-traffic answer comes
+      # from real-traffic-rollout-readiness.yml, which reads production and does not
+      # seed anything.
       - name: Seed deterministic ML release gate fixture
         run: python backend/scripts/seed_release_ml_gate_fixture.py --days 14 --reset
 
-      - name: Run real-traffic parity gate
-        run: python backend/scripts/check_real_traffic_rollout_readiness.py --days 14 --fail-on-not-ready
+      - name: Run parity gate machinery against the simulated fixture
+        run: python backend/scripts/check_real_traffic_rollout_readiness.py --days 14 --traffic-type simulated --fail-on-not-ready
 
-      - name: Run champion/challenger gate
-        run: python backend/scripts/check_champion_challenger_gate.py --days 14 --fail-on-not-ready
+      - name: Run champion/challenger gate against the simulated fixture
+        run: python backend/scripts/check_champion_challenger_gate.py --days 14 --traffic-type simulated --fail-on-not-ready
 
-      - name: Run DS operating-loop gate
-        run: python backend/scripts/check_ds_release_gates.py --lookback-days 14 --fail-on-not-ready
+      - name: Run DS operating-loop gate against the simulated fixture
+        run: python backend/scripts/check_ds_release_gates.py --lookback-days 14 --traffic-type simulated --fail-on-not-ready
 
       - name: Run recommendation quality gate
         run: python backend/scripts/check_recommendation_quality_gate.py --ranking-mode semantic --fail-on-not-ready

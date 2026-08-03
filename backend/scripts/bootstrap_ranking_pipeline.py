@@ -298,6 +298,7 @@ async def _seed_interactions(
                         interaction_type="impression",
                         ranking_mode=ranking_mode,  # type: ignore[arg-type]
                         experiment_key="ranking_mode",
+                        traffic_type="simulated",
                         experiment_variant=variant,
                         query=query_value,
                         model_version_id=active_model_id,
@@ -329,6 +330,7 @@ async def _seed_interactions(
                             interaction_type="click",
                             ranking_mode=ranking_mode,  # type: ignore[arg-type]
                             experiment_key="ranking_mode",
+                            traffic_type="simulated",
                             experiment_variant=variant,
                             query=query_value,
                             model_version_id=active_model_id,
@@ -346,6 +348,7 @@ async def _seed_interactions(
                             interaction_type="save",
                             ranking_mode=ranking_mode,  # type: ignore[arg-type]
                             experiment_key="ranking_mode",
+                            traffic_type="simulated",
                             experiment_variant=variant,
                             query=query_value,
                             model_version_id=active_model_id,
@@ -363,6 +366,7 @@ async def _seed_interactions(
                             interaction_type="apply",
                             ranking_mode=ranking_mode,  # type: ignore[arg-type]
                             experiment_key="ranking_mode",
+                            traffic_type="simulated",
                             experiment_variant=variant,
                             query=query_value,
                             model_version_id=active_model_id,

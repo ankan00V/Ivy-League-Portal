@@ -40,7 +40,10 @@ def _to_float(value: Any) -> float:
 
 
 async def _build_payload(args: argparse.Namespace) -> dict[str, Any]:
-    snapshot = await data_science_observability_service.operating_loop_snapshot(lookback_days=int(args.lookback_days))
+    snapshot = await data_science_observability_service.operating_loop_snapshot(
+        lookback_days=int(args.lookback_days),
+        traffic_type=str(args.traffic_type).strip().lower(),
+    )
     freshness = dict(snapshot.get("feature_freshness") or {})
     drift_rows = list(snapshot.get("drift") or [])
     parity = dict(snapshot.get("parity") or {})
@@ -117,6 +120,15 @@ async def _main() -> int:
     parser.add_argument("--min-real-impressions", type=int, default=settings.MLOPS_PARITY_MIN_REAL_IMPRESSIONS_PER_MODE)
     parser.add_argument("--json-out", type=str, default="backend/benchmarks/ds_release_gates.json")
     parser.add_argument("--fail-on-not-ready", action="store_true")
+    parser.add_argument(
+        "--traffic-type",
+        choices=("real", "simulated"),
+        default="real",
+        help=(
+            "Which traffic population to measure. 'real' describes the product; "
+            "'simulated' verifies the gate machinery against a seeded CI fixture."
+        ),
+    )
     args = parser.parse_args()
 
     client = AsyncIOMotorClient(settings.MONGODB_URL)

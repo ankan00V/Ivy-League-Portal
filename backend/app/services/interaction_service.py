@@ -125,8 +125,10 @@ class InteractionService:
 
         normalized_value = (event_traffic_type or "").strip().lower()
         if normalized_filter == "real":
-            # Backward-compatible: missing traffic_type is treated as real.
-            return normalized_value in {"", "real"}
+            # Blank is unknown provenance, not real. Treating it as real counted
+            # every bootstrap-seeded row as genuine student activity, which is what
+            # made the rollout readiness gate report a win that never happened.
+            return normalized_value == "real"
 
         if normalized_filter == "simulated":
             if normalized_value == "simulated":
