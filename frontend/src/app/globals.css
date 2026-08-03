@@ -1485,7 +1485,8 @@ select.input-base {
 .skill-picker-input-row {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
+  align-content: flex-start;
   gap: 0.4rem;
   min-height: 110px;
   padding: 0.62rem;
@@ -1493,6 +1494,15 @@ select.input-base {
   border-radius: var(--radius-md);
   background: var(--bg-surface);
   box-shadow: var(--shadow-hard-sm);
+  cursor: text;
+}
+
+/* Without this the control is visually indistinguishable from a textarea, and
+   students type comma-separated text without discovering the picker. */
+.skill-picker-icon {
+  flex: 0 0 auto;
+  margin-top: 0.28rem;
+  color: var(--text-muted);
 }
 
 .skill-picker-input-row:focus-within {

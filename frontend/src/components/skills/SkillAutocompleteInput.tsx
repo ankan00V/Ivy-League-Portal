@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo, useRef, useState } from "react";
-import { X } from "lucide-react";
+import { Search, X } from "lucide-react";
 
 import FormSection from "@/components/ui/FormSection";
 
@@ -91,9 +91,14 @@ export default function SkillAutocompleteInput({
 
   const suggestions = useMemo(() => {
     const normalizedQuery = normalizeKey(query);
-    if (!normalizedQuery || normalizedQuery.length < 2) {
+    if (!normalizedQuery) {
       return [];
     }
+    // A single character has to work: C, R and Go are real skills a student
+    // will type, and requiring two characters made them unselectable. Substring
+    // matching is skipped at one character though, since "a" would otherwise
+    // match most of the 60k rows and rank by array order rather than relevance.
+    const allowContains = normalizedQuery.length >= 2;
     const exact: SkillOption[] = [];
     const prefix: SkillOption[] = [];
     const contains: SkillOption[] = [];
@@ -107,7 +112,7 @@ export default function SkillAutocompleteInput({
         exact.push(option);
       } else if (searchable.some((item) => item.startsWith(normalizedQuery))) {
         prefix.push(option);
-      } else if (searchable.some((item) => item.includes(normalizedQuery))) {
+      } else if (allowContains && searchable.some((item) => item.includes(normalizedQuery))) {
         contains.push(option);
       }
       if (exact.length + prefix.length + contains.length >= 18) {
@@ -148,11 +153,16 @@ export default function SkillAutocompleteInput({
     }
   };
 
+  // Always say something. With no helper the field is visually identical to a
+  // plain textarea, so students typed comma-separated text and never discovered
+  // the picker at all.
   const helper = loadError
-    ? "Skill suggestions are unavailable right now."
+    ? "Skill suggestions are unavailable. You can still type skills separated by commas."
     : isLoading
-      ? "Loading skill suggestions."
-      : undefined;
+      ? "Loading the skill list..."
+      : selectedSkills.length > 0
+        ? "Keep typing to add more. Backspace removes the last one."
+        : "Start typing to search 60,000 skills, then pick from the list.";
 
   return (
     <FormSection label={label} required={required} helper={helper} helperTone={loadError ? "warning" : "default"} className={wrapperClassName}>
@@ -164,6 +174,7 @@ export default function SkillAutocompleteInput({
         }}
       >
         <div className="skill-picker-input-row">
+          <Search className="skill-picker-icon" size={15} aria-hidden="true" />
           {selectedSkills.map((skill) => (
             <span key={skill} className="profile-tag removable">
               {skill}
@@ -175,6 +186,10 @@ export default function SkillAutocompleteInput({
           <input
             className="skill-picker-input"
             value={query}
+            role="combobox"
+            aria-expanded={isOpen && suggestions.length > 0}
+            aria-autocomplete="list"
+            autoComplete="off"
             onChange={(event) => {
               setQuery(event.target.value);
               setIsOpen(true);
@@ -184,7 +199,9 @@ export default function SkillAutocompleteInput({
               setIsOpen(true);
               void loadOptions();
             }}
-            placeholder={selectedSkills.length > 0 ? "Add another skill" : placeholder}
+            placeholder={
+              selectedSkills.length > 0 ? "Add another skill..." : "Search skills, e.g. Python"
+            }
           />
         </div>
         {isOpen && suggestions.length > 0 ? (
