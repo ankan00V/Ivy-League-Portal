@@ -109,19 +109,52 @@ INDEED_INDIA_LISTINGS: list[tuple[str, str]] = [
     ("https://in.indeed.com/jobs?q=fresher&l=India", "Job"),
 ]
 
-# Greenhouse exposes a public JSON board API, so these are API reads rather
-# than HTML scrapes. Extended beyond the original three US-only boards to
-# companies that hire early-career engineers in India.
-GREENHOUSE_DEFAULT_BOARD_TOKENS = [
+# Greenhouse exposes a public JSON board API, so these are API reads rather than
+# HTML scrapes. Greenhouse has no "list all boards" endpoint - a board is
+# addressed by its own company token - so the tokens are DISCOVERED from the
+# corpus rather than curated. Any Greenhouse-hosted company the scraper meets
+# through any other source gets its board read on the next run, so inclusion
+# does not depend on someone having named the company here.
+#
+# This list is only a cold-start bootstrap for an empty database. It is
+# deliberately short and is unioned with, never preferred over, discovered
+# tokens.
+GREENHOUSE_BOOTSTRAP_BOARD_TOKENS = [
     "databricks",
     "stripe",
-    "airbnb",
-    "razorpaysoftwareprivatelimited",
-    "zscaler",
-    "postman",
-    "cred",
-    "sprinklr",
 ]
+
+# Matches both the legacy and current Greenhouse URL shapes.
+GREENHOUSE_BOARD_URL_PATTERN = re.compile(
+    r"(?:job-)?boards(?:-api)?\.greenhouse\.io/"
+    r"(?:v\d+/boards/|embed/job_board\?for=)?"
+    r"([A-Za-z0-9_-]+)",
+    re.IGNORECASE,
+)
+
+# Not company boards.
+GREENHOUSE_TOKEN_STOPWORDS = {"embed", "v1", "boards", "jobs", "job", "www"}
+
+
+def discover_greenhouse_board_tokens(urls: Iterable[str]) -> list[str]:
+    """Pull company board tokens out of any Greenhouse URLs we have seen.
+
+    Every Greenhouse job link carries the employer's board token, so the corpus
+    is itself the directory. This is what lets a company be scraped without
+    anyone adding it by hand.
+    """
+    found: list[str] = []
+    seen: set[str] = set()
+    for url in urls:
+        match = GREENHOUSE_BOARD_URL_PATTERN.search(str(url or ""))
+        if not match:
+            continue
+        token = match.group(1).strip().strip("/").lower()
+        if not token or token in seen or token in GREENHOUSE_TOKEN_STOPWORDS:
+            continue
+        seen.add(token)
+        found.append(token)
+    return found
 
 GENERIC_PORTAL_LISTINGS: list[dict[str, Any]] = [
     {
@@ -2587,13 +2620,37 @@ class GreenhouseScraper:
     def _configured_board_tokens(self) -> list[str]:
         raw_value = (settings.SCRAPER_GREENHOUSE_BOARD_TOKENS or "").strip()
         if not raw_value:
-            return list(GREENHOUSE_DEFAULT_BOARD_TOKENS)
+            return list(GREENHOUSE_BOOTSTRAP_BOARD_TOKENS)
         tokens: list[str] = []
         for token in re.split(r"[\s,]+", raw_value):
             normalized = token.strip().strip("/").lower()
             if normalized and normalized not in tokens:
                 tokens.append(normalized)
-        return tokens or list(GREENHOUSE_DEFAULT_BOARD_TOKENS)
+        return tokens or list(GREENHOUSE_BOOTSTRAP_BOARD_TOKENS)
+
+    def _discovered_board_tokens(self) -> list[str]:
+        """Board tokens harvested from Greenhouse URLs already in the corpus.
+
+        Read synchronously via pymongo because fetch_live_opportunities runs in a
+        worker thread (asyncio.to_thread), where the Beanie/motor client bound to
+        the main loop cannot be awaited. Failure is non-fatal: a discovery
+        problem must never take the bootstrap boards down with it.
+        """
+        try:
+            from pymongo import MongoClient
+
+            client = MongoClient(settings.MONGODB_URL, serverSelectionTimeoutMS=5000)
+            try:
+                rows = client[settings.MONGODB_DB_NAME].opportunities.find(
+                    {"url": {"$regex": "greenhouse\\.io", "$options": "i"}},
+                    {"url": 1},
+                ).limit(2000)
+                return discover_greenhouse_board_tokens(str(row.get("url") or "") for row in rows)
+            finally:
+                client.close()
+        except Exception as exc:
+            logger.debug("greenhouse board discovery unavailable: %s", exc)
+            return []
 
     def _job_location(self, job: dict[str, Any]) -> str | None:
         location = job.get("location")
@@ -2649,6 +2706,14 @@ class GreenhouseScraper:
         opportunities: list[dict] = []
         errors: list[str] = []
         board_tokens = self._configured_board_tokens()
+        # Union in every Greenhouse board the corpus has already surfaced, so a
+        # company is included because the scraper found it, not because someone
+        # curated it. Bounded so one very large discovery run cannot starve the
+        # batch budget; the remainder is picked up on subsequent runs.
+        for token in self._discovered_board_tokens():
+            if token not in board_tokens:
+                board_tokens.append(token)
+        board_tokens = board_tokens[: max(1, settings.SCRAPER_GREENHOUSE_MAX_BOARDS)]
         per_board_limit = max(1, max_items // max(1, len(board_tokens)) + 1)
 
         for board_token in board_tokens:

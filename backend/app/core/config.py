@@ -89,6 +89,9 @@ class Settings(BaseSettings):
     SCRAPER_HTTP_RETRIES: int = 4
     SCRAPER_RETRY_BACKOFF: float = 0.8
     SCRAPER_FETCH_BATCH_TIMEOUT_SECONDS: float = 180.0
+    # Greenhouse boards are discovered from the corpus rather than curated, so
+    # this caps how many are read per run. The rest are picked up next run.
+    SCRAPER_GREENHOUSE_MAX_BOARDS: int = 40
     SCRAPER_INTRA_BATCH_SEMANTIC_DEDUP_ENABLED: bool = False
     SCRAPER_UNSTOP_MAX_ITEMS: int = 60
     SCRAPER_NAUKRI_MAX_ITEMS: int = 25
