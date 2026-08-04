@@ -5,7 +5,7 @@ import { motion, useMotionValue, useTransform } from "framer-motion";
 import type { HTMLMotionProps } from "framer-motion";
 import { TrendingUp, Briefcase, ShieldCheck, Activity, Sparkles, Star, CircleAlert, CircleCheck, X, Loader2 } from "lucide-react";
 import { apiUrl } from "@/lib/api";
-import { COOKIE_SESSION_SENTINEL, getAccessToken } from "@/lib/auth-session";
+import { COOKIE_SESSION_SENTINEL, clearAccessToken, getAccessToken } from "@/lib/auth-session";
 import { useRouter } from "next/navigation";
 import { isMongoObjectId, logOpportunityInteraction } from "@/lib/opportunity-interactions";
 import { formatTopPercent, type RankingSummary } from "@/lib/ranking-summary";
@@ -33,9 +33,41 @@ interface ActivityPost {
 interface ProfileSummary {
     incoscore: number;
     email?: string;
+    first_name?: string;
+    last_name?: string;
     full_name?: string;
     skills?: string;
     account_type?: string;
+}
+
+/**
+ * The name to greet this person by.
+ *
+ * Prefers the first name, falls back to the first word of a full name, then to
+ * the part of the email before the "@". Returns null when we genuinely know
+ * nothing, so the caller can fall back to a generic greeting rather than
+ * printing "Welcome back, !".
+ *
+ * Names are stored uppercase (UPPERCASE_TEXT_FIELDS on the backend), so
+ * "ANKAN" is title-cased back to "Ankan" - shouting someone's name at them is
+ * not a greeting. Hyphens and apostrophes are preserved, so "MARY-JANE" and
+ * "O'BRIEN" come back as "Mary-Jane" and "O'Brien".
+ */
+function greetingName(profile: ProfileSummary | null): string | null {
+    const raw =
+        (profile?.first_name || "").trim() ||
+        (profile?.full_name || "").trim().split(/\s+/)[0] ||
+        (profile?.email || "").trim().split("@")[0];
+    if (!raw) {
+        return null;
+    }
+    const cleaned = raw.replace(/[^\p{L}\p{M}'-]/gu, " ").trim();
+    if (!cleaned) {
+        return null;
+    }
+    return cleaned
+        .toLocaleLowerCase()
+        .replace(/(^|[\s'-])(\p{L})/gu, (_match, boundary, letter) => boundary + letter.toLocaleUpperCase());
 }
 
 type DataSourceState = "live" | "simulated" | "no_data";
@@ -147,6 +179,9 @@ const normalizeOpportunityCards = (items: OpportunityCard[]) =>
         rank_position: item.rank_position ?? idx + 1,
     }));
 
+/** Set when any request this render came back 401. See useDashboardAuthGuard below. */
+let sawUnauthorized = false;
+
 const fetchJsonWithTimeout = async <T,>(path: string, init: RequestInit = {}, timeoutMs = 4500): Promise<T | null> => {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
@@ -157,6 +192,15 @@ const fetchJsonWithTimeout = async <T,>(path: string, init: RequestInit = {}, ti
             signal: controller.signal,
         });
         if (!response.ok) {
+            // A 401 is a dead session, not missing data. Collapsing it to null
+            // rendered a fully "signed in" dashboard - Logout button, sidebar,
+            // greeting - with a dash in every tile, because the client decides
+            // it is logged in from a localStorage marker and a 24h clock while
+            // the real credential is an HttpOnly cookie that had already
+            // expired. The user cannot tell that signing in again is the fix.
+            if (response.status === 401) {
+                sawUnauthorized = true;
+            }
             return null;
         }
         return (await response.json()) as T;
@@ -190,6 +234,7 @@ export default function DashboardPage() {
         try {
             setDashboardNotice(null);
             setBackendHealthy(true);
+            sawUnauthorized = false;
             setRecommendationsLoading(!hasRecommendationsRef.current);
             const token = getAccessToken();
             const hasAuth = Boolean(token);
@@ -232,6 +277,18 @@ export default function DashboardPage() {
                 opportunitiesPromise,
                 postsPromise,
             ]);
+
+            // The session died mid-use. Say so and send them to sign in, instead
+            // of rendering a signed-in shell with a dash in every tile - the
+            // client's "logged in" flag is a localStorage marker plus a 24h
+            // clock, so it stays true long after the HttpOnly cookie is gone.
+            if (sawUnauthorized) {
+                clearAccessToken("expired");
+                setIsAuthenticated(false);
+                router.replace(`/login?next=${encodeURIComponent("/dashboard")}`);
+                return;
+            }
+
 
             if (hasAuth) {
                 if (profileData) {
@@ -397,6 +454,8 @@ export default function DashboardPage() {
     );
     const activePosts = posts;
     const incoscoreValue = rankingSummary?.incoscore ?? profile?.incoscore ?? 0;
+    const displayName = greetingName(profile);
+    const welcomeHeading = displayName ? `Welcome back, ${displayName}!` : "Welcome back!";
     const profileStrengthPercent = profileStrength ? clampPercent(profileStrength.strength_percent) : null;
     const incoscoreDisplay = isAuthenticated ? (rankingSummary || profile ? incoscoreValue.toFixed(1) : "--") : "--";
     const applicationDisplay = isAuthenticated ? String(appCount) : "--";
@@ -494,7 +553,7 @@ export default function DashboardPage() {
                     }}>
                     <div>
                         <h1 style={{ fontSize: '3.5rem', marginBottom: '0.25rem', color: '#000000', fontFamily: 'var(--font-serif)', lineHeight: 1, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                            {isAuthenticated ? "Welcome back, Student!" : "Dashboard Preview"}
+                            {isAuthenticated ? welcomeHeading : "Dashboard Preview"}
                             <Sparkles size={36} />
                         </h1>
                         <p style={{ color: 'rgba(0,0,0,0.8)', fontSize: '1.25rem', maxWidth: '500px', fontWeight: 600 }}>
