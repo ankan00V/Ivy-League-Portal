@@ -883,7 +883,24 @@ def _apply_profile_patch(*, profile: Profile, user: User, payload: ProfileUpdate
         profile.graduation_year = int(updates["passout_year"])
 
     # Keep account type mirrored between User and Profile when explicitly changed.
+    #
+    # Self-service promotion to "employer" is refused. Registration forces
+    # "candidate" (auth.py), so this used to be the one path to employer status,
+    # and its only gate was is_corporate_email() - a 21-entry blocklist of
+    # personal providers. Any domain not on that list qualified, including
+    # disposable-mail hosts. That let anyone register a throwaway address,
+    # promote themselves, publish an opportunity, and then read every applicant's
+    # real name and email through the employer application routes and CSV export.
+    # Employer status is now granted by an admin only.
     if payload.account_type and payload.account_type in VALID_ACCOUNT_TYPES and user.account_type != payload.account_type:
+        if str(payload.account_type).strip().lower() == "employer" and not user.is_admin:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Employer accounts are approved manually. Contact support to have "
+                    "your organisation verified."
+                ),
+            )
         user.account_type = payload.account_type
 
     if str(profile.account_type or "").strip().lower() == "employer":

@@ -43,3 +43,7 @@ frontend/public/data/skills-taxonomy/aliases.json
 
 # Local-only session handoff notes. Owner keeps this out of the remote.
 CONTEXT.md
+
+# Generated skills taxonomy bulk exports (163MB). Regenerate with:
+#   python backend/scripts/generate_skills_taxonomy.py
+data/skills-taxonomy/
