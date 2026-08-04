@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     AUTH_SESSION_COOKIE_PATH: str = "/"
     AUTH_SESSION_COOKIE_DOMAIN: Optional[str] = None
     AUTH_SESSION_COOKIE_MAX_AGE_SECONDS: int = 60 * 60 * 24  # 24h
+    # One live session per user. Signing in on a second device ends the first,
+    # so a forgotten session on a shared or lost machine cannot outlive the
+    # login that replaced it.
+    AUTH_SINGLE_ACTIVE_SESSION: bool = True
     AUTH_SESSION_STORE_ENABLED: bool = True
     AUTH_SESSION_REQUIRE_SERVER_STATE: bool = False
     AUTH_SESSION_BIND_DEVICE: bool = True

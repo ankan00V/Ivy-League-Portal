@@ -431,6 +431,27 @@ async def _issue_user_session_token(
         scopes=scopes,
         session_type="admin" if admin_session else "user",
     )
+
+    # One session per user: the session just created survives, every earlier one
+    # is revoked. This is the single choke point for password, OTP and OAuth
+    # sign-in, so enforcing it here covers all of them. Ordering matters - the
+    # new session is registered above first, so a failure here can never leave
+    # the user with no session at all.
+    if settings.AUTH_SINGLE_ACTIVE_SESSION:
+        try:
+            revoked = await session_security_service.invalidate_user_sessions(
+                str(user.id), keep_session_id=session_id
+            )
+            if revoked:
+                logger.info(
+                    "single-session policy revoked %s earlier session(s) for user %s",
+                    revoked,
+                    user.id,
+                )
+        except Exception as exc:
+            # Never block a legitimate sign-in because cleanup failed.
+            logger.warning("could not revoke earlier sessions for user %s: %s", user.id, exc)
+
     _set_session_cookie(response, token, max_age_seconds=ttl_seconds)
     _set_csrf_cookie(response, max_age_seconds=ttl_seconds)
     return token
