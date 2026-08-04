@@ -242,7 +242,19 @@ class TestParserContract(unittest.TestCase):
             for config in GENERIC_PORTAL_LISTINGS
             if config.get("enabled") is False
         }
-        self.assertTrue({"toptal", "pangian", "stackoverflow_jobs", "chegg_internships", "interstride"}.issubset(disabled))
+        # stackoverflow_jobs, chegg_internships and angellist were REMOVED rather
+        # than disabled on 2026-08-04: Stack Overflow Jobs shut down,
+        # Internships.com/careermatch.com closed in December 2023, and AngelList
+        # redirects to Wellfound which is already a separate source. Keeping a
+        # config entry for a service that no longer exists is dead weight that
+        # every future audit has to re-investigate.
+        self.assertTrue({"toptal", "pangian", "interstride"}.issubset(disabled))
+        self.assertTrue(
+            {"stackoverflow_jobs", "chegg_internships", "angellist"}.isdisjoint(
+                {str(config["source"]) for config in GENERIC_PORTAL_LISTINGS}
+            ),
+            "sources for shut-down services should be deleted, not left disabled",
+        )
         self.assertTrue(disabled.isdisjoint(scraper.source_configs))
 
     def test_long_tail_third_party_platforms_are_registered(self) -> None:
@@ -256,7 +268,6 @@ class TestParserContract(unittest.TestCase):
                 "extern",
                 "github_internship_lists",
                 "wayup",
-                "chegg_internships",
             }.issubset(sources)
         )
 

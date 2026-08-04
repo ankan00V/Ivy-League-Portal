@@ -378,18 +378,7 @@ GENERIC_PORTAL_LISTINGS: list[dict[str, Any]] = [
             "https://www.wayup.com/s/internships/",
         ],
     },
-    {
-        "source": "chegg_internships",
-        "label": "Chegg Internships",
-        "default_type": "Internship",
-        "default_university": "Chegg",
-        "enabled": False,
-        "disabled_reason": "Chegg's official internships page says Internships.com and careermatch.com closed in December 2023.",
-        "listings": [
-            "https://www.chegg.com/skills/internships-announcement/",
-        ],
-    },
-    {
+        {
         "source": "zintellect",
         "label": "Zintellect",
         "default_type": "Internship",
@@ -618,8 +607,7 @@ GENERIC_PORTAL_LISTINGS: list[dict[str, Any]] = [
         "label": "FlexJobs",
         "default_type": "Job",
         "default_university": "FlexJobs",
-        "enabled": False,
-        "disabled_reason": "Public site repeatedly times out/blocks anonymous scraping; requires a dedicated approved integration.",
+        # Recovered 2026-08-04: the timeouts/blocks were against a plain GET. Via Scrapling this returns HTTP 200 with ~273KB and 93 job links.
         "listings": [
             "https://www.flexjobs.com/",
         ],
@@ -653,18 +641,7 @@ GENERIC_PORTAL_LISTINGS: list[dict[str, Any]] = [
             "https://remoteok.com/api",
         ],
     },
-    {
-        "source": "angellist",
-        "label": "AngelList",
-        "default_type": "Job",
-        "default_university": "AngelList Startups",
-        "enabled": False,
-        "disabled_reason": "AngelList jobs redirects to Wellfound and blocks anonymous scraping; Wellfound is already tracked separately.",
-        "listings": [
-            "https://angel.co/jobs",
-        ],
-    },
-    {
+        {
         "source": "linkedin_remote",
         "label": "LinkedIn Remote Jobs",
         "default_type": "Job",
@@ -718,24 +695,12 @@ GENERIC_PORTAL_LISTINGS: list[dict[str, Any]] = [
             "https://www.virtualvocations.com/jobs",
         ],
     },
-    {
-        "source": "stackoverflow_jobs",
-        "label": "Stack Overflow Jobs",
-        "default_type": "Job",
-        "default_university": "Stack Overflow",
-        "enabled": False,
-        "disabled_reason": "Stack Overflow Jobs is not a stable globally available public listings source.",
-        "listings": [
-            "https://stackoverflow.com/jobs",
-        ],
-    },
-    {
+        {
         "source": "glassdoor_remote",
         "label": "Glassdoor Remote",
         "default_type": "Job",
         "default_university": "Glassdoor",
-        "enabled": False,
-        "disabled_reason": "Glassdoor blocks anonymous scraping with 403.",
+        # Recovered 2026-08-04: 403 was against a plain GET. With Scrapling leading the fetch chain this returns HTTP 200 with ~863KB and 110 job links.
         "listings": [
             "https://www.glassdoor.com/Job/remote-jobs-SRCH_KO0,6.htm",
         ],
