@@ -56,7 +56,11 @@ interface Opportunity {
 const NOTICE_AUTO_DISMISS_MS = 10_000;
 const FEED_REFRESH_MS = 60 * 1000;
 const FEED_RETRY_MS = 15 * 1000;
-const PERSONALIZED_FETCH_TIMEOUT_MS = 2500;
+// Must exceed the Next proxy's own upstream timeout, or the client abandons a
+// request the proxy is still happily waiting on and silently drops to the
+// unpersonalised list. It was 2500ms against a 5000ms proxy.
+const PERSONALIZED_FETCH_TIMEOUT_MS = 8000;
+const FALLBACK_FETCH_TIMEOUT_MS = 8000;
 const COMPETITIVE_KEYWORDS = [
     "hackathon",
     "competition",
@@ -186,9 +190,16 @@ export default function InternshipsJobsPage() {
                 }
             }
 
-            const res = await fetch(apiUrl("/api/v1/opportunities/?portal=career"), { credentials: "include" });
-            if (res.ok) {
-                const rawData: Opportunity[] = await res.json();
+            // Without an explicit limit this took the endpoint default of 100,
+            // which is why the feed read "100 live" no matter how much had been
+            // scraped. It also had no timeout, so a stalled connection left the
+            // page on its skeleton forever.
+            const rawData = await fetchJsonWithTimeout<Opportunity[]>(
+                "/api/v1/opportunities/?portal=career&limit=400",
+                { credentials: "include" },
+                FALLBACK_FETCH_TIMEOUT_MS,
+            );
+            if (rawData) {
                 const data: Opportunity[] = rawData.map((item, idx) => ({
                     ...item,
                     ranking_mode: item.ranking_mode || "baseline",
@@ -220,13 +231,10 @@ export default function InternshipsJobsPage() {
                 return;
             }
 
-            const errorPayload = await res.json().catch(() => null);
-            const errorDetail =
-                typeof errorPayload?.detail === "string" ? errorPayload.detail : "";
-            const nextNotice = errorDetail.includes("Upstream backend unavailable")
-                ? "Backend API is unavailable. Retrying..."
-                : "Live opportunities are temporarily unavailable. Retrying...";
-            setNotice(nextNotice);
+            // fetchJsonWithTimeout swallows the body on failure, so the specific
+            // upstream detail is no longer available here. One honest message
+            // beats guessing which of several causes applied.
+            setNotice("Live opportunities are temporarily unavailable. Retrying...");
             if (!scraperTriggerAttemptedRef.current) {
                 scraperTriggerAttemptedRef.current = true;
                 void triggerLiveRefresh();
@@ -1245,10 +1253,14 @@ export default function InternshipsJobsPage() {
                     <OpportunityCardsSkeleton count={6} />
                 ) : (
                     <>
+                        {/* visibleOpportunities, not grouped.career: the track and
+                            speciality selections are applied there. Rendering the
+                            unfiltered group made every chip look inert - the
+                            highlight moved but the same cards stayed on screen. */}
                         {renderSection(
                             "Jobs & Internships",
                             "Hiring-focused roles, internships, and career-track openings.",
-                            grouped.career,
+                            visibleOpportunities,
                             "career"
                         )}
                         {!visibleOpportunities.length && (
