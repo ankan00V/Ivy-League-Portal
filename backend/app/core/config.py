@@ -92,6 +92,10 @@ class Settings(BaseSettings):
     # Greenhouse boards are discovered from the corpus rather than curated, so
     # this caps how many are read per run. The rest are picked up next run.
     SCRAPER_GREENHOUSE_MAX_BOARDS: int = 40
+
+    # Ceiling on rows a single feed request may return. Was hardcoded to 200
+    # against a 743-row active corpus, which hid most of what was scraped.
+    OPPORTUNITY_FEED_MAX_LIMIT: int = 600
     SCRAPER_INTRA_BATCH_SEMANTIC_DEDUP_ENABLED: bool = False
     SCRAPER_UNSTOP_MAX_ITEMS: int = 60
     SCRAPER_NAUKRI_MAX_ITEMS: int = 25

@@ -451,8 +451,12 @@ async def _load_active_opportunities(
     limit: int = 100,
 ) -> list[Opportunity]:
     safe_skip = max(0, skip)
-    safe_limit = max(1, min(limit, 200))
-    fetch_window = min(max((safe_skip + safe_limit) * 10, 250), 2000)
+    # The cap was 200 while the corpus held 743 active rows, so roughly 55% of
+    # everything the scrapers collected was unreachable through the feed - it
+    # looked like the scrapers had stopped when they had not. Raised so the
+    # visible feed tracks the corpus; `skip` still pages beyond it.
+    safe_limit = max(1, min(limit, settings.OPPORTUNITY_FEED_MAX_LIMIT))
+    fetch_window = min(max((safe_skip + safe_limit) * 10, 250), 6000)
     query = Opportunity.find_many(Opportunity.domain == domain) if domain else Opportunity.find_many()
     candidates = await query.sort("-created_at").limit(fetch_window).to_list()
     active = _filter_active_opportunities(candidates)
@@ -760,14 +764,14 @@ async def _retrieve_feed_candidates(
             if row.get("id")
         }
         if not ids:
-            fallback_rows = await _load_active_opportunities(limit=200)
+            fallback_rows = await _load_active_opportunities(limit=settings.OPPORTUNITY_FEED_MAX_LIMIT)
             ids = [str(row.id) for row in fallback_rows]
             provider = "active_feed_fallback"
 
         await cache_set_json(
             key,
             {
-                "ids": ids[:200],
+                "ids": ids[: settings.OPPORTUNITY_FEED_MAX_LIMIT],
                 "similarity_by_id": similarity_by_id,
                 "provider": provider,
                 "created_at": utc_now().isoformat(),
@@ -775,9 +779,9 @@ async def _retrieve_feed_candidates(
             ttl_seconds=600,
         )
 
-    rows = await _load_opportunities_by_ids(ids[:200])
+    rows = await _load_opportunities_by_ids(ids[: settings.OPPORTUNITY_FEED_MAX_LIMIT])
     if not rows and ids:
-        rows = await _load_active_opportunities(limit=200)
+        rows = await _load_active_opportunities(limit=settings.OPPORTUNITY_FEED_MAX_LIMIT)
 
     return rows, {
         "cache_hit": cache_hit,

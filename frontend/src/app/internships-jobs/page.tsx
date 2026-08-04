@@ -138,7 +138,7 @@ export default function InternshipsJobsPage() {
             const token = getAccessToken();
             if (token) {
                 const rawData = await fetchJsonWithTimeout<Opportunity[]>(
-                    "/api/v1/opportunities/recommended/me?limit=100&ranking_mode=ab&portal=career",
+                    "/api/v1/opportunities/recommended/me?limit=400&ranking_mode=ab&portal=career",
                     createAuthenticatedFetchInit({}, token),
                     PERSONALIZED_FETCH_TIMEOUT_MS,
                 );
