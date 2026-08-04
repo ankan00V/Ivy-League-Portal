@@ -148,7 +148,14 @@ class Settings(BaseSettings):
     # 200. Only its HTTP fetcher is used; rendering stays with Crawlee/Browser
     # Use rather than adding a third headless browser.
     SCRAPLING_ENABLED: bool = True
-    SCRAPLING_MODE: str = "fallback"  # fallback | preferred | disabled
+    # primary | fallback | disabled.
+    # Measured 2026-08-04 over 8 live sources: scrapling 6.15s vs direct
+    # 35.26s, both 8/8 usable with equivalent payloads. foundit.in alone was
+    # 29.16s direct vs 0.57s scrapling. Since the scrape batch has a fixed
+    # SCRAPER_FETCH_BATCH_TIMEOUT_SECONDS budget consumed in declaration
+    # order, one slow source starves every source after it - which is how
+    # Internshala once returned 2 rows. Direct remains the fallback.
+    SCRAPLING_MODE: str = "primary"
     SCRAPLING_TIMEOUT_SECONDS: float = 40.0
     SCRAPLING_MAX_CONCURRENT: int = 4
     SCRAPLING_CIRCUIT_FAILURE_THRESHOLD: int = 4

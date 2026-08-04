@@ -35,8 +35,18 @@ VALID_HIRING_FOR = {"myself", "others"}
 VALID_AVAILABILITY = {"immediately", "within_1_month", "within_3_months", "exploring"}
 RESUME_REQUIRED_USER_TYPES = {"college_student", "fresher", "professional"}
 ALLOWED_RESUME_EXTENSIONS = {".txt", ".pdf", ".docx", ".doc"}
+# Derived from the validated extension, never from the client. The client's
+# content_type was previously stored verbatim and replayed as media_type on
+# download, letting the uploader choose how their own file is interpreted.
+_RESUME_CONTENT_TYPES = {
+    ".txt": "text/plain",
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".doc": "application/msword",
+}
 RESUME_STORAGE_RELATIVE_DIR = Path("storage") / "resumes"
 RESUME_MAX_FILE_SIZE_MB = 8
+_RESUME_READ_CHUNK_BYTES = 64 * 1024
 UPPERCASE_PROFILE_TEXT_FIELDS = {
     "first_name",
     "last_name",
@@ -1091,15 +1101,27 @@ async def upload_resume(
     """
     filename = (file.filename or "resume.txt").strip() or "resume.txt"
     extension = _safe_resume_extension(filename)
-    content = await file.read()
     size_limit_bytes = int(max(1, RESUME_MAX_FILE_SIZE_MB)) * 1024 * 1024
+    # Read in bounded chunks and abort the moment the cap is passed, rather than
+    # buffering the whole body and measuring afterwards. The previous order meant
+    # an attacker could make the server spool an arbitrarily large upload to disk
+    # before it was rejected, so the size limit cost nothing to exceed.
+    chunks: list[bytes] = []
+    received = 0
+    while True:
+        chunk = await file.read(_RESUME_READ_CHUNK_BYTES)
+        if not chunk:
+            break
+        received += len(chunk)
+        if received > size_limit_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Resume exceeds maximum size ({RESUME_MAX_FILE_SIZE_MB} MB).",
+            )
+        chunks.append(chunk)
+    content = b"".join(chunks)
     if len(content) == 0:
         raise HTTPException(status_code=400, detail="Resume file is empty.")
-    if len(content) > size_limit_bytes:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Resume exceeds maximum size ({RESUME_MAX_FILE_SIZE_MB} MB).",
-        )
 
     profile = await _get_or_create_profile_for_user(current_user)
     storage_key = f"{str(current_user.id)}_{uuid4().hex}{extension}"
@@ -1134,7 +1156,7 @@ async def upload_resume(
 
     profile.resume_url = "/api/v1/users/me/resume/download"
     profile.resume_filename = filename
-    profile.resume_content_type = (file.content_type or "application/octet-stream").strip() or "application/octet-stream"
+    profile.resume_content_type = _RESUME_CONTENT_TYPES.get(extension, "application/octet-stream")
     profile.resume_storage_key = storage_key
     profile.resume_uploaded_at = datetime.now(timezone.utc)
     _sync_profile_identity(profile, current_user)

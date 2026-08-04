@@ -103,9 +103,25 @@ INDEED_INDIA_LISTINGS: list[tuple[str, str]] = [
         "https://in.indeed.com/jobs?q=work+from+home&l=&sc=0kf%3Aattr%28VDTG7%29%3B&from=searchOnDesktopSerp&vjk=fe4dcd039aaba3cd",
         "Job",
     ),
+    # The single work-from-home query above returned general roles; these target
+    # the early-career surface the product is actually for.
+    ("https://in.indeed.com/jobs?q=internship&l=India", "Internship"),
+    ("https://in.indeed.com/jobs?q=fresher&l=India", "Job"),
 ]
 
-GREENHOUSE_DEFAULT_BOARD_TOKENS = ["databricks", "stripe", "airbnb"]
+# Greenhouse exposes a public JSON board API, so these are API reads rather
+# than HTML scrapes. Extended beyond the original three US-only boards to
+# companies that hire early-career engineers in India.
+GREENHOUSE_DEFAULT_BOARD_TOKENS = [
+    "databricks",
+    "stripe",
+    "airbnb",
+    "razorpaysoftwareprivatelimited",
+    "zscaler",
+    "postman",
+    "cred",
+    "sprinklr",
+]
 
 GENERIC_PORTAL_LISTINGS: list[dict[str, Any]] = [
     {
@@ -188,6 +204,34 @@ GENERIC_PORTAL_LISTINGS: list[dict[str, Any]] = [
         "default_university": "Devfolio",
         "listings": [
             "https://devfolio.co/hackathons",
+        ],
+    },
+    {
+        "source": "lablab",
+        "label": "lablab.ai",
+        "default_type": "Hackathon",
+        "default_university": "lablab.ai",
+        "listings": [
+            "https://lablab.ai/event",
+        ],
+    },
+    {
+        "source": "hackindia",
+        "label": "HackIndia",
+        "default_type": "Hackathon",
+        "default_university": "HackIndia",
+        "listings": [
+            "https://hackindia.org/events",
+            "https://hackindia.org",
+        ],
+    },
+    {
+        "source": "zs_associates",
+        "label": "ZS Associates",
+        "default_type": "Job",
+        "default_university": "ZS Associates",
+        "listings": [
+            "https://jobs.zs.com/jobs",
         ],
     },
     {

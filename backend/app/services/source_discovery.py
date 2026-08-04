@@ -609,10 +609,22 @@ class SourceHttpClient:
 
                 direct_error: Exception | None = None
                 direct_page: FetchedPage | None = None
-                try:
-                    direct_page = await self._fetch_direct(normalized, timeout)
-                except Exception as exc:
-                    direct_error = exc
+
+                # In "primary" mode scrapling leads and direct is the fallback.
+                # It is local, free and in-process, so leading with it costs
+                # nothing, and it avoids the pathological direct timings that
+                # eat the batch budget before later sources are reached.
+                scrapling_first = (
+                    str(settings.SCRAPLING_MODE or "fallback").strip().lower() == "primary"
+                )
+                if scrapling_first:
+                    direct_page = await self._try_scrapling(normalized, timeout)
+
+                if direct_page is None:
+                    try:
+                        direct_page = await self._fetch_direct(normalized, timeout)
+                    except Exception as exc:
+                        direct_error = exc
 
                 # Scrapling before the paid providers: it is local and free, and
                 # its stealth headers clear sources a plain GET cannot. Measured
@@ -620,7 +632,10 @@ class SourceHttpClient:
                 # which were otherwise dead. Only attempted when the direct fetch
                 # actually failed or came back blocked, so healthy sources are
                 # untouched.
-                if direct_page is None or int(getattr(direct_page, "status_code", 0)) in {401, 403, 429}:
+                if not scrapling_first and (
+                    direct_page is None
+                    or int(getattr(direct_page, "status_code", 0)) in {401, 403, 429}
+                ):
                     scrapling_page = await self._try_scrapling(normalized, timeout)
                     if scrapling_page is not None:
                         direct_page, direct_error = scrapling_page, None
