@@ -372,57 +372,14 @@ GENERIC_PORTAL_LISTINGS: list[dict[str, Any]] = [
         "label": "WayUp",
         "default_type": "Internship",
         "default_university": "WayUp Employers",
-        "enabled": False,
-        "disabled_reason": "Current public internship page exposes category navigation in bounded checks, not direct opportunity listings; requires a dedicated connector.",
+        # Recovered 2026-08-04 via Crawlee: the page is a JS shell, so a plain
+        # fetch saw only category navigation. Rendered it returns ~58KB with 47
+        # job links. This is the one source that genuinely needs a browser.
         "listings": [
             "https://www.wayup.com/s/internships/",
         ],
     },
-        {
-        "source": "zintellect",
-        "label": "Zintellect",
-        "default_type": "Internship",
-        "default_university": "Zintellect",
-        "enabled": False,
-        "disabled_reason": "Current public catalog renders an app shell/catalog entry in bounded checks; requires a dedicated catalog API/browser connector.",
-        "listings": [
-            "https://www.zintellect.com/catalog",
-        ],
-    },
-    {
-        "source": "interstride",
-        "label": "Interstride",
-        "default_type": "Internship",
-        "default_university": "Interstride",
-        "enabled": False,
-        "disabled_reason": "Student/job portal access is institution/account gated; use an approved partner connector instead of anonymous scraping.",
-        "listings": [
-            "https://www.interstride.com/students/",
-        ],
-    },
-    {
-        "source": "untapped",
-        "label": "Untapped",
-        "default_type": "Internship",
-        "default_university": "Untapped",
-        "enabled": False,
-        "disabled_reason": "Current public page redirects to a career-program marketing page in bounded checks, not direct opportunity listings.",
-        "listings": [
-            "https://www.untapped.io/",
-        ],
-    },
-    {
-        "source": "parker_dewey",
-        "label": "Parker Dewey",
-        "default_type": "Internship",
-        "default_university": "Parker Dewey",
-        "enabled": False,
-        "disabled_reason": "Current public career-launchers page exposes marketing/navigation links in bounded checks; use an approved micro-internship connector.",
-        "listings": [
-            "https://www.parkerdewey.com/career-launchers",
-        ],
-    },
-    {
+                        {
         "source": "extern",
         "label": "Extern",
         "default_type": "Internship",
@@ -477,18 +434,7 @@ GENERIC_PORTAL_LISTINGS: list[dict[str, Any]] = [
             "https://promilo.com/",
         ],
     },
-    {
-        "source": "toptal",
-        "label": "Toptal",
-        "default_type": "Job",
-        "default_university": "Toptal",
-        "enabled": False,
-        "disabled_reason": "No stable public early-career job feed; homepage is marketing content.",
-        "listings": [
-            "https://www.toptal.com/",
-        ],
-    },
-    {
+        {
         "source": "skip_the_drive",
         "label": "Skip The Drive",
         "default_type": "Job",
@@ -533,18 +479,7 @@ GENERIC_PORTAL_LISTINGS: list[dict[str, Any]] = [
             "https://remote4me.com/",
         ],
     },
-    {
-        "source": "pangian",
-        "label": "Pangian",
-        "default_type": "Job",
-        "default_university": "Pangian",
-        "enabled": False,
-        "disabled_reason": "Public job board is currently in transition and the previous listings URL returns 404.",
-        "listings": [
-            "https://pangian.com/job-travel-remote/",
-        ],
-    },
-    {
+        {
         "source": "remotees",
         "label": "Remotees",
         "default_type": "Job",
@@ -562,29 +497,7 @@ GENERIC_PORTAL_LISTINGS: list[dict[str, Any]] = [
             "https://justremote.co/remote-jobs",
         ],
     },
-    {
-        "source": "remotecrew",
-        "label": "Remotecrew",
-        "default_type": "Job",
-        "default_university": "Remotecrew",
-        "enabled": False,
-        "disabled_reason": "Homepage is a hiring-service marketing site, not a public student job feed.",
-        "listings": [
-            "https://remotecrew.io/",
-        ],
-    },
-    {
-        "source": "europe_remotely",
-        "label": "Europe Remotely",
-        "default_type": "Job",
-        "default_university": "Europe Remotely",
-        "enabled": False,
-        "disabled_reason": "Blocks anonymous scraper traffic with 403.",
-        "listings": [
-            "https://europeremotely.com/",
-        ],
-    },
-    {
+            {
         "source": "remoteok_europe",
         "label": "Remote OK Europe",
         "default_type": "Job",
@@ -612,18 +525,7 @@ GENERIC_PORTAL_LISTINGS: list[dict[str, Any]] = [
             "https://www.flexjobs.com/",
         ],
     },
-    {
-        "source": "remote_co",
-        "label": "Remote.co",
-        "default_type": "Job",
-        "default_university": "Remote.co",
-        "enabled": False,
-        "disabled_reason": "Public listings repeatedly time out during bounded health checks; requires a dedicated approved integration.",
-        "listings": [
-            "https://remote.co/remote-jobs/",
-        ],
-    },
-    {
+        {
         "source": "we_work_remotely",
         "label": "We Work Remotely",
         "default_type": "Job",
@@ -714,18 +616,7 @@ GENERIC_PORTAL_LISTINGS: list[dict[str, Any]] = [
             "https://www.monster.com/jobs/search?q=remote",
         ],
     },
-    {
-        "source": "careercloud",
-        "label": "Careercloud",
-        "default_type": "Job",
-        "default_university": "Careercloud",
-        "enabled": False,
-        "disabled_reason": "Career advice/aggregation site, not a stable direct opportunity feed.",
-        "listings": [
-            "https://www.careercloud.com/",
-        ],
-    },
-    {
+        {
         "source": "careerbuilder",
         "label": "CareerBuilder",
         "default_type": "Job",
@@ -734,18 +625,7 @@ GENERIC_PORTAL_LISTINGS: list[dict[str, Any]] = [
             "https://www.careerbuilder.com/jobs?keywords=remote",
         ],
     },
-    {
-        "source": "careeronestop",
-        "label": "CareerOneStop",
-        "default_type": "Job",
-        "default_university": "CareerOneStop",
-        "enabled": False,
-        "disabled_reason": "Blocks anonymous scraper traffic with 403 and is not student-specific.",
-        "listings": [
-            "https://www.careeronestop.org/",
-        ],
-    },
-    {
+        {
         "source": "tensorhack_hackathons",
         "label": "TensorHack Hackathons",
         "default_type": "Hackathon",

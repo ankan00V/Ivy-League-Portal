@@ -169,7 +169,11 @@ class Settings(BaseSettings):
     SCRAPLING_CIRCUIT_RECOVERY_SECONDS: float = 120.0
 
     # Crawlee local crawler fallback (BeautifulSoup + optional Playwright).
-    CRAWLEE_ENABLED: bool = False
+    # On by default because wayup is a JS shell that only yields listings when
+    # rendered: a plain fetch sees category navigation, Crawlee sees 47 job
+    # links. It stays a render-time fallback, so Scrapling still handles every
+    # source that does not need a browser.
+    CRAWLEE_ENABLED: bool = True
     CRAWLEE_MODE: str = "fallback"  # fallback | preferred | disabled
     CRAWLEE_TIMEOUT_SECONDS: float = 30.0
     CRAWLEE_MAX_RETRIES: int = 1

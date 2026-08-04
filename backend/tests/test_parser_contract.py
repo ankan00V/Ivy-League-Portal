@@ -235,41 +235,48 @@ class TestParserContract(unittest.TestCase):
         parsed_rows = [row for row in remotive_rows if is_early_career_opportunity(row)]
         self.assertEqual([row["title"] for row in parsed_rows], ["Junior Data Analyst"])
 
-    def test_disabled_generic_sources_are_not_registered(self) -> None:
-        scraper = GenericOpportunityPortalScraper()
-        disabled = {
+    def test_removed_sources_stay_removed(self) -> None:
+        """Sources deleted on 2026-08-04 after being verified unscrapable.
+
+        Each was probed through the live fetch chain with Scrapling, and the
+        render-dependent ones again through Crawlee. They are deleted rather than
+        disabled because a config entry for a dead service is weight every future
+        audit has to re-investigate. Do not re-add without new evidence.
+        """
+        sources = {str(config["source"]) for config in GENERIC_PORTAL_LISTINGS}
+        removed = {
+            # shut down or duplicated
+            "chegg_internships", "stackoverflow_jobs", "angellist",
+            # marketing pages, no opportunity feed behind them
+            "toptal", "remotecrew", "careercloud", "untapped", "parker_dewey",
+            # unreachable or empty even when rendered
+            "zintellect", "interstride", "europe_remotely", "remote_co",
+            "careeronestop", "pangian",
+        }
+        self.assertTrue(
+            removed.isdisjoint(sources),
+            f"re-added unscrapable sources: {sorted(removed & sources)}",
+        )
+
+    def test_every_registered_source_is_enabled(self) -> None:
+        """No source should sit disabled indefinitely.
+
+        A disabled entry is either recoverable, in which case fix it, or it is
+        not, in which case delete it. Leaving it in limbo is how the list grew to
+        17 dead entries.
+        """
+        disabled = sorted(
             str(config["source"])
             for config in GENERIC_PORTAL_LISTINGS
             if config.get("enabled") is False
-        }
-        # stackoverflow_jobs, chegg_internships and angellist were REMOVED rather
-        # than disabled on 2026-08-04: Stack Overflow Jobs shut down,
-        # Internships.com/careermatch.com closed in December 2023, and AngelList
-        # redirects to Wellfound which is already a separate source. Keeping a
-        # config entry for a service that no longer exists is dead weight that
-        # every future audit has to re-investigate.
-        self.assertTrue({"toptal", "pangian", "interstride"}.issubset(disabled))
-        self.assertTrue(
-            {"stackoverflow_jobs", "chegg_internships", "angellist"}.isdisjoint(
-                {str(config["source"]) for config in GENERIC_PORTAL_LISTINGS}
-            ),
-            "sources for shut-down services should be deleted, not left disabled",
         )
-        self.assertTrue(disabled.isdisjoint(scraper.source_configs))
+        self.assertEqual(disabled, [], f"disabled sources should be fixed or removed: {disabled}")
 
-    def test_long_tail_third_party_platforms_are_registered(self) -> None:
+    def test_render_dependent_sources_are_registered(self) -> None:
+        """wayup only yields listings under a browser, so it must stay wired."""
         sources = {str(config["source"]) for config in GENERIC_PORTAL_LISTINGS}
-        self.assertTrue(
-            {
-                "zintellect",
-                "interstride",
-                "untapped",
-                "parker_dewey",
-                "extern",
-                "github_internship_lists",
-                "wayup",
-            }.issubset(sources)
-        )
+        self.assertIn("wayup", sources)
+        self.assertTrue({"extern", "github_internship_lists"}.issubset(sources))
 
     def test_github_curated_markdown_lists_parse_early_career_rows(self) -> None:
         scraper = GenericOpportunityPortalScraper(session=DummyTextSession(_fixture_text("github_internship_list.md")))
