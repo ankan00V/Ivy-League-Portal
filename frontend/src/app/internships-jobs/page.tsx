@@ -45,6 +45,7 @@ interface Opportunity {
     model_version_id?: string;
 }
 
+const NOTICE_AUTO_DISMISS_MS = 10_000;
 const FEED_REFRESH_MS = 60 * 1000;
 const FEED_RETRY_MS = 15 * 1000;
 const PERSONALIZED_FETCH_TIMEOUT_MS = 2500;
@@ -100,6 +101,20 @@ export default function InternshipsJobsPage() {
     const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
     const [loading, setLoading] = useState(true);
     const [notice, setNotice] = useState<string | null>(null);
+
+    // Transient notices must clear themselves. "Saved to your Applications.
+    // Redirecting..." stayed on screen indefinitely when the redirect did not
+    // happen, so the page kept telling the student an action was in flight long
+    // after it had finished. Persistent conditions re-set the notice on their own
+    // polling cycle, so they survive this timer.
+    useEffect(() => {
+      if (!notice) {
+        return;
+      }
+      const timer = window.setTimeout(() => setNotice(null), NOTICE_AUTO_DISMISS_MS);
+      return () => window.clearTimeout(timer);
+    }, [notice]);
+
     const [applyingId, setApplyingId] = useState<string | null>(null);
     const [savedOpportunityIds, setSavedOpportunityIds] = useState<Record<string, boolean>>({});
     const [hiddenOpportunityIds, setHiddenOpportunityIds] = useState<Record<string, boolean>>({});

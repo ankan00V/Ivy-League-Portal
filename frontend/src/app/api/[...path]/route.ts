@@ -21,6 +21,12 @@ const backendCandidates = Array.from(
 
 const DEFAULT_UPSTREAM_FETCH_TIMEOUT_MS = Number(process.env.BACKEND_PROXY_TIMEOUT_MS || 5000);
 const AUTH_UPSTREAM_FETCH_TIMEOUT_MS = Number(process.env.BACKEND_AUTH_PROXY_TIMEOUT_MS || 30000);
+// Anything that calls a language model needs far longer than the default. The
+// copilot was failing with "Upstream backend unavailable" for exactly this
+// reason: the proxy aborted at 5s while the backend was still waiting on the
+// LLM, so a healthy request surfaced to the student as a dead backend.
+const AI_UPSTREAM_FETCH_TIMEOUT_MS = Number(process.env.BACKEND_AI_PROXY_TIMEOUT_MS || 60000);
+const AI_PATH_PREFIXES = ["v1/opportunities/ask-ai", "v1/chat", "v1/opportunities/evaluate-llm"];
 const CSRF_COOKIE_NAME = process.env.CSRF_COOKIE_NAME || process.env.NEXT_PUBLIC_CSRF_COOKIE_NAME || "vidyaverse_csrf";
 const CSRF_HEADER_NAME = process.env.CSRF_HEADER_NAME || process.env.NEXT_PUBLIC_CSRF_HEADER_NAME || "X-CSRF-Token";
 
@@ -107,6 +113,9 @@ function resolveUpstreamTimeoutMs(path: string[]): number {
   const joinedPath = path.join("/");
   if (joinedPath.startsWith("v1/auth/")) {
     return AUTH_UPSTREAM_FETCH_TIMEOUT_MS;
+  }
+  if (AI_PATH_PREFIXES.some((prefix) => joinedPath.startsWith(prefix))) {
+    return AI_UPSTREAM_FETCH_TIMEOUT_MS;
   }
   return DEFAULT_UPSTREAM_FETCH_TIMEOUT_MS;
 }

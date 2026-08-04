@@ -96,15 +96,41 @@ class RAGService:
         }
 
     def _profile_context(self, profile: Optional[Profile]) -> str:
+        """Everything about the student that should shape a shortlist.
+
+        This used to carry only skills, interests, education and achievements,
+        so the copilot could not tell a final-year student from a fresher, did
+        not know which roles or cities they wanted, and ignored their stipend
+        expectation and availability - all of which the ordinary matcher already
+        uses. Empty fields are dropped rather than sent as "field=", which would
+        spend context on nothing and invite the model to invent a value.
+        """
         if not profile:
             return ""
+        fields = (
+            ("skills", profile.skills),
+            ("interests", profile.interests),
+            ("education", profile.education),
+            ("achievements", profile.achievements),
+            ("course", getattr(profile, "course", None)),
+            ("specialization", getattr(profile, "course_specialization", None)),
+            ("domain", getattr(profile, "domain", None)),
+            ("graduation_year", getattr(profile, "passout_year", None)),
+            ("current_role", getattr(profile, "current_job_role", None)),
+            ("experience", getattr(profile, "total_work_experience", None)),
+            ("preferred_roles", getattr(profile, "preferred_roles", None)),
+            ("preferred_locations", getattr(profile, "preferred_locations", None)),
+            ("work_mode", getattr(profile, "preferred_work_mode", None)),
+            ("expected_stipend", getattr(profile, "expected_stipend_range", None)),
+            ("availability", getattr(profile, "availability", None)),
+            ("bio", getattr(profile, "bio", None)),
+        )
         sections = [
-            f"skills={profile.skills or ''}",
-            f"interests={profile.interests or ''}",
-            f"education={profile.education or ''}",
-            f"achievements={profile.achievements or ''}",
+            f"{name}={str(value).strip()}"
+            for name, value in fields
+            if value is not None and str(value).strip()
         ]
-        return " | ".join(section for section in sections if section.strip())
+        return " | ".join(sections)
 
     async def retrieve(self, query: str, top_k: int = 8, retrieval_settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         intent, entities = await asyncio.gather(
