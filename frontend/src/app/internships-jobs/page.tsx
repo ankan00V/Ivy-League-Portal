@@ -9,6 +9,14 @@ import Image from "next/image";
 import { apiUrl } from "@/lib/api";
 import { createAuthenticatedFetchInit, getAccessToken } from "@/lib/auth-session";
 import { logTrackedOpportunityEvent, useOpportunityFeedImpressions } from "@/lib/opportunity-feed-tracker";
+import {
+    NON_TECHNICAL_FILTERS,
+    TECHNICAL_FILTERS,
+    classifyRoleTrack,
+    matchesTrackFilter,
+    type RoleTrack,
+    type TrackFilter,
+} from "@/lib/role-classification";
 
 interface Opportunity {
     id: string;
@@ -116,6 +124,11 @@ export default function InternshipsJobsPage() {
     }, [notice]);
 
     const [applyingId, setApplyingId] = useState<string | null>(null);
+    // "all" keeps the previous behaviour available; the two tracks split a feed
+    // that otherwise showed a commerce student backend roles and an engineering
+    // student sales roles.
+    const [roleTrack, setRoleTrack] = useState<RoleTrack | "all">("all");
+    const [trackKeyword, setTrackKeyword] = useState<string | null>(null);
     const [savedOpportunityIds, setSavedOpportunityIds] = useState<Record<string, boolean>>({});
     const [hiddenOpportunityIds, setHiddenOpportunityIds] = useState<Record<string, boolean>>({});
     const [imageFallbackMap, setImageFallbackMap] = useState<Record<string, boolean>>({});
@@ -327,10 +340,41 @@ export default function InternshipsJobsPage() {
         return groups;
     }, [filtered]);
 
-    const visibleOpportunities = useMemo(
-        () => grouped.career,
-        [grouped]
+    const trackFilters: TrackFilter[] = useMemo(
+        () =>
+            roleTrack === "technical"
+                ? TECHNICAL_FILTERS
+                : roleTrack === "non_technical"
+                  ? NON_TECHNICAL_FILTERS
+                  : [],
+        [roleTrack],
     );
+
+    const activeTrackFilter = useMemo(
+        () => trackFilters.find((filter) => filter.label === trackKeyword) ?? null,
+        [trackFilters, trackKeyword],
+    );
+
+    const visibleOpportunities = useMemo(() => {
+        let rows = grouped.career;
+        if (roleTrack !== "all") {
+            rows = rows.filter((item) => classifyRoleTrack(item) === roleTrack);
+        }
+        if (activeTrackFilter) {
+            rows = rows.filter((item) => matchesTrackFilter(item, activeTrackFilter));
+        }
+        return rows;
+    }, [grouped, roleTrack, activeTrackFilter]);
+
+    const trackCounts = useMemo(() => {
+        let technical = 0;
+        for (const item of grouped.career) {
+            if (classifyRoleTrack(item) === "technical") {
+                technical += 1;
+            }
+        }
+        return { technical, non_technical: grouped.career.length - technical, all: grouped.career.length };
+    }, [grouped]);
     const trackerContext = useMemo(
         () => ({ surface: "internships_jobs_page", activeTab }),
         [activeTab]
@@ -1076,6 +1120,56 @@ export default function InternshipsJobsPage() {
                     ))}
                 </div>
 
+                {/* Track sub-tabs. Counts are shown so an empty track is
+                    obviously empty rather than looking broken. */}
+                <div className="role-track-tabs" role="tablist" aria-label="Role track">
+                    {([
+                        { key: "all" as const, label: "All roles" },
+                        { key: "technical" as const, label: "Technical" },
+                        { key: "non_technical" as const, label: "Non-technical" },
+                    ]).map((tab) => (
+                        <button
+                            key={tab.key}
+                            type="button"
+                            role="tab"
+                            aria-selected={roleTrack === tab.key}
+                            className={`role-track-tab ${roleTrack === tab.key ? "active" : ""}`}
+                            onClick={() => {
+                                setRoleTrack(tab.key);
+                                // A chip from the other track would match nothing.
+                                setTrackKeyword(null);
+                            }}
+                        >
+                            {tab.label}
+                            <span className="role-track-count">{trackCounts[tab.key]}</span>
+                        </button>
+                    ))}
+                </div>
+
+                {trackFilters.length > 0 && (
+                    <div className="role-track-chips" aria-label="Refine by speciality">
+                        <button
+                            type="button"
+                            className={`role-track-chip ${trackKeyword === null ? "active" : ""}`}
+                            onClick={() => setTrackKeyword(null)}
+                        >
+                            All {roleTrack === "technical" ? "technical" : "non-technical"}
+                        </button>
+                        {trackFilters.map((filter) => (
+                            <button
+                                key={filter.label}
+                                type="button"
+                                className={`role-track-chip ${trackKeyword === filter.label ? "active" : ""}`}
+                                onClick={() =>
+                                    setTrackKeyword((current) => (current === filter.label ? null : filter.label))
+                                }
+                            >
+                                {filter.label}
+                            </button>
+                        ))}
+                    </div>
+                )}
+
                 <AskAIPanel
                     surface="internships_jobs_page"
                     suggestedQueries={[
@@ -1103,7 +1197,13 @@ export default function InternshipsJobsPage() {
                         )}
                         {!visibleOpportunities.length && (
                             <div className="card-panel" style={{ padding: "1.5rem" }}>
-                                <strong>No internships or jobs match this filter right now.</strong>
+                                <strong>
+                                    {trackKeyword
+                                        ? `No ${trackKeyword} roles right now.`
+                                        : roleTrack === "all"
+                                          ? "No internships or jobs match this filter right now."
+                                          : `No ${roleTrack === "technical" ? "technical" : "non-technical"} roles match this filter right now.`}
+                                </strong>
                             </div>
                         )}
                     </>

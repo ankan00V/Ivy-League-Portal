@@ -2128,3 +2128,87 @@ select.input-base {
     padding-top: 0.75rem;
   }
 }
+
+/* Technical / non-technical role tracks on the Internships & Jobs feed.
+   Uses the same 2px border and hard offset shadow as every other control here,
+   so the sub-tabs read as part of the page rather than bolted on. */
+.role-track-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.role-track-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.7rem 1.4rem;
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-weight: 800;
+  box-shadow: var(--shadow-md);
+  transition: var(--bounce-transition);
+}
+
+.role-track-tab:hover {
+  background: var(--bg-surface-hover);
+}
+
+.role-track-tab.active {
+  background: var(--brand-primary);
+  color: #000;
+  box-shadow: var(--shadow-sm);
+  transform: translate(2px, 2px);
+}
+
+/* The count tells a student an empty track is genuinely empty rather than
+   broken, which is the failure mode of a silent filter. */
+.role-track-count {
+  min-width: 1.6rem;
+  padding: 0.05rem 0.4rem;
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  background: var(--bg-base);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-align: center;
+}
+
+.role-track-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 2rem;
+}
+
+.role-track-chip {
+  padding: 0.45rem 0.95rem;
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 0.88rem;
+  font-weight: 700;
+  transition: var(--standard-transition);
+}
+
+.role-track-chip:hover {
+  background: var(--bg-surface-hover);
+}
+
+.role-track-chip.active {
+  background: var(--brand-accent);
+  color: #000;
+  box-shadow: var(--shadow-sm);
+}
+
+@media (max-width: 640px) {
+  .role-track-tab {
+    flex: 1 1 auto;
+    justify-content: center;
+    padding: 0.65rem 0.9rem;
+  }
+}
