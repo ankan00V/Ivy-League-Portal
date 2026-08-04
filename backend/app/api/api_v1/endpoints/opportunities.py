@@ -798,7 +798,8 @@ def _diversify_feed_page(
     offset: int,
     limit: int,
 ) -> list[dict[str, Any]]:
-    safe_limit = max(1, min(int(limit), 50))
+    # Feed path: shares the one ceiling rather than a private 50.
+    safe_limit = max(1, min(int(limit), settings.OPPORTUNITY_FEED_MAX_LIMIT))
     source_cap = max(1, int(math.ceil(safe_limit * 0.20)))
     domain_cap = max(1, int(math.ceil(safe_limit * 0.40)))
     source_counts: dict[str, int] = {}
@@ -871,7 +872,8 @@ async def get_unified_feed(
     candidate retrieval caching, and per-request reranking.
     """
     started_at = time.perf_counter()
-    safe_limit = max(1, min(int(limit), 50))
+    # Feed path: shares the one ceiling rather than a private 50.
+    safe_limit = max(1, min(int(limit), settings.OPPORTUNITY_FEED_MAX_LIMIT))
     offset = _decode_page_token(page_token)
     filter_dict = _safe_json_filters(filters)
     requested_mode = "feed"

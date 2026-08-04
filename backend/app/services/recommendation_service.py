@@ -741,7 +741,11 @@ class RecommendationService:
         )
         ranked = self._diversify_ranked(ranked, per_source_cap=2)
 
-        return ranked[: max(1, min(limit, 50))], meta
+        # Third and last hardcoded ceiling on this path. The endpoint already
+        # bounds `limit` against OPPORTUNITY_FEED_MAX_LIMIT; clamping again to 50
+        # here silently discarded whatever the caller asked for, so a request for
+        # 400 returned 50 and the feed looked like the scrapers had stalled.
+        return ranked[: max(1, min(limit, settings.OPPORTUNITY_FEED_MAX_LIMIT))], meta
 
 
 recommendation_service = RecommendationService()
