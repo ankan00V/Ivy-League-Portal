@@ -2212,3 +2212,97 @@ select.input-base {
     padding: 0.65rem 0.9rem;
   }
 }
+
+/* Speciality filter: chips on desktop, dropdown on mobile.
+   Both render the same multi-select state and CSS picks one, so a selection
+   survives a viewport change instead of being reset by a remount. */
+.track-filter-select {
+  display: none;
+  position: relative;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 2rem;
+}
+
+.track-filter-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex: 1 1 auto;
+  padding: 0.7rem 1rem;
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-weight: 700;
+  box-shadow: var(--shadow-sm);
+}
+
+.track-filter-clear {
+  padding: 0.7rem 0.9rem;
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--brand-primary);
+  color: #000;
+  font-weight: 800;
+  box-shadow: var(--shadow-sm);
+}
+
+/* Sits under the menu and above everything else, so a tap outside closes it
+   without a document-level listener that could outlive the component. */
+.track-filter-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: transparent;
+  border: 0;
+}
+
+.track-filter-menu {
+  position: absolute;
+  z-index: 31;
+  top: calc(100% + 0.4rem);
+  left: 0;
+  right: 0;
+  max-height: 60vh;
+  overflow-y: auto;
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.5rem;
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-md);
+}
+
+.track-filter-option {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 0.7rem;
+  border-radius: var(--radius-sm);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.track-filter-option:hover {
+  background: var(--bg-surface-hover);
+}
+
+/* Comfortably above the 44px minimum touch target. */
+.track-filter-option input {
+  width: 1.15rem;
+  height: 1.15rem;
+  accent-color: var(--brand-accent);
+}
+
+@media (max-width: 767px) {
+  .role-track-chips {
+    display: none;
+  }
+
+  .track-filter-select {
+    display: flex;
+  }
+}

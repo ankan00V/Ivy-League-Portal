@@ -4,7 +4,7 @@ import AskAIPanel from "@/components/AskAIPanel";
 import { OpportunityCardsSkeleton } from "@/components/LoadingSkeletons";
 import React, { startTransition, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { MapPin, Calendar, Send, Bookmark, EyeOff } from "lucide-react";
+import { Bookmark, Calendar, ChevronDown, EyeOff, MapPin, Send } from "lucide-react";
 import Image from "next/image";
 import { apiUrl } from "@/lib/api";
 import { createAuthenticatedFetchInit, getAccessToken } from "@/lib/auth-session";
@@ -105,7 +105,6 @@ async function fetchJsonWithTimeout<T>(
 }
 
 export default function InternshipsJobsPage() {
-    const [activeTab, setActiveTab] = useState("All");
     const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
     const [loading, setLoading] = useState(true);
     const [notice, setNotice] = useState<string | null>(null);
@@ -128,17 +127,13 @@ export default function InternshipsJobsPage() {
     // that otherwise showed a commerce student backend roles and an engineering
     // student sales roles.
     const [roleTrack, setRoleTrack] = useState<RoleTrack | "all">("all");
-    const [trackKeyword, setTrackKeyword] = useState<string | null>(null);
+    const [trackKeywords, setTrackKeywords] = useState<string[]>([]);
+    const [filterMenuOpen, setFilterMenuOpen] = useState(false);
     const [savedOpportunityIds, setSavedOpportunityIds] = useState<Record<string, boolean>>({});
     const [hiddenOpportunityIds, setHiddenOpportunityIds] = useState<Record<string, boolean>>({});
     const [imageFallbackMap, setImageFallbackMap] = useState<Record<string, boolean>>({});
     const opportunitiesSignatureRef = useRef<string>("");
     const scraperTriggerAttemptedRef = useRef(false);
-
-    const domains = useMemo(() => {
-        const apiDomains = Array.from(new Set(opportunities.map(o => o.domain))).filter(Boolean);
-        return ["All", ...apiDomains];
-    }, [opportunities]);
 
     const triggerLiveRefresh = useEffectEvent(async () => {
         const token = getAccessToken();
@@ -253,10 +248,10 @@ export default function InternshipsJobsPage() {
         async (opportunity: Opportunity, interactionType: "impression" | "click" | "save" | "apply" | "dismiss") => {
             await logTrackedOpportunityEvent(opportunity, interactionType, {
                 surface: "internships_jobs_page",
-                activeTab,
+                activeTab: roleTrack,
             });
         },
-        [activeTab]
+        [roleTrack]
     );
 
     useEffect(() => {
@@ -293,16 +288,15 @@ export default function InternshipsJobsPage() {
     }, []);
 
     const filtered = useMemo(() => {
-        const source = (activeTab === "All"
-            ? opportunities
-            : opportunities.filter((o) => o.domain === activeTab)
-        ).filter((opportunity) => !hiddenOpportunityIds[opportunity.id]);
+        const source = opportunities.filter(
+            (opportunity) => !hiddenOpportunityIds[opportunity.id],
+        );
         const getSortTimestamp = (opportunity: Opportunity) =>
             new Date(opportunity.last_seen_at || opportunity.updated_at || opportunity.created_at || 0).getTime();
         return [...source].sort(
             (a, b) => getSortTimestamp(b) - getSortTimestamp(a)
         );
-    }, [activeTab, hiddenOpportunityIds, opportunities]);
+    }, [hiddenOpportunityIds, opportunities]);
 
     const grouped = useMemo(() => {
         const matchesKeyword = (value: string, keywords: string[]) =>
@@ -340,19 +334,21 @@ export default function InternshipsJobsPage() {
         return groups;
     }, [filtered]);
 
+    // "All roles" offers every speciality, so a student who has not picked a
+    // track can still narrow by interest.
     const trackFilters: TrackFilter[] = useMemo(
         () =>
             roleTrack === "technical"
                 ? TECHNICAL_FILTERS
                 : roleTrack === "non_technical"
                   ? NON_TECHNICAL_FILTERS
-                  : [],
+                  : [...TECHNICAL_FILTERS, ...NON_TECHNICAL_FILTERS],
         [roleTrack],
     );
 
-    const activeTrackFilter = useMemo(
-        () => trackFilters.find((filter) => filter.label === trackKeyword) ?? null,
-        [trackFilters, trackKeyword],
+    const activeTrackFilters = useMemo(
+        () => trackFilters.filter((filter) => trackKeywords.includes(filter.label)),
+        [trackFilters, trackKeywords],
     );
 
     const visibleOpportunities = useMemo(() => {
@@ -360,11 +356,15 @@ export default function InternshipsJobsPage() {
         if (roleTrack !== "all") {
             rows = rows.filter((item) => classifyRoleTrack(item) === roleTrack);
         }
-        if (activeTrackFilter) {
-            rows = rows.filter((item) => matchesTrackFilter(item, activeTrackFilter));
+        if (activeTrackFilters.length > 0) {
+            // OR across selections: picking Software and Data & AI should widen
+            // the list, not narrow it to roles that are somehow both.
+            rows = rows.filter((item) =>
+                activeTrackFilters.some((filter) => matchesTrackFilter(item, filter)),
+            );
         }
         return rows;
-    }, [grouped, roleTrack, activeTrackFilter]);
+    }, [grouped, roleTrack, activeTrackFilters]);
 
     const trackCounts = useMemo(() => {
         let technical = 0;
@@ -376,8 +376,8 @@ export default function InternshipsJobsPage() {
         return { technical, non_technical: grouped.career.length - technical, all: grouped.career.length };
     }, [grouped]);
     const trackerContext = useMemo(
-        () => ({ surface: "internships_jobs_page", activeTab }),
-        [activeTab]
+        () => ({ surface: "internships_jobs_page", activeTab: roleTrack }),
+        [roleTrack]
     );
     useOpportunityFeedImpressions(visibleOpportunities, trackerContext);
 
@@ -1087,41 +1087,11 @@ export default function InternshipsJobsPage() {
                 </header>
 
                 {/* Brutalist Navigation Filters */}
-                <div style={{
-                    display: 'flex',
-                    gap: '1rem',
-                    marginBottom: '2.5rem',
-                    overflowX: 'auto',
-                    paddingBottom: '1rem',
-                    /* Hide scrollbar for cleaner look */
-                    scrollbarWidth: 'none',
-                    msOverflowStyle: 'none'
-                }}>
-                    {domains.map(domain => (
-                        <button
-                            key={domain}
-                            onClick={() => setActiveTab(domain)}
-                            style={{
-                                padding: '0.75rem 1.75rem',
-                                borderRadius: 'var(--radius-sm)',
-                                fontWeight: 700,
-                                fontSize: '1rem',
-                                whiteSpace: 'nowrap',
-                                transition: 'var(--bounce-transition)',
-                                background: activeTab === domain ? 'var(--brand-primary)' : 'var(--bg-surface)',
-                                color: activeTab === domain ? '#000000' : 'var(--text-primary)',
-                                border: '2px solid var(--border-subtle)',
-                                boxShadow: activeTab === domain ? 'var(--shadow-sm)' : 'var(--shadow-md)',
-                                transform: activeTab === domain ? 'translate(2px, 2px)' : 'none'
-                            }}
-                        >
-                            {domain}
-                        </button>
-                    ))}
-                </div>
 
-                {/* Track sub-tabs. Counts are shown so an empty track is
-                    obviously empty rather than looking broken. */}
+                {/* The only top-level filter on this page. The old domain
+                    chip row was removed: it was auto-derived from scraped data,
+                    so it surfaced values like "cloudflare.com" as a filter, and
+                    it sat above these tabs competing for the same attention. */}
                 <div className="role-track-tabs" role="tablist" aria-label="Role track">
                     {([
                         { key: "all" as const, label: "All roles" },
@@ -1136,8 +1106,9 @@ export default function InternshipsJobsPage() {
                             className={`role-track-tab ${roleTrack === tab.key ? "active" : ""}`}
                             onClick={() => {
                                 setRoleTrack(tab.key);
-                                // A chip from the other track would match nothing.
-                                setTrackKeyword(null);
+                                // Selections from the other track would match nothing.
+                                setTrackKeywords([]);
+                                setFilterMenuOpen(false);
                             }}
                         >
                             {tab.label}
@@ -1146,27 +1117,112 @@ export default function InternshipsJobsPage() {
                     ))}
                 </div>
 
+                {/* Speciality filter, two presentations of the same
+                    multi-select state. Chips on desktop, where the horizontal
+                    room exists and one tap is faster than opening a menu. The
+                    dropdown takes over under 768px, where eight-plus pills wrap
+                    into several rows and push the listings off screen. CSS
+                    decides which is visible, so the selection survives a resize. */}
                 {trackFilters.length > 0 && (
                     <div className="role-track-chips" aria-label="Refine by speciality">
                         <button
                             type="button"
-                            className={`role-track-chip ${trackKeyword === null ? "active" : ""}`}
-                            onClick={() => setTrackKeyword(null)}
+                            className={`role-track-chip ${trackKeywords.length === 0 ? "active" : ""}`}
+                            onClick={() => setTrackKeywords([])}
                         >
-                            All {roleTrack === "technical" ? "technical" : "non-technical"}
+                            {roleTrack === "technical"
+                                ? "All technical"
+                                : roleTrack === "non_technical"
+                                  ? "All non-technical"
+                                  : "All specialities"}
                         </button>
-                        {trackFilters.map((filter) => (
+                        {trackFilters.map((filter) => {
+                            const checked = trackKeywords.includes(filter.label);
+                            return (
+                                <button
+                                    key={filter.label}
+                                    type="button"
+                                    aria-pressed={checked}
+                                    className={`role-track-chip ${checked ? "active" : ""}`}
+                                    onClick={() =>
+                                        setTrackKeywords((current) =>
+                                            current.includes(filter.label)
+                                                ? current.filter((item) => item !== filter.label)
+                                                : [...current, filter.label],
+                                        )
+                                    }
+                                >
+                                    {filter.label}
+                                </button>
+                            );
+                        })}
+                    </div>
+                )}
+
+                {/* Speciality filter. A dropdown rather than another chip row:
+                    a second row of pills read as a peer of the track tabs and
+                    was easy to mistake for one. Multi-select, because a student
+                    is rarely interested in exactly one speciality. */}
+                {trackFilters.length > 0 && (
+                    <div className="track-filter-select">
+                        <button
+                            type="button"
+                            className="track-filter-trigger"
+                            aria-expanded={filterMenuOpen}
+                            aria-haspopup="listbox"
+                            onClick={() => setFilterMenuOpen((open) => !open)}
+                        >
+                            <span>
+                                {trackKeywords.length === 0
+                                    ? "Filter by speciality"
+                                    : `${trackKeywords.length} speciality${trackKeywords.length > 1 ? "s" : ""} selected`}
+                            </span>
+                            <ChevronDown size={16} aria-hidden="true" />
+                        </button>
+
+                        {trackKeywords.length > 0 && (
                             <button
-                                key={filter.label}
                                 type="button"
-                                className={`role-track-chip ${trackKeyword === filter.label ? "active" : ""}`}
-                                onClick={() =>
-                                    setTrackKeyword((current) => (current === filter.label ? null : filter.label))
-                                }
+                                className="track-filter-clear"
+                                onClick={() => setTrackKeywords([])}
                             >
-                                {filter.label}
+                                Clear
                             </button>
-                        ))}
+                        )}
+
+                        {filterMenuOpen && (
+                            <>
+                                {/* Click-away target, so the menu closes without
+                                    a document-level listener. */}
+                                <button
+                                    type="button"
+                                    className="track-filter-backdrop"
+                                    aria-label="Close speciality filter"
+                                    onClick={() => setFilterMenuOpen(false)}
+                                />
+                                <div className="track-filter-menu" role="listbox" aria-multiselectable="true">
+                                    {trackFilters.map((filter) => {
+                                        const checked = trackKeywords.includes(filter.label);
+                                        return (
+                                            <label key={filter.label} className="track-filter-option">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={checked}
+                                                    onChange={() =>
+                                                        setTrackKeywords((current) =>
+                                                            current.includes(filter.label)
+                                                                ? current.filter((item) => item !== filter.label)
+                                                                : [...current, filter.label],
+                                                        )
+                                                    }
+                                                />
+                                                <span>{filter.label}</span>
+                                            </label>
+                                        );
+                                    })}
+                                </div>
+                            </>
+                        )}
                     </div>
                 )}
 
@@ -1198,8 +1254,8 @@ export default function InternshipsJobsPage() {
                         {!visibleOpportunities.length && (
                             <div className="card-panel" style={{ padding: "1.5rem" }}>
                                 <strong>
-                                    {trackKeyword
-                                        ? `No ${trackKeyword} roles right now.`
+                                    {trackKeywords.length > 0
+                                        ? `No ${trackKeywords.join(", ")} roles right now.`
                                         : roleTrack === "all"
                                           ? "No internships or jobs match this filter right now."
                                           : `No ${roleTrack === "technical" ? "technical" : "non-technical"} roles match this filter right now.`}

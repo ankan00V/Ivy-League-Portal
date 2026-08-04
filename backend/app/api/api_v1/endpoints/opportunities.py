@@ -1355,7 +1355,9 @@ async def get_personalized_recommendations(
     ranking_mode: baseline | semantic | ml | ab
     """
     started_at = time.perf_counter()
-    safe_limit = max(1, min(limit, 50))
+    # Was a hardcoded 50 against a 600-row career feed, so the personalised view
+    # showed a fraction of what the plain list did and the two disagreed.
+    safe_limit = max(1, min(limit, settings.OPPORTUNITY_FEED_MAX_LIMIT))
     requested_mode = ranking_mode
     try:
         profile = await _get_or_create_profile(current_user.id)
