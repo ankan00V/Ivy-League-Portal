@@ -38,6 +38,21 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+
+def get_collection(document: Any) -> Any:
+    """Resolve the raw collection across Beanie versions.
+
+    Beanie 2.x renamed `get_motor_collection` to `get_pymongo_collection`. The same
+    two-step lookup appears in `job_runner`, `vector_service` and the bootstrap
+    scripts; this is the copy the privacy paths use.
+    """
+    for name in ("get_motor_collection", "get_pymongo_collection"):
+        getter = getattr(document, name, None)
+        if callable(getter):
+            return getter()
+    raise AttributeError(f"No collection getter found for {document.__name__}")
+
+
 #: Namespace so a pseudonym from this pipeline can never collide with one produced
 #: elsewhere from the same key.
 _PSEUDONYM_NAMESPACE = b"vidyaverse.warehouse.user.v1"
@@ -136,7 +151,7 @@ async def purge_aged_telemetry(*, apply: bool = False, now: datetime | None = No
     )
 
     for document, redact_fields in targets:
-        collection = document.get_motor_collection()
+        collection = get_collection(document)
         name = document.Settings.name
         query = {"created_at": {"$lt": cutoff}, "user_id": {"$ne": None}}
 

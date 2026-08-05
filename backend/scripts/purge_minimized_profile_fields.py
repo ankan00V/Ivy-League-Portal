@@ -35,6 +35,7 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from app.bootstrap import init_database  # noqa: E402
 from app.models.profile import Profile  # noqa: E402
+from app.services.telemetry_privacy import get_collection  # noqa: E402
 
 #: Exactly the fields removed from the model. Kept as a literal list rather than
 #: derived from the model, because "fields the model no longer has" is unbounded and
@@ -71,7 +72,7 @@ async def main() -> int:
 
     client = await init_database()
     try:
-        collection = Profile.get_motor_collection()
+        collection = get_collection(Profile)
 
         counts = {
             field: await collection.count_documents({field: {"$exists": True}})

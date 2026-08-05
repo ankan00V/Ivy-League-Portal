@@ -208,6 +208,58 @@ class TestErasurePolicy:
                 "randomly generated so it cannot be reversed back to the user."
             )
 
+    def test_collection_lookup_survives_the_beanie_rename(self):
+        """Beanie 2.x renamed get_motor_collection -> get_pymongo_collection.
+
+        Found by running the purge script against Atlas: every rule raised
+        AttributeError, every rule was caught and "skipped" with a warning, and
+        erase_account returned a success receipt having deleted nothing.
+        """
+        from app.services.telemetry_privacy import get_collection
+
+        from app.models.profile import Profile
+
+        class OldBeanie:
+            __name__ = "OldBeanie"
+
+            @staticmethod
+            def get_motor_collection():
+                return "motor"
+
+        class NewBeanie:
+            __name__ = "NewBeanie"
+
+            @staticmethod
+            def get_pymongo_collection():
+                return "pymongo"
+
+        assert get_collection(OldBeanie) == "motor"
+        assert get_collection(NewBeanie) == "pymongo"
+
+        # And the resolver works against a real registered document class.
+        assert any(
+            hasattr(Profile, name)
+            for name in ("get_motor_collection", "get_pymongo_collection")
+        )
+
+    def test_an_unreachable_collection_aborts_rather_than_being_skipped(self):
+        """A deletion that reports success without deleting is the worst outcome.
+
+        `_apply_rule` used to swallow the collection lookup failure and `return`,
+        which is how the rename above turned into a no-op erasure. The lookup must
+        now propagate.
+        """
+        from app.services import account_deletion_service
+
+        source = inspect.getsource(account_deletion_service._apply_rule)
+        lookup_at = source.index("get_collection(rule.document)")
+        preceding = source[:lookup_at]
+        # No try: may open between the start of the function and the lookup.
+        assert "try:" not in preceding, (
+            "_apply_rule must not wrap the collection lookup in a try/except that "
+            "continues; a skipped collection means data survives a deletion."
+        )
+
     def test_user_row_is_deleted_after_the_dependent_rows(self):
         """Order matters: a crash must leave a retryable account, not orphaned data."""
         from app.services import account_deletion_service

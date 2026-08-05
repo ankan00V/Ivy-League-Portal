@@ -71,6 +71,7 @@ from app.models.recommendation_funnel import (
 )
 from app.models.user import User
 from app.models.user_journey import UserJourney
+from app.services.telemetry_privacy import get_collection
 
 logger = logging.getLogger(__name__)
 
@@ -330,6 +331,8 @@ def _collection_name(document: type[Document]) -> str:
     return str(getattr(settings, "name", document.__name__))
 
 
+
+
 async def _apply_rule(
     rule: ErasureRule,
     *,
@@ -347,11 +350,15 @@ async def _apply_rule(
     else:
         match_value = str(user_id) if rule.user_id_as_str else user_id
 
-    try:
-        motor_collection = rule.document.get_motor_collection()
-    except Exception as exc:  # collection not initialised (unit tests, partial boot)
-        logger.warning("Skipping %s during erasure; collection unavailable: %s", collection, exc)
-        return
+    # Deliberately NOT wrapped in a try/except that continues.
+    #
+    # It was, and that was a real defect: Beanie 2.x renamed `get_motor_collection`,
+    # so every rule raised AttributeError, every rule was "skipped" with a warning,
+    # and `erase_account` returned a success receipt having deleted nothing. A
+    # deletion endpoint that reports success without deleting is precisely the
+    # silent-failure shape this whole change set exists to remove, so an
+    # unreachable collection now aborts the erasure loudly and the caller retries.
+    motor_collection = get_collection(rule.document)
 
     # Each user field is handled independently: a row can reference the departing
     # user through more than one of them (an employer who posted an opportunity and
