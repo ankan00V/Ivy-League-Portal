@@ -359,10 +359,26 @@ export default function InternshipsJobsPage() {
         [trackFilters, trackKeywords],
     );
 
+    /* Classify once per listing, not once per use.
+       classifyRoleTrack scans ~200 keywords across descriptions averaging 850
+       characters. Running it for the tab counts and again for the filter cost
+       ~84ms per render over 400 rows on a developer laptop, which is several
+       hundred milliseconds of blocked main thread on the mid-range Android this
+       is actually built for - every time a chip is tapped. This map is computed
+       only when the underlying listings change; switching tracks or specialities
+       then costs a lookup. */
+    const trackByOpportunityId = useMemo(() => {
+        const map = new Map<string, RoleTrack>();
+        for (const item of grouped.career) {
+            map.set(item.id, classifyRoleTrack(item));
+        }
+        return map;
+    }, [grouped]);
+
     const visibleOpportunities = useMemo(() => {
         let rows = grouped.career;
         if (roleTrack !== "all") {
-            rows = rows.filter((item) => classifyRoleTrack(item) === roleTrack);
+            rows = rows.filter((item) => trackByOpportunityId.get(item.id) === roleTrack);
         }
         if (activeTrackFilters.length > 0) {
             // OR across selections: picking Software and Data & AI should widen
@@ -372,17 +388,22 @@ export default function InternshipsJobsPage() {
             );
         }
         return rows;
-    }, [grouped, roleTrack, activeTrackFilters]);
+    }, [grouped, roleTrack, activeTrackFilters, trackByOpportunityId]);
 
     const trackCounts = useMemo(() => {
         let technical = 0;
-        for (const item of grouped.career) {
-            if (classifyRoleTrack(item) === "technical") {
+        for (const track of trackByOpportunityId.values()) {
+            if (track === "technical") {
                 technical += 1;
             }
         }
-        return { technical, non_technical: grouped.career.length - technical, all: grouped.career.length };
-    }, [grouped]);
+        return {
+            technical,
+            non_technical: trackByOpportunityId.size - technical,
+            all: trackByOpportunityId.size,
+        };
+    }, [trackByOpportunityId]);
+
     const trackerContext = useMemo(
         () => ({ surface: "internships_jobs_page", activeTab: roleTrack }),
         [roleTrack]

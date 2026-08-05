@@ -36,6 +36,52 @@ is_vidyaverse_frontend() {
   /usr/bin/curl -fsS -o /dev/null "${url}${stylesheet}" 2>/dev/null
 }
 
+# is_vidyaverse_frontend answers "is something alive on this port", which is not
+# the same question as "is it running the code that is currently on disk". Every
+# frontend fix in this repo compiles into .next, but scripts/start-standalone.mjs
+# copies .next/static into the standalone tree once, at boot, and the server
+# resolves its asset root at the same moment. A server left running across a
+# rebuild therefore keeps serving the previous build and returns 404 for every
+# asset the new one emitted - which presents as "the fix did nothing" rather than
+# as "the server is stale", and has cost several rounds of debugging the wrong
+# layer. The two checks below make the reuse decision depend on freshness.
+
+frontend_build_is_stale() {
+  local stamp="${FRONTEND_DIR}/.next/BUILD_ID"
+  # No build at all counts as stale so the build step below runs.
+  [[ -f "${stamp}" ]] || return 0
+  local targets=() candidate newer
+  for candidate in src public next.config.ts next.config.mjs next.config.js package.json tsconfig.json; do
+    [[ -e "${FRONTEND_DIR}/${candidate}" ]] && targets+=("${FRONTEND_DIR}/${candidate}")
+  done
+  [[ ${#targets[@]} -gt 0 ]] || return 1
+  newer="$(find "${targets[@]}" -type f -newer "${stamp}" -print -quit 2>/dev/null || true)"
+  [[ -n "${newer}" ]]
+}
+
+frontend_serves_current_build() {
+  local url="${1%/}" build_id
+  build_id="$(cat "${FRONTEND_DIR}/.next/BUILD_ID" 2>/dev/null || true)"
+  [[ -n "${build_id}" ]] || return 1
+  # This path embeds the build id, so it is the cheapest way to tell a server
+  # running the current build apart from one running any older build.
+  /usr/bin/curl -fsS -o /dev/null "${url}/_next/static/${build_id}/_buildManifest.js" 2>/dev/null
+}
+
+stop_frontend() {
+  screen -S vidyaverse-frontend -X quit >/dev/null 2>&1 || true
+  local pids attempt
+  pids="$(lsof -nP -iTCP:"${FRONTEND_PORT}" -sTCP:LISTEN -t 2>/dev/null || true)"
+  [[ -n "${pids}" ]] || return 0
+  kill ${pids} >/dev/null 2>&1 || true
+  for attempt in $(seq 1 10); do
+    lsof -nP -iTCP:"${FRONTEND_PORT}" -sTCP:LISTEN -t >/dev/null 2>&1 || return 0
+    sleep 1
+  done
+  lsof -nP -iTCP:"${FRONTEND_PORT}" -sTCP:LISTEN -t 2>/dev/null | xargs kill -9 >/dev/null 2>&1 || true
+  sleep 1
+}
+
 BACKEND_REUSED=0
 if lsof -nP -iTCP:"${BACKEND_PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
   if is_vidyaverse_backend "http://127.0.0.1:${BACKEND_PORT}"; then
@@ -50,8 +96,16 @@ fi
 FRONTEND_REUSED=0
 if lsof -nP -iTCP:"${FRONTEND_PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
   if is_vidyaverse_frontend "http://127.0.0.1:${FRONTEND_PORT}"; then
-    FRONTEND_REUSED=1
-    echo "Reusing healthy frontend and static assets already listening on ${FRONTEND_PORT}."
+    if frontend_build_is_stale; then
+      echo "Frontend sources changed since the last build; rebuilding and restarting it."
+      stop_frontend
+    elif ! frontend_serves_current_build "http://127.0.0.1:${FRONTEND_PORT}"; then
+      echo "Frontend on ${FRONTEND_PORT} is serving an older build; restarting it."
+      stop_frontend
+    else
+      FRONTEND_REUSED=1
+      echo "Reusing healthy frontend already serving the current build on ${FRONTEND_PORT}."
+    fi
   else
     echo "Frontend port ${FRONTEND_PORT} is already in use, but its compiled assets are not healthy. Stop it first or set FRONTEND_PORT."
     exit 1
@@ -141,8 +195,8 @@ else
   rm -f "${LOG_DIR}/backend.pid"
 fi
 
-if [[ ! -f "${FRONTEND_DIR}/.next/standalone/frontend/server.js" ]]; then
-  echo "Frontend production bundle missing; running npm build first."
+if [[ ! -f "${FRONTEND_DIR}/.next/standalone/frontend/server.js" ]] || frontend_build_is_stale; then
+  echo "Frontend production bundle missing or out of date; running npm build first."
   (
     cd "${FRONTEND_DIR}"
     npm run build
