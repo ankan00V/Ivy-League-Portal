@@ -390,6 +390,20 @@ class Settings(BaseSettings):
     RAG_ONLINE_MIN_POSITIVE_FEEDBACK_RATE: float = 0.55
     RAG_ONLINE_MIN_REQUESTS: int = 50
 
+    # Privacy controls.
+    #
+    # TELEMETRY_RAW_RETENTION_DAYS: how long raw interaction and serving-telemetry
+    # rows keep their link to a student. Past this, `purge_aged_telemetry` swaps the
+    # user id for a derived pseudonym and clears the free-text query; the
+    # measurement itself is never deleted. 0 disables retention entirely.
+    #
+    # ANALYTICS_WAREHOUSE_PSEUDONYMIZE_USERS: emit keyed pseudonyms instead of real
+    # user ids in warehouse exports. Defaults on; turning it off means the
+    # ClickHouse copy carries identifiers that resolve against the app database.
+    TELEMETRY_RAW_RETENTION_DAYS: int = 400
+    ANALYTICS_WAREHOUSE_PSEUDONYMIZE_USERS: bool = True
+    ANALYTICS_WAREHOUSE_REQUIRE_CONSENT: bool = True
+
     # Analytics warehouse / feature-store controls
     ANALYTICS_WAREHOUSE_ENABLED: bool = True
     ANALYTICS_LOOKBACK_DAYS_DEFAULT: int = 30

@@ -1446,6 +1446,104 @@ select.input-base {
   color: var(--text-primary);
 }
 
+/* Privacy controls.
+   Only tokens defined in :root above are used here — an undefined custom property
+   invalidates the whole declaration, which is how the skill picker once rendered
+   with no border and no shadow at all. */
+
+.profile-consent-note,
+.profile-address-note {
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+  margin: 0 0 0.35rem;
+}
+
+.profile-consent-note a {
+  color: var(--text-primary);
+  text-decoration: underline;
+}
+
+.profile-danger-zone {
+  margin-top: 2.5rem;
+  padding: 1.25rem;
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-sm);
+  display: grid;
+  gap: 0.75rem;
+}
+
+.profile-danger-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text-primary);
+}
+
+.profile-danger-head h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.profile-danger-zone p {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.profile-danger-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.profile-danger-label code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85em;
+}
+
+.profile-danger-error {
+  color: var(--accent-red, #dc2626);
+  font-weight: 600;
+}
+
+.profile-danger-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.profile-danger-button {
+  padding: 0.55rem 1.1rem;
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: #dc2626;
+  color: #ffffff;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+}
+
+.profile-danger-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.profile-danger-cancel {
+  padding: 0.55rem 1.1rem;
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-weight: 600;
+  cursor: pointer;
+}
+
 .profile-pill-row {
   display: flex;
   flex-wrap: wrap;

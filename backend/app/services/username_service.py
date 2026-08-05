@@ -9,7 +9,6 @@ from app.models.profile import Profile
 from app.models.user import User
 
 _USERNAME_SANITIZER = re.compile(r"[^a-z0-9]+")
-_YEAR_CANDIDATE = re.compile(r"(19\d{2}|20\d{2})")
 _COOL_SUFFIXES = (
     "techie",
     "builder",
@@ -24,18 +23,6 @@ _COOL_SUFFIXES = (
 
 def _normalize_username(value: str) -> str:
     return _USERNAME_SANITIZER.sub("", (value or "").strip().lower())
-
-
-def _extract_birth_year_suffix(profile: Optional[Profile]) -> Optional[str]:
-    if profile is None:
-        return None
-    text = (profile.date_of_birth or "").strip()
-    if not text:
-        return None
-    matches = _YEAR_CANDIDATE.findall(text)
-    if not matches:
-        return None
-    return str(matches[-1])[-2:]
 
 
 def _username_root(user: User, profile: Optional[Profile]) -> str:
@@ -65,7 +52,11 @@ async def _username_available(username: str, user_id: str) -> bool:
 async def _build_unique_username(user: User, profile: Optional[Profile]) -> str:
     seed = hashlib.sha1(str(user.id).encode("utf-8")).hexdigest()
     suffix_word = _COOL_SUFFIXES[int(seed[:2], 16) % len(_COOL_SUFFIXES)]
-    year_suffix = _extract_birth_year_suffix(profile) or f"{int(seed[2:4], 16) % 100:02d}"
+    # Derived from the user id hash, never from the profile. This used to prefer the
+    # last two digits of the student's date of birth, which published their birth
+    # year in a handle shown on the public leaderboard. The hash gives the same
+    # collision spread without encoding anything about the person.
+    year_suffix = f"{int(seed[2:4], 16) % 100:02d}"
     root = _username_root(user, profile)
     base = _normalize_username(f"{root}{suffix_word}")[:18] or "bigtechie"
 

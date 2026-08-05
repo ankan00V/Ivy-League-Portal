@@ -43,6 +43,13 @@ class Profile(Document):
     prefer_wfh: bool = False
     consent_data_processing: bool = False
     consent_updates: bool = False
+    # When consent was granted, which policy text it was granted against, and when
+    # it was withdrawn. Without these the flag is unauditable: a bare boolean cannot
+    # say whether a student agreed to the policy we publish today or to something
+    # replaced since. See `services/privacy_consent_service.py`.
+    consent_data_processing_at: Optional[datetime] = None
+    consent_policy_version: Optional[str] = None
+    consent_withdrawn_at: Optional[datetime] = None
     onboarding_step: str = "identity"
     onboarding_completed: bool = False
     onboarding_completed_at: Optional[datetime] = None
@@ -57,17 +64,20 @@ class Profile(Document):
     certificates: Optional[str] = None
     projects: Optional[str] = None
     responsibilities: Optional[str] = None
-    gender: Optional[str] = None
-    pronouns: Optional[str] = None
-    date_of_birth: Optional[str] = None
-    current_address_line1: Optional[str] = None
-    current_address_landmark: Optional[str] = None
+    # Data minimization, 2026-08-05. Removed: gender, pronouns, date_of_birth,
+    # current/permanent_address_line1, _landmark and _pincode. Nothing read any of
+    # them — they were collected, stored and never used, which is breach liability
+    # with no product return. A pincode plus a college name plus a date of birth
+    # de-anonymizes a student outright.
+    #
+    # `*_region` stays because it is a real ranking input: see
+    # `services/personalization/feature_builder.py::_profile_location_tokens`.
+    #
+    # Legacy documents may still carry the removed keys; Pydantic ignores unknown
+    # fields on load, so they are invisible to the app but still resident in Mongo
+    # until `scripts/purge_minimized_profile_fields.py` is run against a database.
     current_address_region: Optional[str] = None
-    current_address_pincode: Optional[str] = None
-    permanent_address_line1: Optional[str] = None
-    permanent_address_landmark: Optional[str] = None
     permanent_address_region: Optional[str] = None
-    permanent_address_pincode: Optional[str] = None
     hobbies: list[str] = Field(default_factory=list)
     social_links: dict[str, str] = Field(default_factory=dict)
     resume_url: Optional[str] = None

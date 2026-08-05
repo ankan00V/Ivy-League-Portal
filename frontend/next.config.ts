@@ -13,6 +13,12 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   output: 'standalone',
+  // Lets a verification build write somewhere other than the `.next` a running
+  // server is serving from. Rebuilding in place swaps `.next/static` for new
+  // content hashes while the live server keeps emitting HTML that references the
+  // old ones, so every stylesheet 500s and the page renders unstyled. Set
+  // NEXT_DIST_DIR to build without disturbing a running instance.
+  distDir: process.env.NEXT_DIST_DIR || ".next",
   outputFileTracingRoot: path.join(__dirname, ".."),
   skipTrailingSlashRedirect: true,
   allowedDevOrigins: ["127.0.0.1", "localhost", "web.test"],

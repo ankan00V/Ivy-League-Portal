@@ -15,6 +15,9 @@
 
 # next.js
 /.next/
+# Verification builds via NEXT_DIST_DIR, so a build can run without swapping the
+# .next a live server is serving from.
+/.next-*/
 /out/
 
 # production

@@ -15,18 +15,11 @@ type UseProfileDataArgs<TProfile, TUpdatePayload> = {
   deriveUniversitySelection: (value: string) => string;
   hasText: (value: string) => boolean;
   getCollegeName: (profile: TProfile) => string;
-  getCurrentAddress: (profile: TProfile) => {
-    line1: string;
-    landmark: string;
-    region: string;
-    pincode: string;
-  };
-  getPermanentAddress: (profile: TProfile) => {
-    line1: string;
-    landmark: string;
-    region: string;
-    pincode: string;
-  };
+  // Region only. Street line, landmark and pincode were removed in the 2026-08-05
+  // data-minimization pass: nothing read them, and a pincode alongside a college
+  // name is enough to identify a student outright.
+  getCurrentAddress: (profile: TProfile) => { region: string };
+  getPermanentAddress: (profile: TProfile) => { region: string };
   getResumeFilename: (profile: TProfile) => string;
   setSelectedUniversity: Dispatch<SetStateAction<string>>;
   setCopyCurrentAddress: Dispatch<SetStateAction<boolean>>;
@@ -168,11 +161,7 @@ export function useProfileData<TProfile, TUpdatePayload>({
             const currentAddress = getCurrentAddress(nextProfile);
             const permanentAddress = getPermanentAddress(nextProfile);
             setCopyCurrentAddress(
-              hasText(currentAddress.line1) &&
-                currentAddress.line1 === permanentAddress.line1 &&
-                currentAddress.landmark === permanentAddress.landmark &&
-                currentAddress.region === permanentAddress.region &&
-                currentAddress.pincode === permanentAddress.pincode,
+              hasText(currentAddress.region) && currentAddress.region === permanentAddress.region,
             );
 
             hasFreshProfile = true;

@@ -15,6 +15,8 @@ from app.models.feature_store_row import FeatureStoreRow
 from app.models.opportunity_interaction import OpportunityInteraction
 from app.models.ranking_request_telemetry import RankingRequestTelemetry
 from app.models.warehouse_export_run import WarehouseExportRun
+from app.services.privacy_consent_service import consented_user_ids, filter_rows_by_consent
+from app.services.telemetry_privacy import pseudonymize_rows
 
 
 class WarehouseExportService:
@@ -161,6 +163,38 @@ class WarehouseExportService:
                 AnalyticsCohortAggregate.traffic_type == traffic_type
             ).to_list()]
 
+            # Privacy pass, before anything is written to disk.
+            #
+            # 1. Consent gate. `consent_data_processing` used to be a checkbox that
+            #    changed nothing. Analytics is the optional processing it governs, so
+            #    rows belonging to students without active consent leave here.
+            # 2. Pseudonymization. The warehouse copy carries a keyed HMAC of the
+            #    user id, not the id, so the ClickHouse/BI side cannot resolve rows
+            #    back against the application database.
+            #
+            # Aggregate tables (daily/funnel/cohort) hold counts rather than user
+            # ids and are unaffected by both.
+            privacy: dict[str, Any] = {"consent_filtered": False, "pseudonymized": False}
+
+            if settings.ANALYTICS_WAREHOUSE_REQUIRE_CONSENT:
+                permitted = await consented_user_ids()
+                before = len(interactions) + len(telemetry) + len(feature_rows)
+                interactions = filter_rows_by_consent(interactions, permitted_user_ids=permitted)
+                telemetry = filter_rows_by_consent(telemetry, permitted_user_ids=permitted)
+                feature_rows = filter_rows_by_consent(feature_rows, permitted_user_ids=permitted)
+                after = len(interactions) + len(telemetry) + len(feature_rows)
+                privacy.update(
+                    consent_filtered=True,
+                    consented_users=len(permitted),
+                    rows_dropped_without_consent=before - after,
+                )
+
+            if settings.ANALYTICS_WAREHOUSE_PSEUDONYMIZE_USERS:
+                interactions = pseudonymize_rows(interactions)
+                telemetry = pseudonymize_rows(telemetry)
+                feature_rows = pseudonymize_rows(feature_rows)
+                privacy["pseudonymized"] = True
+
             raw_files = {
                 "opportunity_interactions": self._write_jsonl(raw_root / "opportunity_interactions.jsonl", interactions),
                 "ranking_request_telemetry": self._write_jsonl(raw_root / "ranking_request_telemetry.jsonl", telemetry),
@@ -205,6 +239,7 @@ class WarehouseExportService:
                     "export_root": str(root),
                     "clickhouse_enabled": bool(settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED),
                     "clickhouse_tables": clickhouse_tables,
+                    "privacy": privacy,
                 },
                 created_at=utc_now(),
             )

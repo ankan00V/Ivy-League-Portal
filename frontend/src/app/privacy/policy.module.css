@@ -1,0 +1,116 @@
+/* Shared by /privacy and /terms.
+ *
+ * Only tokens that are actually defined in globals.css are referenced here.
+ * An undefined custom property invalidates the whole declaration silently — that
+ * is how the skill picker once shipped with no border and no shadow at all. */
+
+.page {
+  min-height: 100vh;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  padding: 3rem 1.25rem 5rem;
+}
+
+.document {
+  max-width: 46rem;
+  margin: 0 auto;
+  background: var(--bg-surface);
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  padding: 2.5rem;
+  font-family: var(--font-sans);
+  line-height: 1.7;
+}
+
+.header {
+  border-bottom: 2px solid var(--border-subtle);
+  padding-bottom: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.back {
+  display: inline-block;
+  margin-bottom: 1.25rem;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+.back:hover {
+  color: var(--text-primary);
+  text-decoration: underline;
+}
+
+.document h1 {
+  font-family: var(--font-serif);
+  font-size: clamp(2rem, 5vw, 2.75rem);
+  line-height: 1.15;
+  margin: 0 0 0.75rem;
+}
+
+.version {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.document section {
+  margin-bottom: 2.5rem;
+}
+
+.document h2 {
+  font-family: var(--font-serif);
+  font-size: 1.5rem;
+  margin: 0 0 0.85rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.document h3 {
+  font-size: 1.05rem;
+  font-weight: 700;
+  margin: 1.5rem 0 0.5rem;
+}
+
+.document p {
+  margin: 0 0 1rem;
+  color: var(--text-secondary);
+}
+
+.document ul {
+  margin: 0 0 1rem;
+  padding-left: 1.25rem;
+  color: var(--text-secondary);
+}
+
+.document li {
+  margin-bottom: 0.5rem;
+}
+
+.document strong {
+  color: var(--text-primary);
+}
+
+.document a {
+  color: var(--text-primary);
+  text-decoration: underline;
+}
+
+.footnote {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 1rem;
+  margin-top: 2rem;
+}
+
+@media (max-width: 640px) {
+  .page {
+    padding: 1.5rem 0.75rem 3rem;
+  }
+
+  .document {
+    padding: 1.5rem;
+  }
+}
