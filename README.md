@@ -1,6 +1,6 @@
 # VidyaVerse
 
-> AI-powered opportunity intelligence platform that helps students discover, prioritize, and act on internships, research roles, scholarships, and hackathons.
+> AI-powered opportunity intelligence platform that helps students discover, prioritize, and act on internships, jobs, hackathons, competitions, workshops, and conferences.
 
 **Last updated:** August 03, 2026
 **Status:** Active build, production-readiness gates enabled
