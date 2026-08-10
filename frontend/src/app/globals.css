@@ -2275,6 +2275,63 @@ select.input-base {
   text-align: center;
 }
 
+/* Placement filter: India / Remote / Hybrid / International.
+   Visually subordinate to .role-track-tab — smaller, pill-shaped, lighter shadow —
+   because the role track is the primary split and two equally loud tab rows stacked
+   on each other read as one confusing control. Only tokens defined in :root are
+   used; an undefined custom property silently invalidates the whole declaration. */
+.placement-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1.25rem;
+}
+
+.placement-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.42rem 0.95rem;
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: var(--bounce-transition);
+}
+
+.placement-tab:hover {
+  background: var(--bg-surface-hover);
+}
+
+.placement-tab.active {
+  background: var(--brand-primary);
+  color: #000;
+  box-shadow: none;
+  transform: translate(1px, 1px);
+}
+
+/* Same reasoning as .role-track-count: a visible zero tells a student the pill is
+   genuinely empty rather than broken. These counts overlap across pills by design,
+   so they do not sum to the All count. */
+.placement-count {
+  min-width: 1.4rem;
+  padding: 0.02rem 0.35rem;
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  background: var(--bg-base);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-align: center;
+}
+
+.placement-tab.active .placement-count {
+  background: var(--bg-surface);
+}
+
 .role-track-chips {
   display: flex;
   flex-wrap: wrap;

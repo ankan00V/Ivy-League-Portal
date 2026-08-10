@@ -13,7 +13,7 @@ from beanie import PydanticObjectId
 from beanie.exceptions import CollectionWasNotInitialized
 from beanie.odm.operators.find.comparison import In
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from app.api.deps import get_current_active_user, get_current_admin_user
 from app.core.cache import cache_get_json, cache_key, cache_set_json
@@ -28,6 +28,7 @@ from app.models.rag_feedback_event import RAGFeedbackEvent
 from app.models.traffic import TrafficType
 from app.models.user import User
 from app.schemas.rag import RAGAskResponse
+from app.services.opportunity_placement import classify_placement
 from app.services.ai_engine import ai_system
 from app.services.cold_start import ColdStartDecision, cold_start_profile_builder
 from app.services.evaluation_service import evaluation_service
@@ -93,6 +94,31 @@ class OpportunityResponse(OpportunityCreate):
     created_at: datetime
     updated_at: Optional[datetime] = None
     last_seen_at: Optional[datetime] = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def feed_categories(self) -> list[str]:
+        """Placement pills for the feed: india, remote, hybrid, international.
+
+        Computed at serialization rather than filtered in the query, for two
+        reasons. The corpus cannot answer the question in a WHERE clause —
+        `work_mode` is null on 73% of rows, so the signal has to be recovered from
+        location and body text. And the read path is mid-migration between Mongo
+        and Postgres (`OPPORTUNITY_READ_BACKEND`), so a Python classifier gives
+        both backends identical answers instead of two dialects of the same regex
+        drifting apart.
+
+        Non-exclusive by design: a remote internship in Bengaluru returns both
+        `india` and `remote`. May be empty when the listing carries no usable
+        signal, in which case it appears only under "All".
+        """
+        return classify_placement(
+            location=self.location,
+            work_mode=self.work_mode,
+            title=self.title,
+            description=self.description,
+            source=self.source,
+        )
 
 
 class RecommendedOpportunityResponse(OpportunityResponse):
@@ -456,7 +482,11 @@ async def _load_active_opportunities(
     # looked like the scrapers had stopped when they had not. Raised so the
     # visible feed tracks the corpus; `skip` still pages beyond it.
     safe_limit = max(1, min(limit, settings.OPPORTUNITY_FEED_MAX_LIMIT))
-    fetch_window = min(max((safe_skip + safe_limit) * 10, 250), 6000)
+    # The 10x over-fetch existed to survive the Python-side filters when limits
+    # were in the tens. With a limit of 1500 it pulled 6000 full documents across
+    # the network to return a thousand, which is what pushed the query past
+    # Atlas's socket timeout. Twice the request plus a floor is ample.
+    fetch_window = min(max((safe_skip + safe_limit) * 2, 400), 3000)
     query = Opportunity.find_many(Opportunity.domain == domain) if domain else Opportunity.find_many()
     candidates = await query.sort("-created_at").limit(fetch_window).to_list()
     active = _filter_active_opportunities(candidates)
