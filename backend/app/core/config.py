@@ -76,6 +76,45 @@ class Settings(BaseSettings):
     MONGODB_URL: str = "mongodb://localhost:27017"
     MONGODB_DB_NAME: str = "vidyaverse"
 
+    # Neon Postgres. Migration target from Mongo; both are configured during the
+    # transition so the feed can be served from either and compared.
+    # Two URLs on purpose: the pooler multiplexes the many short-lived
+    # connections a request-per-user API makes, while DDL and migrations need
+    # the direct endpoint because a transaction-pooled session cannot hold the
+    # advisory locks CREATE INDEX requires.
+    NEON_DATABASE_URL: Optional[str] = None
+    NEON_DATABASE_DIRECT_URL: Optional[str] = None
+    NEON_DATABASE_NAME: str = "neondb"
+    # Read path switch. Off means the feed still reads Mongo, so the two can be
+    # compared on the same corpus before anything is cut over.
+    OPPORTUNITY_READ_BACKEND: str = "mongo"  # mongo | postgres
+    NEON_POOL_MIN_SIZE: int = 1
+    NEON_POOL_MAX_SIZE: int = 10
+    NEON_COMMAND_TIMEOUT_SECONDS: float = 30.0
+
+    # Supabase Postgres (ap-south-1). Replaced Neon as the migration target:
+    # Neon has no India region and its nearest, Singapore, measured 130ms per
+    # query against 44ms here. The Neon settings above are retained so that
+    # project stays usable, but nothing reads them while these are set.
+    SUPABASE_DATABASE_URL: Optional[str] = None
+    SUPABASE_DATABASE_DIRECT_URL: Optional[str] = None
+    SUPABASE_DATABASE_NAME: str = "postgres"
+    # API keys for the browser client. The backend does not use them - it holds
+    # a direct Postgres connection and its own auth - but they are declared so
+    # pydantic does not reject the .env entries.
+    SUPABASE_PUBLISHABLE_KEY: Optional[str] = None
+    SUPABASE_SECRET_KEY: Optional[str] = None
+    SUPABASE_JWKS_URL: Optional[str] = None
+
+    # Retention. Mongo deleted these itself via TTL indexes; Postgres has no
+    # equivalent and Neon disallows pg_cron here, so an explicit job does it.
+    # An expired OTP that is never deleted stays a usable credential, so this
+    # runs far more often than the ninety-day windows would suggest.
+    RETENTION_PURGE_ENABLED: bool = True
+    RETENTION_PURGE_INTERVAL_MINUTES: int = 30
+    AUTH_AUDIT_RETENTION_DAYS: int = 90
+    SESSION_RECORD_RETENTION_DAYS: int = 30
+
     # Browser automation (Playwright) for auto-application flow
     PLAYWRIGHT_HEADLESS: bool = True
     PLAYWRIGHT_TIMEOUT_MS: int = 45000
