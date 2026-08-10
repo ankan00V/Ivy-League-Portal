@@ -4,7 +4,7 @@ import AskAIPanel from "@/components/AskAIPanel";
 import { OpportunityCardsSkeleton } from "@/components/LoadingSkeletons";
 import React, { startTransition, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Bookmark, Calendar, ChevronDown, EyeOff, MapPin, Send } from "lucide-react";
+import { ArrowRight, Bookmark, Calendar, ChevronDown, ExternalLink, EyeOff, MapPin, Send, X } from "lucide-react";
 import Image from "next/image";
 import { apiUrl } from "@/lib/api";
 import { createAuthenticatedFetchInit, getAccessToken } from "@/lib/auth-session";
@@ -18,6 +18,19 @@ import {
     type TrackFilter,
 } from "@/lib/role-classification";
 
+/* Placement pills. The four non-"all" keys mirror
+   backend/app/services/opportunity_placement.py::FEED_CATEGORIES and must stay in
+   step with it — the backend computes membership, this only renders it. */
+const PLACEMENT_TABS = [
+    { key: "all", label: "All" },
+    { key: "india", label: "India" },
+    { key: "remote", label: "Remote" },
+    { key: "hybrid", label: "Hybrid" },
+    { key: "international", label: "International" },
+] as const;
+
+type PlacementKey = (typeof PLACEMENT_TABS)[number]["key"];
+
 interface Opportunity {
     id: string;
     title: string;
@@ -30,6 +43,14 @@ interface Opportunity {
     canonical_key?: string;
     location?: string;
     work_mode?: string;
+    /* Placement pills computed by the backend
+       (services/opportunity_placement.py), not derived here. work_mode is null on
+       73% of rows and location on 38%, so the categories are recovered from
+       location, body text and source together — logic that has to stay in one
+       place, and the read path is mid-migration between Mongo and Postgres.
+       Non-exclusive: a remote internship in Bengaluru carries both india and
+       remote. May be empty when nothing places the listing. */
+    feed_categories?: string[];
     stipend?: string;
     eligibility?: string;
     batch_years?: number[];
@@ -108,6 +129,27 @@ async function fetchJsonWithTimeout<T>(
     }
 }
 
+/* A description is only worth showing if it actually describes the role.
+   Scrapers fall back to boilerplate ("Opportunity indexed from Naukri.") and
+   sometimes capture a site's own navigation; presenting either as the job
+   description misleads the reader more than showing nothing. When the text does
+   not clear the bar, point at the employer's posting - the authoritative
+   version - instead of inventing confidence we do not have. */
+const DESC_PLACEHOLDER_RE =
+    /(opportunity indexed from|indexed from|discovered on the official|curated .{0,30}list entry|remote-friendly role indexed|no description)/i;
+const DESC_CHROME_RE =
+    /(post a job|sign in|privacy policy|terms of use|quick links|how it works|career center|all rights reserved)/gi;
+
+function isUsableDescription(text?: string | null): boolean {
+    const value = String(text ?? "").trim();
+    if (value.length < 120) return false;
+    if (DESC_PLACEHOLDER_RE.test(value)) return false;
+    const chrome = (value.match(DESC_CHROME_RE) || []).length;
+    if (chrome >= 3) return false;
+    const digits = (value.match(/\d/g) || []).length;
+    return !(chrome >= 2 && digits > value.length * 0.04);
+}
+
 export default function InternshipsJobsPage() {
     const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
     const [loading, setLoading] = useState(true);
@@ -131,6 +173,16 @@ export default function InternshipsJobsPage() {
     // that otherwise showed a commerce student backend roles and an engineering
     // student sales roles.
     const [roleTrack, setRoleTrack] = useState<RoleTrack | "all">("all");
+    // Placement filter, independent of the role track: a student can want
+    // technical + remote at the same time. Single-select because the pills answer
+    // one question ("where do I want to work"), and the categories overlap, so
+    // multi-select would raise "does India + Remote mean both or either" with no
+    // obvious answer.
+    const [placement, setPlacement] = useState<PlacementKey>("all");
+    // Full posting lives in a detail view rather than on the card, so the grid
+    // stays scannable: the description was the tallest element on every card and
+    // pushed the actions below the fold.
+    const [detailOpp, setDetailOpp] = useState<Opportunity | null>(null);
     const [trackKeywords, setTrackKeywords] = useState<string[]>([]);
     const [filterMenuOpen, setFilterMenuOpen] = useState(false);
     const [savedOpportunityIds, setSavedOpportunityIds] = useState<Record<string, boolean>>({});
@@ -165,7 +217,7 @@ export default function InternshipsJobsPage() {
             const token = getAccessToken();
             if (token) {
                 const rawData = await fetchJsonWithTimeout<Opportunity[]>(
-                    "/api/v1/opportunities/recommended/me?limit=400&ranking_mode=ab&portal=career",
+                    "/api/v1/opportunities/recommended/me?limit=1500&ranking_mode=ab&portal=career",
                     createAuthenticatedFetchInit({}, token),
                     PERSONALIZED_FETCH_TIMEOUT_MS,
                 );
@@ -195,7 +247,7 @@ export default function InternshipsJobsPage() {
             // scraped. It also had no timeout, so a stalled connection left the
             // page on its skeleton forever.
             const rawData = await fetchJsonWithTimeout<Opportunity[]>(
-                "/api/v1/opportunities/?portal=career&limit=400",
+                "/api/v1/opportunities/?portal=career&limit=1500",
                 { credentials: "include" },
                 FALLBACK_FETCH_TIMEOUT_MS,
             );
@@ -380,6 +432,9 @@ export default function InternshipsJobsPage() {
         if (roleTrack !== "all") {
             rows = rows.filter((item) => trackByOpportunityId.get(item.id) === roleTrack);
         }
+        if (placement !== "all") {
+            rows = rows.filter((item) => (item.feed_categories ?? []).includes(placement));
+        }
         if (activeTrackFilters.length > 0) {
             // OR across selections: picking Software and Data & AI should widen
             // the list, not narrow it to roles that are somehow both.
@@ -388,7 +443,39 @@ export default function InternshipsJobsPage() {
             );
         }
         return rows;
-    }, [grouped, roleTrack, activeTrackFilters, trackByOpportunityId]);
+    }, [grouped, roleTrack, placement, activeTrackFilters, trackByOpportunityId]);
+
+    /* Counts respect the role track but not the placement pill itself, so each
+       pill shows how many listings it would yield rather than how many are showing
+       now. A count that changed when you selected a different pill would make the
+       row unreadable.
+
+       These deliberately sum to more than "All": the categories overlap, so a
+       remote internship in Bengaluru is counted under both India and Remote.
+       Listings the backend could not place (roughly 22% of the corpus, mostly
+       scraped news items and hackathons with no location) appear only under All,
+       which is why the four pills also sum to less than All would suggest. */
+    const placementCounts = useMemo(() => {
+        const base =
+            roleTrack === "all"
+                ? grouped.career
+                : grouped.career.filter((item) => trackByOpportunityId.get(item.id) === roleTrack);
+        const counts: Record<PlacementKey, number> = {
+            all: base.length,
+            india: 0,
+            remote: 0,
+            hybrid: 0,
+            international: 0,
+        };
+        for (const item of base) {
+            for (const category of item.feed_categories ?? []) {
+                if (category in counts) {
+                    counts[category as PlacementKey] += 1;
+                }
+            }
+        }
+        return counts;
+    }, [grouped, roleTrack, trackByOpportunityId]);
 
     const trackCounts = useMemo(() => {
         let technical = 0;
@@ -472,6 +559,9 @@ export default function InternshipsJobsPage() {
     };
 
     const TYPE_IMAGE_MAP: Record<string, string> = {
+        bounty: "https://images.unsplash.com/photo-1526304640581-d334cdbbf45e?auto=format&fit=crop&w=1400&q=80",
+        bounties: "https://images.unsplash.com/photo-1526304640581-d334cdbbf45e?auto=format&fit=crop&w=1400&q=80",
+        grant: "https://images.unsplash.com/photo-1554224155-6726b3ff858f?auto=format&fit=crop&w=1400&q=80",
         hackathon: "https://images.unsplash.com/photo-1523240795612-9a054b0db644?auto=format&fit=crop&w=1400&q=80",
         hackathons: "https://images.unsplash.com/photo-1523240795612-9a054b0db644?auto=format&fit=crop&w=1400&q=80",
         conference: "https://images.unsplash.com/photo-1517048676732-d65bc937f952?auto=format&fit=crop&w=1400&q=80",
@@ -488,6 +578,13 @@ export default function InternshipsJobsPage() {
     const DOMAIN_IMAGE_MAP: Record<string, string> = {
         "ai and machine learning": "https://images.unsplash.com/photo-1532619675605-1ede6c2ed2b0?auto=format&fit=crop&w=1400&q=80",
         engineering: "https://images.unsplash.com/photo-1504384308090-c894fdcc538d?auto=format&fit=crop&w=1400&q=80",
+        marketing: "https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&w=1400&q=80",
+        "business and operations": "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=1400&q=80",
+        "sales and support": "https://images.unsplash.com/photo-1521737604893-d14cc237f11d?auto=format&fit=crop&w=1400&q=80",
+        "human resources": "https://images.unsplash.com/photo-1521791136064-7986c2920216?auto=format&fit=crop&w=1400&q=80",
+        "design and creative": "https://images.unsplash.com/photo-1561070791-2526d30994b5?auto=format&fit=crop&w=1400&q=80",
+        education: "https://images.unsplash.com/photo-1503676260728-1c00da094a0b?auto=format&fit=crop&w=1400&q=80",
+        other: "https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=1400&q=80",
         finance: "https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?auto=format&fit=crop&w=1400&q=80",
         "data science": "https://images.unsplash.com/photo-1516321497487-e288fb19713f?auto=format&fit=crop&w=1400&q=80",
         law: "https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&w=1400&q=80",
@@ -969,21 +1066,30 @@ export default function InternshipsJobsPage() {
                         </div>
                     </div>
 
-                    <p
+                    <button
+                        type="button"
+                        onClick={() => setDetailOpp(opp)}
                         style={{
-                            color: "var(--text-secondary)",
-                            fontSize: "0.95rem",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: "0.5rem",
+                            width: "100%",
                             marginBottom: "0.25rem",
-                            flex: 1,
-                            display: "-webkit-box",
-                            WebkitLineClamp: 4,
-                            WebkitBoxOrient: "vertical",
-                            overflow: "hidden",
-                            fontWeight: 500,
+                            padding: "0.6rem 0.8rem",
+                            background: "var(--bg-surface-hover)",
+                            border: "2px solid var(--border-subtle)",
+                            borderRadius: "var(--radius-md)",
+                            fontWeight: 800,
+                            fontSize: "0.88rem",
+                            color: "var(--text-primary)",
+                            cursor: "pointer",
                         }}
+                        aria-label={`View full details for ${opp.title}`}
                     >
-                        {opp.description}
-                    </p>
+                        View details
+                        <ArrowRight size={15} aria-hidden="true" />
+                    </button>
                     <div style={{ display: "grid", gap: "0.18rem" }}>
                         <div style={{ fontSize: "0.8rem", fontWeight: 800, color: "var(--text-primary)" }}>
                             {trust.scoreLabel}
@@ -1045,6 +1151,142 @@ export default function InternshipsJobsPage() {
                     </div>
                 </div>
             </motion.article>
+        );
+    };
+
+    /* Full posting for one opportunity.
+       Kept out of the card so the grid stays scannable, and rendered as an
+       overlay rather than a route so the reader keeps their scroll position and
+       filter state when they close it. Apply here goes to the employer's own
+       posting, which is the canonical source and the only place an application
+       actually counts. */
+    const renderDetailOverlay = () => {
+        if (!detailOpp) {
+            return null;
+        }
+        const opp = detailOpp;
+        const trust = trustSummary(opp);
+        const chips = metadataChips(opp);
+        return (
+            <div
+                role="dialog"
+                aria-modal="true"
+                aria-label={opp.title}
+                onClick={() => setDetailOpp(null)}
+                style={{
+                    position: "fixed",
+                    inset: 0,
+                    zIndex: 1000,
+                    background: "rgba(0,0,0,0.55)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    padding: "1.25rem",
+                }}
+            >
+                <div
+                    onClick={(event) => event.stopPropagation()}
+                    style={{
+                        width: "min(760px, 100%)",
+                        maxHeight: "86vh",
+                        overflowY: "auto",
+                        background: "var(--bg-surface)",
+                        border: "2px solid #000000",
+                        borderRadius: "var(--radius-lg)",
+                        boxShadow: "var(--shadow-lg)",
+                        padding: "1.6rem",
+                        display: "grid",
+                        gap: "1rem",
+                    }}
+                >
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: "1rem", alignItems: "start" }}>
+                        <div>
+                            <h2 style={{ fontSize: "1.5rem", fontWeight: 900, color: "var(--text-primary)", marginBottom: "0.4rem" }}>
+                                {opp.title}
+                            </h2>
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.8rem", color: "var(--text-secondary)", fontWeight: 700, fontSize: "0.9rem" }}>
+                                <span style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                                    <MapPin size={14} /> {opp.university || "Global"}
+                                </span>
+                                <span>{formatSourceLabel(opp.source)}</span>
+                            </div>
+                        </div>
+                        <button
+                            type="button"
+                            className="btn-secondary"
+                            onClick={() => setDetailOpp(null)}
+                            aria-label="Close details"
+                            style={{ padding: "0.5rem", border: "2px solid var(--border-subtle)", lineHeight: 0 }}
+                        >
+                            <X size={16} />
+                        </button>
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "0.8rem", background: "var(--bg-surface-hover)", border: "2px solid var(--border-subtle)", borderRadius: "var(--radius-md)", padding: "0.9rem" }}>
+                        {[
+                            ["Domain", opp.domain || "General"],
+                            ["Type", opp.opportunity_type || "Opportunity"],
+                            ["Deadline", opp.deadline
+                                ? new Date(opp.deadline).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+                                : "Rolling Basis"],
+                        ].map(([label, value]) => (
+                            <div key={label}>
+                                <div style={{ fontSize: "0.72rem", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 900, color: "var(--text-secondary)", marginBottom: "0.3rem" }}>
+                                    {label}
+                                </div>
+                                <div style={{ fontWeight: 800, color: "var(--text-primary)" }}>{value}</div>
+                            </div>
+                        ))}
+                    </div>
+
+                    {isUsableDescription(opp.description) ? (
+                        <p style={{ color: "var(--text-secondary)", fontSize: "0.96rem", fontWeight: 500, whiteSpace: "pre-wrap", lineHeight: 1.6 }}>
+                            {opp.description}
+                        </p>
+                    ) : (
+                        <p style={{ color: "var(--text-muted)", fontSize: "0.94rem", fontWeight: 600, lineHeight: 1.6 }}>
+                            A full description was not available from this source — see the JD on the job portal.
+                        </p>
+                    )}
+
+                    {chips.length > 0 ? (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem" }}>
+                            {chips.map((chip) => (
+                                <span key={chip} style={{ fontSize: "0.76rem", padding: "0.25rem 0.6rem", borderRadius: "999px", background: "var(--bg-surface-hover)", border: "1px solid var(--border-subtle)", fontWeight: 700, color: "var(--text-secondary)" }}>
+                                    {chip}
+                                </span>
+                            ))}
+                        </div>
+                    ) : null}
+
+                    <div style={{ display: "grid", gap: "0.2rem" }}>
+                        <div style={{ fontSize: "0.82rem", fontWeight: 800, color: "var(--text-primary)" }}>{trust.scoreLabel}</div>
+                        <div style={{ fontSize: "0.8rem", color: "var(--text-muted)", fontWeight: 600 }}>{trust.evidenceLabel}</div>
+                    </div>
+
+                    <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>
+                        <a
+                            className="btn-primary"
+                            href={opp.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={() => void handleApply(opp)}
+                            style={{ padding: "0.75rem 1.1rem", fontSize: "0.92rem", display: "flex", alignItems: "center", gap: "0.4rem", border: "2px solid #000000", textDecoration: "none" }}
+                        >
+                            <ExternalLink size={15} /> Apply on employer site
+                        </a>
+                        <button
+                            className="btn-secondary"
+                            type="button"
+                            onClick={() => void handleSave(opp)}
+                            disabled={Boolean(savedOpportunityIds[opp.id])}
+                            style={{ padding: "0.75rem 1rem", fontSize: "0.92rem", display: "flex", alignItems: "center", gap: "0.35rem", border: "2px solid var(--border-subtle)" }}
+                        >
+                            <Bookmark size={15} /> {savedOpportunityIds[opp.id] ? "Saved" : "Save"}
+                        </button>
+                    </div>
+                </div>
+            </div>
         );
     };
 
@@ -1142,6 +1384,32 @@ export default function InternshipsJobsPage() {
                         >
                             {tab.label}
                             <span className="role-track-count">{trackCounts[tab.key]}</span>
+                        </button>
+                    ))}
+                </div>
+
+                {/* Placement filter. Sits below the role track because it answers a
+                    different question — where the work happens, not what the work
+                    is — and the two compose: Technical + Remote is a normal ask.
+
+                    The counts intentionally do not add up to All. India/International
+                    is geography and Remote/Hybrid is work mode, so a remote role in
+                    Bengaluru is counted twice; and listings the backend cannot place
+                    are counted only under All. Forcing one bucket per listing would
+                    hide remote Indian internships from India, which is the first
+                    place a student looks. */}
+                <div className="placement-tabs" role="tablist" aria-label="Location and work mode">
+                    {PLACEMENT_TABS.map((tab) => (
+                        <button
+                            key={tab.key}
+                            type="button"
+                            role="tab"
+                            aria-selected={placement === tab.key}
+                            className={`placement-tab ${placement === tab.key ? "active" : ""}`}
+                            onClick={() => setPlacement(tab.key)}
+                        >
+                            {tab.label}
+                            <span className="placement-count">{placementCounts[tab.key]}</span>
                         </button>
                     ))}
                 </div>
@@ -1293,11 +1561,32 @@ export default function InternshipsJobsPage() {
                                           ? "No internships or jobs match this filter right now."
                                           : `No ${roleTrack === "technical" ? "technical" : "non-technical"} roles match this filter right now.`}
                                 </strong>
+                                {/* Name the placement pill explicitly. Otherwise a
+                                    student who picked Hybrid sees a generic empty
+                                    state and concludes the page is broken rather
+                                    than that this one filter is narrow. */}
+                                {placement !== "all" && (
+                                    <p style={{ marginTop: "0.5rem" }}>
+                                        The{" "}
+                                        <strong>
+                                            {PLACEMENT_TABS.find((tab) => tab.key === placement)?.label}
+                                        </strong>{" "}
+                                        filter is applied.{" "}
+                                        <button
+                                            type="button"
+                                            className="placement-tab"
+                                            onClick={() => setPlacement("all")}
+                                        >
+                                            Show all locations
+                                        </button>
+                                    </p>
+                                )}
                             </div>
                         )}
                     </>
                 )}
             </main>
+            {renderDetailOverlay()}
         </div>
     );
 }

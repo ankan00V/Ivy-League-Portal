@@ -19,7 +19,12 @@ const backendCandidates = Array.from(
   ),
 );
 
-const DEFAULT_UPSTREAM_FETCH_TIMEOUT_MS = Number(process.env.BACKEND_PROXY_TIMEOUT_MS || 5000);
+// 5000 was set when the feed held a few hundred rows. The corpus is now past a
+// thousand and one full career-portal request measures ~9.5s upstream, so the
+// proxy was aborting a healthy response and returning 503 - the feed rendered
+// "No internships or jobs match this filter" while the backend was serving 1026
+// rows perfectly well.
+const DEFAULT_UPSTREAM_FETCH_TIMEOUT_MS = Number(process.env.BACKEND_PROXY_TIMEOUT_MS || 30000);
 const AUTH_UPSTREAM_FETCH_TIMEOUT_MS = Number(process.env.BACKEND_AUTH_PROXY_TIMEOUT_MS || 30000);
 // Anything that calls a language model needs far longer than the default. The
 // copilot was failing with "Upstream backend unavailable" for exactly this
