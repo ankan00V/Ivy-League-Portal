@@ -508,6 +508,19 @@ class Settings(BaseSettings):
     ANALYTICS_WAREHOUSE_EXPORT_FORMAT: str = "duckdb_parquet"  # duckdb_parquet | parquet | disabled
     ANALYTICS_WAREHOUSE_SQL_MODELS_DIR: str = "backend/warehouse/models"
     ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED: bool = False
+    # Separate from _ENABLED on purpose. Whether the warehouse is configured and
+    # whether it should be able to fail the readiness probe are different
+    # questions: ClickHouse serves analytics, not requests, so an outage degrades
+    # reporting while every user-facing path stays healthy. Keyed off _ENABLED it
+    # meant an unresolvable ClickHouse hostname reported the whole service as
+    # degraded. Off by default; turn it on where reporting really is release
+    # blocking.
+    ANALYTICS_WAREHOUSE_CLICKHOUSE_REQUIRED_FOR_READINESS: bool = False
+    # Whether a warehouse outage should mark the API not-ready. It should not:
+    # ClickHouse serves analytics, not the feed. Marking it required meant an
+    # unresolvable hostname reported the whole service degraded while every
+    # user-facing path was healthy.
+    ANALYTICS_WAREHOUSE_CLICKHOUSE_REQUIRED_FOR_READINESS: bool = False
     ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST: Optional[str] = None
     ANALYTICS_WAREHOUSE_CLICKHOUSE_PORT: int = 8123
     ANALYTICS_WAREHOUSE_CLICKHOUSE_DATABASE: str = "vidyaverse"
