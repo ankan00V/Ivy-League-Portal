@@ -1,0 +1,14 @@
+# Claude Flow runtime files
+data/
+logs/
+sessions/
+neural/
+*.log
+*.tmp
+
+# Per-machine runtime state. Both embed absolute /Users/<name> paths and describe
+# this checkout's daemon, so committing them would push one developer's local
+# layout to everyone who clones.
+daemon-state.json
+memory-package.json
+metrics/
