@@ -172,7 +172,13 @@ async def init_database() -> AsyncIOMotorClient:
     client = await connect_mongo_with_retries()
     database = client[settings.MONGODB_DB_NAME]
     await _drop_incompatible_bootstrap_indexes(database)
-    timeout = max(10.0, mongo_ping_timeout_seconds() * 2.0)
+    # init_beanie registers every document model and creates their indexes, and
+    # each round trip pays the connection's latency. Ten seconds is fine against
+    # a local Docker Mongo but not against Atlas, where a bare ping measures
+    # ~7.6s from here - startup timed out and the API refused connections while
+    # the database itself was perfectly healthy.
+    remote = "mongodb+srv" in str(settings.MONGODB_URL or "") or ".mongodb.net" in str(settings.MONGODB_URL or "")
+    timeout = max(120.0 if remote else 10.0, mongo_ping_timeout_seconds() * 2.0)
     await asyncio.wait_for(
         init_beanie(
             database=database,
