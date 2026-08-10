@@ -21,7 +21,10 @@ from app.core.email_policy import is_corporate_email
 from app.models.profile import Profile
 from app.models.user import User
 from app.schemas.user import UserResponse
+from app.services.account_deletion_service import erase_account
+from app.services.document_redaction import strip_document_metadata
 from app.services.intelligence import calculate_incoscore
+from app.services.privacy_consent_service import apply_consent_change
 from app.services.resume_review_service import review_resume
 from app.services.username_service import ensure_system_username
 
@@ -35,8 +38,18 @@ VALID_HIRING_FOR = {"myself", "others"}
 VALID_AVAILABILITY = {"immediately", "within_1_month", "within_3_months", "exploring"}
 RESUME_REQUIRED_USER_TYPES = {"college_student", "fresher", "professional"}
 ALLOWED_RESUME_EXTENSIONS = {".txt", ".pdf", ".docx", ".doc"}
+# Derived from the validated extension, never from the client. The client's
+# content_type was previously stored verbatim and replayed as media_type on
+# download, letting the uploader choose how their own file is interpreted.
+_RESUME_CONTENT_TYPES = {
+    ".txt": "text/plain",
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".doc": "application/msword",
+}
 RESUME_STORAGE_RELATIVE_DIR = Path("storage") / "resumes"
 RESUME_MAX_FILE_SIZE_MB = 8
+_RESUME_READ_CHUNK_BYTES = 64 * 1024
 UPPERCASE_PROFILE_TEXT_FIELDS = {
     "first_name",
     "last_name",
@@ -62,13 +75,7 @@ UPPERCASE_PROFILE_TEXT_FIELDS = {
     "certificates",
     "projects",
     "responsibilities",
-    "gender",
-    "pronouns",
-    "current_address_line1",
-    "current_address_landmark",
     "current_address_region",
-    "permanent_address_line1",
-    "permanent_address_landmark",
     "permanent_address_region",
 }
 
@@ -104,11 +111,6 @@ PROFILE_SIGNAL_METADATA: dict[str, tuple[str, str]] = {
     "certificates": ("Certificates", "Add relevant certifications."),
     "projects": ("Projects", "Add your key projects."),
     "responsibilities": ("Responsibilities", "Add initiatives or leadership responsibilities."),
-    "gender": ("Gender", "Select your gender identity."),
-    "pronouns": ("Pronouns", "Add your pronouns."),
-    "date_of_birth": ("Date of Birth", "Add your date of birth."),
-    "current_address_line1": ("Current Address", "Add your current address."),
-    "permanent_address_line1": ("Permanent Address", "Add your permanent address."),
     "hobbies": ("Hobbies", "Add hobbies or personal interests."),
     "social_links": ("Social Links", "Add at least one professional or social link."),
     "resume": ("Resume", "Upload resume/CV."),
@@ -167,17 +169,8 @@ class ProfileUpdate(BaseModel):
     certificates: Optional[str] = None
     projects: Optional[str] = None
     responsibilities: Optional[str] = None
-    gender: Optional[str] = None
-    pronouns: Optional[str] = None
-    date_of_birth: Optional[str] = None
-    current_address_line1: Optional[str] = None
-    current_address_landmark: Optional[str] = None
     current_address_region: Optional[str] = None
-    current_address_pincode: Optional[str] = None
-    permanent_address_line1: Optional[str] = None
-    permanent_address_landmark: Optional[str] = None
     permanent_address_region: Optional[str] = None
-    permanent_address_pincode: Optional[str] = None
     hobbies: Optional[list[str] | str] = None
     social_links: Optional[dict[str, str]] = None
 
@@ -376,17 +369,8 @@ class ProfileResponse(BaseModel):
     certificates: Optional[str] = None
     projects: Optional[str] = None
     responsibilities: Optional[str] = None
-    gender: Optional[str] = None
-    pronouns: Optional[str] = None
-    date_of_birth: Optional[str] = None
-    current_address_line1: Optional[str] = None
-    current_address_landmark: Optional[str] = None
     current_address_region: Optional[str] = None
-    current_address_pincode: Optional[str] = None
-    permanent_address_line1: Optional[str] = None
-    permanent_address_landmark: Optional[str] = None
     permanent_address_region: Optional[str] = None
-    permanent_address_pincode: Optional[str] = None
     hobbies: list[str] = Field(default_factory=list)
     social_links: dict[str, str] = Field(default_factory=dict)
     resume_url: Optional[str] = None
@@ -466,6 +450,26 @@ class LeaderboardEntry(BaseModel):
     full_name: Optional[str] = None
     handle: str
     incoscore: float
+
+
+class AccountDeletionRequest(BaseModel):
+    """Typed confirmation for an irreversible action.
+
+    CSRF double-submit already blocks cross-origin calls; this guards the other
+    failure mode, which is a logged-in student firing the request by accident.
+    """
+
+    confirmation: str = Field(min_length=1)
+
+
+class AccountDeletionResponse(BaseModel):
+    detail: str
+    erased: dict[str, int] = Field(default_factory=dict)
+    pseudonymized: dict[str, int] = Field(default_factory=dict)
+    resume_file_removed: bool = False
+    sessions_revoked: int = 0
+    total_rows_erased: int = 0
+    total_rows_pseudonymized: int = 0
 
 
 def _merge_csv_values(existing: Optional[str], incoming_values: list[str]) -> str:
@@ -797,8 +801,6 @@ def _profile_strength_checks(profile: Profile) -> list[tuple[str, bool]]:
                 ("interests", _text_present("interests")),
                 ("education", _text_present("education")),
                 ("projects", _text_present("projects")),
-                ("date_of_birth", _text_present("date_of_birth")),
-                ("current_address_line1", _text_present("current_address_line1")),
                 ("hobbies", len(_value("hobbies", []) or []) > 0),
                 ("social_links", len(_value("social_links", {}) or {}) > 0),
                 ("resume", _text_present("resume_url")),
@@ -874,8 +876,16 @@ def _apply_profile_patch(*, profile: Profile, user: User, payload: ProfileUpdate
             detail="Employer account setup requires a corporate email (personal providers are not allowed).",
         )
 
+    # Consent is stamped, not just stored. `apply_consent_change` records when the
+    # decision was made and against which policy version, so the flag can be audited
+    # later and so a withdrawal is distinguishable from never having agreed.
+    consent_decision = updates.pop("consent_data_processing", None)
+
     for field, value in updates.items():
         setattr(profile, field, value)
+
+    if consent_decision is not None:
+        apply_consent_change(profile, granted=bool(consent_decision))
 
     if "graduation_year" in updates and updates.get("graduation_year") is not None and profile.passout_year is None:
         profile.passout_year = int(updates["graduation_year"])
@@ -883,7 +893,24 @@ def _apply_profile_patch(*, profile: Profile, user: User, payload: ProfileUpdate
         profile.graduation_year = int(updates["passout_year"])
 
     # Keep account type mirrored between User and Profile when explicitly changed.
+    #
+    # Self-service promotion to "employer" is refused. Registration forces
+    # "candidate" (auth.py), so this used to be the one path to employer status,
+    # and its only gate was is_corporate_email() - a 21-entry blocklist of
+    # personal providers. Any domain not on that list qualified, including
+    # disposable-mail hosts. That let anyone register a throwaway address,
+    # promote themselves, publish an opportunity, and then read every applicant's
+    # real name and email through the employer application routes and CSV export.
+    # Employer status is now granted by an admin only.
     if payload.account_type and payload.account_type in VALID_ACCOUNT_TYPES and user.account_type != payload.account_type:
+        if str(payload.account_type).strip().lower() == "employer" and not user.is_admin:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Employer accounts are approved manually. Contact support to have "
+                    "your organisation verified."
+                ),
+            )
         user.account_type = payload.account_type
 
     if str(profile.account_type or "").strip().lower() == "employer":
@@ -1074,20 +1101,41 @@ async def upload_resume(
     """
     filename = (file.filename or "resume.txt").strip() or "resume.txt"
     extension = _safe_resume_extension(filename)
-    content = await file.read()
     size_limit_bytes = int(max(1, RESUME_MAX_FILE_SIZE_MB)) * 1024 * 1024
+    # Read in bounded chunks and abort the moment the cap is passed, rather than
+    # buffering the whole body and measuring afterwards. The previous order meant
+    # an attacker could make the server spool an arbitrarily large upload to disk
+    # before it was rejected, so the size limit cost nothing to exceed.
+    chunks: list[bytes] = []
+    received = 0
+    while True:
+        chunk = await file.read(_RESUME_READ_CHUNK_BYTES)
+        if not chunk:
+            break
+        received += len(chunk)
+        if received > size_limit_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Resume exceeds maximum size ({RESUME_MAX_FILE_SIZE_MB} MB).",
+            )
+        chunks.append(chunk)
+    content = b"".join(chunks)
     if len(content) == 0:
         raise HTTPException(status_code=400, detail="Resume file is empty.")
-    if len(content) > size_limit_bytes:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Resume exceeds maximum size ({RESUME_MAX_FILE_SIZE_MB} MB).",
-        )
 
     profile = await _get_or_create_profile_for_user(current_user)
+
+    # Strip document metadata before anything touches disk. A PDF's /Info and XMP
+    # packet, and a DOCX's core properties, routinely name the author and the
+    # employer whose machine last edited the file — data the student never entered
+    # into our form and does not expect to be sharing. Redaction fails open: on a
+    # malformed document we store the original rather than block the upload, and
+    # the fallback is logged.
+    storable, _redacted = strip_document_metadata(extension=extension, content=content)
+
     storage_key = f"{str(current_user.id)}_{uuid4().hex}{extension}"
     storage_path = _resume_storage_dir() / storage_key
-    storage_path.write_bytes(content)
+    storage_path.write_bytes(storable)
 
     previous_key = (profile.resume_storage_key or "").strip()
     if previous_key:
@@ -1117,7 +1165,7 @@ async def upload_resume(
 
     profile.resume_url = "/api/v1/users/me/resume/download"
     profile.resume_filename = filename
-    profile.resume_content_type = (file.content_type or "application/octet-stream").strip() or "application/octet-stream"
+    profile.resume_content_type = _RESUME_CONTENT_TYPES.get(extension, "application/octet-stream")
     profile.resume_storage_key = storage_key
     profile.resume_uploaded_at = datetime.now(timezone.utc)
     _sync_profile_identity(profile, current_user)
@@ -1212,6 +1260,49 @@ async def delete_resume(
     await profile.save()
     await cache_manager.invalidate_after_profile_update(user_id=str(current_user.id))
     return profile
+
+
+ACCOUNT_DELETION_CONFIRMATION = "DELETE MY ACCOUNT"
+
+
+@router.delete("/me", response_model=AccountDeletionResponse)
+async def delete_own_account(
+    payload: AccountDeletionRequest,
+    current_user: User = Depends(get_current_active_user),
+) -> Any:
+    """Erase this account and everything attached to it.
+
+    Irreversible. See `app/services/account_deletion_service.py` for which
+    collections are hard-deleted and which keep a pseudonymized measurement row.
+
+    Admins cannot self-delete: the hidden admin control plane assumes a single
+    admin exists, and erasing it through a normal product endpoint would lock the
+    installation out of its own governance surface. Admin removal stays a
+    deliberate operational action.
+    """
+    if (payload.confirmation or "").strip().upper() != ACCOUNT_DELETION_CONFIRMATION:
+        raise HTTPException(
+            status_code=400,
+            detail=f'Send confirmation="{ACCOUNT_DELETION_CONFIRMATION}" to delete your account.',
+        )
+
+    if bool(getattr(current_user, "is_admin", False)):
+        raise HTTPException(
+            status_code=403,
+            detail="Admin accounts cannot be deleted through this endpoint.",
+        )
+
+    receipt = await erase_account(current_user)
+    summary = receipt.as_dict()
+    return AccountDeletionResponse(
+        detail="Account deleted.",
+        erased=summary["erased"],
+        pseudonymized=summary["pseudonymized"],
+        resume_file_removed=summary["resume_file_removed"],
+        sessions_revoked=summary["sessions_revoked"],
+        total_rows_erased=summary["total_rows_erased"],
+        total_rows_pseudonymized=summary["total_rows_pseudonymized"],
+    )
 
 
 @router.get("/leaderboard", response_model=list[LeaderboardEntry])

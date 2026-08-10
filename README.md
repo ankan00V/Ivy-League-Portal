@@ -72,6 +72,8 @@ flowchart LR
 - Ask AI opportunity assistant.
 - Explainable recommendations on both opportunity feeds: users can see profile-aligned reasons, advisory eligibility context, and hide unsuitable listings while the feedback is recorded for future ranking improvements. Matching uses the candidate's degree, graduation year, skills, roles, locations, stipend expectation, and controlled availability preference.
 - Candidate-only Resume Readiness Review: an on-demand, deterministic analysis of an uploaded resume with an explainable `0–100` clarity/readability score, category evidence, strengths, weak spots, and improvements. It is advisory only—not a hiring prediction, eligibility decision, or opportunity-ranking signal—and does not persist extracted resume text or review output.
+- Published `/privacy` and `/terms` pages written from the implementation rather than a template, plus self-service account deletion from the profile page. Neither has been reviewed by a lawyer.
+- Placement filter on the internships feed: `All | India | Remote | Hybrid | International`. The categories are **deliberately non-exclusive** — India/International is geography, Remote/Hybrid is work mode, so a remote internship in Bengaluru appears under both `India` and `Remote` and the pill counts sum to more than the corpus. Forcing one bucket per listing would hide remote Indian internships from the `India` pill. Membership is computed server-side by `app/services/opportunity_placement.py` and exposed as the `feed_categories` field on every opportunity response, so the Mongo and Postgres read paths give identical answers. Classification is inferential because the corpus cannot answer the question directly: measured 2026-08-06, `work_mode` is null on 1,042 of 1,418 active rows (73%) and `location` on 533 (38%), so the signal is recovered from `work_mode`, then `location`, then title/description text, then India-only source boards. That places **1,104 of 1,418 rows (77%)** in at least one pill — `india` 767, `international` 312, `remote` 292, `hybrid` 78. The remaining 23% carry no usable signal and appear only under `All`.
 
 ### AI/ML
 - Multi-source ingestion with semantic deduplication.
@@ -101,6 +103,15 @@ flowchart LR
 - Auth lockout/audit instrumentation.
 - OTP delivery retries record redacted recipient identifiers and error classes only; plaintext email addresses, OTP values, and SMTP error bodies are excluded from application logs.
 - Hidden admin control plane with TOTP and admin action auditing.
+
+### Privacy
+Added 2026-08-05. Before this the product had no deletion path, no published policy, and a consent checkbox that gated nothing.
+
+- **Account erasure.** `DELETE /api/v1/users/me` behind a typed confirmation. `app/services/account_deletion_service.py` holds a classified inventory of every collection carrying a user identifier: identity and user-authored content are hard-deleted, while measurement rows (impressions, exposures, feature snapshots, experiment assignments) keep the row and swap the user id for a randomly generated pseudonym. Deleting measurements instead would retroactively change experiment denominators and training labels. `tests/test_account_deletion.py` sweeps `DOCUMENT_MODELS` and fails the build if a user-scoped collection is added without a disposition or a written exemption.
+- **Consent that gates something.** `consent_data_processing` now controls inclusion in the analytics warehouse export, is stamped with a timestamp and `PRIVACY_POLICY_VERSION`, and supports withdrawal. Consent recorded against a superseded policy version does not count. Ranking a student's own feed is deliberately not gated on it.
+- **Data minimization.** Gender, pronouns, date of birth, and address line1/landmark/pincode were removed from collection: nothing read them. `current_address_region` and `permanent_address_region` are retained because `feature_builder` uses them for location matching. `scripts/purge_minimized_profile_fields.py` (dry-run by default) unsets the retired keys from existing documents. Generated usernames no longer encode the student's birth year, which was previously visible on the public leaderboard.
+- **Resume metadata redaction.** Uploads are rewritten before they touch disk to strip the PDF `/Info` dictionary and XMP packet, and DOCX core properties. Redaction fails open and logs, because blocking an upload is worse for the student than metadata we could not strip. Resume text continues to be parsed locally with spaCy and is never sent to a third-party LLM.
+- **Telemetry retention and pseudonymized export.** Warehouse exports carry a keyed HMAC of the user id rather than the id itself. `TELEMETRY_RAW_RETENTION_DAYS` (default 400) bounds how long raw interaction rows keep their user link; `scripts/purge_aged_telemetry.py` (dry-run by default) rewrites aged rows rather than deleting them, so historical counts are unchanged.
 
 ## 7) Metrics and Impact
 <!-- DATASET_SNAPSHOT:START -->
@@ -245,7 +256,7 @@ Latest drift report: `n/a`
 - Production infra readiness gate: managed MongoDB, Redis, ClickHouse, and S3-compatible artifact storage have been verified from the local runtime; the full strict gate still requires deployed frontend/backend domains and a production BI URL.
 - Local developer harness smoke: 15/15 checks passed on July 29, 2026 - backend, MongoDB, Redis, queue, embedding model, learned ranker, artifact store, public opportunities, API docs, and all frontend routes. This is not production deployment proof.
 - Analytics warehouse: all eight ClickHouse marts materialize and `check_warehouse_release_gate` reports `status=fresh` (July 29, 2026).
-- Backend full suite baseline: **340 passing tests, 114 subtests passed** (latest local run on August 3, 2026)
+- Backend full suite baseline: **506 passing tests, 114 subtests passed** (latest local run on August 5, 2026). Three tests in `test_firecrawl_integration.py` and `test_scraper_fetch_providers.py` fail on the current working tree; the cause is uncommitted provider-routing work in `scraper.py`/`source_discovery.py`, verified by reverting only those two files and re-running the same 16 tests green.
 - Frontend lint: **passing**
 - Frontend production build: **passing**
 - Security and release gates: **active in CI**
@@ -326,6 +337,7 @@ The local harness uses Docker dependencies and ignored `.env` placeholders only 
 - Admin bootstrap: `ADMIN_BOOTSTRAP_ENABLED`, `ADMIN_BOOTSTRAP_EMAIL`, `ADMIN_BOOTSTRAP_PASSWORD`, `ADMIN_TOTP_SECRET`
 - MLOps alerts/incidents: `MLOPS_ALERT_SLACK_WEBHOOK_URL`, `MLOPS_ALERT_PAGERDUTY_ROUTING_KEY`, `MLOPS_INCIDENT_DEFAULT_OWNER`
 - Parity gates: `MLOPS_PARITY_*`
+- Privacy: `TELEMETRY_RAW_RETENTION_DAYS`, `ANALYTICS_WAREHOUSE_PSEUDONYMIZE_USERS`, `ANALYTICS_WAREHOUSE_REQUIRE_CONSENT`
 - Source discovery: `DISCOVERY_ENABLED`, `SERPAPI_KEY`, `FIRECRAWL_ENABLED`, `FIRECRAWL_API_KEY`, `FIRECRAWL_MODE`, `FIRECRAWL_MAX_CONCURRENT`, `CLAUDE_API_KEY`, `MAX_LLM_EXTRACTIONS_PER_HOUR`, `MONTHLY_LLM_BUDGET_USD`, `QUALIFICATION_MIN_SCORE`, `TRUST_MIN_SCORE_AUTO_PROMOTE`, `PROBATION_*`, `SOURCE_FETCH_RATE_LIMIT`
 
 ## 15) High-Value Code Paths

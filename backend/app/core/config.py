@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     AUTH_SESSION_COOKIE_PATH: str = "/"
     AUTH_SESSION_COOKIE_DOMAIN: Optional[str] = None
     AUTH_SESSION_COOKIE_MAX_AGE_SECONDS: int = 60 * 60 * 24  # 24h
+    # One live session per user. Signing in on a second device ends the first,
+    # so a forgotten session on a shared or lost machine cannot outlive the
+    # login that replaced it.
+    AUTH_SINGLE_ACTIVE_SESSION: bool = True
     AUTH_SESSION_STORE_ENABLED: bool = True
     AUTH_SESSION_REQUIRE_SERVER_STATE: bool = False
     AUTH_SESSION_BIND_DEVICE: bool = True
@@ -72,6 +76,45 @@ class Settings(BaseSettings):
     MONGODB_URL: str = "mongodb://localhost:27017"
     MONGODB_DB_NAME: str = "vidyaverse"
 
+    # Neon Postgres. Migration target from Mongo; both are configured during the
+    # transition so the feed can be served from either and compared.
+    # Two URLs on purpose: the pooler multiplexes the many short-lived
+    # connections a request-per-user API makes, while DDL and migrations need
+    # the direct endpoint because a transaction-pooled session cannot hold the
+    # advisory locks CREATE INDEX requires.
+    NEON_DATABASE_URL: Optional[str] = None
+    NEON_DATABASE_DIRECT_URL: Optional[str] = None
+    NEON_DATABASE_NAME: str = "neondb"
+    # Read path switch. Off means the feed still reads Mongo, so the two can be
+    # compared on the same corpus before anything is cut over.
+    OPPORTUNITY_READ_BACKEND: str = "mongo"  # mongo | postgres
+    NEON_POOL_MIN_SIZE: int = 1
+    NEON_POOL_MAX_SIZE: int = 10
+    NEON_COMMAND_TIMEOUT_SECONDS: float = 30.0
+
+    # Supabase Postgres (ap-south-1). Replaced Neon as the migration target:
+    # Neon has no India region and its nearest, Singapore, measured 130ms per
+    # query against 44ms here. The Neon settings above are retained so that
+    # project stays usable, but nothing reads them while these are set.
+    SUPABASE_DATABASE_URL: Optional[str] = None
+    SUPABASE_DATABASE_DIRECT_URL: Optional[str] = None
+    SUPABASE_DATABASE_NAME: str = "postgres"
+    # API keys for the browser client. The backend does not use them - it holds
+    # a direct Postgres connection and its own auth - but they are declared so
+    # pydantic does not reject the .env entries.
+    SUPABASE_PUBLISHABLE_KEY: Optional[str] = None
+    SUPABASE_SECRET_KEY: Optional[str] = None
+    SUPABASE_JWKS_URL: Optional[str] = None
+
+    # Retention. Mongo deleted these itself via TTL indexes; Postgres has no
+    # equivalent and Neon disallows pg_cron here, so an explicit job does it.
+    # An expired OTP that is never deleted stays a usable credential, so this
+    # runs far more often than the ninety-day windows would suggest.
+    RETENTION_PURGE_ENABLED: bool = True
+    RETENTION_PURGE_INTERVAL_MINUTES: int = 30
+    AUTH_AUDIT_RETENTION_DAYS: int = 90
+    SESSION_RECORD_RETENTION_DAYS: int = 30
+
     # Browser automation (Playwright) for auto-application flow
     PLAYWRIGHT_HEADLESS: bool = True
     PLAYWRIGHT_TIMEOUT_MS: int = 45000
@@ -89,6 +132,17 @@ class Settings(BaseSettings):
     SCRAPER_HTTP_RETRIES: int = 4
     SCRAPER_RETRY_BACKOFF: float = 0.8
     SCRAPER_FETCH_BATCH_TIMEOUT_SECONDS: float = 180.0
+    # Greenhouse boards are discovered from the corpus rather than curated, so
+    # this caps how many are read per run. The rest are picked up next run.
+    SCRAPER_GREENHOUSE_MAX_BOARDS: int = 40
+
+    # Ceiling on rows a single feed request may return. Was hardcoded to 200
+    # against a 743-row active corpus, which hid most of what was scraped.
+    # Raised from 600 once the corpus passed 894 active rows: the ceiling was
+    # again hiding a third of what the scrapers collected, and it will keep
+    # growing as the 357-board rotation fills in. Sized with headroom so the
+    # limit does not silently become the thing users see instead of the corpus.
+    OPPORTUNITY_FEED_MAX_LIMIT: int = 2000
     SCRAPER_INTRA_BATCH_SEMANTIC_DEDUP_ENABLED: bool = False
     SCRAPER_UNSTOP_MAX_ITEMS: int = 60
     SCRAPER_NAUKRI_MAX_ITEMS: int = 25
@@ -106,7 +160,12 @@ class Settings(BaseSettings):
     FIRECRAWL_API_KEY: Optional[str] = None
     FIRECRAWL_API_URL: str = "https://api.firecrawl.dev"
     FIRECRAWL_REQUIRE_API_KEY: bool = True
-    FIRECRAWL_MODE: str = "fallback"  # fallback | preferred
+    # Off by default: both paid render providers failed on every URL of the
+    # 2026-08-05 discovery sweep, so each render spent two billable round trips
+    # before reaching obscura, which works. Turned off through config rather than
+    # by removing them from the chain in source_discovery, so the code path and
+    # its tests stay alive and re-enabling is an env var rather than an edit.
+    FIRECRAWL_MODE: str = "disabled"  # fallback | preferred | disabled
     FIRECRAWL_SEARCH_ENABLED: bool = True
     FIRECRAWL_TIMEOUT_SECONDS: float = 30.0
     FIRECRAWL_MAX_RETRIES: int = 2
@@ -122,7 +181,7 @@ class Settings(BaseSettings):
     # Browser Use Cloud CDP rendering for blocked or JS-heavy pages.
     BROWSER_USE_ENABLED: bool = False
     BROWSER_USE_API_KEY: Optional[str] = None
-    BROWSER_USE_MODE: str = "fallback"  # fallback | preferred | disabled
+    BROWSER_USE_MODE: str = "disabled"  # fallback | preferred | disabled (see FIRECRAWL_MODE)
     BROWSER_USE_TIMEOUT_SECONDS: float = 60.0
     BROWSER_USE_MAX_CONCURRENT: int = 2
     BROWSER_USE_WAIT_FOR_MS: int = 1500
@@ -137,7 +196,12 @@ class Settings(BaseSettings):
     # because it costs one fetch per opportunity and can fall through to a paid
     # provider.
     DESCRIPTION_ENRICHMENT_ENABLED: bool = True
-    DESCRIPTION_ENRICHMENT_MAX_PER_RUN: int = 25
+    # Raised 25 -> 90. At 25 a run could not keep pace with ingestion, so the
+    # backlog of rows carrying "Opportunity indexed from <source>" never
+    # cleared and roughly a quarter of cards had no real description. Each
+    # enrichment is one detail-page fetch, and the fetch chain now leads with
+    # scrapling rather than a paid provider, so the added cost is bounded.
+    DESCRIPTION_ENRICHMENT_MAX_PER_RUN: int = 90
     DESCRIPTION_ENRICHMENT_TIMEOUT_SECONDS: float = 25.0
     DESCRIPTION_ENRICHMENT_MAX_CHARS: int = 4000
     DESCRIPTION_ENRICHMENT_INTERVAL_MINUTES: int = 60
@@ -148,14 +212,25 @@ class Settings(BaseSettings):
     # 200. Only its HTTP fetcher is used; rendering stays with Crawlee/Browser
     # Use rather than adding a third headless browser.
     SCRAPLING_ENABLED: bool = True
-    SCRAPLING_MODE: str = "fallback"  # fallback | preferred | disabled
+    # primary | fallback | disabled.
+    # Measured 2026-08-04 over 8 live sources: scrapling 6.15s vs direct
+    # 35.26s, both 8/8 usable with equivalent payloads. foundit.in alone was
+    # 29.16s direct vs 0.57s scrapling. Since the scrape batch has a fixed
+    # SCRAPER_FETCH_BATCH_TIMEOUT_SECONDS budget consumed in declaration
+    # order, one slow source starves every source after it - which is how
+    # Internshala once returned 2 rows. Direct remains the fallback.
+    SCRAPLING_MODE: str = "primary"
     SCRAPLING_TIMEOUT_SECONDS: float = 40.0
     SCRAPLING_MAX_CONCURRENT: int = 4
     SCRAPLING_CIRCUIT_FAILURE_THRESHOLD: int = 4
     SCRAPLING_CIRCUIT_RECOVERY_SECONDS: float = 120.0
 
     # Crawlee local crawler fallback (BeautifulSoup + optional Playwright).
-    CRAWLEE_ENABLED: bool = False
+    # On by default because wayup is a JS shell that only yields listings when
+    # rendered: a plain fetch sees category navigation, Crawlee sees 47 job
+    # links. It stays a render-time fallback, so Scrapling still handles every
+    # source that does not need a browser.
+    CRAWLEE_ENABLED: bool = True
     CRAWLEE_MODE: str = "fallback"  # fallback | preferred | disabled
     CRAWLEE_TIMEOUT_SECONDS: float = 30.0
     CRAWLEE_MAX_RETRIES: int = 1
@@ -165,6 +240,44 @@ class Settings(BaseSettings):
     CRAWLEE_MAX_CONTENT_CHARS: int = 2_000_000
     CRAWLEE_CIRCUIT_FAILURE_THRESHOLD: int = 3
     CRAWLEE_CIRCUIT_RECOVERY_SECONDS: float = 120.0
+
+    # Obscura renders JavaScript, which is the one thing scrapling cannot do and
+    # the reason careers pages that mount their board client-side came back as
+    # empty shells. It is tried before crawlee because it is a single Rust
+    # binary per fetch rather than a Playwright session, so it neither shares
+    # mutable state across workers nor costs a full Chrome in memory.
+    # Concurrency stays low because each fetch is its own browser process.
+    OBSCURA_ENABLED: bool = True
+    OBSCURA_MODE: str = "fallback"  # fallback | preferred | disabled
+    # Empty means "find it on PATH"; the container sets an explicit path.
+    OBSCURA_BINARY_PATH: str = ""
+    OBSCURA_TIMEOUT_SECONDS: float = 45.0
+    OBSCURA_MAX_CONCURRENT: int = 2
+    OBSCURA_STEALTH: bool = True
+    OBSCURA_OBEY_ROBOTS: bool = False
+    OBSCURA_MAX_CONTENT_CHARS: int = 2_000_000
+    OBSCURA_CIRCUIT_FAILURE_THRESHOLD: int = 3
+    OBSCURA_CIRCUIT_RECOVERY_SECONDS: float = 120.0
+
+    # Verified employer boards (company_board_registry). 357 boards cannot all
+    # be fetched every run without dominating the batch budget, and fetching a
+    # fixed prefix would leave the tail permanently stale, so each run takes a
+    # window that advances with the clock. At 60 per run rotating hourly the
+    # whole registry is covered in about six hours.
+    COMPANY_BOARDS_ENABLED: bool = True
+    # Raised 60 -> 120: at 60 the 357-board registry took six hours to cycle,
+    # so a board's postings could be that stale before being refreshed. Measured
+    # at 120 the fetch stays well inside SCRAPER_FETCH_BATCH_TIMEOUT_SECONDS,
+    # and the cycle halves to about three hours.
+    COMPANY_BOARDS_PER_RUN: int = 120
+    COMPANY_BOARDS_ROTATION_SECONDS: int = 3600
+    COMPANY_BOARDS_MAX_ITEMS: int = 400
+    # These boards are employer-wide, so most of what they list is senior. The
+    # platform serves students, so boards are queried and filtered for
+    # early-career roles; without this a 60-board run returned 121 postings of
+    # which exactly one was relevant.
+    COMPANY_BOARDS_EARLY_CAREER_ONLY: bool = True
+    COMPANY_BOARDS_SEARCH_TEXT: str = "intern graduate entry level"
 
     # Apify managed actors. Used for sources whose own markup yields little -
     # Unstop's actor returns real deadlines, structured eligibility and a
@@ -266,9 +379,12 @@ class Settings(BaseSettings):
     # Mongo TLS controls (keep local dev easy, prod strict)
     MONGODB_TLS_FORCE: bool = False
     MONGODB_TLS_ALLOW_INVALID_CERTS: bool = False
-    MONGODB_SERVER_SELECTION_TIMEOUT_MS: int = 10000
-    MONGODB_CONNECT_TIMEOUT_MS: int = 10000
-    MONGODB_SOCKET_TIMEOUT_MS: int = 15000
+    MONGODB_SERVER_SELECTION_TIMEOUT_MS: int = 30000
+    MONGODB_CONNECT_TIMEOUT_MS: int = 20000
+# 15s was tuned for a local Docker Mongo. Against Atlas a full feed query
+    # exceeded it and the endpoint returned 500 after ~40s while the database
+    # was healthy - the read simply took longer than the socket allowed.
+    MONGODB_SOCKET_TIMEOUT_MS: int = 60000
     MONGODB_STARTUP_MAX_RETRIES: int = 4
     MONGODB_STARTUP_RETRY_BACKOFF_SECONDS: float = 1.5
     
@@ -368,6 +484,20 @@ class Settings(BaseSettings):
     RAG_ONLINE_MIN_POSITIVE_FEEDBACK_RATE: float = 0.55
     RAG_ONLINE_MIN_REQUESTS: int = 50
 
+    # Privacy controls.
+    #
+    # TELEMETRY_RAW_RETENTION_DAYS: how long raw interaction and serving-telemetry
+    # rows keep their link to a student. Past this, `purge_aged_telemetry` swaps the
+    # user id for a derived pseudonym and clears the free-text query; the
+    # measurement itself is never deleted. 0 disables retention entirely.
+    #
+    # ANALYTICS_WAREHOUSE_PSEUDONYMIZE_USERS: emit keyed pseudonyms instead of real
+    # user ids in warehouse exports. Defaults on; turning it off means the
+    # ClickHouse copy carries identifiers that resolve against the app database.
+    TELEMETRY_RAW_RETENTION_DAYS: int = 400
+    ANALYTICS_WAREHOUSE_PSEUDONYMIZE_USERS: bool = True
+    ANALYTICS_WAREHOUSE_REQUIRE_CONSENT: bool = True
+
     # Analytics warehouse / feature-store controls
     ANALYTICS_WAREHOUSE_ENABLED: bool = True
     ANALYTICS_LOOKBACK_DAYS_DEFAULT: int = 30
@@ -378,6 +508,19 @@ class Settings(BaseSettings):
     ANALYTICS_WAREHOUSE_EXPORT_FORMAT: str = "duckdb_parquet"  # duckdb_parquet | parquet | disabled
     ANALYTICS_WAREHOUSE_SQL_MODELS_DIR: str = "backend/warehouse/models"
     ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED: bool = False
+    # Separate from _ENABLED on purpose. Whether the warehouse is configured and
+    # whether it should be able to fail the readiness probe are different
+    # questions: ClickHouse serves analytics, not requests, so an outage degrades
+    # reporting while every user-facing path stays healthy. Keyed off _ENABLED it
+    # meant an unresolvable ClickHouse hostname reported the whole service as
+    # degraded. Off by default; turn it on where reporting really is release
+    # blocking.
+    ANALYTICS_WAREHOUSE_CLICKHOUSE_REQUIRED_FOR_READINESS: bool = False
+    # Whether a warehouse outage should mark the API not-ready. It should not:
+    # ClickHouse serves analytics, not the feed. Marking it required meant an
+    # unresolvable hostname reported the whole service degraded while every
+    # user-facing path was healthy.
+    ANALYTICS_WAREHOUSE_CLICKHOUSE_REQUIRED_FOR_READINESS: bool = False
     ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST: Optional[str] = None
     ANALYTICS_WAREHOUSE_CLICKHOUSE_PORT: int = 8123
     ANALYTICS_WAREHOUSE_CLICKHOUSE_DATABASE: str = "vidyaverse"

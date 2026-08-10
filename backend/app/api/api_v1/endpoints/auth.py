@@ -431,6 +431,27 @@ async def _issue_user_session_token(
         scopes=scopes,
         session_type="admin" if admin_session else "user",
     )
+
+    # One session per user: the session just created survives, every earlier one
+    # is revoked. This is the single choke point for password, OTP and OAuth
+    # sign-in, so enforcing it here covers all of them. Ordering matters - the
+    # new session is registered above first, so a failure here can never leave
+    # the user with no session at all.
+    if settings.AUTH_SINGLE_ACTIVE_SESSION:
+        try:
+            revoked = await session_security_service.invalidate_user_sessions(
+                str(user.id), keep_session_id=session_id
+            )
+            if revoked:
+                logger.info(
+                    "single-session policy revoked %s earlier session(s) for user %s",
+                    revoked,
+                    user.id,
+                )
+        except Exception as exc:
+            # Never block a legitimate sign-in because cleanup failed.
+            logger.warning("could not revoke earlier sessions for user %s: %s", user.id, exc)
+
     _set_session_cookie(response, token, max_age_seconds=ttl_seconds)
     _set_csrf_cookie(response, max_age_seconds=ttl_seconds)
     return token
@@ -888,6 +909,15 @@ async def setup_password(
     if str(getattr(current_user, "auth_provider", "") or "").strip().lower() in {"", "otp", "google", "linkedin", "microsoft"}:
         current_user.auth_provider = "password"
     await current_user.save()
+
+    # Changing a password must end every OTHER session, for the same reason a
+    # reset does. The caller's own session is preserved so they are not logged
+    # out of the tab they just used.
+    revoked = await session_security_service.invalidate_user_sessions(
+        str(current_user.id),
+        keep_session_id=_current_session_id(request),
+    )
+    logger.info("password setup revoked %s other session(s) for user %s", revoked, current_user.id)
 
     ip_address, user_agent = _request_context(request)
     await auth_security_service.audit_event(
@@ -1575,6 +1605,15 @@ async def reset_forgotten_password(
         user.auth_provider = "password"
     await user.save()
 
+    # A reset is what a user does when they believe someone else has their
+    # account, so it has to end that someone else's session. Without this the
+    # stolen cookie stayed valid for the full cookie lifetime, because the Redis
+    # session record survived and the JWT exp never moved - the remediation we
+    # tell people to perform accomplished nothing. No session is kept here: the
+    # reset flow is unauthenticated, so there is no current session to preserve.
+    revoked = await session_security_service.invalidate_user_sessions(str(user.id))
+    logger.info("password reset revoked %s active session(s) for user %s", revoked, user.id)
+
     await auth_security_service.record_success(
         email=normalized_email,
         action="password_reset",
@@ -2185,17 +2224,27 @@ async def verify_otp(
     return _token_response_payload(token, user)
 
 
-@router.post("/logout", response_model=dict)
-async def logout(request: Request, response: Response) -> Any:
-    token = None
+def _request_bearer_token(request: Request) -> str | None:
+    """The session token for this request, from cookie or Authorization header."""
     cookie_name = (settings.AUTH_SESSION_COOKIE_NAME or "").strip()
     if cookie_name:
         token = request.cookies.get(cookie_name)
-    if not token:
-        authorization = str(request.headers.get("authorization") or "").strip()
-        if authorization.lower().startswith("bearer "):
-            token = authorization.split(" ", 1)[1].strip()
-    await session_security_service.invalidate_session(session_security_service.extract_session_id(token))
+        if token:
+            return token
+    authorization = str(request.headers.get("authorization") or "").strip()
+    if authorization.lower().startswith("bearer "):
+        return authorization.split(" ", 1)[1].strip()
+    return None
+
+
+def _current_session_id(request: Request) -> str | None:
+    """Session id of the caller, so a bulk revoke can spare their own session."""
+    return session_security_service.extract_session_id(_request_bearer_token(request))
+
+
+@router.post("/logout", response_model=dict)
+async def logout(request: Request, response: Response) -> Any:
+    await session_security_service.invalidate_session(_current_session_id(request))
     _clear_session_cookie(response)
     return {"status": "ok"}
 

@@ -16,7 +16,13 @@ from pathlib import Path
 
 
 TARGET_COUNT = 60000
-OUTPUT_DIR = Path(__file__).resolve().parents[2] / "frontend" / "public" / "data" / "skills-taxonomy"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+# Only the two files the frontend actually fetches belong under public/,
+# because everything there is world-readable over HTTP. The bulk exports
+# (a 47MB .sql dump among them) were being served at
+# /data/skills-taxonomy/skills.sql and copied into the standalone build.
+PUBLIC_DIR = REPO_ROOT / "frontend" / "public" / "data" / "skills-taxonomy"
+OUTPUT_DIR = REPO_ROOT / "data" / "skills-taxonomy"
 
 
 STOP_SKILL_TERMS = {
@@ -491,6 +497,7 @@ def validate(records: list[dict[str, object]]) -> dict[str, int]:
 
 def write_exports(records: list[dict[str, object]]) -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    PUBLIC_DIR.mkdir(parents=True, exist_ok=True)
     categories = [
         {
             "name": category.name,
@@ -519,9 +526,9 @@ def write_exports(records: list[dict[str, object]]) -> None:
     ]
 
     (OUTPUT_DIR / "skills.json").write_text(json.dumps(records, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    (OUTPUT_DIR / "categories.json").write_text(json.dumps(categories, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    (PUBLIC_DIR / "categories.json").write_text(json.dumps(categories, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     (OUTPUT_DIR / "aliases.json").write_text(json.dumps(alias_rows, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    (OUTPUT_DIR / "skills_autocomplete.json").write_text(json.dumps(autocomplete, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")
+    (PUBLIC_DIR / "skills_autocomplete.json").write_text(json.dumps(autocomplete, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")
     (OUTPUT_DIR / "skills.txt").write_text("\n".join(str(record["name"]) for record in records) + "\n", encoding="utf-8")
 
     with (OUTPUT_DIR / "skills.csv").open("w", encoding="utf-8", newline="") as handle:

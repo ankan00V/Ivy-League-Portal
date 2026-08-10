@@ -1446,6 +1446,104 @@ select.input-base {
   color: var(--text-primary);
 }
 
+/* Privacy controls.
+   Only tokens defined in :root above are used here — an undefined custom property
+   invalidates the whole declaration, which is how the skill picker once rendered
+   with no border and no shadow at all. */
+
+.profile-consent-note,
+.profile-address-note {
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+  margin: 0 0 0.35rem;
+}
+
+.profile-consent-note a {
+  color: var(--text-primary);
+  text-decoration: underline;
+}
+
+.profile-danger-zone {
+  margin-top: 2.5rem;
+  padding: 1.25rem;
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-sm);
+  display: grid;
+  gap: 0.75rem;
+}
+
+.profile-danger-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text-primary);
+}
+
+.profile-danger-head h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.profile-danger-zone p {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.profile-danger-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.profile-danger-label code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85em;
+}
+
+.profile-danger-error {
+  color: var(--accent-red, #dc2626);
+  font-weight: 600;
+}
+
+.profile-danger-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.profile-danger-button {
+  padding: 0.55rem 1.1rem;
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: #dc2626;
+  color: #ffffff;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+}
+
+.profile-danger-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.profile-danger-cancel {
+  padding: 0.55rem 1.1rem;
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-weight: 600;
+  cursor: pointer;
+}
+
 .profile-pill-row {
   display: flex;
   flex-wrap: wrap;
@@ -2126,5 +2224,240 @@ select.input-base {
     display: grid;
     gap: 0.75rem;
     padding-top: 0.75rem;
+  }
+}
+
+/* Technical / non-technical role tracks on the Internships & Jobs feed.
+   Uses the same 2px border and hard offset shadow as every other control here,
+   so the sub-tabs read as part of the page rather than bolted on. */
+.role-track-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.role-track-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.7rem 1.4rem;
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-weight: 800;
+  box-shadow: var(--shadow-md);
+  transition: var(--bounce-transition);
+}
+
+.role-track-tab:hover {
+  background: var(--bg-surface-hover);
+}
+
+.role-track-tab.active {
+  background: var(--brand-primary);
+  color: #000;
+  box-shadow: var(--shadow-sm);
+  transform: translate(2px, 2px);
+}
+
+/* The count tells a student an empty track is genuinely empty rather than
+   broken, which is the failure mode of a silent filter. */
+.role-track-count {
+  min-width: 1.6rem;
+  padding: 0.05rem 0.4rem;
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  background: var(--bg-base);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-align: center;
+}
+
+/* Placement filter: India / Remote / Hybrid / International.
+   Visually subordinate to .role-track-tab — smaller, pill-shaped, lighter shadow —
+   because the role track is the primary split and two equally loud tab rows stacked
+   on each other read as one confusing control. Only tokens defined in :root are
+   used; an undefined custom property silently invalidates the whole declaration. */
+.placement-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1.25rem;
+}
+
+.placement-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.42rem 0.95rem;
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: var(--bounce-transition);
+}
+
+.placement-tab:hover {
+  background: var(--bg-surface-hover);
+}
+
+.placement-tab.active {
+  background: var(--brand-primary);
+  color: #000;
+  box-shadow: none;
+  transform: translate(1px, 1px);
+}
+
+/* Same reasoning as .role-track-count: a visible zero tells a student the pill is
+   genuinely empty rather than broken. These counts overlap across pills by design,
+   so they do not sum to the All count. */
+.placement-count {
+  min-width: 1.4rem;
+  padding: 0.02rem 0.35rem;
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  background: var(--bg-base);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-align: center;
+}
+
+.placement-tab.active .placement-count {
+  background: var(--bg-surface);
+}
+
+.role-track-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 2rem;
+}
+
+.role-track-chip {
+  padding: 0.45rem 0.95rem;
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 0.88rem;
+  font-weight: 700;
+  transition: var(--standard-transition);
+}
+
+.role-track-chip:hover {
+  background: var(--bg-surface-hover);
+}
+
+.role-track-chip.active {
+  background: var(--brand-accent);
+  color: #000;
+  box-shadow: var(--shadow-sm);
+}
+
+@media (max-width: 640px) {
+  .role-track-tab {
+    flex: 1 1 auto;
+    justify-content: center;
+    padding: 0.65rem 0.9rem;
+  }
+}
+
+/* Speciality filter: chips on desktop, dropdown on mobile.
+   Both render the same multi-select state and CSS picks one, so a selection
+   survives a viewport change instead of being reset by a remount. */
+.track-filter-select {
+  display: none;
+  position: relative;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 2rem;
+}
+
+.track-filter-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex: 1 1 auto;
+  padding: 0.7rem 1rem;
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-weight: 700;
+  box-shadow: var(--shadow-sm);
+}
+
+.track-filter-clear {
+  padding: 0.7rem 0.9rem;
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--brand-primary);
+  color: #000;
+  font-weight: 800;
+  box-shadow: var(--shadow-sm);
+}
+
+/* Sits under the menu and above everything else, so a tap outside closes it
+   without a document-level listener that could outlive the component. */
+.track-filter-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: transparent;
+  border: 0;
+}
+
+.track-filter-menu {
+  position: absolute;
+  z-index: 31;
+  top: calc(100% + 0.4rem);
+  left: 0;
+  right: 0;
+  max-height: 60vh;
+  overflow-y: auto;
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.5rem;
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-md);
+}
+
+.track-filter-option {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 0.7rem;
+  border-radius: var(--radius-sm);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.track-filter-option:hover {
+  background: var(--bg-surface-hover);
+}
+
+/* Comfortably above the 44px minimum touch target. */
+.track-filter-option input {
+  width: 1.15rem;
+  height: 1.15rem;
+  accent-color: var(--brand-accent);
+}
+
+@media (max-width: 767px) {
+  .role-track-chips {
+    display: none;
+  }
+
+  .track-filter-select {
+    display: flex;
   }
 }

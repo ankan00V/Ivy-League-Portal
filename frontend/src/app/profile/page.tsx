@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 
 import { CenteredPageSkeleton } from "@/components/LoadingSkeletons";
+import DeleteAccountPanel from "@/components/DeleteAccountPanel";
 import Sidebar from "@/components/Sidebar";
 import ResumeReadinessReview from "@/components/ResumeReadinessReview";
 import SkillAutocompleteInput from "@/components/skills/SkillAutocompleteInput";
@@ -104,17 +105,8 @@ type ProfilePayload = {
   certificates: string;
   projects: string;
   responsibilities: string;
-  gender: string;
-  pronouns: string;
-  date_of_birth: string;
-  current_address_line1: string;
-  current_address_landmark: string;
   current_address_region: string;
-  current_address_pincode: string;
-  permanent_address_line1: string;
-  permanent_address_landmark: string;
   permanent_address_region: string;
-  permanent_address_pincode: string;
   hobbies: string[];
   social_links: Record<string, string>;
   resume_url: string;
@@ -164,17 +156,8 @@ type ProfileUpdatePayload = {
   certificates?: string;
   projects?: string;
   responsibilities?: string;
-  gender?: string;
-  pronouns?: string;
-  date_of_birth?: string;
-  current_address_line1?: string;
-  current_address_landmark?: string;
   current_address_region?: string;
-  current_address_pincode?: string;
-  permanent_address_line1?: string;
-  permanent_address_landmark?: string;
   permanent_address_region?: string;
-  permanent_address_pincode?: string;
   hobbies?: string[];
   social_links?: Record<string, string>;
 };
@@ -197,8 +180,6 @@ const USER_TYPE_OPTIONS: Array<{ key: UserType; label: string }> = [
 
 const DOMAIN_OPTIONS = ["Engineering", "Management", "Arts & Science", "Medicine", "Law", "Other"];
 const GOAL_OPTIONS = ["To find a Job", "Compete & Upskill", "To Host an Event", "To be a Mentor"];
-const PRONOUN_OPTIONS = ["He/Him", "She/Her", "They/Them", "Prefer not to say"];
-const GENDER_OPTIONS = ["Male", "Female", "Non-binary", "Prefer not to say"];
 const OTHER_UNIVERSITY_VALUE = "__other__";
 const OTHER_COURSE_VALUE = "__other_course__";
 const OTHER_SPECIALIZATION_VALUE = "__other_specialization__";
@@ -231,13 +212,7 @@ const UPPERCASE_TEXT_FIELDS = new Set<keyof ProfilePayload>([
   "certificates",
   "projects",
   "responsibilities",
-  "gender",
-  "pronouns",
-  "current_address_line1",
-  "current_address_landmark",
   "current_address_region",
-  "permanent_address_line1",
-  "permanent_address_landmark",
   "permanent_address_region",
 ]);
 
@@ -375,17 +350,8 @@ function hydrateProfilePayload(profilePayload: Record<string, unknown>): Profile
     certificates: toText(profilePayload.certificates),
     projects: toText(profilePayload.projects),
     responsibilities: toText(profilePayload.responsibilities),
-    gender: toText(profilePayload.gender),
-    pronouns: toText(profilePayload.pronouns),
-    date_of_birth: toText(profilePayload.date_of_birth),
-    current_address_line1: toText(profilePayload.current_address_line1),
-    current_address_landmark: toText(profilePayload.current_address_landmark),
     current_address_region: toText(profilePayload.current_address_region),
-    current_address_pincode: toText(profilePayload.current_address_pincode),
-    permanent_address_line1: toText(profilePayload.permanent_address_line1),
-    permanent_address_landmark: toText(profilePayload.permanent_address_landmark),
     permanent_address_region: toText(profilePayload.permanent_address_region),
-    permanent_address_pincode: toText(profilePayload.permanent_address_pincode),
     hobbies: toStringArray(profilePayload.hobbies),
     social_links: toStringMap(profilePayload.social_links),
     resume_url: toText(profilePayload.resume_url),
@@ -461,17 +427,8 @@ function buildProfileUpdatePayload(profile: ProfilePayload): ProfileUpdatePayloa
   assignOptionalText(payload, "certificates", profile.certificates);
   assignOptionalText(payload, "projects", profile.projects);
   assignOptionalText(payload, "responsibilities", profile.responsibilities);
-  assignOptionalText(payload, "gender", profile.gender);
-  assignOptionalText(payload, "pronouns", profile.pronouns);
-  assignOptionalText(payload, "date_of_birth", profile.date_of_birth);
-  assignOptionalText(payload, "current_address_line1", profile.current_address_line1);
-  assignOptionalText(payload, "current_address_landmark", profile.current_address_landmark);
   assignOptionalText(payload, "current_address_region", profile.current_address_region);
-  assignOptionalText(payload, "current_address_pincode", profile.current_address_pincode);
-  assignOptionalText(payload, "permanent_address_line1", profile.permanent_address_line1);
-  assignOptionalText(payload, "permanent_address_landmark", profile.permanent_address_landmark);
   assignOptionalText(payload, "permanent_address_region", profile.permanent_address_region);
-  assignOptionalText(payload, "permanent_address_pincode", profile.permanent_address_pincode);
 
   return payload;
 }
@@ -509,32 +466,14 @@ function getCollegeNameFromProfile(profile: ProfilePayload): string {
   return profile.college_name;
 }
 
-function getCurrentAddressFromProfile(profile: ProfilePayload): {
-  line1: string;
-  landmark: string;
-  region: string;
-  pincode: string;
-} {
-  return {
-    line1: profile.current_address_line1,
-    landmark: profile.current_address_landmark,
-    region: profile.current_address_region,
-    pincode: profile.current_address_pincode,
-  };
+// Only the region survives data minimization: it is a ranking input, whereas the
+// street line, landmark and pincode were collected and never read by anything.
+function getCurrentAddressFromProfile(profile: ProfilePayload): { region: string } {
+  return { region: profile.current_address_region };
 }
 
-function getPermanentAddressFromProfile(profile: ProfilePayload): {
-  line1: string;
-  landmark: string;
-  region: string;
-  pincode: string;
-} {
-  return {
-    line1: profile.permanent_address_line1,
-    landmark: profile.permanent_address_landmark,
-    region: profile.permanent_address_region,
-    pincode: profile.permanent_address_pincode,
-  };
+function getPermanentAddressFromProfile(profile: ProfilePayload): { region: string } {
+  return { region: profile.permanent_address_region };
 }
 
 function getResumeFilenameFromProfile(profile: ProfilePayload): string {
@@ -542,10 +481,7 @@ function getResumeFilenameFromProfile(profile: ProfilePayload): string {
 }
 
 const CURRENT_TO_PERMANENT_ADDRESS_FIELD: Partial<Record<keyof ProfilePayload, keyof ProfilePayload>> = {
-  current_address_line1: "permanent_address_line1",
-  current_address_landmark: "permanent_address_landmark",
   current_address_region: "permanent_address_region",
-  current_address_pincode: "permanent_address_pincode",
 };
 
 export default function ProfilePage() {
@@ -595,17 +531,8 @@ export default function ProfilePage() {
     certificates: "",
     projects: "",
     responsibilities: "",
-    gender: "",
-    pronouns: "",
-    date_of_birth: "",
-    current_address_line1: "",
-    current_address_landmark: "",
     current_address_region: "",
-    current_address_pincode: "",
-    permanent_address_line1: "",
-    permanent_address_landmark: "",
     permanent_address_region: "",
-    permanent_address_pincode: "",
     hobbies: [],
     social_links: {},
     resume_url: "",
@@ -666,10 +593,7 @@ export default function ProfilePage() {
     }
     setProfile((prev) => ({
       ...prev,
-      permanent_address_line1: prev.current_address_line1,
-      permanent_address_landmark: prev.current_address_landmark,
       permanent_address_region: prev.current_address_region,
-      permanent_address_pincode: prev.current_address_pincode,
     }));
   };
 
@@ -735,7 +659,7 @@ export default function ProfilePage() {
       work: hasText(profile.current_job_role) || hasText(profile.total_work_experience) || hasText(profile.experience_summary),
       accomplishments:
         hasText(profile.achievements) || hasText(profile.certificates) || hasText(profile.projects) || hasText(profile.responsibilities),
-      personal: hasText(profile.date_of_birth) || hasText(profile.current_address_line1) || profile.hobbies.length > 0,
+      personal: hasText(profile.current_address_region) || profile.hobbies.length > 0,
       social: hasSocial,
     };
   }, [profile]);
@@ -1238,12 +1162,23 @@ export default function ProfilePage() {
           checked={profile.consent_data_processing}
           onChange={(checked) => updateProfile("consent_data_processing", checked)}
         >
-          I agree to data processing and privacy terms *
+          Include my activity in analytics *
         </ToggleRow>
+        {/* The toggle now controls something specific, so it says what. It used to
+            read "I agree to data processing and privacy terms" and link to nothing,
+            while gating no behaviour at all. */}
+        <p className="profile-consent-note">
+          Turning this off excludes your activity from our analytics warehouse. Your
+          recommendations keep working either way. See the{" "}
+          <Link href="/privacy">Privacy Policy</Link> and{" "}
+          <Link href="/terms">Terms of Service</Link>.
+        </p>
         <ToggleRow className="profile-inline-check" checked={profile.consent_updates} onChange={(checked) => updateProfile("consent_updates", checked)}>
           I want product and opportunity updates
         </ToggleRow>
       </div>
+
+      <DeleteAccountPanel />
     </>
   );
 
@@ -1456,58 +1391,14 @@ export default function ProfilePage() {
 
   const renderPersonalSection = () => (
     <>
-      {renderSectionHeader("Personal Details", "Pronouns, DOB, address, and personal interests")}
-      <FormSection className="profile-field" label="Pronouns">
-        <PillGroup className="profile-pill-row">
-          {PRONOUN_OPTIONS.map((item) => (
-            <button
-              key={item}
-              type="button"
-              className={`profile-pill ${profile.pronouns === item ? "active" : ""}`}
-              onClick={() => updateProfile("pronouns", item)}
-            >
-              {item}
-            </button>
-          ))}
-        </PillGroup>
-      </FormSection>
-
-      <FormSection className="profile-field" label="Gender">
-        <PillGroup className="profile-pill-row">
-          {GENDER_OPTIONS.map((item) => (
-            <button key={item} type="button" className={`profile-pill ${profile.gender === item ? "active" : ""}`} onClick={() => updateProfile("gender", item)}>
-              {item}
-            </button>
-          ))}
-        </PillGroup>
-      </FormSection>
-
-      <TextField
-        wrapperClassName="profile-field"
-        label="Date of Birth"
-        value={profile.date_of_birth}
-        onChange={(event) => updateProfile("date_of_birth", event.target.value)}
-        placeholder="YYYY-MM-DD or DD/MM/YYYY"
-      />
+      {renderSectionHeader("Personal Details", "Where you are based, and your personal interests")}
 
       <div className="profile-address-card">
-        <h3>Current Address</h3>
-        <div className="profile-field-grid two">
-          <TextField
-            wrapperClassName="profile-field"
-            label="Address Line 1"
-            value={profile.current_address_line1}
-            onChange={(event) => updateProfile("current_address_line1", event.target.value)}
-            placeholder="Street, locality"
-          />
-          <TextField
-            wrapperClassName="profile-field"
-            label="Landmark"
-            value={profile.current_address_landmark}
-            onChange={(event) => updateProfile("current_address_landmark", event.target.value)}
-            placeholder="Landmark"
-          />
-        </div>
+        <h3>Current Location</h3>
+        <p className="profile-address-note">
+          City and state only. We use this to match opportunities near you — we do not ask for a
+          street address, and we do not need one.
+        </p>
         <div className="profile-field-grid two">
           <TextField
             wrapperClassName="profile-field"
@@ -1516,39 +1407,15 @@ export default function ProfilePage() {
             onChange={(event) => updateProfile("current_address_region", event.target.value)}
             placeholder="City, State, Country"
           />
-          <TextField
-            wrapperClassName="profile-field"
-            label="Pincode"
-            value={profile.current_address_pincode}
-            onChange={(event) => updateProfile("current_address_pincode", event.target.value)}
-            placeholder="144411"
-          />
         </div>
       </div>
 
       <div className="profile-address-card">
         <div className="profile-address-head">
-          <h3>Permanent Address</h3>
+          <h3>Home Location</h3>
           <ToggleRow className="profile-inline-check" checked={copyCurrentAddress} onChange={handleCopyCurrentAddressChange}>
-            Copy current address
+            Same as current
           </ToggleRow>
-        </div>
-
-        <div className="profile-field-grid two">
-          <TextField
-            wrapperClassName="profile-field"
-            label="Address Line 1"
-            value={profile.permanent_address_line1}
-            onChange={(event) => updateProfile("permanent_address_line1", event.target.value)}
-            placeholder="Street, locality"
-          />
-          <TextField
-            wrapperClassName="profile-field"
-            label="Landmark"
-            value={profile.permanent_address_landmark}
-            onChange={(event) => updateProfile("permanent_address_landmark", event.target.value)}
-            placeholder="Landmark"
-          />
         </div>
 
         <div className="profile-field-grid two">
@@ -1558,13 +1425,6 @@ export default function ProfilePage() {
             value={profile.permanent_address_region}
             onChange={(event) => updateProfile("permanent_address_region", event.target.value)}
             placeholder="City, State, Country"
-          />
-          <TextField
-            wrapperClassName="profile-field"
-            label="Pincode"
-            value={profile.permanent_address_pincode}
-            onChange={(event) => updateProfile("permanent_address_pincode", event.target.value)}
-            placeholder="713358"
           />
         </div>
       </div>

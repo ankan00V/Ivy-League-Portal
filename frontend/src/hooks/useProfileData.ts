@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 
 import { apiUrl } from "@/lib/api";
 import { clearAccessToken, createAuthenticatedFetchInit, getAccessToken } from "@/lib/auth-session";
@@ -15,18 +15,11 @@ type UseProfileDataArgs<TProfile, TUpdatePayload> = {
   deriveUniversitySelection: (value: string) => string;
   hasText: (value: string) => boolean;
   getCollegeName: (profile: TProfile) => string;
-  getCurrentAddress: (profile: TProfile) => {
-    line1: string;
-    landmark: string;
-    region: string;
-    pincode: string;
-  };
-  getPermanentAddress: (profile: TProfile) => {
-    line1: string;
-    landmark: string;
-    region: string;
-    pincode: string;
-  };
+  // Region only. Street line, landmark and pincode were removed in the 2026-08-05
+  // data-minimization pass: nothing read them, and a pincode alongside a college
+  // name is enough to identify a student outright.
+  getCurrentAddress: (profile: TProfile) => { region: string };
+  getPermanentAddress: (profile: TProfile) => { region: string };
   getResumeFilename: (profile: TProfile) => string;
   setSelectedUniversity: Dispatch<SetStateAction<string>>;
   setCopyCurrentAddress: Dispatch<SetStateAction<boolean>>;
@@ -73,6 +66,31 @@ export function useProfileData<TProfile, TUpdatePayload>({
   setCopyCurrentAddress,
 }: UseProfileDataArgs<TProfile, TUpdatePayload>): UseProfileDataResult {
   const router = useRouter();
+
+  // Snapshot of the profile exactly as the server last gave it to us. Anything
+  // that differs from this is unsaved work the student typed.
+  const lastServerProfileRef = useRef<string | null>(null);
+  const profileRef = useRef(profile);
+
+  // Mirrored in an effect rather than during render: assigning to a ref while
+  // rendering is not safe under concurrent rendering.
+  useEffect(() => {
+    profileRef.current = profile;
+  }, [profile]);
+
+  const hasUnsavedEdits = useCallback((): boolean => {
+    const baseline = lastServerProfileRef.current;
+    if (baseline === null) {
+      return false;
+    }
+    try {
+      return JSON.stringify(profileRef.current) !== baseline;
+    } catch {
+      // Never let a serialisation problem decide to discard someone's typing.
+      return true;
+    }
+  }, []);
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploadingResume, setUploadingResume] = useState(false);
@@ -131,16 +149,19 @@ export function useProfileData<TProfile, TUpdatePayload>({
           if (profileRes.ok) {
             const nextProfile = hydrateProfilePayload(profilePayload);
             setProfile(nextProfile);
+            // Baseline for the unsaved-work check. Set on every server hydrate,
+            // including after a save, so a saved profile is not treated as dirty.
+            try {
+              lastServerProfileRef.current = JSON.stringify(nextProfile);
+            } catch {
+              lastServerProfileRef.current = null;
+            }
             setSelectedUniversity(deriveUniversitySelection(getCollegeName(nextProfile)));
 
             const currentAddress = getCurrentAddress(nextProfile);
             const permanentAddress = getPermanentAddress(nextProfile);
             setCopyCurrentAddress(
-              hasText(currentAddress.line1) &&
-                currentAddress.line1 === permanentAddress.line1 &&
-                currentAddress.landmark === permanentAddress.landmark &&
-                currentAddress.region === permanentAddress.region &&
-                currentAddress.pincode === permanentAddress.pincode,
+              hasText(currentAddress.region) && currentAddress.region === permanentAddress.region,
             );
 
             hasFreshProfile = true;
@@ -178,17 +199,35 @@ export function useProfileData<TProfile, TUpdatePayload>({
 
     void loadProfile(true);
 
+    // Refresh on focus, but never over unsaved work. A student switching to
+    // another app to copy a LinkedIn URL - the most ordinary thing that happens
+    // on a phone in this form - used to come back to every typed field silently
+    // reverted to the last server state, with no warning and no undo.
     const handleWindowFocus = () => {
+      if (hasUnsavedEdits()) {
+        return;
+      }
       void loadProfile(false);
     };
 
+    // Closing the tab mid-edit deserves a prompt for the same reason.
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (hasUnsavedEdits()) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    };
+
     window.addEventListener("focus", handleWindowFocus);
+    window.addEventListener("beforeunload", handleBeforeUnload);
     return () => {
       window.removeEventListener("focus", handleWindowFocus);
+      window.removeEventListener("beforeunload", handleBeforeUnload);
     };
   }, [
     router,
     setProfile,
+    hasUnsavedEdits,
     hydrateProfilePayload,
     deriveUniversitySelection,
     hasText,
@@ -229,6 +268,11 @@ export function useProfileData<TProfile, TUpdatePayload>({
       }
       const nextProfile = hydrateProfilePayload(payload);
       setProfile(nextProfile);
+      try {
+        lastServerProfileRef.current = JSON.stringify(nextProfile);
+      } catch {
+        lastServerProfileRef.current = null;
+      }
       setSelectedUniversity(deriveUniversitySelection(getCollegeName(nextProfile)));
       setMessage("Profile updated successfully.");
     } catch (err) {

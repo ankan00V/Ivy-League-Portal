@@ -13,7 +13,7 @@ from beanie import PydanticObjectId
 from beanie.exceptions import CollectionWasNotInitialized
 from beanie.odm.operators.find.comparison import In
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from app.api.deps import get_current_active_user, get_current_admin_user
 from app.core.cache import cache_get_json, cache_key, cache_set_json
@@ -28,6 +28,7 @@ from app.models.rag_feedback_event import RAGFeedbackEvent
 from app.models.traffic import TrafficType
 from app.models.user import User
 from app.schemas.rag import RAGAskResponse
+from app.services.opportunity_placement import classify_placement
 from app.services.ai_engine import ai_system
 from app.services.cold_start import ColdStartDecision, cold_start_profile_builder
 from app.services.evaluation_service import evaluation_service
@@ -93,6 +94,31 @@ class OpportunityResponse(OpportunityCreate):
     created_at: datetime
     updated_at: Optional[datetime] = None
     last_seen_at: Optional[datetime] = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def feed_categories(self) -> list[str]:
+        """Placement pills for the feed: india, remote, hybrid, international.
+
+        Computed at serialization rather than filtered in the query, for two
+        reasons. The corpus cannot answer the question in a WHERE clause —
+        `work_mode` is null on 73% of rows, so the signal has to be recovered from
+        location and body text. And the read path is mid-migration between Mongo
+        and Postgres (`OPPORTUNITY_READ_BACKEND`), so a Python classifier gives
+        both backends identical answers instead of two dialects of the same regex
+        drifting apart.
+
+        Non-exclusive by design: a remote internship in Bengaluru returns both
+        `india` and `remote`. May be empty when the listing carries no usable
+        signal, in which case it appears only under "All".
+        """
+        return classify_placement(
+            location=self.location,
+            work_mode=self.work_mode,
+            title=self.title,
+            description=self.description,
+            source=self.source,
+        )
 
 
 class RecommendedOpportunityResponse(OpportunityResponse):
@@ -451,8 +477,16 @@ async def _load_active_opportunities(
     limit: int = 100,
 ) -> list[Opportunity]:
     safe_skip = max(0, skip)
-    safe_limit = max(1, min(limit, 200))
-    fetch_window = min(max((safe_skip + safe_limit) * 10, 250), 2000)
+    # The cap was 200 while the corpus held 743 active rows, so roughly 55% of
+    # everything the scrapers collected was unreachable through the feed - it
+    # looked like the scrapers had stopped when they had not. Raised so the
+    # visible feed tracks the corpus; `skip` still pages beyond it.
+    safe_limit = max(1, min(limit, settings.OPPORTUNITY_FEED_MAX_LIMIT))
+    # The 10x over-fetch existed to survive the Python-side filters when limits
+    # were in the tens. With a limit of 1500 it pulled 6000 full documents across
+    # the network to return a thousand, which is what pushed the query past
+    # Atlas's socket timeout. Twice the request plus a floor is ample.
+    fetch_window = min(max((safe_skip + safe_limit) * 2, 400), 3000)
     query = Opportunity.find_many(Opportunity.domain == domain) if domain else Opportunity.find_many()
     candidates = await query.sort("-created_at").limit(fetch_window).to_list()
     active = _filter_active_opportunities(candidates)
@@ -760,14 +794,14 @@ async def _retrieve_feed_candidates(
             if row.get("id")
         }
         if not ids:
-            fallback_rows = await _load_active_opportunities(limit=200)
+            fallback_rows = await _load_active_opportunities(limit=settings.OPPORTUNITY_FEED_MAX_LIMIT)
             ids = [str(row.id) for row in fallback_rows]
             provider = "active_feed_fallback"
 
         await cache_set_json(
             key,
             {
-                "ids": ids[:200],
+                "ids": ids[: settings.OPPORTUNITY_FEED_MAX_LIMIT],
                 "similarity_by_id": similarity_by_id,
                 "provider": provider,
                 "created_at": utc_now().isoformat(),
@@ -775,9 +809,9 @@ async def _retrieve_feed_candidates(
             ttl_seconds=600,
         )
 
-    rows = await _load_opportunities_by_ids(ids[:200])
+    rows = await _load_opportunities_by_ids(ids[: settings.OPPORTUNITY_FEED_MAX_LIMIT])
     if not rows and ids:
-        rows = await _load_active_opportunities(limit=200)
+        rows = await _load_active_opportunities(limit=settings.OPPORTUNITY_FEED_MAX_LIMIT)
 
     return rows, {
         "cache_hit": cache_hit,
@@ -794,7 +828,8 @@ def _diversify_feed_page(
     offset: int,
     limit: int,
 ) -> list[dict[str, Any]]:
-    safe_limit = max(1, min(int(limit), 50))
+    # Feed path: shares the one ceiling rather than a private 50.
+    safe_limit = max(1, min(int(limit), settings.OPPORTUNITY_FEED_MAX_LIMIT))
     source_cap = max(1, int(math.ceil(safe_limit * 0.20)))
     domain_cap = max(1, int(math.ceil(safe_limit * 0.40)))
     source_counts: dict[str, int] = {}
@@ -867,7 +902,8 @@ async def get_unified_feed(
     candidate retrieval caching, and per-request reranking.
     """
     started_at = time.perf_counter()
-    safe_limit = max(1, min(int(limit), 50))
+    # Feed path: shares the one ceiling rather than a private 50.
+    safe_limit = max(1, min(int(limit), settings.OPPORTUNITY_FEED_MAX_LIMIT))
     offset = _decode_page_token(page_token)
     filter_dict = _safe_json_filters(filters)
     requested_mode = "feed"
@@ -1351,7 +1387,9 @@ async def get_personalized_recommendations(
     ranking_mode: baseline | semantic | ml | ab
     """
     started_at = time.perf_counter()
-    safe_limit = max(1, min(limit, 50))
+    # Was a hardcoded 50 against a 600-row career feed, so the personalised view
+    # showed a fraction of what the plain list did and the two disagreed.
+    safe_limit = max(1, min(limit, settings.OPPORTUNITY_FEED_MAX_LIMIT))
     requested_mode = ranking_mode
     try:
         profile = await _get_or_create_profile(current_user.id)

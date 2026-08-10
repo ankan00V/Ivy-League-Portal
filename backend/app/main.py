@@ -733,9 +733,16 @@ async def _artifact_store_health() -> dict[str, Any]:
             aws_secret_access_key=settings.MLOPS_MODEL_ARTIFACT_S3_SECRET_ACCESS_KEY or None,
             region_name=settings.MLOPS_MODEL_ARTIFACT_S3_REGION or None,
         )
+        # boto3's defaults retry for tens of seconds. This check is optional and
+        # sits on the readiness path, so a dead endpoint must fail fast rather
+        # than hold the probe open - it was contributing 10.4s to every call.
+        from botocore.config import Config  # type: ignore
+
         client = session.client(
             "s3",
             endpoint_url=(settings.MLOPS_MODEL_ARTIFACT_S3_ENDPOINT_URL or None),
+            config=Config(connect_timeout=2, read_timeout=2,
+                          retries={"max_attempts": 1, "mode": "standard"}),
         )
         client.head_bucket(Bucket=bucket)
 
@@ -858,10 +865,14 @@ async def readiness_check(request: Request, _auth: Any = Depends(_readiness_depe
     checks = {
         "mongodb": await _run_check("mongodb", lambda: _mongo_health(request), required=True),
         "redis": await _run_check("redis", _redis_health, required=bool(settings.REDIS_URL)),
+        # Analytics, not serving. A warehouse outage degrades reporting, not the
+        # API - marking it required meant an unresolvable ClickHouse hostname
+        # reported the whole service as degraded while every user-facing path
+        # was healthy.
         "clickhouse": await _run_check(
             "clickhouse",
             _clickhouse_health,
-            required=bool(settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED),
+            required=bool(settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_REQUIRED_FOR_READINESS),
         ),
         "artifact_store": await _run_check("artifact_store", _artifact_store_health, required=False),
         "queue": await _run_check("queue", _queue_health, required=bool(settings.JOBS_ENABLED)),

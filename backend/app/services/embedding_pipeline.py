@@ -62,10 +62,37 @@ def _split_terms(value: Any) -> list[str]:
     return [part.strip() for part in str(value).split(",") if part.strip()]
 
 
+# Vectors produced by the md5 hash fallback are stamped with this suffix so they
+# are never mistaken for real model output.
+DEGRADED_VERSION_SUFFIX = "+hash_fallback"
+
+
 class EmbeddingPipeline:
     @property
     def model_version(self) -> str:
-        return (settings.EMBEDDING_MODEL_VERSION or settings.EMBEDDING_MODEL).strip()
+        """The version stamp for vectors written right now.
+
+        This used to return the static config string unconditionally, so when
+        sentence-transformers failed to load and the service silently fell back
+        to md5 bag-of-words vectors, those vectors were stamped
+        "sentence-transformers/all-MiniLM-L6-v2@v1" anyway. Two things followed:
+        cosine similarity between a hash vector and a real query vector is noise,
+        so those rows became unretrievable; and because the stamp matched,
+        needs_opportunity_embedding() considered them current, so no later run
+        would ever repair them. An audit found 202 such rows in a live index.
+
+        Stamping the runtime mode instead makes the damage visible and, more
+        importantly, self-healing: once the real model loads the stamps stop
+        matching and the pipeline re-embeds them.
+        """
+        base = (settings.EMBEDDING_MODEL_VERSION or settings.EMBEDDING_MODEL).strip()
+        try:
+            if embedding_service.is_degraded():
+                return f"{base}{DEGRADED_VERSION_SUFFIX}"
+        except Exception:
+            # Never let a health-probe problem block embedding entirely.
+            pass
+        return base
 
     def opportunity_text(self, opportunity: Opportunity | dict[str, Any]) -> str:
         def field(name: str, default: Any = "") -> Any:

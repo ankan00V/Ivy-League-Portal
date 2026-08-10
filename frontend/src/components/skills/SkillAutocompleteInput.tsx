@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useRef, useState } from "react";
+import React, { useId, useMemo, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
 
 import FormSection from "@/components/ui/FormSection";
@@ -58,6 +58,9 @@ export default function SkillAutocompleteInput({
   required = false,
   wrapperClassName,
 }: SkillAutocompleteInputProps) {
+  // Stable per-instance id so aria-controls can point at this listbox even when
+  // the component is rendered more than once on a page.
+  const listboxId = useId();
   const [options, setOptions] = useState<SkillOption[]>([]);
   const [query, setQuery] = useState("");
   const [isOpen, setIsOpen] = useState(false);
@@ -187,6 +190,10 @@ export default function SkillAutocompleteInput({
             className="skill-picker-input"
             value={query}
             role="combobox"
+            // role="combobox" requires aria-controls as well as aria-expanded.
+            // Without it a screen reader announces a combobox but cannot find the
+            // list it controls, which is worse than plain text input.
+            aria-controls={listboxId}
             aria-expanded={isOpen && suggestions.length > 0}
             aria-autocomplete="list"
             autoComplete="off"
@@ -200,12 +207,12 @@ export default function SkillAutocompleteInput({
               void loadOptions();
             }}
             placeholder={
-              selectedSkills.length > 0 ? "Add another skill..." : "Search skills, e.g. Python"
+              selectedSkills.length > 0 ? "Add another skill..." : (placeholder ?? "Search skills, e.g. Python")
             }
           />
         </div>
         {isOpen && suggestions.length > 0 ? (
-          <div className="skill-picker-menu" role="listbox">
+          <div className="skill-picker-menu" role="listbox" id={listboxId}>
             {suggestions.map((option) => (
               <button
                 key={option.id}

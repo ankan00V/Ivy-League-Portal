@@ -44,6 +44,7 @@ from app.models.source_discovery import (
 )
 from app.models.user import User
 from app.services.browser_use_client import BrowserUseClient, BrowserUseUnavailableError, browser_use_client
+from app.services.obscura_client import ObscuraUnavailableError, obscura_client
 from app.services.crawlee_client import CrawleeClient, CrawleeUnavailableError, crawlee_client
 from app.services.firecrawl_client import FirecrawlClient, FirecrawlUnavailableError, firecrawl_client
 from app.services.opportunity_trust import apply_trust_assessment, assess_opportunity_trust
@@ -486,6 +487,7 @@ class SourceHttpClient:
         self.firecrawl = firecrawl or firecrawl_client
         self.browser_use = browser_use or browser_use_client
         self.crawlee = crawlee or crawlee_client
+        self.obscura = obscura_client
         # scraper_fetch_bridge caches one SourceHttpClient for the process but
         # runs asyncio.run() per fetch, so these primitives are used from a new
         # event loop every call. Plain asyncio.Semaphore/Lock bind to the first
@@ -507,20 +509,32 @@ class SourceHttpClient:
 
     def _preferred_render_providers(self) -> list[str]:
         providers: list[str] = []
+        # Both paid render providers are off by default via FIRECRAWL_MODE and
+        # BROWSER_USE_MODE, which now default to "disabled" — they failed on every
+        # URL of the 2026-08-05 sweep and each render burned two billable round
+        # trips first. The calls stay here rather than being commented out so the
+        # path keeps its test coverage and re-enabling is an env var, not an edit.
         if self.firecrawl.configured and self._provider_mode("FIRECRAWL_MODE") == "preferred":
             providers.append("firecrawl")
         if self.browser_use.configured and self._provider_mode("BROWSER_USE_MODE") == "preferred":
             providers.append("browser_use")
+        if self.obscura.configured and self._provider_mode("OBSCURA_MODE") == "preferred":
+            providers.append("obscura")
         if self.crawlee.configured and self._provider_mode("CRAWLEE_MODE") == "preferred":
             providers.append("crawlee")
         return providers
 
     def _fallback_render_providers(self) -> list[str]:
         providers: list[str] = []
+        # Same as above: gated by mode, which defaults to "disabled".
         if self.firecrawl.configured and self._provider_mode("FIRECRAWL_MODE") != "disabled":
             providers.append("firecrawl")
         if self.browser_use.configured and self._provider_mode("BROWSER_USE_MODE") != "disabled":
             providers.append("browser_use")
+        # Ahead of crawlee: it renders JavaScript just as well for a fraction of
+        # the memory, and does not share a Playwright driver between workers.
+        if self.obscura.configured and self._provider_mode("OBSCURA_MODE") != "disabled":
+            providers.append("obscura")
         if self.crawlee.configured and self._provider_mode("CRAWLEE_MODE") != "disabled":
             providers.append("crawlee")
         return providers
@@ -530,6 +544,8 @@ class SourceHttpClient:
             return await self._fetch_firecrawl(url, timeout_seconds)
         if provider == "browser_use":
             return await self._fetch_browser_use(url, timeout_seconds)
+        if provider == "obscura":
+            return await self._fetch_obscura(url, timeout_seconds)
         if provider == "crawlee":
             return await self._fetch_crawlee(url, timeout_seconds, render=True)
         raise ValueError(f"unsupported_render_provider:{provider}")
@@ -546,7 +562,12 @@ class SourceHttpClient:
         for provider in providers:
             try:
                 return await self._fetch_render_provider(provider, url, timeout_seconds)
-            except (FirecrawlUnavailableError, BrowserUseUnavailableError, CrawleeUnavailableError):
+            except (
+                FirecrawlUnavailableError,
+                BrowserUseUnavailableError,
+                ObscuraUnavailableError,
+                CrawleeUnavailableError,
+            ):
                 logger.warning(
                     "%s render provider failed; trying next provider",
                     phase,
@@ -609,10 +630,22 @@ class SourceHttpClient:
 
                 direct_error: Exception | None = None
                 direct_page: FetchedPage | None = None
-                try:
-                    direct_page = await self._fetch_direct(normalized, timeout)
-                except Exception as exc:
-                    direct_error = exc
+
+                # In "primary" mode scrapling leads and direct is the fallback.
+                # It is local, free and in-process, so leading with it costs
+                # nothing, and it avoids the pathological direct timings that
+                # eat the batch budget before later sources are reached.
+                scrapling_first = (
+                    str(settings.SCRAPLING_MODE or "fallback").strip().lower() == "primary"
+                )
+                if scrapling_first:
+                    direct_page = await self._try_scrapling(normalized, timeout)
+
+                if direct_page is None:
+                    try:
+                        direct_page = await self._fetch_direct(normalized, timeout)
+                    except Exception as exc:
+                        direct_error = exc
 
                 # Scrapling before the paid providers: it is local and free, and
                 # its stealth headers clear sources a plain GET cannot. Measured
@@ -620,7 +653,10 @@ class SourceHttpClient:
                 # which were otherwise dead. Only attempted when the direct fetch
                 # actually failed or came back blocked, so healthy sources are
                 # untouched.
-                if direct_page is None or int(getattr(direct_page, "status_code", 0)) in {401, 403, 429}:
+                if not scrapling_first and (
+                    direct_page is None
+                    or int(getattr(direct_page, "status_code", 0)) in {401, 403, 429}
+                ):
                     scrapling_page = await self._try_scrapling(normalized, timeout)
                     if scrapling_page is not None:
                         direct_page, direct_error = scrapling_page, None
@@ -723,6 +759,18 @@ class SourceHttpClient:
             elapsed_seconds=result.elapsed_seconds,
             content_type="text/html",
             provider="browser_use",
+        )
+
+    async def _fetch_obscura(self, url: str, timeout_seconds: float) -> FetchedPage:
+        result = await self.obscura.scrape(url, timeout_seconds=timeout_seconds)
+        return FetchedPage(
+            url=url,
+            final_url=result.final_url,
+            status_code=result.status_code,
+            text=result.html,
+            elapsed_seconds=result.elapsed_seconds,
+            content_type="text/html",
+            provider="obscura",
         )
 
     async def _fetch_crawlee(self, url: str, timeout_seconds: float, *, render: bool) -> FetchedPage:

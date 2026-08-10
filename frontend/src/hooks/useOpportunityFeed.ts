@@ -46,6 +46,7 @@ type OpportunityInteraction = "impression" | "click" | "save" | "apply" | "dismi
 
 const FEED_REFRESH_MS = 60 * 1000;
 const FEED_RETRY_MS = 15 * 1000;
+const NOTICE_AUTO_DISMISS_MS = 10_000;
 const PERSONALIZED_FETCH_TIMEOUT_MS = 2500;
 const DEFAULT_FETCH_TIMEOUT_MS = 3500;
 const COMPETITIVE_KEYWORDS = [
@@ -106,6 +107,20 @@ export function useOpportunityFeed() {
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
+
+  // Transient notices must clear themselves. "Saved to your Applications.
+  // Redirecting..." stayed on screen indefinitely when the redirect did not
+  // happen, so the page kept telling the student an action was in flight long
+  // after it had finished. Persistent conditions re-set the notice on their own
+  // polling cycle, so they survive this timer.
+  useEffect(() => {
+    if (!notice) {
+      return;
+    }
+    const timer = window.setTimeout(() => setNotice(null), NOTICE_AUTO_DISMISS_MS);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+
   const [applyingId, setApplyingId] = useState<string | null>(null);
   const [savedOpportunityIds, setSavedOpportunityIds] = useState<Record<string, boolean>>({});
   const [hiddenOpportunityIds, setHiddenOpportunityIds] = useState<Record<string, boolean>>({});
@@ -145,7 +160,7 @@ export function useOpportunityFeed() {
       const token = getAccessToken();
       if (token) {
         const rawData = await fetchJsonWithTimeout<Opportunity[]>(
-          "/api/v1/opportunities/recommended/me?limit=100&ranking_mode=ab&portal=competitive",
+          "/api/v1/opportunities/recommended/me?limit=400&ranking_mode=ab&portal=competitive",
           createAuthenticatedFetchInit({}, token),
           PERSONALIZED_FETCH_TIMEOUT_MS,
         );
