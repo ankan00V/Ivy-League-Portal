@@ -26,12 +26,29 @@ from app.models.opportunity_interaction import OpportunityInteraction
 from app.models.profile import Profile
 from app.models.ranking_model_version import RankingModelVersion
 from app.models.user import User
+from app.services.telemetry_privacy import get_collection
 
 MARKER_START = "<!-- DATASET_SNAPSHOT:START -->"
 MARKER_END = "<!-- DATASET_SNAPSHOT:END -->"
 
 
 async def _collect_snapshot() -> dict[str, Any]:
+    """Collect the numbers, with the qualifiers that keep them from misleading.
+
+    Two of these used to be published bare, and both invited the wrong reading.
+
+    `opportunities` counted every row regardless of status, so retired and expired
+    listings were reported as if they were the live corpus. They are now split.
+
+    `opportunity_interactions` was worse. A single figure under a heading that says
+    "Dataset Size" reads as user engagement, and on 2026-08-10 every one of the
+    30,083 rows on Atlas belonged to **one** account. Reporting that number without
+    the distinct-user count beside it would repeat, in a third form, the defect this
+    repo has already published twice: a metric that is arithmetically true and
+    substantively false. The traffic_type split is here for the same reason —
+    Atlas has never had the provenance backfill run against it, so a "real" label
+    there means "not yet audited", not "verified genuine".
+    """
     generated_at = utc_now()
     opportunities = await Opportunity.find_many().to_list()
     source_counter = Counter(
@@ -39,13 +56,39 @@ async def _collect_snapshot() -> dict[str, Any]:
         for item in opportunities
     )
 
+    status_counter = Counter(
+        str(getattr(item, "opportunity_status", "") or "unknown").strip().lower() or "unknown"
+        for item in opportunities
+    )
+
+    # get_collection, not get_motor_collection: Beanie 2.x renamed the accessor,
+    # and calling the old name here would raise AttributeError at snapshot time.
+    interactions = get_collection(OpportunityInteraction)
+    interaction_total = int(await interactions.count_documents({}))
+    interaction_users = len(await interactions.distinct("user_id"))
+    traffic_counter: dict[str, int] = {}
+    async for row in interactions.aggregate(
+        [{"$group": {"_id": "$traffic_type", "n": {"$sum": 1}}}]
+    ):
+        traffic_counter[str(row.get("_id") or "unlabelled")] = int(row.get("n") or 0)
+
+    event_counter: dict[str, int] = {}
+    async for row in interactions.aggregate(
+        [{"$group": {"_id": "$interaction_type", "n": {"$sum": 1}}}]
+    ):
+        event_counter[str(row.get("_id") or "unknown")] = int(row.get("n") or 0)
+
     return {
         "generated_at": generated_at.isoformat(),
         "snapshot_date": generated_at.strftime("%B %d, %Y"),
         "counts": {
             "opportunities": len(opportunities),
+            "opportunities_active": int(status_counter.get("active", 0)),
+            "opportunities_expired": int(status_counter.get("expired", 0)),
+            "opportunities_removed": int(status_counter.get("removed", 0)),
             "applications": int(await Application.find_many().count()),
-            "opportunity_interactions": int(await OpportunityInteraction.find_many().count()),
+            "opportunity_interactions": interaction_total,
+            "interaction_distinct_users": interaction_users,
             "experiments": int(await Experiment.find_many().count()),
             "experiment_assignments": int(await ExperimentAssignment.find_many().count()),
             "ranking_model_versions": int(await RankingModelVersion.find_many().count()),
@@ -53,6 +96,8 @@ async def _collect_snapshot() -> dict[str, Any]:
             "profiles": int(await Profile.find_many().count()),
             "users": int(await User.find_many().count()),
         },
+        "interaction_traffic_type": dict(sorted(traffic_counter.items(), key=lambda i: (-i[1], i[0]))),
+        "interaction_events": dict(sorted(event_counter.items(), key=lambda i: (-i[1], i[0]))),
         "source_distribution": dict(sorted(source_counter.items(), key=lambda item: (-item[1], item[0]))),
     }
 
@@ -60,24 +105,79 @@ async def _collect_snapshot() -> dict[str, Any]:
 def _build_markdown(snapshot: dict[str, Any]) -> str:
     counts = dict(snapshot.get("counts") or {})
     source_distribution = dict(snapshot.get("source_distribution") or {})
+    traffic = dict(snapshot.get("interaction_traffic_type") or {})
+    events = dict(snapshot.get("interaction_events") or {})
+    interaction_users = int(counts.get("interaction_distinct_users") or 0)
+    interaction_total = int(counts.get("opportunity_interactions") or 0)
+
     lines = [
         "## Dataset Size (Verified Snapshot)",
         f"Snapshot date: **{snapshot.get('snapshot_date') or 'n/a'}**",
         "",
-        f"- Opportunities: **{int(counts.get('opportunities') or 0):,}**",
+        "This is a count of rows in the database. It is **not** a measure of usage,",
+        "and the interaction figures below are qualified for that reason.",
+        "",
+        f"- Opportunities: **{int(counts.get('opportunities') or 0):,}** total "
+        f"({int(counts.get('opportunities_active') or 0):,} active, "
+        f"{int(counts.get('opportunities_expired') or 0):,} expired, "
+        f"{int(counts.get('opportunities_removed') or 0):,} retired)",
         f"- Applications: **{int(counts.get('applications') or 0):,}**",
-        f"- Opportunity interactions: **{int(counts.get('opportunity_interactions') or 0):,}**",
+        f"- Users: **{int(counts.get('users') or 0):,}**",
+        f"- Profiles: **{int(counts.get('profiles') or 0):,}**",
         f"- Experiments: **{int(counts.get('experiments') or 0):,}**",
         f"- Experiment assignments: **{int(counts.get('experiment_assignments') or 0):,}**",
         f"- Ranking model versions: **{int(counts.get('ranking_model_versions') or 0):,}**",
         f"- Drift reports: **{int(counts.get('drift_reports') or 0):,}**",
-        f"- Profiles: **{int(counts.get('profiles') or 0):,}**",
-        f"- Users: **{int(counts.get('users') or 0):,}**",
         "",
-        "Source distribution for opportunities:",
+        f"- Opportunity interactions: **{interaction_total:,}**, "
+        f"generated by **{interaction_users:,} distinct account"
+        f"{'' if interaction_users == 1 else 's'}**.",
     ]
-    for source, count in source_distribution.items():
+
+    if interaction_users <= 2 and interaction_total > 100:
+        lines.append(
+            f"  Read that pairing before quoting the row count: {interaction_total:,} rows "
+            f"across {interaction_users} account{'' if interaction_users == 1 else 's'} is "
+            "developer activity, not student traffic."
+        )
+
+    if events:
+        lines.append(
+            "  By event: "
+            + ", ".join(f"{name} {count:,}" for name, count in events.items())
+            + "."
+        )
+
+    if traffic:
+        lines.append(
+            "  By provenance label: "
+            + ", ".join(f"`{name}` {count:,}" for name, count in traffic.items())
+            + ". A `real` label means the row has not been audited, not that it has "
+            "been verified genuine — see `app/models/traffic.py`."
+        )
+
+    # The registry passed 200 sources once the company-board rotation filled in, and
+    # a 200-line list buries every other fact in this section. Top N only, with the
+    # remainder stated rather than silently dropped — the full breakdown is in the
+    # JSON artifact this script writes alongside the README.
+    top_n = 20
+    ranked = list(source_distribution.items())
+    lines += [
+        "",
+        f"Top {top_n} sources by opportunity count (all statuses; "
+        f"{len(ranked):,} sources total, full breakdown in "
+        "`backend/benchmarks/dataset_snapshot_latest.json`):",
+    ]
+    for source, count in ranked[:top_n]:
         lines.append(f"- `{source}`: {int(count):,}")
+
+    tail = ranked[top_n:]
+    if tail:
+        tail_rows = sum(int(count) for _, count in tail)
+        lines.append(
+            f"- _...and {len(tail):,} further sources contributing {tail_rows:,} "
+            "opportunities between them._"
+        )
     return "\n".join(lines).strip()
 
 

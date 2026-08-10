@@ -2,7 +2,7 @@
 
 > AI-powered opportunity intelligence platform that helps students discover, prioritize, and act on internships, research roles, scholarships, and hackathons.
 
-**Last updated:** August 03, 2026
+**Last updated:** August 10, 2026
 **Status:** Active build, production-readiness gates enabled
 
 ## 1) Executive Summary
@@ -58,7 +58,7 @@ flowchart LR
 |---|---|
 | Frontend | Next.js 16, TypeScript, Playwright |
 | Backend | FastAPI, Pydantic, Beanie ODM |
-| Data | Managed MongoDB, managed Redis, managed ClickHouse |
+| Data | Managed MongoDB (primary), managed Redis, managed ClickHouse. Supabase Postgres (ap-south-1) is being introduced as the opportunity read path — `OPPORTUNITY_READ_BACKEND` still defaults to `mongo`, so nothing is cut over. |
 | AI/ML | sentence-transformers, vector retrieval, learned ranker, optional skill-span extractor |
 | Storage | S3-compatible production artifact store |
 | Observability/Ops | GitHub Actions, Prometheus metrics, Grafana/BI, Slack/PagerDuty hooks |
@@ -73,7 +73,7 @@ flowchart LR
 - Explainable recommendations on both opportunity feeds: users can see profile-aligned reasons, advisory eligibility context, and hide unsuitable listings while the feedback is recorded for future ranking improvements. Matching uses the candidate's degree, graduation year, skills, roles, locations, stipend expectation, and controlled availability preference.
 - Candidate-only Resume Readiness Review: an on-demand, deterministic analysis of an uploaded resume with an explainable `0–100` clarity/readability score, category evidence, strengths, weak spots, and improvements. It is advisory only—not a hiring prediction, eligibility decision, or opportunity-ranking signal—and does not persist extracted resume text or review output.
 - Published `/privacy` and `/terms` pages written from the implementation rather than a template, plus self-service account deletion from the profile page. Neither has been reviewed by a lawyer.
-- Placement filter on the internships feed: `All | India | Remote | Hybrid | International`. The categories are **deliberately non-exclusive** — India/International is geography, Remote/Hybrid is work mode, so a remote internship in Bengaluru appears under both `India` and `Remote` and the pill counts sum to more than the corpus. Forcing one bucket per listing would hide remote Indian internships from the `India` pill. Membership is computed server-side by `app/services/opportunity_placement.py` and exposed as the `feed_categories` field on every opportunity response, so the Mongo and Postgres read paths give identical answers. Classification is inferential because the corpus cannot answer the question directly: measured 2026-08-06, `work_mode` is null on 1,042 of 1,418 active rows (73%) and `location` on 533 (38%), so the signal is recovered from `work_mode`, then `location`, then title/description text, then India-only source boards. That places **1,104 of 1,418 rows (77%)** in at least one pill — `india` 767, `international` 312, `remote` 292, `hybrid` 78. The remaining 23% carry no usable signal and appear only under `All`.
+- Placement filter on the internships feed: `All | India | Remote | Hybrid | International`. The categories are **deliberately non-exclusive** — India/International is geography, Remote/Hybrid is work mode, so a remote internship in Bengaluru appears under both `India` and `Remote` and the pill counts sum to more than the corpus. Forcing one bucket per listing would hide remote Indian internships from the `India` pill. Membership is computed server-side by `app/services/opportunity_placement.py` and exposed as the `feed_categories` field on every opportunity response, so the Mongo and Postgres read paths give identical answers. Classification is inferential because the corpus cannot answer the question directly: measured against Atlas on 2026-08-10, `work_mode` is null on 999 of 1,370 active rows (72%) and `location` on 515 (37%), so the signal is recovered from `work_mode`, then `location`, then title/description text, then India-only source boards. That places **1,073 of 1,370 active rows (78%)** in at least one pill — `india` 750, `remote` 299, `international` 293, `hybrid` 84. The remaining 22% carry no usable signal and appear only under `All`.
 
 ### AI/ML
 - Multi-source ingestion with semantic deduplication.
@@ -83,11 +83,11 @@ flowchart LR
 - Offline benchmark and online parity/champion-challenger gates.
 
 ### Platform
-- MongoDB-first backend architecture + Redis support.
+- MongoDB-first backend architecture + Redis support. A Postgres migration is in progress (`backend/migrations/`, `OPPORTUNITY_READ_BACKEND`); both databases are configured during the transition so the same corpus can be served from either and compared before any cutover.
 - Background jobs with retry, dead-letter behavior, bounded concurrency, queue caps, and handler timeouts.
 - Opportunity ingestion is scheduled immediately at API startup and then every `SCRAPER_INTERVAL_MINUTES` (30 minutes by default). Each `scraper.run` is persisted in the Mongo-backed job queue for retry and operational visibility; primary sources are saved before generic portals, each fetch batch has a bounded `SCRAPER_FETCH_BATCH_TIMEOUT_SECONDS` (180 seconds by default), and model-backed semantic dedup/embedding rebuilds remain off the ingestion critical path by default.
 - Past-deadline opportunities are retired by setting `opportunity_status="expired"`, which hides them from every student-facing surface. Ingestion never hard-deletes opportunity rows: many connectors synthesise a deadline when the source exposes none, so deletion destroyed records that had not genuinely closed.
-- Source discovery pipeline with company seeds, user submissions, qualification queues, adaptive extraction, managed Firecrawl fallback for JS-heavy pages, probation, dynamic scraper registration, and health quarantine.
+- Source discovery pipeline with company seeds, user submissions, qualification queues, adaptive extraction, JavaScript rendering for pages that mount their board client-side, probation, dynamic scraper registration, and health quarantine. Rendering is served by obscura ahead of crawlee; the paid providers (Firecrawl, Browser Use) remain wired but default to `disabled` via `FIRECRAWL_MODE` / `BROWSER_USE_MODE` after failing on every URL of the 2026-08-05 sweep.
 - Opportunity quality scoring normalizes location, work mode, duration, stipend, and tags; it also evaluates deadline, eligibility, compensation, and duplicate signals. Low-completeness records enter the admin review queue with explicit reasons, while trust-risk records remain separately blocked from student-facing surfaces.
 - Source-discovery skill tags use a guarded, optional skill-span extractor and retain the static keyword fallback whenever its local artifact is unavailable or inference fails.
 - Official company careers intelligence with a curated S-tier internship watchlist across global tech, quant/trading, Indian product, IT services, government/PSU, research, consulting, analytics, banking, manufacturing, aerospace, energy, FMCG, and hidden-gem employers.
@@ -117,38 +117,47 @@ Added 2026-08-05. Before this the product had no deletion path, no published pol
 <!-- DATASET_SNAPSHOT:START -->
 
 ## Dataset Size (Verified Snapshot)
-Snapshot date: **August 03, 2026**
+Snapshot date: **August 10, 2026**
 
-- Opportunities: **330**
-- Applications: **0**
-- Opportunity interactions: **15,706**
-- Experiments: **3**
-- Experiment assignments: **300**
-- Ranking model versions: **360**
-- Drift reports: **361**
-- Profiles: **319**
-- Users: **323**
+This is a count of rows in the database. It is **not** a measure of usage,
+and the interaction figures below are qualified for that reason.
 
-Source distribution for opportunities:
-- `freshersworld`: 61
-- `internshala`: 58
-- `indeed_india`: 53
-- `unstop`: 32
-- `linkedin`: 19
-- `ivy_rss`: 15
-- `hackerearth`: 12
-- `ycombinator_jobs`: 12
-- `aicte_internship`: 10
-- `makeintern`: 9
-- `wayup`: 9
-- `devfolio`: 8
-- `devpost`: 8
-- `foundit`: 8
-- `promilo`: 7
-- `hack2skill`: 5
-- `codeforces`: 2
-- `handshake`: 1
-- `techgig`: 1
+- Opportunities: **1,786** total (1,370 active, 63 expired, 353 retired)
+- Applications: **7**
+- Users: **3**
+- Profiles: **3**
+- Experiments: **2**
+- Experiment assignments: **2**
+- Ranking model versions: **1**
+- Drift reports: **0**
+
+- Opportunity interactions: **30,083**, generated by **1 distinct account**.
+  Read that pairing before quoting the row count: 30,083 rows across 1 account is developer activity, not student traffic.
+  By event: impression 30,072, apply 7, click 3, save 1.
+  By provenance label: `real` 30,083. A `real` label means the row has not been audited, not that it has been verified genuine — see `app/models/traffic.py`.
+
+Top 20 sources by opportunity count (all statuses; 213 sources total, full breakdown in `backend/benchmarks/dataset_snapshot_latest.json`):
+- `internshala`: 222
+- `indeed_india`: 153
+- `unstop`: 121
+- `glassdoor`: 116
+- `github_internship_lists`: 109
+- `linkedin`: 64
+- `company_careers_tcs_com`: 59
+- `tensorhack_hackathons`: 53
+- `company_careers_datadoghq_com`: 47
+- `greenhouse`: 47
+- `freshersworld`: 46
+- `linkedin_remote`: 34
+- `company_bosch`: 27
+- `company_careers_cloudflare_com`: 22
+- `company_careers_paytm_com`: 20
+- `remoteok`: 19
+- `ivy_rss`: 18
+- `extern`: 17
+- `we_work_remotely`: 15
+- `aicte_internship`: 14
+- _...and 193 further sources contributing 563 opportunities between them._
 
 <!-- DATASET_SNAPSHOT:END -->
 
@@ -193,11 +202,23 @@ Any "lift" computed over that data recovers those constants plus sampling
 noise. It compares synthetic data against itself, so a significance test on it
 is not meaningful.
 
-Real (non-seed) traffic to date: **1,402 impressions, 0 clicks, 0 saves,
-0 applies**, and the `applications` collection is empty. Interpret every
-ranking metric in this document as infrastructure validation, not evidence of
-user outcomes. This section will carry real numbers once real interactions
-exist.
+Traffic to date, measured against Atlas on 2026-08-10: **30,072 impressions,
+3 clicks, 1 save, 7 applies** — and **every one of those rows belongs to a
+single account**. That is one developer exercising the feed, not student
+traffic, and the click-through rate it implies (0.01%) is a property of
+scripted scrolling rather than of the ranker.
+
+Note also that all 30,083 rows carry `traffic_type: "real"`. That label means
+"never audited", not "verified genuine": the provenance backfill described
+below has only ever been run against local Mongo, so on Atlas the default has
+simply never been challenged. Running
+`backend/scripts/backfill_traffic_provenance.py` there reports 0 rows to
+relabel, because its heuristics target the bootstrap seeder's signature and
+these rows did not come from it.
+
+Interpret every ranking metric in this document as infrastructure validation,
+not evidence of user outcomes. This section will carry meaningful numbers once
+more than one person has used the product.
 
 ### Ranking maturity: what is and is not validated
 Stated plainly, because the surrounding infrastructure is easy to mistake for a
@@ -252,11 +273,11 @@ Latest drift report: `n/a`
 - The [India 2025 internship dataset](https://www.kaggle.com/datasets/jayaantanaath/internship-opportunities-in-india-2025/data) is suitable only as a deduplicated validation corpus for structured field extraction. It has no user-to-opportunity interaction labels, so it must never be used to train the learned ranker.
 
 ### Engineering quality signal
-- Focused scraper/source contract suite: **53 passing tests** (latest local run on July 29, 2026)
+- Focused scraper/source contract suite: **70 passing tests, 73 subtests** across `test_scraper_fetch_providers`, `test_scraper_health_service`, `test_scraper_ingestion` and `test_source_discovery_pipeline` (local run on August 10, 2026)
 - Production infra readiness gate: managed MongoDB, Redis, ClickHouse, and S3-compatible artifact storage have been verified from the local runtime; the full strict gate still requires deployed frontend/backend domains and a production BI URL.
-- Local developer harness smoke: 15/15 checks passed on July 29, 2026 - backend, MongoDB, Redis, queue, embedding model, learned ranker, artifact store, public opportunities, API docs, and all frontend routes. This is not production deployment proof.
-- Analytics warehouse: all eight ClickHouse marts materialize and `check_warehouse_release_gate` reports `status=fresh` (July 29, 2026).
-- Backend full suite baseline: **506 passing tests, 114 subtests passed** (latest local run on August 5, 2026). Three tests in `test_firecrawl_integration.py` and `test_scraper_fetch_providers.py` fail on the current working tree; the cause is uncommitted provider-routing work in `scraper.py`/`source_discovery.py`, verified by reverting only those two files and re-running the same 16 tests green.
+- Local developer harness smoke: 15/15 checks passed on July 29, 2026 - backend, MongoDB, Redis, queue, embedding model, learned ranker, artifact store, public opportunities, API docs, and all frontend routes. **Not re-run since**, and the stack has changed materially in that time (obscura in the fetch chain, Postgres migration scaffolding, readiness-probe changes). Treat it as a July 29 result, not current status. This is not production deployment proof.
+- Analytics warehouse: all eight marts exist under `backend/storage/warehouse/marts/`, but they were **last materialized on July 29, 2026** and have not been rebuilt since, so `check_warehouse_release_gate` should not be assumed `fresh` today. ClickHouse is enabled and configured, but its hostname was not resolving as of August 10, which is why it no longer gates `/health/ready` — see `ANALYTICS_WAREHOUSE_CLICKHOUSE_REQUIRED_FOR_READINESS`.
+- Backend full suite baseline: **583 passing tests, 114 subtests passed, 0 failing** (local run on August 10, 2026).
 - Frontend lint: **passing**
 - Frontend production build: **passing**
 - Security and release gates: **active in CI**
