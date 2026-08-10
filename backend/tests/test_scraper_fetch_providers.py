@@ -185,6 +185,10 @@ class TestMultiProviderRouting(unittest.TestCase):
                 patch.object(settings, "FIRECRAWL_MODE", "fallback"),
                 patch.object(settings, "BROWSER_USE_MODE", "fallback"),
                 patch.object(settings, "CRAWLEE_MODE", "disabled"),
+                # Obscura is enabled by default and sits in the fallback chain,
+                # so it must be pinned off here like crawlee or the test reaches
+                # real DNS and the chain resolves to the wrong provider.
+                patch.object(settings, "OBSCURA_ENABLED", False),
                 patch.object(settings, "FIRECRAWL_MIN_HTML_LENGTH", 100),
                 patch.object(settings, "SOURCE_FETCH_RATE_LIMIT", 1000.0),
             ):

@@ -158,6 +158,21 @@ def discover_greenhouse_board_tokens(urls: Iterable[str]) -> list[str]:
 
 GENERIC_PORTAL_LISTINGS: list[dict[str, Any]] = [
     {
+        # Self-hosted board, no applicant tracking system behind it. The listing
+        # is mounted client-side, so scrapling returns an empty shell and only
+        # the rendering provider reaches it; verified 2026-08-05 returning eight
+        # live roles. The fragment matters - /careers without #jobs came back
+        # empty - and the fetch is intermittent, so the retry session is doing
+        # real work here rather than being belt-and-braces.
+        "source": "propel",
+        "label": "Propel",
+        "default_type": "Job",
+        "default_university": "Propel",
+        "listings": [
+            "https://www.trypropel.ai/careers#jobs",
+        ],
+    },
+    {
         "source": "linkedin",
         "label": "LinkedIn",
         "default_type": "Job",
@@ -655,6 +670,17 @@ GENERIC_PORTAL_LISTINGS: list[dict[str, Any]] = [
 ]
 
 SCRAPER_SOURCE_AUDIT_OVERRIDES: dict[str, dict[str, Any]] = {
+    # Re-verified 2026-08-05 against both fetchers in the chain, scrapling and
+    # Obscura with full JavaScript rendering. Each returned a page but no job
+    # markup, so these are anti-bot walls rather than parser gaps and there is
+    # nothing further to try.
+    "hackerearth": {
+        "enabled": False,
+        "disabled_reason": (
+            "Audit 2026-08-05: challenge listings render but expose no parseable "
+            "job cards to either scrapling or Obscura (12 anchors, 1 job link)."
+        ),
+    },
     "naukri": {
         "enabled": False,
         "disabled_reason": "Duplicate of the dedicated NaukriScraper scheduled job.",
@@ -744,12 +770,12 @@ SCRAPER_SOURCE_AUDIT_OVERRIDES: dict[str, dict[str, Any]] = {
         "disabled_reason": "Audit 2026-06-25: hackathons page fetched but no opportunities parsed.",
     },
     "remoteok_asia": {
-        "enabled": False,
-        "disabled_reason": "Audit 2026-06-25: shared Remote OK API rarely yields Asia-filtered early-career rows.",
+        "enabled": True,
+        "disabled_reason": "Re-enabled 2026-08-05: reads the JSON board API directly; the HTML parser was returning 2 rows from a 100-job payload.",
     },
     "remoteok_europe": {
-        "enabled": False,
-        "disabled_reason": "Audit 2026-06-25: shared Remote OK API rarely yields Europe-filtered early-career rows.",
+        "enabled": True,
+        "disabled_reason": "Re-enabled 2026-08-05: reads the JSON board API directly; the HTML parser was returning 2 rows from a 100-job payload.",
     },
 }
 
@@ -1579,14 +1605,238 @@ def _listing_needs_render(listing_url: str) -> bool:
     return True
 
 
+def _canonical_domain(supplied: Any, classified: str) -> str:
+    """Return a domain from the app's taxonomy, never a hostname or a tag."""
+    from app.services.ai_engine import ai_system as _ai
+
+    canonical = {str(d).strip().lower(): str(d) for d in getattr(_ai, "domains", [])}
+    candidate = str(supplied or "").strip()
+    if candidate and candidate.lower() in canonical:
+        return canonical[candidate.lower()]
+    fallback = str(classified or "").strip()
+    if fallback and fallback.lower() in canonical:
+        return canonical[fallback.lower()]
+    # Falling back to Engineering labelled every unrecognised role as technical.
+    # "Other" is honest: the card shows no false domain and the filters do not
+    # promise a match that is not there.
+    return "Other"
+
+
+# Bounties, grants and open calls are not roles. They were being typed
+# "Internship" by their source's default_type and so landed in the
+# Internships/Jobs portal - Algora OSS Bounties and Immunefi Bug Bounties both
+# showed there as internships.
+BOUNTY_HINTS = (
+    "bounty", "bounties", "bug bounty", "reward pool", "prize pool",
+    "open call", "grant program", "grants &", "grants and",
+)
+
+
+# Words that mean "this is a job posting" regardless of what the body mentions.
+ROLE_TITLE_WORDS = (
+    "engineer", "developer", "analyst", "scientist", "designer", "manager",
+    "consultant", "associate", "specialist", "architect", "administrator",
+    "accountant", "recruiter", "marketer", "strategist", "technician",
+    "programmer", "researcher", "counsel", "paralegal", "sde", "intern",
+)
+# "intern" but not "internal"/"international", which are ordinary words in
+# job titles and would otherwise turn a senior role into an internship.
+_INTERN_RE = re.compile(r"\bintern(?:ship|s)?\b", re.I)
+
+
+# Listing pages carry navigation, filter facets and footers alongside the jobs.
+# A selector that drifts starts harvesting those instead: Virtual Vocations
+# produced a row titled "Entry Level 5434" - a filter count, not a role - whose
+# description was the site's own menu ("Sign in Post a Job ... Privacy Policy").
+# These reach students as real openings, so they are rejected at ingestion.
+
+# A title that is a category followed by a count, e.g. "Entry Level 5434".
+_FACET_TITLE_RE = re.compile(
+    r"^\s*(entry level|experienced|management|senior level|executive level|"
+    r"full time|part time|permanent|temporary|contract|remote|internships?|jobs?)"
+    r"[\s\-:]*\d{2,}\s*$",
+    re.I,
+)
+# Chrome that only appears in navigation and footers, never in a job body.
+_CHROME_PHRASES = (
+    "post a job", "sign in", "sign up", "privacy policy", "terms of use",
+    "quick links", "how it works", "career center", "browse remote jobs",
+    "cookie policy", "all rights reserved", "back to top", "skip to content",
+)
+
+
+def _looks_like_page_chrome(text: str) -> bool:
+    """True when a description is really the site's own navigation."""
+    lowered = str(text or "").lower()
+    if len(lowered) < 40:
+        return False
+    hits = sum(1 for phrase in _CHROME_PHRASES if phrase in lowered)
+    if hits >= 3:
+        return True
+    # Facet lists are mostly digits: "Accounting 58 Administrative 111 ...".
+    digits = sum(c.isdigit() for c in lowered)
+    return hits >= 2 and digits > len(lowered) * 0.04
+
+
+# A job title names a role at an employer. These shapes are category pages,
+# filters and navigation that a drifting selector picks up instead, and each one
+# was observed on a live card: "Grand Rapids, MI" (a location facet),
+# "Mechanical Engineering" (a discipline filter), "Campus Internships" (a
+# category page) and "Find jobs and internships" (a nav link). They link to
+# listing pages, so a student clicks Apply and lands on a search result.
+
+# "City, ST" or "City, Country" - a location, not a role.
+_LOCATION_TITLE_RE = re.compile(
+    r"^[A-Z][A-Za-z.\- ]{2,30},\s*(?:[A-Z]{2}|[A-Z][a-z]{2,})\s*$"
+)
+# Navigation labels, often carrying an arrow.
+_NAV_TITLE_RE = re.compile(
+    r"(^|\s)(find|browse|explore|search|view|see)\s+(jobs|internships|opportunities|roles)|"
+    r"[\u2190-\u21FF\u2794-\u27BF]",
+    re.I,
+)
+# Bare category and discipline names with no role noun.
+_CATEGORY_TITLES = {
+    "campus internships", "office internships", "virtual internships",
+    "remote internships", "summer internships", "winter internships",
+    "fellowship program", "fellowship programs", "internship program",
+    "internships", "jobs", "opportunities", "all jobs", "all internships",
+    "software development", "web development", "web design and development",
+    "social media seo", "sales business development", "business development",
+    "mechanical engineering", "civil engineering", "electrical engineering",
+    "computer science", "information technology", "international relations",
+    "data science", "digital marketing", "graphic design", "content writing",
+    "human resources", "finance", "marketing", "sales", "operations",
+    "engineering", "management", "consulting", "research",
+}
+# Words that make a title a role rather than a category.
+_EVENT_NOUNS = (
+    "hackathon", "challenge", "competition", "contest", "olympiad", "quiz",
+    "summit", "conference", "symposium", "bootcamp", "workshop", "fest",
+    "datathon", "case study", "ideathon", "sprint", "grand prix",
+)
+_ROLE_NOUNS = (
+    "intern", "engineer", "developer", "analyst", "scientist", "designer",
+    "manager", "consultant", "associate", "specialist", "architect", "lead",
+    "executive", "officer", "assistant", "coordinator", "trainee", "apprentice",
+    "researcher", "strategist", "recruiter", "accountant", "writer", "editor",
+    "administrator", "technician", "advisor", "representative", "agent",
+)
+
+
+def is_usable_listing(title: str, description: str | None = None) -> bool:
+    """Reject rows that are page furniture rather than an opening."""
+    name = _collapse_whitespace(str(title or ""))
+    if len(name) < 4:
+        return False
+    if _FACET_TITLE_RE.match(name):
+        return False
+    if _NAV_TITLE_RE.search(name):
+        return False
+
+    normalized = re.sub(r"[^a-z0-9 ]+", " ", name.lower())
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    # Checked before the role-noun guard below, because these name a category
+    # while still containing a role word - "Campus Internships" is a filter page,
+    # not an internship.
+    if normalized in _CATEGORY_TITLES:
+        return False
+
+    # Events are named, not titled by role: "Citadel Hackathon - Season 1" has
+    # no role noun and is short, and the rule below retired it as a category.
+    # A named event with a year, season or edition is a real listing.
+    if any(word in normalized for word in _EVENT_NOUNS):
+        # Still reject the bare plurals that are category pages rather than a
+        # specific event: "Upcoming Hackathons", "All past hackathons".
+        # A specific event is singular and named. Plurals and action phrases are
+        # the site's own category and call-to-action pages: "Customer
+        # hackathons", "Host a public hackathon", "All past hackathons".
+        if re.match(
+            r"^(all|upcoming|past|open|browse|organize|organise|host|create|submit|join|"
+            r"register|find|see|view|learn|explore|competitive|featured|popular)\b",
+            normalized,
+        ):
+            return False
+        if re.search(r"\b(hackathons|challenges|competitions|contests|quizzes|workshops|conferences)\b", normalized):
+            return False
+        return True
+
+    has_role = any(word in normalized for word in _ROLE_NOUNS)
+    # A role noun means the title names a job, so the location and category
+    # heuristics no longer apply: "AI Engineer, Intern" reads as "City, Country"
+    # to a pattern that cannot see it is a role.
+    if has_role:
+        return True
+    if _LOCATION_TITLE_RE.match(name):
+        return False
+    # Short and with no role noun: a discipline or category, not a posting.
+    if len(normalized.split()) <= 4:
+        return False
+    # A title that is only digits and punctuation is never a role.
+    if not re.search(r"[A-Za-z]{3}", name):
+        return False
+    if description and _looks_like_page_chrome(description):
+        return False
+    return True
+
+
 def _infer_opportunity_type(title: str, description: str) -> str:
-    text = f"{title} {description}".lower()
+    """Type a listing from its title, using the body only as a tiebreak.
+
+    The previous version searched title and description together and returned
+    the first TYPE_HINTS match anywhere in that text. Descriptions are long and
+    mention all sorts of things, so a single stray word decided the type: an
+    "AI Engineer" posting at a trading firm was filed as a Conference because
+    its body mentioned one, and Remote OK jobs became Hackathons. The title is
+    what the employer actually calls the role, so it decides; the body only
+    speaks when the title says nothing.
+    """
+    title_text = str(title or "").lower()
+    body_text = str(description or "").lower()
+
+    if any(hint in title_text for hint in BOUNTY_HINTS):
+        return "Bounty"
+
     for opp_type, hints in TYPE_HINTS.items():
-        if any(hint in text for hint in hints):
+        if any(hint in title_text for hint in hints):
             return opp_type
-    if "job" in text or "hiring" in text:
+    if "job" in title_text or "hiring" in title_text:
+        return "Job"
+
+    # A role-shaped title is a role, whatever the body talks about. Without this
+    # the fallthrough below decided the type from the description, which is how
+    # "AI Engineer" at a trading firm became a Conference.
+    if any(word in title_text for word in ROLE_TITLE_WORDS):
+        return "Internship" if _INTERN_RE.search(title_text) else "Job"
+
+    # Title inconclusive. A bounty mentioned only in the body still is one.
+    if any(hint in body_text for hint in BOUNTY_HINTS):
+        return "Bounty"
+    for opp_type, hints in TYPE_HINTS.items():
+        if any(hint in body_text for hint in hints):
+            return opp_type
+    if "job" in body_text or "hiring" in body_text:
         return "Job"
     return "Opportunity"
+
+
+def _resolve_listing_type(title: str, description: str, default_type: str | None) -> str:
+    """Source default, except where the title says otherwise.
+
+    A source-wide default_type cannot know that one particular row is something
+    else. TensorHack is configured as "Internship", so its bug-bounty and grant
+    listings were stamped Internship on every run - which is why they kept
+    reappearing in the Internships/Jobs tab after being corrected by hand.
+
+    The default is still trusted for everything else, because a title alone is
+    weak evidence and a hackathon source knows better than a keyword. Only a
+    Bounty reading overrides it: that is the case where the default is
+    demonstrably wrong and the title is unambiguous.
+    """
+    inferred = _infer_opportunity_type(title, description)
+    if inferred == "Bounty":
+        return inferred
+    return default_type or inferred
 
 
 def is_early_career_opportunity(record: dict[str, Any]) -> bool:
@@ -2800,7 +3050,9 @@ class GenericOpportunityPortalScraper:
                         "title": title[:220],
                         "description": final_description[:700],
                         "url": url,
-                        "opportunity_type": default_type or _infer_opportunity_type(title, final_description),
+                        "opportunity_type": _resolve_listing_type(
+                            title, final_description, default_type
+                        ),
                         "university": organization or default_university,
                         "deadline": deadline,
                         "source": source_name,
@@ -3398,6 +3650,81 @@ class GenericOpportunityPortalScraper:
             )
         return opportunities
 
+    def _fetch_remoteok_opportunities(
+        self,
+        *,
+        listing_url: str,
+        source_name: str,
+        default_type: str,
+        default_university: str,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """Read Remote OK's JSON board instead of scraping its HTML.
+
+        The configured URL is an API endpoint, but it was being handed to the
+        HTML parser, which found two listings in a payload carrying a hundred.
+        The rows are already structured - title, company, location, tags, date -
+        so parsing them directly is both more accurate and cheaper than trying
+        to recover the same fields from markup.
+
+        The first element of the response is Remote OK's legal/attribution
+        notice rather than a job, so anything without a position is skipped.
+        """
+        response = self.session.get(
+            listing_url,
+            headers={**self.headers, "Accept": "application/json"},
+            timeout=settings.SCRAPER_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, list):
+            raise RuntimeError(f"{source_name}: unexpected Remote OK response shape")
+
+        results: list[dict[str, Any]] = []
+        for row in payload:
+            if len(results) >= max(1, limit):
+                break
+            if not isinstance(row, dict):
+                continue
+            title = _collapse_whitespace(str(row.get("position") or ""))
+            url = _canonicalize_url(str(row.get("url") or row.get("apply_url") or ""))
+            if not title or not url:
+                continue
+
+            company = _collapse_whitespace(str(row.get("company") or "")) or default_university
+            location = _collapse_whitespace(str(row.get("location") or "")) or "Remote"
+            tags = row.get("tags")
+            tag_text = ", ".join(str(t) for t in tags[:6]) if isinstance(tags, list) else ""
+            description = _strip_html(str(row.get("description") or ""))
+            parts = [
+                description,
+                f"Skills: {tag_text}." if tag_text else "",
+                f"Location: {location}.",
+            ]
+            posted = _parse_datetime(str(row.get("date") or ""))
+
+            results.append({
+                "title": title[:220],
+                "description": _collapse_whitespace(
+                    " ".join(part for part in parts if part)
+                )[:700] or f"Remote role at {company}.",
+                "url": url,
+            # Classify from the title and the board's own default, not from the
+            # description. _infer_opportunity_type returns the first TYPE_HINTS
+            # match anywhere in the text, and Remote OK descriptions are long
+            # marketing copy, so a single stray "challenge" was filing
+            # "Partner Support Associate" as a Hackathon. That also let the row
+            # skip is_early_career_opportunity, which only screens type "job".
+            "opportunity_type": (
+                "Internship" if "intern" in title.lower() else default_type
+            ),
+                "university": company,
+                "location": location,
+                "deadline": posted + timedelta(days=45) if posted else None,
+                "source": source_name,
+            })
+        return results
+
     def fetch_live_opportunities(self, source_name: str, max_items: int = 12) -> list[dict]:
         normalized_source = source_name.strip().lower()
         source_config = self.source_configs.get(normalized_source)
@@ -3412,6 +3739,19 @@ class GenericOpportunityPortalScraper:
 
         for listing_url in listing_urls:
             try:
+                if normalized_source.startswith("remoteok"):
+                    opportunities.extend(
+                        self._fetch_remoteok_opportunities(
+                            listing_url=listing_url,
+                            source_name=normalized_source,
+                            default_type=default_type,
+                            default_university=default_university,
+                            limit=max_items - len(opportunities),
+                        )
+                    )
+                    if len(opportunities) >= max_items:
+                        break
+                    continue
                 if normalized_source == "github_internship_lists":
                     opportunities.extend(
                         self._fetch_github_markdown_opportunities(
@@ -3503,6 +3843,12 @@ hack2skill_scraper = Hack2SkillScraper()
 freshersworld_scraper = FreshersworldScraper()
 indeed_india_scraper = IndeedIndiaScraper()
 greenhouse_scraper = GreenhouseScraper()
+
+from app.services.company_board_scraper import CompanyBoardScraper  # noqa: E402
+
+# 357 employer boards, each verified to return live postings. Rotated per run so
+# the whole registry refreshes without any single run paying for all of them.
+company_board_scraper = CompanyBoardScraper()
 generic_portal_scraper = GenericOpportunityPortalScraper()
 
 _scraper_lock = asyncio.Lock()
@@ -3682,6 +4028,11 @@ async def _insert_and_broadcast(
         if not is_probable_opportunity_posting(opp_data):
             non_posting_count += 1
             continue
+        # Page furniture that survived the posting check: a facet count read as
+        # a title ("Entry Level 5434"), or a body that is the site's own menu.
+        if not is_usable_listing(opp_data.get("title", ""), opp_data.get("description")):
+            non_posting_count += 1
+            continue
         if not is_in_scope_opportunity(opp_data):
             out_of_scope_count += 1
             continue
@@ -3692,13 +4043,26 @@ async def _insert_and_broadcast(
         if url in seen_urls:
             continue
         seen_urls.add(url)
+        # Title passed separately so it can outweigh the body: merging them let
+        # a description decide the domain, which is how a travel consultant and
+        # a marketing intern were both filed as Engineering.
         classification = ai_system.classify_opportunity(
-            f"{opp_data.get('title', '')} {opp_data.get('description', '')}"
+            str(opp_data.get("description", "") or ""),
+            title=str(opp_data.get("title", "") or ""),
         )
         normalized_payload = _enrich_metadata(dict(opp_data))
         normalized_payload["url"] = normalized_payload.get("url") or url
         normalized_payload["deadline"] = _to_naive_utc(opp_data.get("deadline"))
-        normalized_payload["domain"] = opp_data.get("domain") or classification["primary_domain"]
+        # A source's own "domain" is only trusted when it is one of the six the
+        # app actually uses. Sources supply whatever they like - a careers page
+        # yielded "cloudflare.com", tag-driven paths yielded "saas", "cloud" and
+        # "consumer goods" - and those went straight onto the card, where the
+        # Domain field is supposed to tell a student what kind of work the role
+        # is. Anything unrecognised falls back to the classifier, which only
+        # returns canonical values.
+        normalized_payload["domain"] = _canonical_domain(
+            opp_data.get("domain"), classification["primary_domain"]
+        )
         normalized_payload["source"] = opp_data.get("source") or source_name.lower().replace(" ", "_")
         assessment = assess_opportunity_trust(normalized_payload)
         normalized_payload.update(assessment.as_update())
@@ -4082,6 +4446,10 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
                         greenhouse_scraper.fetch_live_opportunities,
                         max(1, settings.SCRAPER_GREENHOUSE_MAX_ITEMS),
                     ),
+                    asyncio.to_thread(
+                        company_board_scraper.fetch_live_opportunities,
+                        max(1, settings.COMPANY_BOARDS_MAX_ITEMS),
+                    ),
                 ],
                 batch_name="primary_sources",
                 timeout_seconds=settings.SCRAPER_FETCH_BATCH_TIMEOUT_SECONDS,
@@ -4096,6 +4464,7 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
                 freshersworld_result,
                 indeed_india_result,
                 greenhouse_result,
+                company_boards_result,
             ) = base_fetch_results
 
             async def _process_source_result(
@@ -4187,6 +4556,13 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
                 source_label="Greenhouse",
                 result=greenhouse_result,
                 empty_message="No opportunities parsed from Greenhouse.",
+            )
+            await _process_source_result(
+                source_key="company_boards",
+                source_label="Company Career Boards",
+                result=company_boards_result,
+                empty_message="No opportunities parsed from company career boards.",
+                result_has_errors_tuple=True,
             )
 
             portal_specs: list[tuple[str, str]] = [

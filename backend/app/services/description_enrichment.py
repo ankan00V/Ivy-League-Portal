@@ -114,6 +114,32 @@ def extract_description(html: str) -> str:
     return best[: settings.DESCRIPTION_ENRICHMENT_MAX_CHARS]
 
 
+def _interleave_by_host(rows: list) -> list:
+    """Round-robin the candidates by hostname.
+
+    Ordering strictly by recency groups every row from one source together, and
+    a single bot-walled source then takes the whole run down with it: Indeed
+    detail pages all answer 403, they were the newest rows, and four consecutive
+    failures opened the fetch circuit breaker - so a 120-row pass enriched
+    nothing at all. Interleaving means one dead host costs one failure per
+    round instead of an unbroken run of them, and the breaker only opens if the
+    failures are genuinely widespread.
+    """
+    from urllib.parse import urlparse
+
+    buckets: dict[str, list] = {}
+    for row in rows:
+        host = urlparse(str(getattr(row, "url", "") or "")).hostname or "unknown"
+        buckets.setdefault(host, []).append(row)
+    ordered: list = []
+    while buckets:
+        for host in list(buckets):
+            ordered.append(buckets[host].pop(0))
+            if not buckets[host]:
+                del buckets[host]
+    return ordered
+
+
 async def enrich_opportunity_descriptions(limit: int | None = None) -> dict[str, Any]:
     """Fetch detail pages for rows whose description is unusable.
 
@@ -138,6 +164,7 @@ async def enrich_opportunity_descriptions(limit: int | None = None) -> dict[str,
         .limit(budget * 5)
         .to_list()
     )
+    candidates = _interleave_by_host(candidates)
 
     for opportunity in candidates:
         report.scanned += 1
@@ -150,15 +177,35 @@ async def enrich_opportunity_descriptions(limit: int | None = None) -> dict[str,
             continue
 
         report.attempted += 1
+        timeout = float(settings.DESCRIPTION_ENRICHMENT_TIMEOUT_SECONDS)
         try:
-            page = await fetch_page(
-                url,
-                render=False,
-                timeout_seconds=float(settings.DESCRIPTION_ENRICHMENT_TIMEOUT_SECONDS),
-            )
+            page = await fetch_page(url, render=False, timeout_seconds=timeout)
         except Exception as exc:
+            page = None
+            first_error = f"{type(exc).__name__}"
+        else:
+            first_error = None
+
+        # Escalate to the rendering chain when the cheap fetch was refused.
+        # Indeed answers 403 to every detail page on a plain fetch, which is 129
+        # of the rows still carrying a placeholder description - the largest
+        # single group. The same URL returns 200 and a full page through
+        # Obscura, so giving up at the first 403 was throwing away the only
+        # descriptions those rows can ever have.
+        blocked = page is None or getattr(page, "status_code", 0) in {401, 403, 405, 406, 408, 409, 425, 429} \
+            or len(str(getattr(page, "text", "") or "").strip()) < 500
+        if blocked:
+            try:
+                rendered = await fetch_page(url, render=True, timeout_seconds=max(timeout, 60.0))
+            except Exception as exc:
+                report.failed += 1
+                report.errors.append(f"{url}: {first_error or type(exc).__name__}")
+                continue
+            if rendered is not None and str(getattr(rendered, "text", "") or "").strip():
+                page = rendered
+        if page is None:
             report.failed += 1
-            report.errors.append(f"{url}: {type(exc).__name__}")
+            report.errors.append(f"{url}: {first_error or 'no_page'}")
             continue
 
         # A 404 body still yields plenty of extractable text, so status has to

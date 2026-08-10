@@ -138,7 +138,11 @@ class Settings(BaseSettings):
 
     # Ceiling on rows a single feed request may return. Was hardcoded to 200
     # against a 743-row active corpus, which hid most of what was scraped.
-    OPPORTUNITY_FEED_MAX_LIMIT: int = 600
+    # Raised from 600 once the corpus passed 894 active rows: the ceiling was
+    # again hiding a third of what the scrapers collected, and it will keep
+    # growing as the 357-board rotation fills in. Sized with headroom so the
+    # limit does not silently become the thing users see instead of the corpus.
+    OPPORTUNITY_FEED_MAX_LIMIT: int = 2000
     SCRAPER_INTRA_BATCH_SEMANTIC_DEDUP_ENABLED: bool = False
     SCRAPER_UNSTOP_MAX_ITEMS: int = 60
     SCRAPER_NAUKRI_MAX_ITEMS: int = 25
@@ -156,7 +160,12 @@ class Settings(BaseSettings):
     FIRECRAWL_API_KEY: Optional[str] = None
     FIRECRAWL_API_URL: str = "https://api.firecrawl.dev"
     FIRECRAWL_REQUIRE_API_KEY: bool = True
-    FIRECRAWL_MODE: str = "fallback"  # fallback | preferred
+    # Off by default: both paid render providers failed on every URL of the
+    # 2026-08-05 discovery sweep, so each render spent two billable round trips
+    # before reaching obscura, which works. Turned off through config rather than
+    # by removing them from the chain in source_discovery, so the code path and
+    # its tests stay alive and re-enabling is an env var rather than an edit.
+    FIRECRAWL_MODE: str = "disabled"  # fallback | preferred | disabled
     FIRECRAWL_SEARCH_ENABLED: bool = True
     FIRECRAWL_TIMEOUT_SECONDS: float = 30.0
     FIRECRAWL_MAX_RETRIES: int = 2
@@ -172,7 +181,7 @@ class Settings(BaseSettings):
     # Browser Use Cloud CDP rendering for blocked or JS-heavy pages.
     BROWSER_USE_ENABLED: bool = False
     BROWSER_USE_API_KEY: Optional[str] = None
-    BROWSER_USE_MODE: str = "fallback"  # fallback | preferred | disabled
+    BROWSER_USE_MODE: str = "disabled"  # fallback | preferred | disabled (see FIRECRAWL_MODE)
     BROWSER_USE_TIMEOUT_SECONDS: float = 60.0
     BROWSER_USE_MAX_CONCURRENT: int = 2
     BROWSER_USE_WAIT_FOR_MS: int = 1500
@@ -187,7 +196,12 @@ class Settings(BaseSettings):
     # because it costs one fetch per opportunity and can fall through to a paid
     # provider.
     DESCRIPTION_ENRICHMENT_ENABLED: bool = True
-    DESCRIPTION_ENRICHMENT_MAX_PER_RUN: int = 25
+    # Raised 25 -> 90. At 25 a run could not keep pace with ingestion, so the
+    # backlog of rows carrying "Opportunity indexed from <source>" never
+    # cleared and roughly a quarter of cards had no real description. Each
+    # enrichment is one detail-page fetch, and the fetch chain now leads with
+    # scrapling rather than a paid provider, so the added cost is bounded.
+    DESCRIPTION_ENRICHMENT_MAX_PER_RUN: int = 90
     DESCRIPTION_ENRICHMENT_TIMEOUT_SECONDS: float = 25.0
     DESCRIPTION_ENRICHMENT_MAX_CHARS: int = 4000
     DESCRIPTION_ENRICHMENT_INTERVAL_MINUTES: int = 60
@@ -226,6 +240,44 @@ class Settings(BaseSettings):
     CRAWLEE_MAX_CONTENT_CHARS: int = 2_000_000
     CRAWLEE_CIRCUIT_FAILURE_THRESHOLD: int = 3
     CRAWLEE_CIRCUIT_RECOVERY_SECONDS: float = 120.0
+
+    # Obscura renders JavaScript, which is the one thing scrapling cannot do and
+    # the reason careers pages that mount their board client-side came back as
+    # empty shells. It is tried before crawlee because it is a single Rust
+    # binary per fetch rather than a Playwright session, so it neither shares
+    # mutable state across workers nor costs a full Chrome in memory.
+    # Concurrency stays low because each fetch is its own browser process.
+    OBSCURA_ENABLED: bool = True
+    OBSCURA_MODE: str = "fallback"  # fallback | preferred | disabled
+    # Empty means "find it on PATH"; the container sets an explicit path.
+    OBSCURA_BINARY_PATH: str = ""
+    OBSCURA_TIMEOUT_SECONDS: float = 45.0
+    OBSCURA_MAX_CONCURRENT: int = 2
+    OBSCURA_STEALTH: bool = True
+    OBSCURA_OBEY_ROBOTS: bool = False
+    OBSCURA_MAX_CONTENT_CHARS: int = 2_000_000
+    OBSCURA_CIRCUIT_FAILURE_THRESHOLD: int = 3
+    OBSCURA_CIRCUIT_RECOVERY_SECONDS: float = 120.0
+
+    # Verified employer boards (company_board_registry). 357 boards cannot all
+    # be fetched every run without dominating the batch budget, and fetching a
+    # fixed prefix would leave the tail permanently stale, so each run takes a
+    # window that advances with the clock. At 60 per run rotating hourly the
+    # whole registry is covered in about six hours.
+    COMPANY_BOARDS_ENABLED: bool = True
+    # Raised 60 -> 120: at 60 the 357-board registry took six hours to cycle,
+    # so a board's postings could be that stale before being refreshed. Measured
+    # at 120 the fetch stays well inside SCRAPER_FETCH_BATCH_TIMEOUT_SECONDS,
+    # and the cycle halves to about three hours.
+    COMPANY_BOARDS_PER_RUN: int = 120
+    COMPANY_BOARDS_ROTATION_SECONDS: int = 3600
+    COMPANY_BOARDS_MAX_ITEMS: int = 400
+    # These boards are employer-wide, so most of what they list is senior. The
+    # platform serves students, so boards are queried and filtered for
+    # early-career roles; without this a 60-board run returned 121 postings of
+    # which exactly one was relevant.
+    COMPANY_BOARDS_EARLY_CAREER_ONLY: bool = True
+    COMPANY_BOARDS_SEARCH_TEXT: str = "intern graduate entry level"
 
     # Apify managed actors. Used for sources whose own markup yields little -
     # Unstop's actor returns real deadlines, structured eligibility and a
@@ -327,9 +379,12 @@ class Settings(BaseSettings):
     # Mongo TLS controls (keep local dev easy, prod strict)
     MONGODB_TLS_FORCE: bool = False
     MONGODB_TLS_ALLOW_INVALID_CERTS: bool = False
-    MONGODB_SERVER_SELECTION_TIMEOUT_MS: int = 10000
-    MONGODB_CONNECT_TIMEOUT_MS: int = 10000
-    MONGODB_SOCKET_TIMEOUT_MS: int = 15000
+    MONGODB_SERVER_SELECTION_TIMEOUT_MS: int = 30000
+    MONGODB_CONNECT_TIMEOUT_MS: int = 20000
+# 15s was tuned for a local Docker Mongo. Against Atlas a full feed query
+    # exceeded it and the endpoint returned 500 after ~40s while the database
+    # was healthy - the read simply took longer than the socket allowed.
+    MONGODB_SOCKET_TIMEOUT_MS: int = 60000
     MONGODB_STARTUP_MAX_RETRIES: int = 4
     MONGODB_STARTUP_RETRY_BACKOFF_SECONDS: float = 1.5
     

@@ -697,8 +697,23 @@ async def _job_opportunity_status_refresh(payload: dict[str, Any]) -> dict[str, 
     return result.model_dump()
 
 
+async def _job_retention_purge(payload: dict[str, Any]) -> dict[str, Any]:
+    """Delete records that MongoDB's TTL indexes used to remove.
+
+    Postgres has no TTL and Neon does not allow pg_cron in this database, so
+    the expiry that was invisible infrastructure becomes an explicit job. It is
+    registered here rather than left to the migration because an OTP that is
+    never deleted stays a valid credential, and nothing errors when that
+    happens.
+    """
+    from app.services.retention_service import purge_expired_records
+
+    return await purge_expired_records()
+
+
 def register_default_jobs() -> None:
     job_runner.register("scraper.run", _job_scraper)
+    job_runner.register("retention.purge", _job_retention_purge)
     job_runner.register("scraper.recover_unhealthy", _job_scraper_recover_unhealthy)
     job_runner.register("opportunities.quality_pipeline", _job_opportunity_quality)
     job_runner.register("opportunities.dedup_scan", _job_opportunities_dedup_scan)

@@ -8,13 +8,24 @@ class AIEngine:
         self.classifier = None
         
         # Define categories matching our domains
+        # Six domains, all technical or professional, meant every non-technical
+        # role landed in the Engineering bucket - a travel consultant, an HR
+        # intern and a digital marketing intern were all labelled Engineering,
+        # which is worse than no label because a student filters on it.
         self.domains = [
             "AI and Machine Learning",
             "Law",
             "Biomedical and Healthcare",
             "Engineering",
             "Finance",
-            "Data Science"
+            "Data Science",
+            "Marketing",
+            "Business and Operations",
+            "Sales and Support",
+            "Human Resources",
+            "Design and Creative",
+            "Education",
+            "Other",
         ]
         self.domain_keywords = {
             "AI and Machine Learning": {
@@ -44,6 +55,34 @@ class AIEngine:
                 "statistical", "statistics", "sql", "power bi", "tableau",
                 "business intelligence", "data engineering", "data engineer",
             },
+            "Marketing": {
+                "marketing", "seo", "sem", "brand", "branding", "advertising",
+                "campaign", "growth marketing", "digital marketing", "content marketing",
+                "social media", "copywriting", "public relations", "communications",
+            },
+            "Business and Operations": {
+                "business analyst", "operations", "strategy", "consultant", "consulting",
+                "program manager", "project manager", "supply chain", "logistics",
+                "procurement", "travel consultant", "administration", "coordinator",
+            },
+            "Sales and Support": {
+                "sales", "business development", "account executive", "account manager",
+                "customer success", "customer support", "customer service", "pre-sales",
+                "inside sales", "retention", "telecalling", "client servicing",
+            },
+            "Human Resources": {
+                "human resources", "hr ", "recruitment", "recruiter", "talent acquisition",
+                "people operations", "payroll", "onboarding", "hr intern", "hr consultant",
+            },
+            "Design and Creative": {
+                "designer", "design intern", "ux", "ui/ux", "graphic design", "visual design",
+                "product design", "illustrator", "figma", "video editing", "animation",
+                "photography", "creative",
+            },
+            "Education": {
+                "teaching", "tutor", "educator", "curriculum", "edtech", "academic",
+                "instructional", "trainer", "faculty", "lecturer",
+            },
         }
 
     def _ensure_nlp(self):
@@ -72,22 +111,37 @@ class AIEngine:
         self._ensure_nlp()
         self._ensure_classifier()
 
-    def classify_opportunity(self, text: str) -> dict:
-        """
-        Classifies an opportunity text into one or more domains with confidence scores.
-        """
-        if not text.strip():
-            return {"primary_domain": "General", "scores": {}}
+    def classify_opportunity(self, text: str, title: str | None = None) -> dict:
+        """Score domains, weighting the title far above the body.
 
-        lowered = text.lower()
+        Scoring the title and description as one blob let the body decide: a
+        marketing internship whose description mentioned the engineering team
+        scored Engineering, and a travel consultant role scored it too. The
+        title is what the employer calls the job, so a keyword there counts for
+        several times one buried in the body.
+
+        The fallback is "Other" rather than Engineering. Defaulting to a real
+        domain mislabels every unrecognised role as technical, which is exactly
+        how non-technical listings ended up filed as Engineering.
+        """
+        if not str(text or "").strip() and not str(title or "").strip():
+            return {"primary_domain": "Other", "relevant_domains": {}}
+
+        # When no title is passed the first line is the best available proxy.
+        body = str(text or "").lower()
+        head = str(title if title is not None else body.split("\n", 1)[0][:160]).lower()
+
+        TITLE_WEIGHT = 5
         scored_domains: list[tuple[str, float]] = []
         for domain, keywords in self.domain_keywords.items():
-            hits = 0
+            score = 0
             for keyword in keywords:
-                if keyword in lowered:
-                    hits += 1
-            if hits:
-                scored_domains.append((domain, min(0.95, 0.25 + hits * 0.18)))
+                if keyword in head:
+                    score += TITLE_WEIGHT
+                elif keyword in body:
+                    score += 1
+            if score:
+                scored_domains.append((domain, min(0.95, 0.25 + score * 0.06)))
 
         if scored_domains:
             scored_domains.sort(key=lambda item: item[1], reverse=True)
@@ -96,10 +150,7 @@ class AIEngine:
                 "relevant_domains": {domain: round(score, 2) for domain, score in scored_domains},
             }
 
-        return {
-            "primary_domain": "Engineering",
-            "relevant_domains": {"Engineering": 0.45},
-        }
+        return {"primary_domain": "Other", "relevant_domains": {"Other": 0.4}}
 
     def parse_resume(self, text: str) -> dict:
         """
