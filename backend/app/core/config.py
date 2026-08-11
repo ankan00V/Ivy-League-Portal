@@ -507,6 +507,23 @@ class Settings(BaseSettings):
     ANALYTICS_WAREHOUSE_DUCKDB_PATH: str = "backend/storage/warehouse/warehouse.duckdb"
     ANALYTICS_WAREHOUSE_EXPORT_FORMAT: str = "duckdb_parquet"  # duckdb_parquet | parquet | disabled
     ANALYTICS_WAREHOUSE_SQL_MODELS_DIR: str = "backend/warehouse/models"
+    # Off by default, and the reason is worth recording because the setting looks
+    # like an obvious thing to switch on.
+    #
+    # ClickHouse is write-only here. `warehouse_export_service` pushes eight mart
+    # tables to it and nothing ever reads them back — the analytics API serves
+    # marts from DuckDB (`read_mart`), and the only other clients are a health
+    # probe and a release gate. Its intended consumer is an external BI tool that
+    # does not exist yet (ANALYTICS_BI_TOOL_URL still points at localhost:3001).
+    #
+    # The volume does not justify it either: all eight marts together are 441 KB.
+    # ClickHouse is built for billions of rows; DuckDB is the right tool at this
+    # size by several orders of magnitude and is already doing the work.
+    #
+    # It stayed enabled against a dead hostname for seven weeks (last successful
+    # export 2026-06-19) without anything noticing, and the only symptom it
+    # produced was a false "service degraded" on /health/ready. Turn this back on
+    # when there is a real dashboard reading it.
     ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED: bool = False
     # Separate from _ENABLED on purpose. Whether the warehouse is configured and
     # whether it should be able to fail the readiness probe are different
