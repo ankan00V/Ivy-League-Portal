@@ -32,6 +32,103 @@ MARKER_START = "<!-- DATASET_SNAPSHOT:START -->"
 MARKER_END = "<!-- DATASET_SNAPSHOT:END -->"
 
 
+async def _collect_snapshot_postgres() -> dict[str, Any]:
+    """Same snapshot, read from Postgres with SQL.
+
+    A separate implementation rather than a shared one because `pg_documents.install`
+    patches the Beanie *query* API (`find_many`, `find_one`, …) but not
+    `get_motor_collection`. The Mongo path below reaches for the raw collection to
+    run `distinct` and `aggregate`, and under the Postgres ODM that handle still
+    points at Mongo — it would return numbers from the abandoned database while
+    looking like it worked.
+    """
+    import asyncpg
+
+    generated_at = utc_now()
+    conn = await asyncpg.connect(
+        settings.SUPABASE_DATABASE_URL,
+        timeout=30,
+        # The Supabase pooler runs pgbouncer in transaction mode, which does not
+        # support prepared statements.
+        statement_cache_size=0,
+    )
+    try:
+        async def scalar(sql: str) -> int:
+            return int(await conn.fetchval(sql) or 0)
+
+        def _label(value: Any) -> str:
+            """Strip JSON encoding from enum-ish columns.
+
+            `pg_documents` maps Literal/enum string fields onto `json` columns, so
+            `interaction_type` physically stores `"impression"` — quote characters
+            included. Rendered raw, the README reads `"impression" 30,132`. Note
+            this also means SQL like `WHERE interaction_type = 'impression'` fails
+            outright with `invalid input syntax for type json`.
+            """
+            if value is None:
+                return "unlabelled"
+            text = str(value).strip()
+            if len(text) >= 2 and text[0] == '"' and text[-1] == '"':
+                text = text[1:-1]
+            return text or "unlabelled"
+
+        async def breakdown(sql: str) -> dict[str, int]:
+            merged: dict[str, int] = {}
+            for r in await conn.fetch(sql):
+                key = _label(r["k"])
+                merged[key] = merged.get(key, 0) + int(r["n"])
+            return merged
+
+        statuses = await breakdown(
+            'SELECT opportunity_status AS k, count(*) n FROM app."opportunities" GROUP BY 1'
+        )
+        return {
+            "generated_at": generated_at.isoformat(),
+            "snapshot_date": generated_at.strftime("%B %d, %Y"),
+            "backend": "postgres",
+            "counts": {
+                "opportunities": sum(statuses.values()),
+                "opportunities_active": statuses.get("active", 0),
+                "opportunities_expired": statuses.get("expired", 0),
+                "opportunities_removed": statuses.get("removed", 0),
+                "applications": await scalar('SELECT count(*) FROM app."applications"'),
+                "opportunity_interactions": await scalar(
+                    'SELECT count(*) FROM app."opportunity_interactions"'
+                ),
+                "interaction_distinct_users": await scalar(
+                    'SELECT count(DISTINCT user_id) FROM app."opportunity_interactions"'
+                ),
+                "experiments": await scalar('SELECT count(*) FROM app."experiments"'),
+                "experiment_assignments": await scalar(
+                    'SELECT count(*) FROM app."experiment_assignments"'
+                ),
+                "ranking_model_versions": await scalar(
+                    'SELECT count(*) FROM app."ranking_model_versions"'
+                ),
+                "drift_reports": await scalar('SELECT count(*) FROM app."model_drift_reports"'),
+                "profiles": await scalar('SELECT count(*) FROM app."profiles"'),
+                "users": await scalar('SELECT count(*) FROM app."users"'),
+            },
+            "interaction_traffic_type": await breakdown(
+                'SELECT traffic_type AS k, count(*) n FROM app."opportunity_interactions" GROUP BY 1'
+            ),
+            "interaction_events": await breakdown(
+                'SELECT interaction_type AS k, count(*) n FROM app."opportunity_interactions" GROUP BY 1'
+            ),
+            "source_distribution": dict(
+                sorted(
+                    (await breakdown(
+                        'SELECT lower(coalesce(nullif(trim(source), \'\'), \'unknown\')) AS k, '
+                        'count(*) n FROM app."opportunities" GROUP BY 1'
+                    )).items(),
+                    key=lambda item: (-item[1], item[0]),
+                )
+            ),
+        }
+    finally:
+        await conn.close()
+
+
 async def _collect_snapshot() -> dict[str, Any]:
     """Collect the numbers, with the qualifiers that keep them from misleading.
 
@@ -208,23 +305,40 @@ async def _main() -> int:
     )
     args = parser.parse_args()
 
-    client = AsyncIOMotorClient(settings.MONGODB_URL)
-    await init_beanie(
-        database=client[settings.MONGODB_DB_NAME],
-        document_models=[
-            Opportunity,
-            Application,
-            OpportunityInteraction,
-            Experiment,
-            ExperimentAssignment,
-            RankingModelVersion,
-            ModelDriftReport,
-            Profile,
-            User,
-        ],
-    )
+    models = [
+        Opportunity,
+        Application,
+        OpportunityInteraction,
+        Experiment,
+        ExperimentAssignment,
+        RankingModelVersion,
+        ModelDriftReport,
+        Profile,
+        User,
+    ]
+
+    # Read whichever database is actually serving.
+    #
+    # This script used to connect to Mongo unconditionally, which was correct
+    # until it wasn't: after the Postgres cutover it kept publishing a "Verified
+    # Snapshot" measured against an abandoned Atlas database that had taken no
+    # write since 2026-06-18, while the live corpus grew in Postgres. A snapshot
+    # that reports the wrong database with a confident heading is precisely the
+    # class of number this repo has published before and should not publish again.
+    client = None
+    if settings.POSTGRES_ODM_ENABLED:
+        from app.db import pg_documents
+
+        pg_documents.install(models)
+    else:
+        client = AsyncIOMotorClient(settings.MONGODB_URL)
+        await init_beanie(database=client[settings.MONGODB_DB_NAME], document_models=models)
     try:
-        snapshot = await _collect_snapshot()
+        snapshot = (
+            await _collect_snapshot_postgres()
+            if settings.POSTGRES_ODM_ENABLED
+            else await _collect_snapshot()
+        )
         markdown = _build_markdown(snapshot)
 
         readme_path = Path(args.readme)
@@ -254,7 +368,9 @@ async def _main() -> int:
         )
         return 0
     finally:
-        client.close()
+        # None when reading Postgres: no Mongo connection was opened.
+        if client is not None:
+            client.close()
 
 
 if __name__ == "__main__":
