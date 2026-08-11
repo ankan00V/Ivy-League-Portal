@@ -117,7 +117,7 @@ Added 2026-08-05. Before this the product had no deletion path, no published pol
 <!-- DATASET_SNAPSHOT:START -->
 
 ## Dataset Size (Verified Snapshot)
-Snapshot date: **August 10, 2026**
+Snapshot date: **August 11, 2026**
 
 - Opportunities: **330**
 - Applications: **0**
