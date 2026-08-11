@@ -500,7 +500,13 @@ class Settings(BaseSettings):
     # ANALYTICS_WAREHOUSE_PSEUDONYMIZE_USERS: emit keyed pseudonyms instead of real
     # user ids in warehouse exports. Defaults on; turning it off means the
     # ClickHouse copy carries identifiers that resolve against the app database.
-    TELEMETRY_RAW_RETENTION_DAYS: int = 400
+    # 400 days was arbitrary and, on Postgres, actively harmful: interaction rows
+    # average ~1.6 KB there (vs ~850 B compressed on Mongo) and `features` alone is
+    # 53% of the table heap, so a window nothing ever reaches means the table only
+    # grows. 120 days is the longest consumer window plus a month of headroom —
+    # retraining looks back MLOPS_RETRAIN_LOOKBACK_DAYS (90), the guardrail 30, and
+    # drift 7. Past 120 days nothing reads `features` or `query` at all.
+    TELEMETRY_RAW_RETENTION_DAYS: int = 120
     ANALYTICS_WAREHOUSE_PSEUDONYMIZE_USERS: bool = True
     ANALYTICS_WAREHOUSE_REQUIRE_CONSENT: bool = True
 
@@ -538,11 +544,6 @@ class Settings(BaseSettings):
     # meant an unresolvable ClickHouse hostname reported the whole service as
     # degraded. Off by default; turn it on where reporting really is release
     # blocking.
-    ANALYTICS_WAREHOUSE_CLICKHOUSE_REQUIRED_FOR_READINESS: bool = False
-    # Whether a warehouse outage should mark the API not-ready. It should not:
-    # ClickHouse serves analytics, not the feed. Marking it required meant an
-    # unresolvable hostname reported the whole service degraded while every
-    # user-facing path was healthy.
     ANALYTICS_WAREHOUSE_CLICKHOUSE_REQUIRED_FOR_READINESS: bool = False
     ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST: Optional[str] = None
     ANALYTICS_WAREHOUSE_CLICKHOUSE_PORT: int = 8123

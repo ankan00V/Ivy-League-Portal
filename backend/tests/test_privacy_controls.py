@@ -275,3 +275,56 @@ class TestProfileMinimization:
             "permanent_address_region",
         }
         assert not set(module.PURGE_FIELDS) & set(module.PROTECTED_FIELDS)
+
+
+class TestRetentionTargetsTheServingDatabase:
+    """Retention must run against whichever store is actually serving.
+
+    `pg_documents.install` patches the Beanie query API but not the raw-collection
+    accessor, so `get_collection()` still returns a **Mongo** handle under the
+    Postgres ODM. The retention job used that handle, which meant it reported a
+    clean run while never touching the live database — the same silent
+    wrong-store failure the dataset snapshot had.
+    """
+
+    def test_purge_dispatches_on_the_active_backend(self):
+        import inspect
+
+        from app.services import telemetry_privacy
+
+        source = inspect.getsource(telemetry_privacy.purge_aged_telemetry)
+        assert "POSTGRES_ODM_ENABLED" in source, (
+            "purge_aged_telemetry must dispatch on the active backend; otherwise it "
+            "silently retains against the abandoned Mongo database."
+        )
+        dispatch_at = source.index("POSTGRES_ODM_ENABLED")
+        mongo_at = source.index("get_collection(")
+        assert dispatch_at < mongo_at, "the backend check must precede the Mongo path"
+
+    def test_postgres_path_never_deletes_rows(self):
+        """Deleting aged rows would shrink historical impression counts."""
+        import inspect
+
+        from app.services import telemetry_privacy
+
+        source = inspect.getsource(telemetry_privacy._purge_aged_telemetry_postgres)
+        assert "DELETE" not in source.upper().replace("DELETED", "")
+        assert "UPDATE app.opportunity_interactions" in source
+
+    def test_postgres_path_clears_the_feature_payload(self):
+        """`features` is 53% of the table heap and unread past the training window."""
+        import inspect
+
+        from app.services import telemetry_privacy
+
+        source = inspect.getsource(telemetry_privacy._purge_aged_telemetry_postgres)
+        assert "features = NULL" in source
+        assert "query = NULL" in source
+
+    def test_retention_window_outlives_every_consumer(self):
+        """Must exceed the longest lookback, or retention destroys training data."""
+        from app.core.config import settings
+
+        assert settings.TELEMETRY_RAW_RETENTION_DAYS > settings.MLOPS_RETRAIN_LOOKBACK_DAYS
+        assert settings.TELEMETRY_RAW_RETENTION_DAYS > settings.MLOPS_GUARDRAIL_LOOKBACK_DAYS
+        assert settings.TELEMETRY_RAW_RETENTION_DAYS > settings.MLOPS_DRIFT_LOOKBACK_DAYS
