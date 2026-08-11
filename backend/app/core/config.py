@@ -99,6 +99,12 @@ class Settings(BaseSettings):
     SUPABASE_DATABASE_URL: Optional[str] = None
     SUPABASE_DATABASE_DIRECT_URL: Optional[str] = None
     SUPABASE_DATABASE_NAME: str = "postgres"
+    # Route the Beanie models at Postgres instead of Mongo. On by default now
+    # that Atlas is retired: the whole application - auth, jobs, scraper writes,
+    # analytics - runs against Supabase, and Mongo is never contacted at boot.
+    # Setting this to false restores the Beanie/Mongo path without a redeploy,
+    # which only works while MONGODB_URL still points at a live cluster.
+    POSTGRES_ODM_ENABLED: bool = True
     # API keys for the browser client. The backend does not use them - it holds
     # a direct Postgres connection and its own auth - but they are declared so
     # pydantic does not reject the .env entries.

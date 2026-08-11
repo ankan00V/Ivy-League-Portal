@@ -133,7 +133,9 @@ async def _main() -> int:
             return 2
         return 0
     finally:
-        client.close()
+        # None under POSTGRES_ODM_ENABLED: Mongo was never contacted.
+        if client is not None:
+            client.close()
 
 
 if __name__ == "__main__":

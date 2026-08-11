@@ -168,7 +168,17 @@ async def connect_mongo_with_retries() -> AsyncIOMotorClient:
     raise RuntimeError(f"MongoDB client initialization failed after {startup_retries} attempts: {last_error}")
 
 
-async def init_database() -> AsyncIOMotorClient:
+async def init_database() -> Optional[AsyncIOMotorClient]:
+    if settings.POSTGRES_ODM_ENABLED:
+        # Point every document model at Postgres and skip Mongo entirely. This
+        # returns None rather than a client, which is the honest answer: there
+        # is no Mongo connection to hand back, and callers check for it.
+        from app.db import pg_documents
+
+        patched = pg_documents.install(DOCUMENT_MODELS)
+        logger.info("Postgres ODM enabled: %s document models patched, MongoDB not contacted", patched)
+        return None
+
     client = await connect_mongo_with_retries()
     database = client[settings.MONGODB_DB_NAME]
     await _drop_incompatible_bootstrap_indexes(database)

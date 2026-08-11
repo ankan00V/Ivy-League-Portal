@@ -61,7 +61,9 @@ async def main() -> int:
             print("\nDry run. Re-run with --apply to rewrite these rows.", file=sys.stderr)
         return 0
     finally:
-        client.close()
+        # None under POSTGRES_ODM_ENABLED: Mongo was never contacted.
+        if client is not None:
+            client.close()
 
 
 if __name__ == "__main__":

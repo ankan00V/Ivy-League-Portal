@@ -31,7 +31,12 @@ async def run_worker() -> None:
     finally:
         await job_runner.stop()
         await close_redis()
-        client.close()
+        # init_database returns None under POSTGRES_ODM_ENABLED - there is no
+        # Mongo client to close because Mongo was never contacted. Unguarded,
+        # this raised AttributeError on every worker shutdown the moment that
+        # flag was turned on.
+        if client is not None:
+            client.close()
         logger.info("VidyaVerse worker stopped")
 
 

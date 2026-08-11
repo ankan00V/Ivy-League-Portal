@@ -592,7 +592,10 @@ async def lifespan(app: FastAPI):
         warmup_task.cancel()
     await job_runner.stop()
     await close_redis()
-    client.close()
+    # None under POSTGRES_ODM_ENABLED: no Mongo connection was opened, so there
+    # is nothing to close. Shutdown must not raise on the way out.
+    if client is not None:
+        client.close()
 
 
 async def _warmup_rag_components() -> None:
@@ -672,6 +675,19 @@ async def _run_check(name: str, checker: Any, *, required: bool = True) -> dict[
 
 
 async def _mongo_health(request: Request) -> dict[str, Any]:
+    if settings.POSTGRES_ODM_ENABLED:
+        # There is no Mongo connection by design here, so probe the store that
+        # is actually serving. Reporting "mongo_client_missing" would fail
+        # readiness on a system that is entirely healthy.
+        from app.repositories import opportunity_repository
+
+        result = await opportunity_repository.health()
+        return {
+            "ok": bool(result.get("ok")),
+            "detail": result.get("detail", "postgres ok"),
+            "metadata": {"backend": "postgres", "rows": result.get("rows")},
+        }
+
     client = getattr(request.app.state, "mongo_client", None)
     if client is None:
         return {"ok": False, "detail": "mongo_client_missing"}

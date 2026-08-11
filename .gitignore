@@ -73,3 +73,11 @@ ruvector.db-*
 # leaves the tree permanently dirty.
 CLAUDE.md
 frontend/CLAUDE.md
+
+# Final Atlas export taken before retiring the cluster. Contains real user
+# data (emails, audit trails) and must never reach the repository.
+backend/backups/
+
+# ruflo drops runtime session state wherever it is invoked from, including
+# backend/. Per-machine state carrying absolute paths - never committed.
+.claude-flow/
