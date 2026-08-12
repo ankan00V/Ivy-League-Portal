@@ -507,6 +507,20 @@ class Settings(BaseSettings):
     # retraining looks back MLOPS_RETRAIN_LOOKBACK_DAYS (90), the guardrail 30, and
     # drift 7. Past 120 days nothing reads `features` or `query` at all.
     TELEMETRY_RAW_RETENTION_DAYS: int = 120
+
+    # Collapse repeat impressions of the same card to the same user inside this
+    # window. 0 disables it and restores one row per render.
+    #
+    # Measured 2026-08-11: 30,143 impression rows covered only 1,318 distinct
+    # (user, opportunity) pairs - 22.9x duplication, with single cards logged 42
+    # times to one user, each carrying a ~1 KB feature payload. Every feed render
+    # re-logged every visible card, which was adding ~6.7 MB/day to a 500 MB tier.
+    #
+    # This is also the more honest measurement. Counting 42 impressions for a card
+    # a student scrolled past a few times inflates the CTR denominator and makes
+    # the ranker look far worse than it is. Clicks, saves and applies are never
+    # deduplicated - only impressions.
+    IMPRESSION_DEDUP_WINDOW_MINUTES: int = 60
     ANALYTICS_WAREHOUSE_PSEUDONYMIZE_USERS: bool = True
     ANALYTICS_WAREHOUSE_REQUIRE_CONSENT: bool = True
 

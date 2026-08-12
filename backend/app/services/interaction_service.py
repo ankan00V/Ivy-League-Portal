@@ -9,6 +9,7 @@ from beanie import PydanticObjectId
 
 from app.core import metrics as metrics_module
 from app.core.cache import cache_manager
+from app.core.config import settings
 from app.models.opportunity_interaction import OpportunityInteraction
 from app.models.traffic import TrafficType
 from app.models.user_journey import UserJourney
@@ -319,6 +320,33 @@ class InteractionService:
             return str(rows[0].session_id)
         return f"journey:{user_id}:{uuid.uuid4().hex}"
 
+    async def _recently_impressed(
+        self,
+        *,
+        user_id: PydanticObjectId,
+        window_minutes: int,
+    ) -> set[str]:
+        """Opportunity ids this user has already been shown inside the window.
+
+        One query per batch rather than one per card: a feed render posts every
+        visible listing, so a per-card existence check would turn a single page
+        view into dozens of round trips.
+        """
+        if window_minutes <= 0:
+            return set()
+        since = utc_now() - timedelta(minutes=window_minutes)
+        try:
+            recent = await OpportunityInteraction.find_many(
+                OpportunityInteraction.user_id == user_id,
+                OpportunityInteraction.interaction_type == "impression",
+                OpportunityInteraction.created_at >= since,
+            ).to_list()
+        except Exception:
+            # Never let a dedup lookup cost an impression. Failing open logs a
+            # duplicate row; failing closed would silently drop the measurement.
+            return set()
+        return {str(row.opportunity_id) for row in recent}
+
     async def log_impressions(
         self,
         *,
@@ -326,11 +354,33 @@ class InteractionService:
         impressions: Iterable[dict[str, Any]],
         traffic_type: TrafficType = "real",
     ) -> int:
+        """Log impressions, collapsing repeats of the same card inside the window.
+
+        Every feed render used to write a row per visible listing, so 30,143
+        impression rows covered just 1,318 distinct (user, opportunity) pairs -
+        22.9x duplication, one card logged 42 times to a single user, each row
+        carrying a ~1 KB feature payload.
+
+        Suppressing the repeats is also the more honest measurement: counting a
+        card 42 times because a student scrolled past it inflates the CTR
+        denominator and makes the ranker look worse than it is. Only impressions
+        are collapsed - clicks, saves and applies always write.
+        """
+        window = int(getattr(settings, "IMPRESSION_DEDUP_WINDOW_MINUTES", 0) or 0)
+        already_seen = await self._recently_impressed(user_id=user_id, window_minutes=window)
+
         inserted = 0
         for impression in impressions:
             opportunity_id = object_id_or_none(impression.get("opportunity_id"))
             if not opportunity_id:
                 continue
+            if window > 0:
+                key = str(opportunity_id)
+                if key in already_seen:
+                    continue
+                # Also collapses repeats inside this one payload, which happens
+                # when a card appears twice in a single render.
+                already_seen.add(key)
             await self.log_event(
                 user_id=user_id,
                 opportunity_id=opportunity_id,
