@@ -204,6 +204,7 @@ _INDIA_ONLY_SOURCES = frozenset(
         "foundit",
         "hack2skill",
         "devfolio",
+        "thejobcompany",
     }
 )
 

@@ -98,6 +98,24 @@ FRESHERSWORLD_LISTINGS: list[tuple[str, str]] = [
     ("https://www.freshersworld.com/jobs/category/it-software-job-vacancies", "Job"),
 ]
 
+# The Job Company (thejobcompany.co.in). Indian tech board, server-rendered PHP,
+# so the plain fetch path is enough - no rendering provider needed.
+#
+# Batch pages are the reason this source is worth having: it files every posting
+# under the graduating years it accepts, which maps straight onto `batch_years`
+# and is exactly the axis students filter on. Only the near-term batches are
+# fetched; the site keeps categories back to 2018, which are of no use to anyone
+# still studying.
+#
+# Verified reachable 2026-08-13. Note it is blocked by at least one Indian
+# university's SSL-intercepting proxy, so a local fetch failure here is more
+# likely to be the network than the site - see CONTEXT.md.
+THEJOBCOMPANY_LISTINGS: list[tuple[str, str]] = [
+    ("https://thejobcompany.co.in/job-category/batch/2026", "Job"),
+    ("https://thejobcompany.co.in/job-category/batch/2027", "Job"),
+    ("https://thejobcompany.co.in/job-category/internships", "Internship"),
+]
+
 INDEED_INDIA_LISTINGS: list[tuple[str, str]] = [
     (
         "https://in.indeed.com/jobs?q=work+from+home&l=&sc=0kf%3Aattr%28VDTG7%29%3B&from=searchOnDesktopSerp&vjk=fe4dcd039aaba3cd",
@@ -2593,6 +2611,126 @@ class FreshersworldScraper:
         return _dedupe_by_url(opportunities)[:max_items]
 
 
+class TheJobCompanyScraper:
+    """thejobcompany.co.in - Indian early-career tech board.
+
+    Server-rendered PHP, so `render=False` is enough. Each listing card is a
+    `div.job-listing` whose fields are labelled in bold:
+
+        <p class="company-title">FanCode  is hiring Software Engineer Internship</p>
+        <p><strong>Batch :</strong> 2027 | 2026 </p>
+        <p><strong>Location :</strong> Mumbai, India</p>
+        <p><strong>Qualification :</strong> BE/B-TECH in CS or IT</p>
+        <p><strong>Salary :</strong> 40,000-50,000/ Month (Stipend) [Expected]</p>
+
+    The title carries the employer as "<Company> is hiring <Role>", which is the
+    only place the company name appears in a parseable form - the logo image is
+    an opaque numeric filename.
+    """
+
+    #: "<Company> is hiring <Role>". Tolerates the double space the site emits and
+    #: the "is hiring for" variant.
+    _TITLE_SPLIT = re.compile(r"\s+is\s+hiring\s+(?:for\s+)?", re.IGNORECASE)
+    _YEAR = re.compile(r"\b(20\d{2})\b")
+
+    def __init__(self, session: requests.Session | None = None) -> None:
+        self.session = session or _build_retry_session()
+
+    def _labelled_fields(self, card) -> dict[str, str]:
+        """Read the `<strong>Label :</strong> value` pairs out of one card."""
+        fields: dict[str, str] = {}
+        for node in card.select("p"):
+            label_node = node.find("strong")
+            if not label_node:
+                continue
+            label = _collapse_whitespace(label_node.get_text(" ", strip=True))
+            label = label.rstrip(":").strip().lower()
+            value = _collapse_whitespace(node.get_text(" ", strip=True))
+            # Strip the label back off the combined text of the <p>.
+            value = re.sub(rf"^{re.escape(label)}\s*:?\s*", "", value, flags=re.IGNORECASE).strip()
+            if label and value:
+                fields[label] = value
+        return fields
+
+    def _extract_cards(self, soup: BeautifulSoup, listing_url: str) -> list[dict]:
+        opportunities: list[dict] = []
+
+        for card in soup.select("div.job-listing"):
+            link = card.select_one("a.applyBtn[href]") or card.select_one("a[href*='job_details.php']")
+            title_node = card.select_one("p.company-title")
+            if not link or not title_node:
+                continue
+
+            raw_title = _collapse_whitespace(title_node.get_text(" ", strip=True))
+            if not raw_title:
+                continue
+
+            parts = self._TITLE_SPLIT.split(raw_title, maxsplit=1)
+            if len(parts) == 2 and parts[0].strip():
+                company, title = parts[0].strip(), parts[1].strip()
+            else:
+                # No recognisable "is hiring" split - keep the whole string as the
+                # title rather than inventing an employer.
+                company, title = "", raw_title
+
+            fields = self._labelled_fields(card)
+            location = fields.get("location", "")
+            qualification = fields.get("qualification", "")
+            salary = fields.get("salary", "")
+            batch = fields.get("batch", "")
+
+            batch_years = sorted({int(y) for y in self._YEAR.findall(batch)})
+
+            fragments = [f"{company or 'This employer'} is hiring for {title}."]
+            for label, value in (
+                ("Location", location),
+                ("Batch", batch),
+                ("Qualification", qualification),
+                ("Compensation", salary),
+            ):
+                if value:
+                    fragments.append(f"{label}: {value}")
+
+            opportunities.append(
+                {
+                    "title": title,
+                    "description": " | ".join(fragments)[:700],
+                    "url": urljoin(listing_url, (link.get("href") or "").strip()),
+                    "opportunity_type": "Job",
+                    "university": company or "The Job Company Employer",
+                    "location": location or None,
+                    "eligibility": qualification or None,
+                    "stipend": salary or None,
+                    "batch_years": batch_years,
+                    "deadline": None,
+                    "source": "thejobcompany",
+                }
+            )
+
+        return opportunities
+
+    def fetch_live_opportunities(self, max_items: int = 30) -> list[dict]:
+        opportunities: list[dict] = []
+
+        for listing_url, default_type in THEJOBCOMPANY_LISTINGS:
+            try:
+                # render=False: the markup is server-side, so paying for a
+                # rendering provider here would buy nothing.
+                page = _fetch_listing_page(listing_url, render=False)
+                soup = BeautifulSoup(page.text, "html.parser")
+                parsed = self._extract_cards(soup, listing_url)
+                if default_type:
+                    for record in parsed:
+                        record["opportunity_type"] = default_type
+                opportunities.extend(parsed)
+                if len(opportunities) >= max_items:
+                    break
+            except Exception as exc:
+                logger.debug("[TheJobCompany] Failed fetch from %s: %s", listing_url, exc)
+
+        return _dedupe_by_url(opportunities)[:max_items]
+
+
 class IndeedIndiaScraper:
     def __init__(self, session: requests.Session | None = None) -> None:
         self.session = session or _build_retry_session()
@@ -3841,6 +3979,7 @@ naukri_scraper = NaukriScraper()
 internshala_scraper = InternshalaScraper()
 hack2skill_scraper = Hack2SkillScraper()
 freshersworld_scraper = FreshersworldScraper()
+thejobcompany_scraper = TheJobCompanyScraper()
 indeed_india_scraper = IndeedIndiaScraper()
 greenhouse_scraper = GreenhouseScraper()
 
@@ -4010,6 +4149,9 @@ async def _insert_and_broadcast(
 ) -> dict[str, int]:
     opportunity_rows = list(opportunities)
     inserted_count = 0
+    # Rows to mirror into Postgres after the Mongo writes succeed. Keyed by
+    # url so a row touched more than once in a batch is sent once.
+    mirrored: dict[str, Any] = {}
     updated_count = 0
     failed_count = 0
     trust_scores: list[float] = []
@@ -4228,6 +4370,7 @@ async def _insert_and_broadcast(
                     existing.updated_at = now_naive
                     updated_count += 1
                 await existing.save()
+                mirrored[existing.url] = existing
                 existing_by_url[existing.url] = existing
                 if canonical_key:
                     existing_by_key[canonical_key] = existing
@@ -4298,6 +4441,7 @@ async def _insert_and_broadcast(
                     if changed:
                         duplicate.updated_at = now_naive
                     await duplicate.save()
+                    mirrored[duplicate.url] = duplicate
                     duplicate_key = str(getattr(duplicate, "canonical_key", "") or "").strip()
                     duplicate_cluster = str(getattr(duplicate, "duplicate_cluster_key", "") or "").strip()
                     existing_by_url[duplicate.url] = duplicate
@@ -4315,6 +4459,7 @@ async def _insert_and_broadcast(
             )
             await opportunity.insert()
             inserted_count += 1
+            mirrored[opportunity.url] = opportunity
             existing_by_url[opportunity.url] = opportunity
             opportunity_key = str(getattr(opportunity, "canonical_key", "") or "").strip()
             opportunity_cluster = str(getattr(opportunity, "duplicate_cluster_key", "") or "").strip()
@@ -4339,9 +4484,29 @@ async def _insert_and_broadcast(
             failed_count += 1
             print(f"[ScraperInsert] Failed to upsert '{normalized_payload.get('title', 'unknown')}': {exc}")
 
+    # Mirror to Postgres once the Mongo writes are done. The feed reads from
+    # Postgres, so without this a scrape would land rows nobody could see.
+    # Deliberately after the fact and failure-tolerant: the scrape has already
+    # succeeded by this point and must not be undone by a mirror problem.
+    mirror_count = 0
+    # With the Postgres ODM active the rows above were already written to
+    # Postgres directly, so mirroring would re-write what is already there -
+    # and it opened a second connection pool mid-scrape, which failed DNS while
+    # the scrape had the resolver busy.
+    if mirrored and not settings.POSTGRES_ODM_ENABLED:
+        try:
+            from app.repositories import opportunity_repository
+
+            mirror_count = await opportunity_repository.upsert_opportunities(
+                list(mirrored.values())
+            )
+        except Exception as exc:
+            print(f"[ScraperMirror] postgres mirror failed: {type(exc).__name__}: {exc}")
+
     return {
         "inserted": inserted_count,
         "updated": updated_count,
+        "mirrored_to_postgres": mirror_count,
         "failed": failed_count,
         "parsed": parsed_count,
         "out_of_scope": out_of_scope_count,
@@ -4439,6 +4604,10 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
                         max(1, settings.SCRAPER_FRESHERSWORLD_MAX_ITEMS),
                     ),
                     asyncio.to_thread(
+                        thejobcompany_scraper.fetch_live_opportunities,
+                        max(1, settings.SCRAPER_THEJOBCOMPANY_MAX_ITEMS),
+                    ),
+                    asyncio.to_thread(
                         indeed_india_scraper.fetch_live_opportunities,
                         max(1, settings.SCRAPER_INDEED_MAX_ITEMS),
                     ),
@@ -4462,6 +4631,7 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
                 internshala_result,
                 hack2skill_result,
                 freshersworld_result,
+                thejobcompany_result,
                 indeed_india_result,
                 greenhouse_result,
                 company_boards_result,
@@ -4538,6 +4708,12 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
                 source_label="Hack2Skill",
                 result=hack2skill_result,
                 empty_message="No opportunities parsed from Hack2Skill.",
+            )
+            await _process_source_result(
+                source_key="thejobcompany",
+                source_label="The Job Company",
+                result=thejobcompany_result,
+                empty_message="No opportunities parsed from The Job Company.",
             )
             await _process_source_result(
                 source_key="freshersworld",
