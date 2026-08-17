@@ -147,3 +147,40 @@ def inspect_source(module):
     import inspect
 
     return inspect.getsource(module)
+
+
+class TestRejectionReasonNamesTheRealGate:
+    """A rejection reason has to name the gate that actually failed.
+
+    Extraction rejects on `confidence >= 0.7 and len(valid) >= 2`, but both
+    branches reported "low_extraction_confidence". Nine discovered sources were
+    filed that way with confidence 0.907 — comfortably over the bar — and
+    qualification scores above 89, including builtin.com and
+    careers.ingrammicro.com. Their real failure was parsing fewer than two
+    listings, which is a selector or a thin page, not a bad parser. The label
+    sent anyone auditing rejections after the wrong problem.
+    """
+
+    def test_high_confidence_is_not_reported_as_low_confidence(self):
+        import inspect
+
+        from app.services.source_discovery import AdaptiveExtractionService
+
+        source = inspect.getsource(AdaptiveExtractionService)
+        assert "too_few_opportunities" in source, (
+            "a source that cleared the confidence bar but yielded too few rows must "
+            "not be labelled low_extraction_confidence"
+        )
+        # Match the assignment, not the explanatory comment above it.
+        low_at = source.index('rejection_reason = f"low_extraction_confidence')
+        guard_at = source.index("if confidence < 0.7")
+        assert guard_at < low_at, "the low-confidence label must sit behind a confidence check"
+
+    def test_thin_pages_are_flagged_for_review(self):
+        """Extraction worked, so a human should see why the page had no listings."""
+        import inspect
+
+        from app.services.source_discovery import AdaptiveExtractionService
+
+        source = inspect.getsource(AdaptiveExtractionService)
+        assert "elif confidence >= 0.7" in source
