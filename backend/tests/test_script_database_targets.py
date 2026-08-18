@@ -41,14 +41,9 @@ KNOWN_UNCONVERTED = {
     "bootstrap_company_seeds.py",
     "bootstrap_demo_data.py",
     "bootstrap_ranking_pipeline.py",
-    "check_warehouse_release_gate.py",
     "dedupe_probation_opportunities.py",
     "migrate_admin_identity.py",
     "publish_model_metadata.py",
-    "publish_ranker_rollout_report.py",
-    "publish_weekly_business_impact_scorecard.py",
-    "publish_weekly_ds_scorecard.py",
-    "publish_weekly_mlops_scorecard.py",
     "run_deduplication_scan.py",
     "run_model_lifecycle_pipeline.py",
     "seed_release_ml_gate_fixture.py",
@@ -101,6 +96,12 @@ class TestNoNewHardcodedMongo:
             "validate_data_health.py",
             "rebuild_analytics_warehouse.py",
             "publish_dataset_snapshot.py",
+            # Publish figures that people read as fact.
+            "publish_weekly_ds_scorecard.py",
+            "publish_weekly_mlops_scorecard.py",
+            "publish_weekly_business_impact_scorecard.py",
+            "publish_ranker_rollout_report.py",
+            "check_warehouse_release_gate.py",
         }
         still_hardcoded = critical & hardcoded_scripts()
         assert not still_hardcoded, (

@@ -17,6 +17,8 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.core.config import settings
+
+import _script_db
 from app.core.time import utc_now
 from app.models.mlops_incident import MlopsIncident
 from app.models.model_drift_report import ModelDriftReport
@@ -134,11 +136,7 @@ async def _main() -> int:
     )
     args = parser.parse_args()
 
-    client = AsyncIOMotorClient(settings.MONGODB_URL)
-    await init_beanie(
-        database=client[settings.MONGODB_DB_NAME],
-        document_models=[MlopsIncident, ModelDriftReport, RankingModelVersion],
-    )
+    client = await _script_db.connect([MlopsIncident, ModelDriftReport, RankingModelVersion])
     try:
         payload = await _build_scorecard(days=max(1, min(int(args.days), 90)))
         markdown = _render_markdown(payload)
@@ -170,7 +168,7 @@ async def _main() -> int:
         )
         return 0
     finally:
-        client.close()
+        _script_db.close(client)
 
 
 if __name__ == "__main__":

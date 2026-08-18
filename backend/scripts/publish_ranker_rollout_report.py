@@ -18,6 +18,8 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.core.config import settings
+
+import _script_db
 from app.core.time import utc_now
 from app.models.opportunity_interaction import OpportunityInteraction
 from app.models.ranking_model_version import RankingModelVersion
@@ -186,11 +188,7 @@ async def _main() -> int:
     )
     args = parser.parse_args()
 
-    client = AsyncIOMotorClient(settings.MONGODB_URL)
-    await init_beanie(
-        database=client[settings.MONGODB_DB_NAME],
-        document_models=[RankingModelVersion, RankingRequestTelemetry, OpportunityInteraction],
-    )
+    client = await _script_db.connect([RankingModelVersion, RankingRequestTelemetry, OpportunityInteraction])
     try:
         payload = await _build_report(days=max(1, min(int(args.days), 30)))
 
@@ -236,7 +234,7 @@ async def _main() -> int:
         )
         return 0
     finally:
-        client.close()
+        _script_db.close(client)
 
 
 if __name__ == "__main__":

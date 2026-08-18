@@ -18,6 +18,8 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.core.config import settings
+
+import _script_db
 from app.core.time import utc_now
 from app.models.application import Application
 from app.models.opportunity_interaction import OpportunityInteraction
@@ -228,11 +230,7 @@ async def _main() -> int:
     current_start = now - timedelta(days=days)
     previous_start = current_start - timedelta(days=days)
 
-    client = AsyncIOMotorClient(settings.MONGODB_URL)
-    await init_beanie(
-        database=client[settings.MONGODB_DB_NAME],
-        document_models=[OpportunityInteraction, RankingRequestTelemetry, Application],
-    )
+    client = await _script_db.connect([OpportunityInteraction, RankingRequestTelemetry, Application])
     try:
         current_window = await _window_metrics(start=current_start, end=now)
         previous_window = await _window_metrics(start=previous_start, end=current_start)
@@ -277,7 +275,7 @@ async def _main() -> int:
         )
         return 0
     finally:
-        client.close()
+        _script_db.close(client)
 
 
 if __name__ == "__main__":
