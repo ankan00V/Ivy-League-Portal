@@ -18,6 +18,8 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.core.config import settings
+
+import _script_db
 from app.models.opportunity import Opportunity
 from app.models.opportunity_interaction import OpportunityInteraction
 from app.models.user import User
@@ -32,8 +34,7 @@ def _client_kwargs() -> dict[str, Any]:
 
 
 async def _run(args: argparse.Namespace) -> dict[str, Any]:
-    client = AsyncIOMotorClient(settings.MONGODB_URL, **_client_kwargs())
-    await init_beanie(database=client[settings.MONGODB_DB_NAME], document_models=[Opportunity, OpportunityInteraction, User])
+    client = await _script_db.connect([Opportunity, OpportunityInteraction, User])
     try:
         all_opportunities = await Opportunity.find_many().to_list()
         active = [row for row in all_opportunities if is_student_visible_opportunity(row)]
@@ -74,7 +75,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
             failures.append(f"positive training pairs below {int(args.min_positive_pairs)}")
         return {"status": "ok" if not failures else "failed", "checks": checks, "failures": failures}
     finally:
-        client.close()
+        _script_db.close(client)
 
 
 def main() -> int:

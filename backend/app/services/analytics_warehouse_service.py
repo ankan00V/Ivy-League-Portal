@@ -52,6 +52,37 @@ class WarehouseBuildSummary:
     telemetry_processed: int
 
 
+#: Interaction rows average ~1.6 KB on Postgres because each carries a ~1 KB
+#: `features` payload, so a 30-day window is tens of megabytes. Fetching that in
+#: one statement exceeded NEON_COMMAND_TIMEOUT_SECONDS through the Supabase
+#: pooler and raised TimeoutError, which would have turned a warehouse rebuild
+#: into a hard failure the moment it was pointed at the right database.
+_FETCH_PAGE_SIZE = 2000
+
+
+async def _fetch_paged(model, *filters) -> list:
+    """Read every matching row in bounded pages.
+
+    Ordered by created_at so pagination is stable: an unordered LIMIT/OFFSET can
+    repeat or skip rows if the planner changes its mind between pages, which
+    would silently duplicate or drop training examples.
+    """
+    collected: list = []
+    offset = 0
+    while True:
+        page = await (
+            model.find_many(*filters)
+            .sort("created_at")
+            .skip(offset)
+            .limit(_FETCH_PAGE_SIZE)
+            .to_list()
+        )
+        collected.extend(page)
+        if len(page) < _FETCH_PAGE_SIZE:
+            return collected
+        offset += _FETCH_PAGE_SIZE
+
+
 class AnalyticsWarehouseService:
     async def rebuild(
         self,
@@ -66,14 +97,16 @@ class AnalyticsWarehouseService:
         since = utc_now() - timedelta(days=safe_days)
         normalized_traffic = (traffic_type or "real").strip().lower() or "real"
 
-        interactions = await OpportunityInteraction.find_many(
+        interactions = await _fetch_paged(
+            OpportunityInteraction,
             OpportunityInteraction.created_at >= since,
             OpportunityInteraction.traffic_type == normalized_traffic,
-        ).to_list()
-        telemetry = await RankingRequestTelemetry.find_many(
+        )
+        telemetry = await _fetch_paged(
+            RankingRequestTelemetry,
             RankingRequestTelemetry.created_at >= since,
             RankingRequestTelemetry.traffic_type == normalized_traffic,
-        ).to_list()
+        )
 
         await AnalyticsDailyAggregate.find_many(
             AnalyticsDailyAggregate.date >= _day_key(since),

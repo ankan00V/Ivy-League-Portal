@@ -46,27 +46,49 @@ def _client_kwargs() -> dict[str, Any]:
     return kwargs
 
 
+MODELS = [
+    OpportunityInteraction,
+    RankingRequestTelemetry,
+    AnalyticsDailyAggregate,
+    AnalyticsFunnelAggregate,
+    AnalyticsCohortAggregate,
+    FeatureStoreRow,
+    WarehouseExportRun,
+]
+
+
 async def _run(*, lookback_days: int, traffic_type: str) -> dict[str, Any]:
-    client = AsyncIOMotorClient(settings.MONGODB_URL, **_client_kwargs())
-    await init_beanie(
-        database=client[settings.MONGODB_DB_NAME],
-        document_models=[
-            OpportunityInteraction,
-            RankingRequestTelemetry,
-            AnalyticsDailyAggregate,
-            AnalyticsFunnelAggregate,
-            AnalyticsCohortAggregate,
-            FeatureStoreRow,
-            WarehouseExportRun,
-        ],
-    )
+    # Rebuild from whichever database is serving.
+    #
+    # This connected to Mongo unconditionally, which after the Postgres cutover
+    # meant it rebuilt the warehouse from an abandoned database whose newest
+    # interaction is 2026-06-03. Any lookback shorter than the gap selects an
+    # empty window, so the job found nothing, wrote nothing, and reported
+    # `status: ok` with `feature_rows: 0` - a green run that had silently stopped
+    # producing the training data the ranker retrains on.
+    #
+    # Third occurrence of this shape after the dataset snapshot and the retention
+    # job, hence `assert_targets_serving_database` below and its regression test.
+    client = None
+    if settings.POSTGRES_ODM_ENABLED:
+        from app.db import pg_documents
+
+        pg_documents.install(MODELS)
+    else:
+        client = AsyncIOMotorClient(settings.MONGODB_URL, **_client_kwargs())
+        await init_beanie(
+            database=client[settings.MONGODB_DB_NAME],
+            document_models=MODELS,
+        )
     try:
         return await analytics_warehouse_service.rebuild(
             lookback_days=lookback_days,
             traffic_type=traffic_type,
         )
     finally:
-        client.close()
+        # None under POSTGRES_ODM_ENABLED: Mongo was never contacted.
+        if client is not None:
+            client.close()
 
 
 def _build_parser() -> argparse.ArgumentParser:
