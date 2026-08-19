@@ -208,43 +208,6 @@ Added 2026-08-05. Before this the product had no deletion path, no published pol
 - **Telemetry retention and pseudonymized export.** Warehouse exports carry a keyed HMAC of the user id rather than the id itself. `TELEMETRY_RAW_RETENTION_DAYS` (default 400) bounds how long raw interaction rows keep their user link; `scripts/purge_aged_telemetry.py` (dry-run by default) rewrites aged rows rather than deleting them, so historical counts are unchanged.
 
 ## 7) Metrics and Impact
-<!-- DATASET_SNAPSHOT:START -->
-
-## Dataset Size (Verified Snapshot)
-Snapshot date: **August 19, 2026**
-
-- Opportunities: **330**
-- Applications: **0**
-- Opportunity interactions: **15,706**
-- Experiments: **3**
-- Experiment assignments: **300**
-- Ranking model versions: **360**
-- Drift reports: **361**
-- Profiles: **319**
-- Users: **323**
-
-Source distribution for opportunities:
-- `freshersworld`: 61
-- `internshala`: 58
-- `indeed_india`: 53
-- `unstop`: 32
-- `linkedin`: 19
-- `ivy_rss`: 15
-- `hackerearth`: 12
-- `ycombinator_jobs`: 12
-- `aicte_internship`: 10
-- `makeintern`: 9
-- `wayup`: 9
-- `devfolio`: 8
-- `devpost`: 8
-- `foundit`: 8
-- `promilo`: 7
-- `hack2skill`: 5
-- `codeforces`: 2
-- `handshake`: 1
-- `techgig`: 1
-
-<!-- DATASET_SNAPSHOT:END -->
 
 ### Offline retrieval regression fixture
 These come from `backend/benchmarks/`, which is a **CI regression fixture, not a
