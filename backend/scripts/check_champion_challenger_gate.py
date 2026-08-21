@@ -16,6 +16,8 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.core.config import settings
+
+import _script_db
 from app.core.time import utc_now
 from app.models.opportunity_interaction import OpportunityInteraction
 from app.models.ranking_model_version import RankingModelVersion
@@ -135,10 +137,8 @@ async def _main() -> int:
     days = max(1, min(int(args.days), 90))
     baseline_mode = str(settings.LEARNED_RANKER_STAGED_BASELINE_MODE or "semantic").strip().lower() or "semantic"
 
-    client = AsyncIOMotorClient(settings.MONGODB_URL)
-    await init_beanie(
-        database=client[settings.MONGODB_DB_NAME],
-        document_models=[RankingModelVersion, OpportunityInteraction, RankingRequestTelemetry],
+    client = await _script_db.connect(
+        [RankingModelVersion, OpportunityInteraction, RankingRequestTelemetry]
     )
     try:
         champion = await RankingModelVersion.find_one(RankingModelVersion.is_active == True)  # noqa: E712
@@ -257,7 +257,7 @@ async def _main() -> int:
             return 2
         return 0
     finally:
-        client.close()
+        _script_db.close(client)
 
 
 if __name__ == "__main__":

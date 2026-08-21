@@ -216,3 +216,53 @@ class TestClickHouseSchemaInference(unittest.TestCase):
         rows = [(None,), (date(2026, 1, 1),)]
         inferred = self.service._clickhouse_type(self.service._column_sample(rows, 0))
         self.assertEqual(inferred, "Date")
+
+
+class TestClickHouseMirrorIsolation(unittest.TestCase):
+    """A dead ClickHouse must not fail an export whose marts already built.
+
+    The managed instance was a 30-day trial. It expired, its hostname now returns
+    NXDOMAIN, and the push has been failing since 2026-06-19. Before this
+    isolation, that failure propagated out of `export()` and every refresh
+    recorded `status=error` — discarding marts that had been written to disk
+    seconds earlier, for a mirror that nothing reads. The analytics API serves
+    marts from DuckDB, not ClickHouse.
+    """
+
+    def test_push_failure_does_not_fail_the_export(self) -> None:
+        import inspect
+
+        from app.services import warehouse_export_service as module
+
+        source = inspect.getsource(module.WarehouseExportService.export)
+        push_at = source.index("_materialize_clickhouse")
+        preceding = source[:push_at]
+
+        self.assertIn(
+            "try:",
+            preceding[preceding.rindex("clickhouse_tables: list[str] = []") :],
+            "the ClickHouse push must be wrapped so a mirror failure cannot discard "
+            "a successful mart build",
+        )
+
+    def test_export_records_the_mirror_outcome(self) -> None:
+        """A skipped push must be visible, not silent."""
+        import inspect
+
+        from app.services import warehouse_export_service as module
+
+        source = inspect.getsource(module.WarehouseExportService.export)
+        for field in ("clickhouse_status", "clickhouse_error"):
+            self.assertIn(
+                field,
+                source,
+                f"export() must record {field} so a failed mirror is auditable",
+            )
+
+    def test_disabled_clickhouse_is_reported_as_disabled(self) -> None:
+        import inspect
+
+        from app.services import warehouse_export_service as module
+
+        source = inspect.getsource(module.WarehouseExportService.export)
+        self.assertIn('clickhouse_status = "disabled"', source)

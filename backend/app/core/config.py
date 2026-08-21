@@ -99,6 +99,12 @@ class Settings(BaseSettings):
     SUPABASE_DATABASE_URL: Optional[str] = None
     SUPABASE_DATABASE_DIRECT_URL: Optional[str] = None
     SUPABASE_DATABASE_NAME: str = "postgres"
+    # Route the Beanie models at Postgres instead of Mongo. On by default now
+    # that Atlas is retired: the whole application - auth, jobs, scraper writes,
+    # analytics - runs against Supabase, and Mongo is never contacted at boot.
+    # Setting this to false restores the Beanie/Mongo path without a redeploy,
+    # which only works while MONGODB_URL still points at a live cluster.
+    POSTGRES_ODM_ENABLED: bool = True
     # API keys for the browser client. The backend does not use them - it holds
     # a direct Postgres connection and its own auth - but they are declared so
     # pydantic does not reject the .env entries.
@@ -150,6 +156,7 @@ class Settings(BaseSettings):
     SCRAPER_INTERNSHALA_MAX_ITEMS: int = 30
     SCRAPER_HACK2SKILL_MAX_ITEMS: int = 24
     SCRAPER_FRESHERSWORLD_MAX_ITEMS: int = 30
+    SCRAPER_THEJOBCOMPANY_MAX_ITEMS: int = 40
     SCRAPER_INDEED_MAX_ITEMS: int = 20
     SCRAPER_GREENHOUSE_MAX_ITEMS: int = 40
     SCRAPER_GREENHOUSE_BOARD_TOKENS: str = "databricks,stripe,airbnb"
@@ -494,7 +501,27 @@ class Settings(BaseSettings):
     # ANALYTICS_WAREHOUSE_PSEUDONYMIZE_USERS: emit keyed pseudonyms instead of real
     # user ids in warehouse exports. Defaults on; turning it off means the
     # ClickHouse copy carries identifiers that resolve against the app database.
-    TELEMETRY_RAW_RETENTION_DAYS: int = 400
+    # 400 days was arbitrary and, on Postgres, actively harmful: interaction rows
+    # average ~1.6 KB there (vs ~850 B compressed on Mongo) and `features` alone is
+    # 53% of the table heap, so a window nothing ever reaches means the table only
+    # grows. 120 days is the longest consumer window plus a month of headroom —
+    # retraining looks back MLOPS_RETRAIN_LOOKBACK_DAYS (90), the guardrail 30, and
+    # drift 7. Past 120 days nothing reads `features` or `query` at all.
+    TELEMETRY_RAW_RETENTION_DAYS: int = 120
+
+    # Collapse repeat impressions of the same card to the same user inside this
+    # window. 0 disables it and restores one row per render.
+    #
+    # Measured 2026-08-11: 30,143 impression rows covered only 1,318 distinct
+    # (user, opportunity) pairs - 22.9x duplication, with single cards logged 42
+    # times to one user, each carrying a ~1 KB feature payload. Every feed render
+    # re-logged every visible card, which was adding ~6.7 MB/day to a 500 MB tier.
+    #
+    # This is also the more honest measurement. Counting 42 impressions for a card
+    # a student scrolled past a few times inflates the CTR denominator and makes
+    # the ranker look far worse than it is. Clicks, saves and applies are never
+    # deduplicated - only impressions.
+    IMPRESSION_DEDUP_WINDOW_MINUTES: int = 60
     ANALYTICS_WAREHOUSE_PSEUDONYMIZE_USERS: bool = True
     ANALYTICS_WAREHOUSE_REQUIRE_CONSENT: bool = True
 
@@ -507,6 +534,23 @@ class Settings(BaseSettings):
     ANALYTICS_WAREHOUSE_DUCKDB_PATH: str = "backend/storage/warehouse/warehouse.duckdb"
     ANALYTICS_WAREHOUSE_EXPORT_FORMAT: str = "duckdb_parquet"  # duckdb_parquet | parquet | disabled
     ANALYTICS_WAREHOUSE_SQL_MODELS_DIR: str = "backend/warehouse/models"
+    # Off by default, and the reason is worth recording because the setting looks
+    # like an obvious thing to switch on.
+    #
+    # ClickHouse is write-only here. `warehouse_export_service` pushes eight mart
+    # tables to it and nothing ever reads them back — the analytics API serves
+    # marts from DuckDB (`read_mart`), and the only other clients are a health
+    # probe and a release gate. Its intended consumer is an external BI tool that
+    # does not exist yet (ANALYTICS_BI_TOOL_URL still points at localhost:3001).
+    #
+    # The volume does not justify it either: all eight marts together are 441 KB.
+    # ClickHouse is built for billions of rows; DuckDB is the right tool at this
+    # size by several orders of magnitude and is already doing the work.
+    #
+    # It stayed enabled against a dead hostname for seven weeks (last successful
+    # export 2026-06-19) without anything noticing, and the only symptom it
+    # produced was a false "service degraded" on /health/ready. Turn this back on
+    # when there is a real dashboard reading it.
     ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED: bool = False
     # Separate from _ENABLED on purpose. Whether the warehouse is configured and
     # whether it should be able to fail the readiness probe are different
@@ -515,11 +559,6 @@ class Settings(BaseSettings):
     # meant an unresolvable ClickHouse hostname reported the whole service as
     # degraded. Off by default; turn it on where reporting really is release
     # blocking.
-    ANALYTICS_WAREHOUSE_CLICKHOUSE_REQUIRED_FOR_READINESS: bool = False
-    # Whether a warehouse outage should mark the API not-ready. It should not:
-    # ClickHouse serves analytics, not the feed. Marking it required meant an
-    # unresolvable hostname reported the whole service degraded while every
-    # user-facing path was healthy.
     ANALYTICS_WAREHOUSE_CLICKHOUSE_REQUIRED_FOR_READINESS: bool = False
     ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST: Optional[str] = None
     ANALYTICS_WAREHOUSE_CLICKHOUSE_PORT: int = 8123

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 import asyncio
 import base64
 import hashlib
@@ -44,6 +46,8 @@ from app.services.recommendation_service import recommendation_service
 from app.services.ranking_request_telemetry_service import ranking_request_telemetry_service
 from app.services.vector_service import opportunity_vector_service
 from app.core.time import as_utc_aware, utc_now
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -487,8 +491,27 @@ async def _load_active_opportunities(
     # the network to return a thousand, which is what pushed the query past
     # Atlas's socket timeout. Twice the request plus a floor is ample.
     fetch_window = min(max((safe_skip + safe_limit) * 2, 400), 3000)
-    query = Opportunity.find_many(Opportunity.domain == domain) if domain else Opportunity.find_many()
-    candidates = await query.sort("-created_at").limit(fetch_window).to_list()
+
+    # Postgres path. Atlas M0 stopped being able to answer this query at all -
+    # it timed out after 60s and returned 500 - so the same corpus is served
+    # from Supabase, where status and portal are applied in SQL instead of
+    # pulling a window into memory and discarding most of it.
+    if str(settings.OPPORTUNITY_READ_BACKEND or "mongo").strip().lower() == "postgres":
+        from app.repositories import opportunity_repository
+
+        try:
+            candidates = await opportunity_repository.load_active_opportunities(
+                domain=domain, portal=portal, limit=safe_skip + safe_limit,
+            )
+        except Exception:
+            # A backend switch must never take the feed down: fall back to Mongo
+            # and let the failure surface in logs rather than as an empty page.
+            logger.exception("postgres feed read failed; falling back to mongo")
+            query = Opportunity.find_many(Opportunity.domain == domain) if domain else Opportunity.find_many()
+            candidates = await query.sort("-created_at").limit(fetch_window).to_list()
+    else:
+        query = Opportunity.find_many(Opportunity.domain == domain) if domain else Opportunity.find_many()
+        candidates = await query.sort("-created_at").limit(fetch_window).to_list()
     active = _filter_active_opportunities(candidates)
     normalized_portal = str(portal or "").strip().lower()
     if normalized_portal in {"career", "competitive", "other"}:

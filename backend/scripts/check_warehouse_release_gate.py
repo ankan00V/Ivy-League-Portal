@@ -16,6 +16,8 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.core.config import settings
+
+import _script_db
 from app.models.warehouse_export_run import WarehouseExportRun
 from app.services.warehouse_export_service import warehouse_export_service
 
@@ -41,15 +43,11 @@ def _client_kwargs() -> dict[str, Any]:
 
 
 async def _run() -> dict[str, Any]:
-    client = AsyncIOMotorClient(settings.MONGODB_URL, **_client_kwargs())
-    await init_beanie(
-        database=client[settings.MONGODB_DB_NAME],
-        document_models=[WarehouseExportRun],
-    )
+    client = await _script_db.connect([WarehouseExportRun])
     try:
         return await warehouse_export_service.freshness_status()
     finally:
-        client.close()
+        _script_db.close(client)
 
 
 def main() -> None:

@@ -19,6 +19,8 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.core.config import settings
+
+import _script_db
 from app.models.application import Application
 from app.models.opportunity import Opportunity
 from app.models.opportunity_interaction import OpportunityInteraction
@@ -61,16 +63,10 @@ def _client_kwargs() -> dict[str, Any]:
 
 
 async def _init_db() -> None:
-    client = AsyncIOMotorClient(settings.MONGODB_URL, **_client_kwargs())
-    await init_beanie(
-        database=client[settings.MONGODB_DB_NAME],
-        document_models=[
-            User,
-            Profile,
-            Opportunity,
-            OpportunityInteraction,
-            Application,
-        ],
+    # Trains on whichever database is serving. Hardcoded to Mongo this retrained
+    # the ranker on an abandoned corpus whose newest interaction is 2026-06-03.
+    await _script_db.connect(
+        [User, Profile, Opportunity, OpportunityInteraction, Application]
     )
 
 

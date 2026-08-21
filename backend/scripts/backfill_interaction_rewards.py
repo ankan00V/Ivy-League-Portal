@@ -51,7 +51,9 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
             updated += 1
             by_event[event_type] = by_event.get(event_type, 0) + 1
     finally:
-        client.close()
+        # None under POSTGRES_ODM_ENABLED: Mongo was never contacted.
+        if client is not None:
+            client.close()
 
     return {
         "status": "ok",

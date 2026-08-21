@@ -25,7 +25,9 @@ async def _run(args: argparse.Namespace) -> dict:
             dry_run=bool(args.dry_run),
         )
     finally:
-        client.close()
+        # None under POSTGRES_ODM_ENABLED: Mongo was never contacted.
+        if client is not None:
+            client.close()
 
 
 def main() -> int:

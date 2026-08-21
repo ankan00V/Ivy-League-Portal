@@ -93,10 +93,10 @@ async def _main() -> int:
     parser.add_argument("--json-out", type=str, default="backend/benchmarks/weekly_ds_scorecard.json")
     args = parser.parse_args()
 
-    client = AsyncIOMotorClient(settings.MONGODB_URL)
-    await init_beanie(
-        database=client[settings.MONGODB_DB_NAME],
-        document_models=[
+    # A scorecard read from the wrong database publishes confident numbers about
+    # an abandoned one.
+    client = await _script_db.connect(
+        [
             AssistantAuditEvent,
             FeatureStoreRow,
             ModelDriftReport,
@@ -105,7 +105,7 @@ async def _main() -> int:
             Profile,
             RankingModelVersion,
             RankingRequestTelemetry,
-        ],
+        ]
     )
     try:
         snapshot = await data_science_observability_service.operating_loop_snapshot(lookback_days=max(1, min(int(args.days), 90)))
@@ -130,7 +130,7 @@ async def _main() -> int:
         print(json.dumps({"status": "ok", "markdown": str(markdown_path), "json": str(json_path)}, indent=2))
         return 0
     finally:
-        client.close()
+        _script_db.close(client)
 
 
 if __name__ == "__main__":

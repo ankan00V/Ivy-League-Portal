@@ -16,6 +16,8 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.core.config import settings
+
+import _script_db
 from app.core.time import utc_now
 from app.models.assistant_audit_event import AssistantAuditEvent
 from app.models.feature_store_row import FeatureStoreRow
@@ -131,10 +133,9 @@ async def _main() -> int:
     )
     args = parser.parse_args()
 
-    client = AsyncIOMotorClient(settings.MONGODB_URL)
-    await init_beanie(
-        database=client[settings.MONGODB_DB_NAME],
-        document_models=[
+    # A release gate that reads the wrong database passes for the wrong reason.
+    client = await _script_db.connect(
+        [
             AssistantAuditEvent,
             FeatureStoreRow,
             ModelDriftReport,
@@ -143,7 +144,7 @@ async def _main() -> int:
             Profile,
             RankingModelVersion,
             RankingRequestTelemetry,
-        ],
+        ]
     )
     try:
         payload = await _build_payload(args)
@@ -157,7 +158,7 @@ async def _main() -> int:
             return 2
         return 0
     finally:
-        client.close()
+        _script_db.close(client)
 
 
 if __name__ == "__main__":

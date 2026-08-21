@@ -121,6 +121,71 @@ def retention_cutoff(*, now: datetime | None = None) -> datetime | None:
     return reference - timedelta(days=days)
 
 
+async def _purge_aged_telemetry_postgres(*, apply: bool, cutoff: datetime) -> dict[str, Any]:
+    """Retention against Postgres.
+
+    A separate path because `pg_documents.install` patches the Beanie query API but
+    not the raw-collection accessor. `get_collection()` therefore still hands back a
+    **Mongo** handle under the Postgres ODM, so the Mongo branch below would have
+    reported a clean run while never touching the live database — the same silent
+    wrong-store failure the dataset snapshot had.
+
+    Clears three things past the window:
+
+    - `user_id` -> a derived pseudonym, so the row stops naming a student.
+    - `query`   -> free text the student typed.
+    - `features` -> the 55-key ranker vector. This is the storage win: it averages
+      1,088 bytes of jsonb per row and is 53% of the table heap. Nothing reads it
+      past `MLOPS_RETRAIN_LOOKBACK_DAYS` (90) — drift looks back 7 days and the
+      guardrail 30 — so beyond the window it is dead weight that only grows.
+
+    Rows are never deleted. Counts, funnels and experiment denominators computed
+    over history stay exactly as they were.
+    """
+    import asyncpg
+
+    conn = await asyncpg.connect(
+        settings.SUPABASE_DATABASE_URL,
+        timeout=60,
+        # Supabase's pooler is pgbouncer in transaction mode.
+        statement_cache_size=0,
+    )
+    report: dict[str, Any] = {
+        "status": "ok",
+        "backend": "postgres",
+        "mode": "apply" if apply else "dry-run",
+        "cutoff": cutoff.isoformat(),
+        "collections": {},
+    }
+    try:
+        matched = await conn.fetchval(
+            "SELECT count(*) FROM app.opportunity_interactions "
+            "WHERE created_at < $1 AND features IS NOT NULL",
+            cutoff,
+        )
+        reclaimable = await conn.fetchval(
+            "SELECT coalesce(sum(pg_column_size(features)), 0) "
+            "FROM app.opportunity_interactions WHERE created_at < $1",
+            cutoff,
+        )
+        entry: dict[str, Any] = {
+            "matched": int(matched or 0),
+            "reclaimable_bytes": int(reclaimable or 0),
+        }
+        if apply and matched:
+            result = await conn.execute(
+                "UPDATE app.opportunity_interactions "
+                "SET features = NULL, query = NULL "
+                "WHERE created_at < $1 AND features IS NOT NULL",
+                cutoff,
+            )
+            entry["modified"] = int(str(result).rsplit(" ", 1)[-1] or 0)
+        report["collections"]["opportunity_interactions"] = entry
+        return report
+    finally:
+        await conn.close()
+
+
 async def purge_aged_telemetry(*, apply: bool = False, now: datetime | None = None) -> dict[str, Any]:
     """Unlink telemetry older than the retention window from the students who made it.
 
@@ -138,8 +203,12 @@ async def purge_aged_telemetry(*, apply: bool = False, now: datetime | None = No
     if cutoff is None:
         return {"status": "disabled", "reason": "TELEMETRY_RAW_RETENTION_DAYS <= 0"}
 
+    if settings.POSTGRES_ODM_ENABLED:
+        return await _purge_aged_telemetry_postgres(apply=apply, cutoff=cutoff)
+
     report: dict[str, Any] = {
         "status": "ok",
+        "backend": "mongo",
         "mode": "apply" if apply else "dry-run",
         "cutoff": cutoff.isoformat(),
         "collections": {},

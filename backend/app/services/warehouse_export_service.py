@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from datetime import date, datetime, timezone
 from typing import Any
@@ -17,6 +18,8 @@ from app.models.ranking_request_telemetry import RankingRequestTelemetry
 from app.models.warehouse_export_run import WarehouseExportRun
 from app.services.privacy_consent_service import consented_user_ids, filter_rows_by_consent
 from app.services.telemetry_privacy import pseudonymize_rows
+
+logger = logging.getLogger(__name__)
 
 
 class WarehouseExportService:
@@ -216,12 +219,33 @@ class WarehouseExportService:
                     export_parquet=export_format in {"duckdb_parquet", "parquet"},
                 )
 
+            # The ClickHouse push is a mirror, not the product of this job. The marts
+            # are already built and on disk by this point, and the analytics API reads
+            # them from DuckDB, so letting a push failure raise would throw away a
+            # successful export and record status=error for work that actually
+            # succeeded. It is isolated for that reason.
+            #
+            # This is not hypothetical: the managed instance was a 30-day trial that
+            # expired, its hostname now returns NXDOMAIN, and every refresh since
+            # 2026-06-19 would have been reported as a failed export.
             clickhouse_tables: list[str] = []
+            clickhouse_status = "disabled"
+            clickhouse_error: str | None = None
             if settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED and duckdb_path:
-                clickhouse_tables = self._materialize_clickhouse(
-                    duckdb_path=duckdb_path,
-                    table_names=[name for name in exported_tables if name.startswith("mart_")],
-                )
+                try:
+                    clickhouse_tables = self._materialize_clickhouse(
+                        duckdb_path=duckdb_path,
+                        table_names=[name for name in exported_tables if name.startswith("mart_")],
+                    )
+                    clickhouse_status = "ok"
+                except Exception as exc:
+                    clickhouse_status = "failed"
+                    clickhouse_error = f"{exc.__class__.__name__}: {exc}"
+                    logger.warning(
+                        "Warehouse marts built successfully; ClickHouse mirror push failed "
+                        "and was skipped: %s",
+                        clickhouse_error,
+                    )
 
             if metrics_module.WAREHOUSE_EXPORTS_TOTAL is not None:
                 metrics_module.WAREHOUSE_EXPORTS_TOTAL.labels(format=export_format, status="ok").inc()
@@ -238,6 +262,8 @@ class WarehouseExportService:
                     "duckdb_path": duckdb_path,
                     "export_root": str(root),
                     "clickhouse_enabled": bool(settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED),
+                    "clickhouse_status": clickhouse_status,
+                    "clickhouse_error": clickhouse_error,
                     "clickhouse_tables": clickhouse_tables,
                     "privacy": privacy,
                 },
@@ -254,7 +280,12 @@ class WarehouseExportService:
                 "raw_files": raw_files,
                 "mart_files": mart_files,
                 "exported_tables": exported_tables,
+                "clickhouse_status": clickhouse_status,
                 "clickhouse_tables": clickhouse_tables,
+                # Surfaced to callers, not just buried in the run record: a
+                # consent lookup that silently resolves to zero users produces a
+                # successful-looking export containing no user rows at all.
+                "privacy": privacy,
             }
         except Exception as exc:
             if metrics_module.WAREHOUSE_EXPORTS_TOTAL is not None:

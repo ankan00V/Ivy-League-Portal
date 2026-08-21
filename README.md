@@ -2,7 +2,7 @@
 
 > AI-powered opportunity intelligence platform that helps students discover, prioritize, and act on internships, jobs, hackathons, competitions, workshops, and conferences.
 
-**Last updated:** August 03, 2026
+**Last updated:** August 10, 2026
 **Status:** Active build, production-readiness gates enabled
 
 ## 1) Executive Summary
@@ -36,7 +36,7 @@ flowchart LR
     A["External Sources"] --> A1["Source Discovery Trust Gate"]
     A1 --> B["Scraper Ingestion"]
     B --> C["Dedup + Canonicalization"]
-    C --> D[("MongoDB")]
+    C --> D[("Supabase Postgres")]
 
     U["User Query / Context"] --> E["Embeddings + NLP"]
     D --> F["Vector Retrieval"]
@@ -152,7 +152,7 @@ class node_mongo,node_redis,node_warehouse,node_delivery toneIndigo
 |---|---|
 | Frontend | Next.js 16, TypeScript, Playwright |
 | Backend | FastAPI, Pydantic, Beanie ODM |
-| Data | Managed MongoDB, managed Redis, managed ClickHouse |
+| Data | **Supabase Postgres (ap-south-1) is the database**, with pgvector for opportunity embeddings. Managed Redis for sessions, queues and rate limits. MongoDB is retired — see the migration note in section 6. ClickHouse integration exists but is **disabled**; see the warehouse note in section 7. |
 | AI/ML | sentence-transformers, vector retrieval, learned ranker, optional skill-span extractor |
 | Storage | S3-compatible production artifact store |
 | Observability/Ops | GitHub Actions, Prometheus metrics, Grafana/BI, Slack/PagerDuty hooks |
@@ -167,7 +167,7 @@ class node_mongo,node_redis,node_warehouse,node_delivery toneIndigo
 - Explainable recommendations on both opportunity feeds: users can see profile-aligned reasons, advisory eligibility context, and hide unsuitable listings while the feedback is recorded for future ranking improvements. Matching uses the candidate's degree, graduation year, skills, roles, locations, stipend expectation, and controlled availability preference.
 - Candidate-only Resume Readiness Review: an on-demand, deterministic analysis of an uploaded resume with an explainable `0–100` clarity/readability score, category evidence, strengths, weak spots, and improvements. It is advisory only—not a hiring prediction, eligibility decision, or opportunity-ranking signal—and does not persist extracted resume text or review output.
 - Published `/privacy` and `/terms` pages written from the implementation rather than a template, plus self-service account deletion from the profile page. Neither has been reviewed by a lawyer.
-- Placement filter on the internships feed: `All | India | Remote | Hybrid | International`. The categories are **deliberately non-exclusive** — India/International is geography, Remote/Hybrid is work mode, so a remote internship in Bengaluru appears under both `India` and `Remote` and the pill counts sum to more than the corpus. Forcing one bucket per listing would hide remote Indian internships from the `India` pill. Membership is computed server-side by `app/services/opportunity_placement.py` and exposed as the `feed_categories` field on every opportunity response, so the Mongo and Postgres read paths give identical answers. Classification is inferential because the corpus cannot answer the question directly: measured 2026-08-06, `work_mode` is null on 1,042 of 1,418 active rows (73%) and `location` on 533 (38%), so the signal is recovered from `work_mode`, then `location`, then title/description text, then India-only source boards. That places **1,104 of 1,418 rows (77%)** in at least one pill — `india` 767, `international` 312, `remote` 292, `hybrid` 78. The remaining 23% carry no usable signal and appear only under `All`.
+- Placement filter on the internships feed: `All | India | Remote | Hybrid | International`. The categories are **deliberately non-exclusive** — India/International is geography, Remote/Hybrid is work mode, so a remote internship in Bengaluru appears under both `India` and `Remote` and the pill counts sum to more than the corpus. Forcing one bucket per listing would hide remote Indian internships from the `India` pill. Membership is computed server-side by `app/services/opportunity_placement.py` and exposed as the `feed_categories` field on every opportunity response, so it is computed once server-side rather than duplicated in the frontend. Classification is inferential because the corpus cannot answer the question directly: measured on 2026-08-10, `work_mode` is null on 999 of 1,370 active rows (72%) and `location` on 515 (37%), so the signal is recovered from `work_mode`, then `location`, then title/description text, then India-only source boards. That places **1,073 of 1,370 active rows (78%)** in at least one pill — `india` 750, `remote` 299, `international` 293, `hybrid` 84. The remaining 22% carry no usable signal and appear only under `All`.
 
 ### AI/ML
 - Multi-source ingestion with semantic deduplication.
@@ -177,11 +177,11 @@ class node_mongo,node_redis,node_warehouse,node_delivery toneIndigo
 - Offline benchmark and online parity/champion-challenger gates.
 
 ### Platform
-- MongoDB-first backend architecture + Redis support.
+- **Postgres-backed architecture + Redis support. The migration off MongoDB is complete.** `POSTGRES_ODM_ENABLED` patches every Beanie document model onto Postgres at startup, so the ~651 existing call sites keep their Beanie shape while the storage underneath changed; Mongo is never contacted. Verified 2026-08-11: Postgres held 1,845 opportunities, 30,143 interactions and every live user, with writes landing continuously, while the Atlas database had received no write since 2026-06-18. `MONGODB_URL` remains configured only so the abandoned data stays reachable, and nothing reads it.
 - Background jobs with retry, dead-letter behavior, bounded concurrency, queue caps, and handler timeouts.
-- Opportunity ingestion is scheduled immediately at API startup and then every `SCRAPER_INTERVAL_MINUTES` (30 minutes by default). Each `scraper.run` is persisted in the Mongo-backed job queue for retry and operational visibility; primary sources are saved before generic portals, each fetch batch has a bounded `SCRAPER_FETCH_BATCH_TIMEOUT_SECONDS` (180 seconds by default), and model-backed semantic dedup/embedding rebuilds remain off the ingestion critical path by default.
+- Opportunity ingestion is scheduled immediately at API startup and then every `SCRAPER_INTERVAL_MINUTES` (30 minutes by default). Each `scraper.run` is persisted in the Postgres-backed job queue for retry and operational visibility; primary sources are saved before generic portals, each fetch batch has a bounded `SCRAPER_FETCH_BATCH_TIMEOUT_SECONDS` (180 seconds by default), and model-backed semantic dedup/embedding rebuilds remain off the ingestion critical path by default.
 - Past-deadline opportunities are retired by setting `opportunity_status="expired"`, which hides them from every student-facing surface. Ingestion never hard-deletes opportunity rows: many connectors synthesise a deadline when the source exposes none, so deletion destroyed records that had not genuinely closed.
-- Source discovery pipeline with company seeds, user submissions, qualification queues, adaptive extraction, managed Firecrawl fallback for JS-heavy pages, probation, dynamic scraper registration, and health quarantine.
+- Source discovery pipeline with company seeds, user submissions, qualification queues, adaptive extraction, JavaScript rendering for pages that mount their board client-side, probation, dynamic scraper registration, and health quarantine. Rendering is served by obscura ahead of crawlee; the paid providers (Firecrawl, Browser Use) remain wired but default to `disabled` via `FIRECRAWL_MODE` / `BROWSER_USE_MODE` after failing on every URL of the 2026-08-05 sweep.
 - Opportunity quality scoring normalizes location, work mode, duration, stipend, and tags; it also evaluates deadline, eligibility, compensation, and duplicate signals. Low-completeness records enter the admin review queue with explicit reasons, while trust-risk records remain separately blocked from student-facing surfaces.
 - Source-discovery skill tags use a guarded, optional skill-span extractor and retain the static keyword fallback whenever its local artifact is unavailable or inference fails.
 - Official company careers intelligence with a curated S-tier internship watchlist across global tech, quant/trading, Indian product, IT services, government/PSU, research, consulting, analytics, banking, manufacturing, aerospace, energy, FMCG, and hidden-gem employers.
@@ -250,11 +250,23 @@ Any "lift" computed over that data recovers those constants plus sampling
 noise. It compares synthetic data against itself, so a significance test on it
 is not meaningful.
 
-Real (non-seed) traffic to date: **1,402 impressions, 0 clicks, 0 saves,
-0 applies**, and the `applications` collection is empty. Interpret every
-ranking metric in this document as infrastructure validation, not evidence of
-user outcomes. This section will carry real numbers once real interactions
-exist.
+Traffic to date, measured on 2026-08-10: **30,072 impressions,
+3 clicks, 1 save, 7 applies** — and **every one of those rows belongs to a
+single account**. That is one developer exercising the feed, not student
+traffic, and the click-through rate it implies (0.01%) is a property of
+scripted scrolling rather than of the ranker.
+
+Note also that all 30,083 rows carry `traffic_type: "real"`. That label means
+"never audited", not "verified genuine": the provenance backfill described
+below has only ever been run against local Mongo, so on Atlas the default has
+simply never been challenged. Running
+`backend/scripts/backfill_traffic_provenance.py` there reports 0 rows to
+relabel, because its heuristics target the bootstrap seeder's signature and
+these rows did not come from it.
+
+Interpret every ranking metric in this document as infrastructure validation,
+not evidence of user outcomes. This section will carry meaningful numbers once
+more than one person has used the product.
 
 ### Ranking maturity: what is and is not validated
 Stated plainly, because the surrounding infrastructure is easy to mistake for a
@@ -309,11 +321,12 @@ Latest drift report: `n/a`
 - The [India 2025 internship dataset](https://www.kaggle.com/datasets/jayaantanaath/internship-opportunities-in-india-2025/data) is suitable only as a deduplicated validation corpus for structured field extraction. It has no user-to-opportunity interaction labels, so it must never be used to train the learned ranker.
 
 ### Engineering quality signal
-- Focused scraper/source contract suite: **53 passing tests** (latest local run on July 29, 2026)
-- Production infra readiness gate: managed MongoDB, Redis, ClickHouse, and S3-compatible artifact storage have been verified from the local runtime; the full strict gate still requires deployed frontend/backend domains and a production BI URL.
-- Local developer harness smoke: 15/15 checks passed on July 29, 2026 - backend, MongoDB, Redis, queue, embedding model, learned ranker, artifact store, public opportunities, API docs, and all frontend routes. This is not production deployment proof.
-- Analytics warehouse: all eight ClickHouse marts materialize and `check_warehouse_release_gate` reports `status=fresh` (July 29, 2026).
-- Backend full suite baseline: **506 passing tests, 114 subtests passed** (latest local run on August 5, 2026). Three tests in `test_firecrawl_integration.py` and `test_scraper_fetch_providers.py` fail on the current working tree; the cause is uncommitted provider-routing work in `scraper.py`/`source_discovery.py`, verified by reverting only those two files and re-running the same 16 tests green.
+- Focused scraper/source contract suite: **70 passing tests, 73 subtests** across `test_scraper_fetch_providers`, `test_scraper_health_service`, `test_scraper_ingestion` and `test_source_discovery_pipeline` (local run on August 10, 2026)
+- Production infra readiness gate: managed Postgres, Redis, and S3-compatible artifact storage are verified from the local runtime; ClickHouse is reported as skipped while disabled. The full strict gate still requires deployed frontend/backend domains and a production BI URL.
+- Local developer harness smoke: 15/15 checks passed on July 29, 2026 - backend, database, Redis, queue, embedding model, learned ranker, artifact store, public opportunities, API docs, and all frontend routes. **Not re-run since**, and the stack has changed materially in that time (obscura in the fetch chain, Postgres migration scaffolding, readiness-probe changes). Treat it as a July 29 result, not current status. This is not production deployment proof.
+- Analytics warehouse: the eight marts exist under `backend/storage/warehouse/marts/` and are served to the analytics API from DuckDB. They were **last materialized on July 29, 2026**, so `check_warehouse_release_gate` should not be assumed `fresh` today.
+- **ClickHouse is disabled and unused.** Stated plainly because the stack table used to imply otherwise. It was only ever a write-only mirror: `warehouse_export_service` pushed eight mart tables to it and nothing read them back — the analytics API reads DuckDB (`read_mart`), and the only other clients were a health probe and a release gate. Its intended consumer, an external BI tool, does not exist (`ANALYTICS_BI_TOOL_URL` still points at `localhost:3001`). The managed instance was a 30-day trial that expired; its hostname has returned `NXDOMAIN` since roughly mid-July and the last successful export was **2026-06-19**, which nothing noticed. The volume never justified it either: all eight marts together are **441 KB**, where ClickHouse is built for billions of rows and DuckDB is the correct tool by orders of magnitude. The integration is retained behind `ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED=False`, the export now isolates the mirror push so a dead endpoint cannot fail a successful mart build, and the readiness probe no longer gates on it.
+- Backend full suite baseline: **583 passing tests, 114 subtests passed, 0 failing** (local run on August 10, 2026).
 - Frontend lint: **passing**
 - Frontend production build: **passing**
 - Security and release gates: **active in CI**
@@ -328,7 +341,7 @@ Latest drift report: `n/a`
 
 ## 9) Current Production Readiness Boundary
 - The codebase contains production gates, env contracts, CI workflows, security guardrails, managed-infra checks, and operational runbooks.
-- Production runtime must use deployed services: managed MongoDB, managed Redis, managed ClickHouse, S3-compatible artifact storage, live frontend/backend domains, configured OAuth/Turnstile/SMTP, production BI, and real alert destinations.
+- Production runtime must use deployed services: managed Postgres (Supabase), managed Redis, S3-compatible artifact storage, live frontend/backend domains, configured OAuth/Turnstile/SMTP, production BI, and real alert destinations.
 - Local Docker, localhost ports, MinIO, and local `.env` values are only a developer verification harness. They are not the production architecture and are rejected by the strict production infrastructure readiness gate.
 - Without the real production secrets and deployed service endpoints, production can be validated only up to contract/readiness checks, not proven live.
 
@@ -361,10 +374,10 @@ make warehouse-refresh
 make ds-gates
 ```
 
-`make infra-check` is strict by default. It fails when MongoDB, Redis, ClickHouse, artifact storage, or BI point at localhost, Docker service names, MinIO, or other local/dev infrastructure.
+`make infra-check` is strict by default. It fails when Postgres, Redis, artifact storage, or BI point at localhost, Docker service names, MinIO, or other local/dev infrastructure.
 
 Required external services:
-- MongoDB with TLS and production credentials.
+- Supabase Postgres with TLS and production credentials. Note the pooler runs pgbouncer in transaction mode, so asyncpg clients must set `statement_cache_size=0`; the direct URL is required for migrations and `CREATE INDEX`, which a pooled session cannot hold advisory locks for.
 - Redis or Upstash-compatible Redis for sessions, queues, rate limits, and online features.
 - ClickHouse with TLS for analytics marts.
 - S3-compatible artifact storage for model artifacts.

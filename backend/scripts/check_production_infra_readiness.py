@@ -23,10 +23,26 @@ from app.core.time import utc_now
 from app.services.model_artifact_service import model_artifact_service
 
 
-def _status(name: str, ok: bool, detail: str, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+def _status(
+    name: str,
+    ok: bool,
+    detail: str,
+    metadata: dict[str, Any] | None = None,
+    *,
+    skipped: bool = False,
+) -> dict[str, Any]:
+    """A check result.
+
+    `skipped` marks a dependency that is deliberately switched off. It reports
+    `ok` so the gate passes, but carries the flag so the summary can say
+    "skipped" rather than implying the dependency was verified. Without this
+    distinction, turning an optional dependency off fails the release gate,
+    which pushes people toward leaving dead infrastructure enabled.
+    """
     return {
         "name": name,
         "ok": bool(ok),
+        "skipped": bool(skipped),
         "detail": detail,
         "metadata": dict(metadata or {}),
     }
@@ -102,7 +118,17 @@ async def _check_redis(*, require_managed: bool) -> dict[str, Any]:
 def _check_clickhouse(*, require_managed: bool) -> dict[str, Any]:
     host = (settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST or "").strip()
     if not settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED:
-        return _status("clickhouse", False, "ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED is false")
+        # Passes, deliberately. ClickHouse is a write-only mirror for an external
+        # BI tool; nothing in the product reads it (the analytics API serves marts
+        # from DuckDB). Failing the release gate because an unused warehouse is
+        # switched off is backwards — it makes deleting dead infrastructure more
+        # expensive than paying for it.
+        return _status(
+            "clickhouse",
+            True,
+            "disabled (ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED is false) - skipped, not verified",
+            skipped=True,
+        )
     if not host:
         return _status("clickhouse", False, "ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST is empty")
     if require_managed and host.lower() in {"localhost", "127.0.0.1", "::1", "clickhouse"}:
@@ -199,10 +225,15 @@ async def _run(*, require_managed: bool, include_bi: bool) -> dict[str, Any]:
     ]
     if include_bi:
         checks.append(_check_bi_tool(require_managed=require_managed))
+    skipped = [item["name"] for item in checks if item.get("skipped")]
     return {
         "generated_at": utc_now().isoformat(),
         "require_managed": bool(require_managed),
         "ok": all(bool(item["ok"]) for item in checks),
+        # Surfaced separately so a green gate cannot be mistaken for "everything
+        # was checked". A skipped dependency is switched off, not verified.
+        "skipped": skipped,
+        "verified": [item["name"] for item in checks if not item.get("skipped")],
         "checks": checks,
     }
 

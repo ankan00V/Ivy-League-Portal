@@ -1880,9 +1880,25 @@ class AdaptiveExtractionService:
                 source.probation_start = utc_now()
             else:
                 source.status = SourceStatus.rejected
-                source.rejection_reason = f"low_extraction_confidence:{confidence:.2f}"
+                # Name the gate that actually failed. Both conditions used to
+                # report "low_extraction_confidence", so a source that parsed
+                # cleanly (confidence 0.91) but yielded a single listing was
+                # filed as a bad extraction. Nine sources were mislabelled that
+                # way - builtin.com and careers.ingrammicro.com among them, both
+                # with qualification scores above 89 - which sends anyone
+                # auditing rejections after the wrong problem entirely. Too few
+                # rows is a selector or a thin page; low confidence is a parser.
+                if confidence < 0.7:
+                    source.rejection_reason = f"low_extraction_confidence:{confidence:.2f}"
+                else:
+                    source.rejection_reason = (
+                        f"too_few_opportunities:{len(valid)} (confidence {confidence:.2f} passed)"
+                    )
                 source.rejected_at = utc_now()
                 if 0.4 <= confidence < 0.7:
+                    source.requires_admin_review = True
+                elif confidence >= 0.7:
+                    # Extraction worked; a human should look at why the page is thin.
                     source.requires_admin_review = True
         except Exception as exc:
             source.status = SourceStatus.rejected
