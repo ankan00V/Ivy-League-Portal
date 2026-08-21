@@ -93,6 +93,36 @@ async def _register_codecs(conn: asyncpg.Connection) -> None:
             schema="pg_catalog",
         )
 
+    # pgvector is an extension type asyncpg has never heard of, so without this
+    # it hands back the literal text '[0.1,0.2,...]'. The models declare
+    # list[float], and a string flowed straight through: the vector index copied
+    # it into an array column, where asyncpg iterated the string one character
+    # at a time and semantic search died with "must be real number, not str".
+    try:
+        await conn.set_type_codec(
+            "vector",
+            encoder=_encode_vector,
+            decoder=_decode_vector,
+            schema="public",
+            format="text",
+        )
+    except Exception:
+        # pgvector is not installed everywhere; the rest of the ODM works fine.
+        logger.debug("pgvector codec not registered", exc_info=True)
+
+
+def _encode_vector(value) -> str:
+    if isinstance(value, str):
+        return value
+    return "[" + ",".join(f"{float(x):.6f}" for x in (value or [])) + "]"
+
+
+def _decode_vector(value) -> list[float]:
+    text = str(value or "").strip().strip("[]")
+    if not text:
+        return []
+    return [float(part) for part in text.split(",")]
+
 
 async def close_pool() -> None:
     global _pool
@@ -153,10 +183,82 @@ class PgQuery:
         # own has to resolve inside extras rather than as a bare identifier.
         return build_where(self.filters, await columns_of(table_of(self.model_cls)))
 
+    def with_vectors(self):
+        """Include vector columns in the result.
+
+        Only the embedding pipeline needs them; see _select_columns.
+        """
+        self._want_vectors = True
+        return self
+
+    async def _select_columns(self) -> str:
+        """Column list for SELECT, excluding vector columns by default.
+
+        `SELECT *` pulls every embedding with every row. The feed loads the
+        whole corpus, so that meant shipping ~1,800 x 384 floats from Mumbai on
+        each request - 80 of the feed's 84 seconds was the event loop waiting on
+        that transfer, with almost no CPU spent. Nothing outside the embedding
+        pipeline reads the column, and that path asks for it explicitly.
+        """
+        if getattr(self, "_want_vectors", False):
+            return "*"
+        columns = await columns_of(table_of(self.model_cls))
+        vectors = [c for c, t in columns.items() if is_vector_column(t)]
+        if not vectors:
+            return "*"
+        return ", ".join(f'"{c}"' for c in columns if c not in vectors)
+
+    #: Rows fetched per round trip when async-iterating. Bounded because
+    #: interaction rows carry a ~1 KB `features` payload, so an unpaged read of a
+    #: month's traffic exceeds the pooler's command timeout.
+    _AITER_PAGE = 1000
+
+    async def __aiter__(self):
+        """Support `async for row in Model.find_many(...)`.
+
+        Beanie queries are async iterables and roughly 651 call sites were left
+        untouched on the promise that the models keep their Beanie shape, so a
+        missing __aiter__ is a hole in that promise rather than a missing nicety.
+
+        It cost a real outage: `privacy_consent_service.consented_user_ids` used
+        `async for` and raised TypeError under this ODM. Its fail-closed handler
+        caught the error and returned an empty permission set, so every warehouse
+        export silently dropped **all** user rows while reporting success. The
+        privacy default held - nothing leaked - but the marts were empty of
+        exactly the data they exist to describe.
+
+        Pages internally so iterating a large table cannot time out. Ordered by
+        id for a stable cursor: without an ORDER BY, LIMIT/OFFSET may repeat or
+        skip rows between pages.
+        """
+        offset = 0
+        base_skip = self._skip or 0
+        remaining = self._limit
+        while True:
+            size = self._AITER_PAGE if remaining is None else min(self._AITER_PAGE, remaining)
+            if size <= 0:
+                return
+            page = await self._clone_for_page(skip=base_skip + offset, limit=size).to_list()
+            for row in page:
+                yield row
+            if len(page) < size:
+                return
+            offset += len(page)
+            if remaining is not None:
+                remaining -= len(page)
+
+    def _clone_for_page(self, *, skip: int, limit: int):
+        """A copy of this query bound to one page, leaving the original untouched."""
+        clone = PgQuery(self.model_cls, tuple(self.filters), self._single)
+        clone._sort = self._sort or '"id"'
+        clone._skip = skip
+        clone._limit = limit
+        return clone
+
     async def to_list(self, length: int | None = None) -> list:
         table = table_of(self.model_cls)
         where, params = await self._where()
-        sql = f'SELECT * FROM app."{table}" WHERE {where}'
+        sql = f'SELECT {await self._select_columns()} FROM app."{table}" WHERE {where}'
         if self._sort:
             sql += f" ORDER BY {self._sort}"
         effective = length or self._limit
@@ -530,6 +632,77 @@ def _attach_fields(model_cls) -> None:
         if isinstance(getattr(model_cls, name, None), ExpressionField):
             continue  # init_beanie already ran; leave its version alone
         setattr(model_cls, name, ExpressionField(field.alias or name))
+
+
+async def bulk_save(model_cls, instances: list) -> int:
+    """Write many instances in a few round trips instead of one each.
+
+    The vector index rebuild saved row by row: ~3,600 sequential round trips to
+    Supabase for a full rebuild, which is where the 375-second first search came
+    from. Column sets can differ between rows (a row with no embedding drops the
+    vector column), so rows are grouped by their column set and each group goes
+    out as a single executemany.
+    """
+    if not instances:
+        return 0
+    table = table_of(model_cls)
+    available = {c: t for c, t in (await columns_of(table)).items() if c != "id"}
+
+    inserts: dict[tuple, list] = {}
+    updates: dict[tuple, list] = {}
+    for instance in instances:
+        cols = _without_empty_vectors(instance, available)
+        key = tuple(cols)
+        target = updates if getattr(instance, "_pg_row_id", None) else inserts
+        target.setdefault(key, []).append((cols, instance))
+
+    written = 0
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        for key, group in inserts.items():
+            from bson import ObjectId
+
+            cols = group[0][0]
+            rows = []
+            for _, instance in group:
+                if getattr(instance, "id", None) is None:
+                    instance.id = ObjectId()
+                rows.append(tuple(model_to_values(instance, cols)))
+            placeholders = ", ".join(f"${i+1}" for i in range(len(cols)))
+            quoted = ", ".join(f'"{c}"' for c in cols)
+            written += await _executemany_chunked(
+                conn,
+                f'INSERT INTO app."{table}" ({quoted}) VALUES ({placeholders})',
+                rows,
+            )
+
+        for key, group in updates.items():
+            cols = group[0][0]
+            assignments = ", ".join(f'"{c}" = ${i+1}' for i, c in enumerate(cols))
+            rows = [
+                tuple(model_to_values(instance, cols)) + (instance._pg_row_id,)
+                for _, instance in group
+            ]
+            written += await _executemany_chunked(
+                conn,
+                f'UPDATE app."{table}" SET {assignments} WHERE id = ${len(cols) + 1}',
+                rows,
+            )
+    return written
+
+
+# Rows carrying a 384-float vector are large, and the whole batch shares one
+# command_timeout. Sending ~1,800 of them as a single executemany exceeded the
+# 30s budget and the rebuild died; chunking keeps every statement well inside it
+# while still being one round trip per chunk rather than per row.
+_BULK_CHUNK = 200
+
+
+async def _executemany_chunked(conn, sql: str, rows: list) -> int:
+    for start in range(0, len(rows), _BULK_CHUNK):
+        await conn.executemany(sql, rows[start:start + _BULK_CHUNK],
+                               timeout=max(60.0, float(settings.NEON_COMMAND_TIMEOUT_SECONDS) * 4))
+    return len(rows)
 
 
 def install(models: list) -> int:

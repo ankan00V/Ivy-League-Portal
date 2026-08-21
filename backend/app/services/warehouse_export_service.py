@@ -282,6 +282,10 @@ class WarehouseExportService:
                 "exported_tables": exported_tables,
                 "clickhouse_status": clickhouse_status,
                 "clickhouse_tables": clickhouse_tables,
+                # Surfaced to callers, not just buried in the run record: a
+                # consent lookup that silently resolves to zero users produces a
+                # successful-looking export containing no user rows at all.
+                "privacy": privacy,
             }
         except Exception as exc:
             if metrics_module.WAREHOUSE_EXPORTS_TOTAL is not None:
