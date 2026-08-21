@@ -15,17 +15,8 @@
     "ranking_model_versions": 1,
     "users": 4
   },
-  "generated_at": "2026-08-11T15:35:40.401727+00:00",
-  "interaction_events": {
-    "apply": 7,
-    "click": 3,
-    "impression": 30132,
-    "save": 1
-  },
-  "interaction_traffic_type": {
-    "real": 30143
-  },
-  "snapshot_date": "August 11, 2026",
+  "generated_at": "2026-08-19T04:45:21.603537+00:00",
+  "snapshot_date": "August 19, 2026",
   "source_distribution": {
     "aicte_internship": 14,
     "codeforces": 9,

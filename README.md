@@ -1,6 +1,6 @@
 # VidyaVerse
 
-> AI-powered opportunity intelligence platform that helps students discover, prioritize, and act on internships, research roles, scholarships, and hackathons.
+> AI-powered opportunity intelligence platform that helps students discover, prioritize, and act on internships, jobs, hackathons, competitions, workshops, and conferences.
 
 **Last updated:** August 10, 2026
 **Status:** Active build, production-readiness gates enabled
@@ -52,7 +52,101 @@ flowchart LR
     K --> M["MLOps Retrain + Drift"]
     M --> H
 ```
+```mermaid
+flowchart TD
 
+subgraph group_client["Product client"]
+  node_web["Next.js product surfaces<br/>frontend<br/>[page.tsx]"]
+  node_proxy["Backend API proxy<br/>frontend gateway<br/>[route.ts]"]
+end
+
+subgraph group_api["API and control plane"]
+  node_fastapi["FastAPI service<br/>API runtime<br/>[main.py]"]
+  node_api_domains["Versioned API domains<br/>route assembly<br/>[api.py]"]
+  node_security["Session and security boundary<br/>middleware<br/>[http_middleware.py]"]
+  node_admin["Privileged admin plane<br/>admin service"]
+end
+
+subgraph group_ingestion["Opportunity pipeline"]
+  node_worker["Background job runtime<br/>worker<br/>[worker.py]"]
+  node_acquisition["Source acquisition<br/>ingestion orchestration<br/>[scraper.py]"]
+  node_providers{{"Scraping providers<br/>external fetch boundary"}}
+  node_curation["Curation and trust<br/>quality pipeline"]
+end
+
+subgraph group_intelligence["Retrieval and learning"]
+  node_recommendations["Personalized feed<br/>recommendation service"]
+  node_vectors["Embedding and vector retrieval<br/>semantic retrieval"]
+  node_assistant["RAG assistant<br/>assistant service"]
+  node_experiments["Experiments and ranking telemetry<br/>experimentation"]
+  node_mlops["MLOps lifecycle controls<br/>model governance"]
+end
+
+subgraph group_data["Data and operations"]
+  node_mongo[("MongoDB operational store<br/>primary database<br/>[opportunity.py]")]
+  node_redis["Redis online state<br/>cache and queue<br/>[redis.py]"]
+  node_warehouse[("ClickHouse warehouse<br/>analytics warehouse")]
+  node_delivery["Delivery and observability<br/>deployment automation<br/>[docker-compose.yml]"]
+end
+
+node_web -->|"product requests"| node_proxy
+node_proxy -->|"proxies"| node_fastapi
+node_fastapi -->|"applies"| node_security
+node_security -->|"authorizes requests"| node_api_domains
+node_api_domains -->|"admin endpoints"| node_admin
+node_api_domains -->|"feed requests"| node_recommendations
+node_api_domains -->|"chat requests"| node_assistant
+node_api_domains -->|"reads and writes"| node_mongo
+node_security -->|"sessions and limits"| node_redis
+node_worker -->|"runs scheduled jobs"| node_acquisition
+node_worker -->|"consumes queues"| node_redis
+node_acquisition -->|"fetches sources"| node_providers
+node_providers -->|"listing candidates"| node_curation
+node_curation -->|"persists curated records"| node_mongo
+node_mongo -->|"opportunity text"| node_vectors
+node_vectors -->|"semantic candidates"| node_recommendations
+node_mongo -->|"profiles and interactions"| node_recommendations
+node_vectors -->|"retrieval context"| node_assistant
+node_recommendations -->|"impressions and ranking telemetry"| node_experiments
+node_experiments -->|"governed analytics export"| node_warehouse
+node_warehouse -->|"training and evaluation datasets"| node_mlops
+node_mlops -.->|"guarded ranking rollout"| node_recommendations
+node_delivery -.->|"deploys and monitors"| node_fastapi
+node_delivery -.->|"runs ML and data gates"| node_worker
+
+click node_web "https://github.com/ankan00v/ivy-league-portal/blob/main/frontend/src/app/page.tsx"
+click node_proxy "https://github.com/ankan00v/ivy-league-portal/blob/main/frontend/src/app/api/%5B...path%5D/route.ts"
+click node_fastapi "https://github.com/ankan00v/ivy-league-portal/blob/main/backend/app/main.py"
+click node_api_domains "https://github.com/ankan00v/ivy-league-portal/blob/main/backend/app/api/api_v1/api.py"
+click node_security "https://github.com/ankan00v/ivy-league-portal/blob/main/backend/app/core/http_middleware.py"
+click node_admin "https://github.com/ankan00v/ivy-league-portal/blob/main/backend/app/services/admin_identity_service.py"
+click node_worker "https://github.com/ankan00v/ivy-league-portal/blob/main/backend/app/worker.py"
+click node_acquisition "https://github.com/ankan00v/ivy-league-portal/blob/main/backend/app/services/scraper.py"
+click node_providers "https://github.com/ankan00v/ivy-league-portal/blob/main/backend/app/services/firecrawl_client.py"
+click node_curation "https://github.com/ankan00v/ivy-league-portal/blob/main/backend/app/services/duplicate_detector.py"
+click node_recommendations "https://github.com/ankan00v/ivy-league-portal/blob/main/backend/app/services/recommendation_service.py"
+click node_vectors "https://github.com/ankan00v/ivy-league-portal/blob/main/backend/app/services/embedding_pipeline.py"
+click node_assistant "https://github.com/ankan00v/ivy-league-portal/blob/main/backend/app/services/assistant_service.py"
+click node_experiments "https://github.com/ankan00v/ivy-league-portal/blob/main/backend/app/services/experiment_service.py"
+click node_mlops "https://github.com/ankan00v/ivy-league-portal/blob/main/backend/app/services/mlops/retraining_service.py"
+click node_mongo "https://github.com/ankan00v/ivy-league-portal/blob/main/backend/app/models/opportunity.py"
+click node_redis "https://github.com/ankan00v/ivy-league-portal/blob/main/backend/app/core/redis.py"
+click node_warehouse "https://github.com/ankan00v/ivy-league-portal/blob/main/backend/warehouse/clickhouse_schema.sql"
+click node_delivery "https://github.com/ankan00v/ivy-league-portal/blob/main/docker-compose.yml"
+
+classDef toneNeutral fill:#f8fafc,stroke:#334155,stroke-width:1.5px,color:#0f172a
+classDef toneBlue fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#172554
+classDef toneAmber fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f
+classDef toneMint fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d
+classDef toneRose fill:#ffe4e6,stroke:#e11d48,stroke-width:1.5px,color:#881337
+classDef toneIndigo fill:#e0e7ff,stroke:#4f46e5,stroke-width:1.5px,color:#312e81
+classDef toneTeal fill:#ccfbf1,stroke:#0f766e,stroke-width:1.5px,color:#134e4a
+class node_web,node_proxy toneBlue
+class node_fastapi,node_api_domains,node_security,node_admin toneAmber
+class node_worker,node_acquisition,node_providers,node_curation toneMint
+class node_recommendations,node_vectors,node_assistant,node_experiments,node_mlops toneRose
+class node_mongo,node_redis,node_warehouse,node_delivery toneIndigo
+```
 ## 5) Technology Stack
 | Layer | Technologies |
 |---|---|
@@ -114,52 +208,6 @@ Added 2026-08-05. Before this the product had no deletion path, no published pol
 - **Telemetry retention and pseudonymized export.** Warehouse exports carry a keyed HMAC of the user id rather than the id itself. `TELEMETRY_RAW_RETENTION_DAYS` (default 400) bounds how long raw interaction rows keep their user link; `scripts/purge_aged_telemetry.py` (dry-run by default) rewrites aged rows rather than deleting them, so historical counts are unchanged.
 
 ## 7) Metrics and Impact
-<!-- DATASET_SNAPSHOT:START -->
-
-## Dataset Size (Verified Snapshot)
-Snapshot date: **August 11, 2026**
-
-This is a count of rows in the database. It is **not** a measure of usage,
-and the interaction figures below are qualified for that reason.
-
-- Opportunities: **1,845** total (1,429 active, 64 expired, 352 retired)
-- Applications: **7**
-- Users: **4**
-- Profiles: **4**
-- Experiments: **2**
-- Experiment assignments: **2**
-- Ranking model versions: **1**
-- Drift reports: **0**
-
-- Opportunity interactions: **30,143**, generated by **2 distinct accounts**.
-  Read that pairing before quoting the row count: 30,143 rows across 2 accounts is developer activity, not student traffic.
-  By event: impression 30,132, save 1, apply 7, click 3.
-  By provenance label: `real` 30,143. A `real` label means the row has not been audited, not that it has been verified genuine — see `app/models/traffic.py`.
-
-Top 20 sources by opportunity count (all statuses; 218 sources total, full breakdown in `backend/benchmarks/dataset_snapshot_latest.json`):
-- `internshala`: 225
-- `indeed_india`: 165
-- `unstop`: 121
-- `glassdoor`: 119
-- `github_internship_lists`: 118
-- `linkedin`: 67
-- `company_careers_tcs_com`: 59
-- `tensorhack_hackathons`: 59
-- `company_careers_datadoghq_com`: 47
-- `freshersworld`: 47
-- `greenhouse`: 46
-- `linkedin_remote`: 34
-- `company_bosch`: 32
-- `company_careers_cloudflare_com`: 22
-- `company_careers_paytm_com`: 20
-- `extern`: 19
-- `remoteok`: 19
-- `ivy_rss`: 18
-- `we_work_remotely`: 15
-- `aicte_internship`: 14
-- _...and 198 further sources contributing 579 opportunities between them._
-
-<!-- DATASET_SNAPSHOT:END -->
 
 ### Offline retrieval regression fixture
 These come from `backend/benchmarks/`, which is a **CI regression fixture, not a
