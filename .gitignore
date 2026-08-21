@@ -81,3 +81,20 @@ backend/backups/
 # ruflo drops runtime session state wherever it is invoked from, including
 # backend/. Per-machine state carrying absolute paths - never committed.
 .claude-flow/
+
+# Markdown policy (2026-08-21): the root README.md is the only narrative document
+# the remote carries, alongside the docs/ tree. Everything else — agent and skill
+# definitions under .claude/ and .agents/, per-package AGENTS.md / CLAUDE.md, and
+# working notes like MIGRATION_PLAN.md — is local tooling or session scratch and
+# stays out of the shared history.
+#
+# Ordering matters: *.md must come first, and the re-includes below must be
+# anchored. An unanchored `!README.md` would match at any depth and drag back
+# frontend/README.md and ~15 files under .claude/commands/.
+*.md
+!/README.md
+!docs/**/*.md
+# Parser test input, not documentation: backend/tests/test_parser_contract.py
+# feeds this file to GenericOpportunityPortalScraper. Ignoring it would break
+# the suite on a fresh clone.
+!backend/tests/fixtures/**/*.md
