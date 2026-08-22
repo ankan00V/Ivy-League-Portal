@@ -46,7 +46,22 @@ class Settings(BaseSettings):
     AUTH_SESSION_REDIS_PREFIX: str = "vidyaverse:auth"
     AUTH_SESSION_ACTIVITY_UPDATE_INTERVAL_SECONDS: int = 60
     AUTH_COOKIE_ONLY_MODE: bool = False
+    # Student accounts must be created with a college address. Applied only at
+    # signup: existing accounts keep whatever they registered with, because
+    # enforcing it at login would lock out every account that predates the rule.
+    CANDIDATE_REQUIRE_INSTITUTIONAL_EMAIL: bool = True
+    # Off means "any domain that is not a consumer mailbox", which admits real
+    # college domains like lpu.in that carry no academic suffix. Turn on once
+    # the set of known college domains is complete enough to be strict.
+    CANDIDATE_INSTITUTIONAL_EMAIL_STRICT: bool = False
     ADMIN_BOOTSTRAP_ENABLED: bool = True
+
+    # The employer portal is retired, not deleted. There are zero employer
+    # accounts and zero employer-posted opportunities, while the only gate on
+    # employer powers was a non-freemail email domain -- so self-serve signup
+    # let anyone with a bought domain post straight into the candidate feed.
+    # Flip this to True to bring the whole workflow back; nothing was removed.
+    EMPLOYER_PORTAL_ENABLED: bool = False
     # Deliberately empty. This identity is reserved for the hidden admin control
     # plane, so baking a real address into source shipped one maintainer's
     # personal email to every clone of the repository and made it the admin
@@ -121,11 +136,12 @@ class Settings(BaseSettings):
     AUTH_AUDIT_RETENTION_DAYS: int = 90
     SESSION_RECORD_RETENTION_DAYS: int = 30
 
-    # Browser automation (Playwright) for auto-application flow
-    PLAYWRIGHT_HEADLESS: bool = True
+    # Playwright timeout for the Naukri listing fallback (scraper.py). The rest of
+    # this block - PLAYWRIGHT_HEADLESS, AUTO_SUBMIT_ENABLED,
+    # AUTO_APPLY_SCREENSHOT_DIR - configured an auto-application flow that was
+    # written and never wired to an endpoint; the service and its settings went
+    # together.
     PLAYWRIGHT_TIMEOUT_MS: int = 45000
-    AUTO_SUBMIT_ENABLED: bool = False
-    AUTO_APPLY_SCREENSHOT_DIR: str = "/tmp/vidyaverse-auto-apply"
 
     # Scraper reliability controls
     SCRAPER_AUTORUN_ENABLED: bool = True
@@ -485,7 +501,32 @@ class Settings(BaseSettings):
     RAG_REQUEST_TIMEOUT_SECONDS: float = 25.0
     RAG_RETRIEVAL_TIMEOUT_SECONDS: float = 45.0
     RAG_LLM_TIMEOUT_SECONDS: float = 15.0
+    # The model must close a JSON object containing up to three shortlist entries,
+    # each carrying a why_fit sentence and a citation URL. Source URLs run long
+    # (internshala slugs alone are ~120 characters), so 700 truncated every real
+    # response mid-string: json.loads then failed and the grounded answer was
+    # silently replaced by the canned heuristic. Measured completions land near
+    # 1,100 tokens; 2,000 leaves headroom without inviting a rambling answer.
+    RAG_LLM_MAX_TOKENS: int = 2000
     RAG_JUDGE_TIMEOUT_SECONDS: float = 8.0
+
+    # Cross-encoder reranking of the bi-encoder shortlist. The bi-encoder scores
+    # query and document independently, which is what lets it scan the corpus but
+    # also what let "product and analytics competitions" retrieve a Codeforces
+    # round at cosine 0.5. The cross-encoder reads the pair together and separates
+    # those two by ~20 logits.
+    #
+    # CANDIDATES is the shortlist depth handed to the reranker, not the answer
+    # size: retrieval over-fetches this many, the reranker reorders them, and the
+    # caller's top_k is applied afterwards. Too small and a good candidate never
+    # reaches the reranker; cost is linear in this number, so it is bounded.
+    RAG_RERANKER_ENABLED: bool = True
+    RAG_RERANKER_MODEL: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    RAG_RERANK_CANDIDATES: int = 40
+    # RRF damping. 60 is the value from the original TREC paper and is a plateau,
+    # not a tuned constant: it flattens the contribution of rank differences deep
+    # in the list so the fusion is decided by the top of each ranking.
+    RAG_RERANK_RRF_K: float = 60.0
     RAG_OFFLINE_EVAL_DATASET_PATH: str = "backend/benchmarks/data/gold_temporal_holdout.jsonl"
     RAG_OFFLINE_MIN_RECALL_AT_K: float = 0.35
     RAG_ONLINE_MIN_POSITIVE_FEEDBACK_RATE: float = 0.55

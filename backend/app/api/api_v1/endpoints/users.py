@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.api.deps import get_current_active_user
 from app.core.cache import cache_manager
+from app.core.config import settings
 from app.core.email_policy import is_corporate_email
 from app.models.profile import Profile
 from app.models.user import User
@@ -903,6 +904,8 @@ def _apply_profile_patch(*, profile: Profile, user: User, payload: ProfileUpdate
     # real name and email through the employer application routes and CSV export.
     # Employer status is now granted by an admin only.
     if payload.account_type and payload.account_type in VALID_ACCOUNT_TYPES and user.account_type != payload.account_type:
+        if str(payload.account_type).strip().lower() == "employer" and not settings.EMPLOYER_PORTAL_ENABLED:
+            raise HTTPException(status_code=400, detail="Employer accounts are not available.")
         if str(payload.account_type).strip().lower() == "employer" and not user.is_admin:
             raise HTTPException(
                 status_code=403,

@@ -30,21 +30,43 @@ class RAGTemplateResolution:
     assigned_via_experiment: bool
 
 
+# Bumped whenever the prompt's output contract changes. ensure_defaults()
+# supersedes a stored template built against an older contract, because the
+# generator parses what comes back: a row seeded under SCHEMA v1 keeps asking for
+# opportunity_id and url forever, and the v2 parser drops every entry it returns.
+SYSTEM_PROMPT_SCHEMA_VERSION = 2
+
+
 def _default_system_prompt() -> str:
+    """The single definition of the generator's output contract.
+
+    This text used to be duplicated in rag_service._generate_insights as its
+    inline fallback. The copies drifted the moment one was edited: the stored
+    template kept instructing the old schema, the code default was never
+    consulted because a template existed, and every answer silently failed the
+    ref resolver and fell back to the heuristic. rag_service now imports this.
+
+    Candidates are addressed by `ref`, a small integer index. The model is not
+    given ids or urls, so it cannot cite an opportunity that was not retrieved,
+    and it never has to transcribe a 24-hex ObjectId - which is how
+    llama-3.1-8b invented 6a734a20c87526767b68e1cb and lost the answer to the
+    hallucination gate. The server resolves ref back to the canonical id and url.
+    """
     return (
         "You are an opportunity-shortlisting assistant. "
         "Return STRICT JSON only (no markdown). "
         "Schema:\n"
         "- summary: string\n"
-        "- top_opportunities: array (max 3) of {opportunity_id, title, why_fit, urgency(low|medium|high), match_score(0-100), citations}\n"
+        "- top_opportunities: array (max 3) of "
+        "{ref, why_fit, urgency(low|medium|high), match_score(0-100)}\n"
         "- deadline_urgency: string\n"
         "- recommended_action: string\n"
-        "- citations: array of {opportunity_id, url}\n"
-        "- safety: {hallucination_checks_passed, failed_checks}\n"
         "Rules:\n"
-        "- Only use opportunity_id values from candidates.\n"
-        "- Every top_opportunity MUST include citations with the matching opportunity_id and url.\n"
-        "- citations must reference retrieved candidates (id + url)."
+        "- ref MUST be the integer ref of a candidate. Never invent one.\n"
+        "- Do not emit ids, urls, titles or citations; the server attaches them.\n"
+        "- why_fit must cite concrete evidence from that candidate's own description "
+        "- the skill, domain, deadline or eligibility that matches. "
+        "Never restate the query back."
     )
 
 
@@ -61,6 +83,20 @@ class RAGTemplateRegistryService:
             RAGTemplateVersion.template_key == settings.RAG_TEMPLATE_KEY_DEFAULT,
             RAGTemplateVersion.is_active == True,  # noqa: E712
         )
+
+        # An active row built against an older output contract is worse than no
+        # row: the generator keeps calling the model, the model keeps answering
+        # in the old shape, and the parser discards all of it. Retire it and let
+        # the insert below seed the current contract as a new version.
+        if template is not None:
+            stored_version = int((template.metadata or {}).get("system_prompt_schema_version") or 1)
+            if stored_version < SYSTEM_PROMPT_SCHEMA_VERSION:
+                template.is_active = False
+                template.status = "superseded"
+                template.updated_at = utc_now()
+                await template.save()
+                template = None
+
         if not template:
             existing = await RAGTemplateVersion.find_many(
                 RAGTemplateVersion.template_key == settings.RAG_TEMPLATE_KEY_DEFAULT
@@ -85,7 +121,10 @@ class RAGTemplateRegistryService:
                     "min_feedback_positive_rate": float(settings.RAG_ONLINE_MIN_POSITIVE_FEEDBACK_RATE),
                     "min_online_requests": float(settings.RAG_ONLINE_MIN_REQUESTS),
                 },
-                metadata={"seeded_by": "ensure_defaults"},
+                metadata={
+                    "seeded_by": "ensure_defaults",
+                    "system_prompt_schema_version": SYSTEM_PROMPT_SCHEMA_VERSION,
+                },
                 created_at=utc_now(),
                 updated_at=utc_now(),
             )
@@ -110,7 +149,15 @@ class RAGTemplateRegistryService:
             )
             await experiment.insert()
             return
-        if sorted(v.name for v in experiment.variants) != sorted(labels):
+        # Tolerate a row written before the pg_odm nested-model fix, where each
+        # variant round-tripped as the repr string of the model rather than a
+        # JSON object. Reading .name off those raised AttributeError, and
+        # main.py swallowed it, so the registry never initialised. Anything that
+        # is not a usable variant counts as a mismatch and gets rewritten.
+        stored_names = [getattr(v, "name", None) for v in (experiment.variants or [])]
+        if any(name is None for name in stored_names) or sorted(
+            name for name in stored_names if name is not None
+        ) != sorted(labels):
             experiment.variants = variants
             experiment.updated_at = utc_now()
             await experiment.save()

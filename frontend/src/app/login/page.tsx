@@ -16,8 +16,9 @@ import {
   setPendingAdminChallenge,
 } from "@/lib/auth-session";
 import { getApiErrorMessage, getUnknownErrorMessage } from "@/lib/error-utils";
+import { EMPLOYER_PORTAL_ENABLED } from "@/lib/employer-portal";
 import { evaluatePasswordStrength } from "@/lib/password-strength";
-import { getTurnstileToken } from "@/lib/turnstile";
+import { getTurnstileToken, mountTurnstile } from "@/lib/turnstile";
 
 type AuthStep = "email" | "otp" | "password" | "forgot-email" | "forgot-reset";
 type AccountType = "candidate" | "employer";
@@ -75,12 +76,63 @@ function resolveNextParam(raw: string | null): string | null {
   return value;
 }
 
+/** mm:ss, so a long cooldown reads as a clock rather than "Resend in 96s". */
+function formatCooldown(seconds: number): string {
+  const total = Math.max(0, Math.floor(seconds));
+  const mins = Math.floor(total / 60);
+  const secs = total % 60;
+  return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const defaultOtpCooldownSeconds = 60;
   const [accountType, setAccountType] = useState<AccountType>("candidate");
   const [step, setStep] = useState<AuthStep>("email");
+  // Token from the visible widget below. Held in state so the form can show the
+  // challenge and refuse to submit until it is solved, instead of solving
+  // invisibly at submit time where a failure looks like a dead button.
+  // The token is stored with the step it was issued for, and read back only when
+  // those match. That derives the "clear the token when the step changes" rule
+  // instead of enforcing it with a setState in the effect body, which triggers a
+  // cascading render and is what react-hooks/set-state-in-effect flags. A token
+  // minted for `password` can never be submitted against `forgot`, because the
+  // comparison below yields null rather than relying on a reset having run.
+  // token is nullable because mountTurnstile's callback also fires with null
+  // when a solved challenge expires, which must clear the stored token.
+  const [issuedToken, setIssuedToken] = useState<{ step: string; token: string | null } | null>(null);
+  const turnstileToken = issuedToken?.step === step ? issuedToken.token : null;
+
+  useEffect(() => {
+    let dispose: (() => void) | null = null;
+    let cancelled = false;
+    const node = document.getElementById("turnstile-mount");
+    if (!node) {
+      return;
+    }
+    const action =
+      step === "password" ? "login_password" : step.startsWith("forgot") ? "forgot_password" : "login_otp";
+    mountTurnstile(node, action, (token) => {
+      if (!cancelled) {
+        setIssuedToken({ step, token });
+      }
+    })
+      .then((cleanup) => {
+        dispose = cleanup;
+      })
+      .catch(() => {
+        // No key configured, or the widget failed to load. The submit handlers
+        // already fall back to getTurnstileToken(action), so there is nothing to
+        // record here.
+      });
+    return () => {
+      cancelled = true;
+      if (dispose) {
+        dispose();
+      }
+    };
+  }, [step]);
   const [email, setEmail] = useState("");
   const [otp, setOtp] = useState("");
   const [password, setPassword] = useState("");
@@ -211,7 +263,7 @@ export default function LoginPage() {
     resetMessages();
 
     try {
-      const turnstileToken = await getTurnstileToken("login_otp");
+      const verificationToken = turnstileToken ?? (await getTurnstileToken("login_otp"));
       const res = await fetch(apiUrl("/api/v1/auth/send-otp"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -219,7 +271,7 @@ export default function LoginPage() {
           email: normalizedEmail,
           purpose: "signin",
           account_type: accountType,
-          turnstile_token: turnstileToken,
+          turnstile_token: verificationToken,
         }),
       });
       const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
@@ -298,9 +350,9 @@ export default function LoginPage() {
       const body = new URLSearchParams();
       body.set("username", email);
       body.set("password", password);
-      const turnstileToken = await getTurnstileToken("login_password");
-      if (turnstileToken) {
-        body.set("turnstile_token", turnstileToken);
+      const verificationToken = turnstileToken ?? (await getTurnstileToken("login_password"));
+      if (verificationToken) {
+        body.set("turnstile_token", verificationToken);
       }
 
       const res = await fetch(apiUrl("/api/v1/auth/login"), {
@@ -364,14 +416,14 @@ export default function LoginPage() {
     resetMessages();
 
     try {
-      const turnstileToken = await getTurnstileToken("forgot_password");
+      const verificationToken = turnstileToken ?? (await getTurnstileToken("forgot_password"));
       const res = await fetch(apiUrl("/api/v1/auth/password/forgot/send-otp"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           email: normalizedResetEmail,
           account_type: accountType,
-          turnstile_token: turnstileToken,
+          turnstile_token: verificationToken,
         }),
       });
       const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
@@ -538,45 +590,53 @@ export default function LoginPage() {
         >
           <div>
             <h1 style={{ fontSize: "2.2rem", marginBottom: "0.35rem" }}>Secure Sign In</h1>
-            <p style={{ color: "var(--text-secondary)" }}>Choose OTP or password sign-in. Legacy OTP accounts can set a password after login.</p>
+            <p style={{ color: "var(--text-secondary)" }}>Choose OTP or password sign-in</p>
           </div>
 
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: "0.5rem",
-              background: "var(--bg-surface-hover)",
-              padding: "0.3rem",
-              borderRadius: "999px",
-              border: "2px solid var(--border-subtle)",
-              maxWidth: "360px",
-            }}
-          >
-            <button
-              type="button"
-              className={accountType === "candidate" ? "btn-primary" : "btn-secondary"}
-              style={{ borderRadius: "999px", width: "100%" }}
-              disabled={loading || step === "otp" || step === "forgot-reset"}
-              onClick={() => setAccountType("candidate")}
+          {/* Account-type toggle is hidden while the employer portal is retired.
+              accountType stays pinned to "candidate", so every request below
+              keeps sending the field the API still expects. */}
+          {EMPLOYER_PORTAL_ENABLED && (
+            <>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "0.5rem",
+                background: "var(--bg-surface-hover)",
+                padding: "0.3rem",
+                borderRadius: "999px",
+                border: "2px solid var(--border-subtle)",
+                maxWidth: "360px",
+              }}
             >
-              Candidate
-            </button>
-            <button
-              type="button"
-              className={accountType === "employer" ? "btn-primary" : "btn-secondary"}
-              style={{ borderRadius: "999px", width: "100%" }}
-              disabled={loading || step === "otp" || step === "forgot-reset"}
-              onClick={() => setAccountType("employer")}
-            >
-              Employer
-            </button>
-          </div>
-          {accountType === "employer" && (
-            <p style={{ color: "var(--text-secondary)", fontWeight: 700 }}>
-              Employer sign-in requires a corporate email domain.
-            </p>
+              <button
+                type="button"
+                className={accountType === "candidate" ? "btn-primary" : "btn-secondary"}
+                style={{ borderRadius: "999px", width: "100%" }}
+                disabled={loading || step === "otp" || step === "forgot-reset"}
+                onClick={() => setAccountType("candidate")}
+              >
+                Candidate
+              </button>
+              <button
+                type="button"
+                className={accountType === "employer" ? "btn-primary" : "btn-secondary"}
+                style={{ borderRadius: "999px", width: "100%" }}
+                disabled={loading || step === "otp" || step === "forgot-reset"}
+                onClick={() => setAccountType("employer")}
+              >
+                Employer
+              </button>
+            </div>
+            {accountType === "employer" && (
+              <p style={{ color: "var(--text-secondary)", fontWeight: 700 }}>
+                Employer sign-in requires a corporate email domain.
+              </p>
+            )}
+            </>
           )}
+
 
           {error && (
             <div style={{ background: "rgba(239,68,68,0.08)", border: "2px solid #ef4444", color: "#b91c1c", borderRadius: "var(--radius-sm)", padding: "0.75rem" }}>
@@ -642,18 +702,12 @@ export default function LoginPage() {
                     disabled={loading}
                     style={{ letterSpacing: "0.25em", textAlign: "center", fontWeight: 800 }}
                   />
-                  <button
-                    type="button"
-                    className="btn-secondary"
-                    disabled={loading || otpCooldownSeconds > 0}
-                    onClick={() => void requestOtp()}
-                    style={{ width: "100%", justifyContent: "center" }}
-                  >
-                    {otpCooldownSeconds > 0 ? `Resend OTP in ${otpCooldownSeconds}s` : "Resend OTP"}
-                  </button>
                 </>
               )}
 
+              {/* Turnstile renders here: visible, inside the form, so a failed or
+                  pending challenge is obvious rather than silently blocking submit. */}
+              <div id="turnstile-mount" style={{ display: "grid", justifyContent: "center", minHeight: "1px" }} />
               <button
                 type="submit"
                 className="btn-primary"
@@ -666,6 +720,26 @@ export default function LoginPage() {
                     ? (otpCooldownSeconds > 0 ? `Continue with OTP (${otpCooldownSeconds}s)` : "Continue with OTP")
                     : "Verify OTP & Sign In"}
               </button>
+              {/* Resend is a secondary action, so it reads as one line of text
+                  under the primary button rather than a second full-width
+                  button competing with it. */}
+              {step === "otp" && (
+                <p className="auth-resend-row">
+                  Didn&apos;t receive code?{" "}
+                  {otpCooldownSeconds > 0 ? (
+                    <span className="auth-resend-wait">Resend in {formatCooldown(otpCooldownSeconds)}</span>
+                  ) : (
+                    <button
+                      type="button"
+                      className="auth-resend-link"
+                      disabled={loading}
+                      onClick={() => void requestOtp()}
+                    >
+                      Resend
+                    </button>
+                  )}
+                </p>
+              )}
             </form>
           )}
 
@@ -691,6 +765,9 @@ export default function LoginPage() {
                 required
                 disabled={loading}
               />
+              {/* Turnstile renders here: visible, inside the form, so a failed or
+                  pending challenge is obvious rather than silently blocking submit. */}
+              <div id="turnstile-mount" style={{ display: "grid", justifyContent: "center", minHeight: "1px" }} />
               <button type="submit" className="btn-primary" disabled={loading} style={{ width: "100%", justifyContent: "center", marginTop: "0.25rem" }}>
                 {loading ? "Signing in..." : "Sign In with Password"}
               </button>
@@ -737,6 +814,9 @@ export default function LoginPage() {
                 required
                 disabled={loading}
               />
+              {/* Turnstile renders here: visible, inside the form, so a failed or
+                  pending challenge is obvious rather than silently blocking submit. */}
+              <div id="turnstile-mount" style={{ display: "grid", justifyContent: "center", minHeight: "1px" }} />
               <button
                 type="submit"
                 className="btn-primary"

@@ -4113,10 +4113,36 @@ async def _expire_opportunities(records: Iterable[Any]) -> int:
     return expired_count
 
 
+async def _revive_opportunities(records: Iterable[Any]) -> int:
+    """Restore rows whose deadline moved back into the future.
+
+    _expire_opportunities is one-way: it skips anything already expired, and
+    nothing ever undid it. Several connectors stamp a synthetic deadline
+    (`now + 30 days`), so a posting expires, gets re-scraped with a refreshed
+    date, and stays hidden anyway - 7 live postings had been re-scraped within
+    24 hours, one of them 18 minutes earlier, and were still invisible to
+    students.
+
+    Only "expired" is reversed. "removed" and "filled" are deliberate
+    retirements and must stay put.
+    """
+    revived = 0
+    now_naive = _to_naive_utc(utc_now())
+    for record in records:
+        if str(getattr(record, "opportunity_status", "") or "").strip().lower() != "expired":
+            continue
+        record.opportunity_status = "active"
+        record.updated_at = now_naive
+        await record.save()
+        revived += 1
+    return revived
+
+
 async def _cleanup_inactive_opportunities(Opportunity) -> dict[str, int]:
     now = _to_naive_utc(utc_now())
     cleanup_report = {
         "expired_marked": 0,
+        "revived": 0,
         "expired_deleted": 0,
         "stale_deleted": 0,
         "hard_stale_deleted": 0,
@@ -4130,6 +4156,15 @@ async def _cleanup_inactive_opportunities(Opportunity) -> dict[str, int]:
         }
     ).to_list()
     cleanup_report["expired_marked"] = await _expire_opportunities(expired_records)
+
+    # The inverse sweep: a refreshed deadline should bring a posting back.
+    revivable = await Opportunity.find_many(
+        {
+            "deadline": {"$ne": None, "$gt": now},
+            "opportunity_status": "expired",
+        }
+    ).to_list()
+    cleanup_report["revived"] = await _revive_opportunities(revivable)
     cleanup_report["total_deleted"] = (
         cleanup_report["expired_deleted"]
         + cleanup_report["stale_deleted"]
