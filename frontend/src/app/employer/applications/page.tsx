@@ -7,6 +7,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import BrandLogo from "@/components/BrandLogo";
 import { TableWorkspaceSkeleton } from "@/components/LoadingSkeletons";
 import { apiUrl } from "@/lib/api";
+import { EMPLOYER_PORTAL_ENABLED } from "@/lib/employer-portal";
 import { clearAccessToken, getAccessToken } from "@/lib/auth-session";
 import { getApiErrorMessage, getUnknownErrorMessage } from "@/lib/error-utils";
 
@@ -45,6 +46,15 @@ function stableDate(value?: string | null): string {
 
 export default function EmployerApplicationsPage() {
   const router = useRouter();
+  // The portal is retired: its API routes are not mounted, so rendering this page
+  // would only produce failed requests. Bounce to the candidate dashboard instead
+  // of showing a shell that can never load.
+  useEffect(() => {
+    if (!EMPLOYER_PORTAL_ENABLED) {
+      router.replace("/dashboard");
+    }
+  }, [router]);
+
   const [rows, setRows] = useState<EmployerApplication[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);

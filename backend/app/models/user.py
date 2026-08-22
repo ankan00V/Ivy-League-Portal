@@ -10,6 +10,12 @@ class User(Document):
     full_name: Optional[str] = None
     username: Optional[str] = None
     account_type: str = "candidate"  # candidate | employer
+    # A personal address the student verifies after signing up with their
+    # college mail, so access survives graduation when the college mailbox is
+    # switched off. Only ever set through the OTP-verified flow; sign-in accepts
+    # it only once secondary_email_verified is true.
+    secondary_email: Optional[str] = None
+    secondary_email_verified: bool = False
     auth_provider: str = "otp"  # otp | google | linkedin | microsoft | password
     is_active: bool = True
     is_admin: bool = False
@@ -25,6 +31,7 @@ class User(Document):
         name = "users"
         indexes = [
             "email",
+            "secondary_email",
             "username",
             "full_name",
             "account_type",

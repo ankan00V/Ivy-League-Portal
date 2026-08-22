@@ -1,5 +1,6 @@
 import { apiUrl } from "@/lib/api";
 import { ADMIN_DASHBOARD_PATH } from "@/lib/admin-routes";
+import { landingPathForAccountType } from "@/lib/employer-portal";
 
 // Kept for backward cleanup compatibility only. Tokens are no longer persisted.
 export const ACCESS_TOKEN_KEY = "access_token";
@@ -220,9 +221,9 @@ export async function resolvePostAuthRoute(token?: string | null): Promise<strin
         }
         return "/onboarding";
       }
-      return accountType === "employer" ? "/employer/dashboard" : "/dashboard";
+      return landingPathForAccountType(accountType);
     }
-    return accountType === "employer" ? "/employer/dashboard" : "/dashboard";
+    return landingPathForAccountType(accountType);
   } catch {
     return "/dashboard";
   }

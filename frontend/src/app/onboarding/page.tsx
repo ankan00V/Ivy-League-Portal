@@ -16,6 +16,7 @@ import {
   getFieldOfStudyOptions,
   getProgramValueFromLabel,
 } from "@/lib/education-taxonomy";
+import { landingPathForAccountType } from "@/lib/employer-portal";
 import { INDIAN_INSTITUTION_OPTIONS, OTHER_INSTITUTION_LABEL } from "@/lib/indian-institutions";
 
 type AccountType = "candidate" | "employer";
@@ -266,7 +267,7 @@ function getCurrentRoleFromOnboardingProfile(profile: ProfilePayload): string {
 }
 
 function resolveOnboardingRouteForAccountType(accountType: string): string {
-  return accountType === "employer" ? "/employer/dashboard" : "/dashboard";
+  return landingPathForAccountType(accountType);
 }
 
 function buildOnboardingPayload(profile: ProfilePayload): OnboardingUpdatePayload {

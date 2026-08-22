@@ -3,7 +3,7 @@ import Sidebar from "@/components/Sidebar";
 import AskAIPanel from "@/components/AskAIPanel";
 import { OpportunityCardsSkeleton } from "@/components/LoadingSkeletons";
 import React, { startTransition, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { ArrowRight, Bookmark, Calendar, ChevronDown, ExternalLink, EyeOff, MapPin, Send, X } from "lucide-react";
 import Image from "next/image";
 import { apiUrl } from "@/lib/api";
@@ -348,9 +348,28 @@ export default function InternshipsJobsPage() {
     }, []);
 
     const filtered = useMemo(() => {
-        const source = opportunities.filter(
-            (opportunity) => !hiddenOpportunityIds[opportunity.id],
-        );
+        /* Collapse repeated ids before anything else looks at the list.
+           The corpus carries a handful of rows sharing one id (the migration
+           dropped the unique constraint on the legacy identifier), and the cards
+           are keyed by that id. Duplicate React keys break reconciliation: the
+           track filter computed the right subset - the badge read "433 live" -
+           while all 797 cards stayed on screen, so every chip looked dead.
+           Removing the repeats fixes the filters and stops the same posting
+           appearing twice. */
+        const seenIds = new Set<string>();
+        const source = opportunities.filter((opportunity) => {
+            if (hiddenOpportunityIds[opportunity.id]) {
+                return false;
+            }
+            const id = String(opportunity.id ?? "");
+            if (id && seenIds.has(id)) {
+                return false;
+            }
+            if (id) {
+                seenIds.add(id);
+            }
+            return true;
+        });
         const getSortTimestamp = (opportunity: Opportunity) =>
             new Date(opportunity.last_seen_at || opportunity.updated_at || opportunity.created_at || 0).getTime();
         return [...source].sort(
@@ -698,10 +717,9 @@ export default function InternshipsJobsPage() {
         const details = metadataChips(opp);
         return (
             <motion.article
-                key={opp.id || idx}
+                key={`${opp.id ?? "row"}-${idx}`}
                 initial={{ opacity: 0, scale: 0.96, y: 24 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.96, y: 12 }}
                 transition={{ duration: 0.18, ease: "easeOut" }}
                 className="card-panel"
                 style={{
@@ -936,10 +954,9 @@ export default function InternshipsJobsPage() {
         const details = metadataChips(opp);
         return (
             <motion.article
-                key={opp.id || idx}
+                key={`${opp.id ?? "row"}-${idx}`}
                 initial={{ opacity: 0, scale: 0.98, y: 24 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.98, y: 12 }}
                 transition={{ duration: 0.18, ease: "easeOut" }}
                 className="card-panel"
                 style={{ padding: 0, display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}
@@ -1333,11 +1350,18 @@ export default function InternshipsJobsPage() {
                         gap: "1.5rem",
                     }}
                 >
-                    <AnimatePresence mode="popLayout" initial={false}>
-                        {items.map((opp, idx) =>
-                            variant === "competitive" ? renderCompetitiveCard(opp, idx) : renderCareerCard(opp, idx)
-                        )}
-                    </AnimatePresence>
+                    {/* No AnimatePresence here.
+                        It keeps exiting children mounted until their exit
+                        animation finishes, and this list is hundreds of cards
+                        long: narrowing 797 to 432 left 365 cards animating out
+                        while 432 animated in, so the grid held 1227 nodes at
+                        once. The count badge sits outside it and updated
+                        immediately, which is why the filter looked broken -
+                        the number changed and the same cards stayed on screen.
+                        Cards still animate in; removal is now instant. */}
+                    {items.map((opp, idx) =>
+                        variant === "competitive" ? renderCompetitiveCard(opp, idx) : renderCareerCard(opp, idx)
+                    )}
                 </div>
             </section>
         );

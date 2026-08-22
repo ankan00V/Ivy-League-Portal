@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import sys
+from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Any, Awaitable, Callable, Optional
 
@@ -32,7 +34,14 @@ def _get_collection(document_cls: type) -> Any:
 
 class JobRunner:
     def __init__(self) -> None:
-        self._worker_id = f"api:{random.randint(1000, 9999)}"
+        # Jobs run in their own process now, so a lock stamped "api:" points at
+        # the wrong place when you are working out which process is holding a
+        # stuck job. Name the process that actually claimed it.
+        # `python -m app.worker` resolves argv[0] to .../app/worker.py, so the
+        # module path never appears in argv - match the script name instead.
+        entrypoint = Path(sys.argv[0] or "").name if sys.argv else ""
+        process = "worker" if entrypoint.startswith("worker") else "api"
+        self._worker_id = f"{process}:{random.randint(1000, 9999)}"
         self._task: Optional[asyncio.Task[None]] = None
         self._inflight: set[asyncio.Task[None]] = set()
         self._stop_event = asyncio.Event()

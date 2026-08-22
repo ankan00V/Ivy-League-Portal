@@ -29,6 +29,7 @@ from app.services.model_artifact_service import model_artifact_service
 from app.services.personalization.learned_ranker import learned_ranker
 from app.services.warehouse_export_service import warehouse_export_service
 from app.services.vector_service import opportunity_vector_service
+from app.services.reranker_service import reranker_service
 from app.core.redis import close_redis, get_redis
 from app.core import metrics as metrics_module
 from app.core.metrics import (
@@ -603,6 +604,16 @@ async def _warmup_rag_components() -> None:
     await embedding_service.embed_query("warmup query")
     await nlp_service.classify_intent("data science internships")
     await opportunity_vector_service.rebuild(force=False)
+    # The cross-encoder is the most expensive of these to load: measured at ~30s
+    # for the first Ask AI request versus 2-3s once resident. Without this the
+    # first real user after every boot pays that, and RAG_LLM_TIMEOUT_SECONDS
+    # (12s in this environment) cuts them off before an answer is generated -
+    # so the cold request does not just feel slow, it silently degrades to the
+    # heuristic fallback. Scoring one trivial pair is enough to force the load.
+    await reranker_service.rerank(
+        query="warmup query",
+        candidates=[{"title": "warmup a"}, {"title": "warmup b"}],
+    )
 
 # Compared on a stripped, lowercased value. Every production guard in this file
 # normalises before comparing, but these three did not - so ENVIRONMENT set to

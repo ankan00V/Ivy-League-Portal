@@ -20,8 +20,12 @@ from app.services.bedrock_llm_client import BedrockLLMClient, BedrockLLMConfig
 from app.services.evaluation_service import evaluation_service
 from app.services.nlp_service import nlp_service
 from app.services.openai_client import create_async_openai_client
-from app.services.rag_template_registry_service import rag_template_registry_service
+from app.services.rag_template_registry_service import (
+    _default_system_prompt,
+    rag_template_registry_service,
+)
 from app.services.vector_service import opportunity_vector_service
+from app.services.reranker_service import reranker_service
 
 logger = logging.getLogger(__name__)
 
@@ -151,10 +155,21 @@ class RAGService:
             except Exception:
                 pass
 
-        results = await opportunity_vector_service.search(
+        # Over-fetch, then rerank, then truncate. Asking the bi-encoder for exactly
+        # top_k means a candidate the cross-encoder would have promoted is never
+        # scored by it - the reranker can only reorder what retrieval hands it, so
+        # the shortlist has to be deeper than the answer.
+        candidate_k = max(search_top_k, int(getattr(settings, "RAG_RERANK_CANDIDATES", 40)))
+        candidates = await opportunity_vector_service.search(
             query,
-            top_k=search_top_k,
+            top_k=candidate_k,
             filters=filters,
+        )
+
+        results = await reranker_service.rerank(
+            query=query,
+            candidates=candidates,
+            top_k=search_top_k,
         )
 
         return {
@@ -162,6 +177,28 @@ class RAGService:
             "entities": entities,
             "results": results,
             "filters": filters,
+            "retrieval_debug": {
+                "candidates_retrieved": len(candidates),
+                "returned": len(results),
+                "reranked": bool(results and "rerank_score" in results[0]),
+                # Best cross-encoder score among the rows actually returned.
+                #
+                # This is the question cosine similarity structurally cannot answer.
+                # Similarity is relative - the nearest vector is always returned, so
+                # 0.48 means "closest thing in the corpus", not "a match". That is
+                # how "product and analytics competitions worth shortlisting this
+                # week" returned a Codeforces round and had it described as a
+                # shortlist. The cross-encoder scores on an absolute scale, and on
+                # that query every candidate lands near -10: the corpus correctly
+                # reporting it holds no product or analytics competition at all.
+                #
+                # Callers can use this to say so, rather than presenting the
+                # least-bad rows as though they answered the question.
+                "top_rerank_score": max(
+                    (float(r["rerank_score"]) for r in results if "rerank_score" in r),
+                    default=None,
+                ),
+            },
         }
 
     def _heuristic_insight(self, query: str, results: list[dict[str, Any]]) -> dict[str, Any]:
@@ -224,6 +261,54 @@ class RAGService:
                 "source": item.get("source"),
             }
         return allowed
+
+    @staticmethod
+    def _resolve_refs(parsed: dict[str, Any], candidates: list[dict[str, Any]]) -> dict[str, Any]:
+        """Turn the model's `ref` integers back into canonical ids, urls and citations.
+
+        Grounding is enforced here rather than requested in the prompt. A ref is
+        either a valid index into the candidate list - in which case the id, url
+        and title come from the retrieved row and are correct by construction -
+        or it is not, in which case the entry is dropped. There is no third
+        outcome, so the model cannot cite an opportunity that was never
+        retrieved no matter what it emits.
+
+        Citations are rebuilt from the surviving entries for the same reason:
+        anything the model wrote in that field is discarded.
+        """
+        resolved: list[dict[str, Any]] = []
+        citations: list[dict[str, Any]] = []
+
+        for entry in parsed.get("top_opportunities") or []:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                ref = int(entry.get("ref"))
+            except (TypeError, ValueError):
+                continue
+            if ref < 0 or ref >= len(candidates):
+                continue
+
+            source = candidates[ref]
+            opportunity_id = str(source.get("id") or "").strip()
+            url = str(source.get("url") or "").strip()
+            if not opportunity_id or not url:
+                continue
+
+            citation = {"opportunity_id": opportunity_id, "url": url}
+            item = dict(entry)
+            item.pop("ref", None)
+            item["opportunity_id"] = opportunity_id
+            item["title"] = source.get("title")
+            item["citations"] = [citation]
+            resolved.append(item)
+            if citation not in citations:
+                citations.append(citation)
+
+        out = dict(parsed)
+        out["top_opportunities"] = resolved
+        out["citations"] = citations
+        return out
 
     def _apply_hallucination_checks(self, insights: RAGInsights, results: list[dict[str, Any]]) -> RAGInsights:
         allowed = self._allowed_sources(results)
@@ -337,11 +422,18 @@ class RAGService:
             "intent": retrieval_payload.get("intent", {}),
             "entities": retrieval_payload.get("entities", {}),
             "profile": self._profile_context(profile),
+            # Candidates are addressed by `ref`, a small integer index into
+            # top_candidates. The model is deliberately not shown opportunity ids
+            # or urls: it cannot cite what it has never been given, and it no
+            # longer has to transcribe a 24-hex ObjectId character by character -
+            # which is how llama-3.1-8b produced
+            # top_opportunity_id_not_retrieved:6a734a20c87526767b68e1cb and lost a
+            # whole answer to the hallucination gate. The server resolves ref back
+            # to the canonical id, url and title below.
             "candidates": [
                 {
-                    "id": item.get("id"),
+                    "ref": index,
                     "title": item.get("title"),
-                    "url": item.get("url"),
                     "description": str(item.get("description") or "")[:480],
                     "domain": item.get("domain"),
                     "opportunity_type": item.get("opportunity_type"),
@@ -349,7 +441,7 @@ class RAGService:
                     "deadline": str(item.get("deadline") or ""),
                     "similarity": item.get("similarity"),
                 }
-                for item in top_candidates
+                for index, item in enumerate(top_candidates)
             ],
         }
 
@@ -357,22 +449,10 @@ class RAGService:
             {
                 "role": "system",
                 "content": (
-                    (system_prompt or "").strip()
-                    or (
-                        "You are an opportunity-shortlisting assistant. "
-                        "Return STRICT JSON only (no markdown). "
-                        "Schema:\n"
-                        "- summary: string\n"
-                        "- top_opportunities: array (max 3) of {opportunity_id, title, why_fit, urgency(low|medium|high), match_score(0-100), citations}\n"
-                        "- deadline_urgency: string\n"
-                        "- recommended_action: string\n"
-                        "- citations: array of {opportunity_id, url}\n"
-                        "- safety: {hallucination_checks_passed, failed_checks}\n"
-                        "Rules:\n"
-                        "- Only use opportunity_id values from candidates.\n"
-                        "- Every top_opportunity MUST include citations with the matching opportunity_id and url.\n"
-                        "- citations must reference retrieved candidates (id + url)."
-                    )
+                    # One definition of the output contract, imported rather
+                    # than restated. The copy that used to live here drifted from
+                    # the stored template and silently broke every answer.
+                    (system_prompt or "").strip() or _default_system_prompt()
                 ),
             },
             {"role": "user", "content": json.dumps(prompt)},
@@ -385,7 +465,7 @@ class RAGService:
                         model_id=self._bedrock_model,
                         messages=messages,
                         temperature=0,
-                        max_tokens=700,
+                        max_tokens=max(700, int(getattr(settings, "RAG_LLM_MAX_TOKENS", 2000))),
                     ),
                     timeout=max(3.0, float(getattr(settings, "RAG_LLM_TIMEOUT_SECONDS", 15.0))),
                 )
@@ -397,7 +477,7 @@ class RAGService:
                         extra_headers=self._extra_headers(title="VidyaVerse RAG"),
                         response_format={"type": "json_object"},
                         temperature=0,
-                        max_tokens=700,
+                        max_tokens=max(700, int(getattr(settings, "RAG_LLM_MAX_TOKENS", 2000))),
                     ),
                     timeout=max(3.0, float(getattr(settings, "RAG_LLM_TIMEOUT_SECONDS", 15.0))),
                 )
@@ -411,15 +491,41 @@ class RAGService:
             logger.warning("RAG LLM generation failed; serving heuristic fallback: %s", exc)
             return self._heuristic_insight(query, retrieval_payload.get("results", []))
 
+        # Every fallback below is logged with its reason. This block previously
+        # swallowed all three failure modes in silence, so a truncated completion
+        # was indistinguishable from a model that had never been called: the API
+        # returned a well-formed heuristic answer and nothing anywhere recorded
+        # that the LLM's grounded output had been discarded.
         parsed = self._extract_json(content)
-        if parsed:
-            try:
-                insights = RAGInsights.model_validate(parsed)
-                insights = self._apply_hallucination_checks(insights, retrieval_payload.get("results", []))
-                if insights.safety.hallucination_checks_passed:
-                    return insights.model_dump()
-            except Exception:
-                pass
+        if not parsed:
+            logger.warning(
+                "RAG LLM returned unparseable content (%d chars); serving heuristic fallback. "
+                "A truncated tail usually means RAG_LLM_MAX_TOKENS is too low for the schema.",
+                len(content or ""),
+            )
+            return self._heuristic_insight(query, retrieval_payload.get("results", []))
+
+        parsed = self._resolve_refs(parsed, top_candidates)
+        if not parsed.get("top_opportunities"):
+            logger.warning(
+                "RAG LLM returned no resolvable candidate refs; serving heuristic fallback."
+            )
+            return self._heuristic_insight(query, retrieval_payload.get("results", []))
+
+        try:
+            insights = RAGInsights.model_validate(parsed)
+        except Exception as exc:
+            logger.warning("RAG LLM JSON failed schema validation; serving heuristic fallback: %s", exc)
+            return self._heuristic_insight(query, retrieval_payload.get("results", []))
+
+        insights = self._apply_hallucination_checks(insights, retrieval_payload.get("results", []))
+        if insights.safety.hallucination_checks_passed:
+            return insights.model_dump()
+
+        logger.warning(
+            "RAG LLM answer failed hallucination checks %s; serving heuristic fallback.",
+            list(insights.safety.failed_checks or []),
+        )
         return self._heuristic_insight(query, retrieval_payload.get("results", []))
 
     async def ask(

@@ -32,6 +32,26 @@ def _text_hash(text: str) -> str:
     return md5((text or "").encode("utf-8")).hexdigest()
 
 
+async def _flush(model_cls, instances: list) -> int:
+    """Persist accumulated rows in as few round trips as the backend allows.
+
+    On Postgres this is a couple of executemany calls. With the ODM disabled
+    there is no bulk path, so it falls back to the per-row saves this replaced.
+    """
+    if not instances:
+        return 0
+    if settings.POSTGRES_ODM_ENABLED:
+        from app.db.pg_documents import bulk_save
+
+        return await bulk_save(model_cls, instances)
+    for instance in instances:
+        if getattr(instance, "id", None) is None:
+            await instance.insert()
+        else:
+            await instance.save()
+    return len(instances)
+
+
 class OpportunityVectorService:
     def __init__(self) -> None:
         self._lock = asyncio.Lock()
@@ -62,8 +82,11 @@ class OpportunityVectorService:
         opportunities: list[Opportunity],
         texts: list[str],
     ) -> np.ndarray | None:
+        # "mongo" is kept as an accepted value only because existing .env files
+        # still say it; the rows now live in Postgres either way. "postgres" is
+        # the honest name for the same behaviour.
         provider = (settings.VECTOR_STORE_PROVIDER or "memory").strip().lower()
-        if provider != "mongo" or not settings.VECTOR_STORE_PERSISTENCE_ENABLED:
+        if provider not in ("mongo", "postgres") or not settings.VECTOR_STORE_PERSISTENCE_ENABLED:
             return None
         if not opportunities:
             return np.empty((0, embedding_service.dimension), dtype=np.float32)
@@ -76,6 +99,10 @@ class OpportunityVectorService:
         to_embed_keys: list[str] = []
         embeddings_map: dict[str, list[float]] = {}
         now = utc_now()
+        # Accumulated and written in bulk below. Saving each row as it is built
+        # meant one round trip per row, and a full rebuild is thousands of them.
+        pending_opportunities: list[Opportunity] = []
+        pending_entries: list[VectorIndexEntry] = []
 
         for opportunity, text in zip(opportunities, texts):
             key = str(opportunity.id)
@@ -133,23 +160,45 @@ class OpportunityVectorService:
                 opportunity.embedding_text_hash = payload["text_hash"]
                 opportunity.embedding_model_version = embedding_pipeline.model_version
                 opportunity.embedding_updated_at = now
-                await opportunity.save()
+                pending_opportunities.append(opportunity)
             if row:
-                row.text_hash = payload["text_hash"]
-                row.text = payload["text"]
-                row.embedding = payload["embedding"]
-                row.metadata = payload["metadata"]
-                row.updated_at = now
-                await row.save()
+                # Only rewrite a row whose content actually moved. This branch
+                # was unconditional, so every rebuild rewrote all ~1,850 entries
+                # - each a 384-float array - even when nothing had changed. That
+                # write storm is what made the API crawl while the rebuild job
+                # was running: the same endpoint measured 64s during a rebuild
+                # and 1.8s once it finished.
+                #
+                # `metadata` is deliberately not compared: it carries the
+                # opportunity's updated_at, which the scraper touches constantly,
+                # and matching on it would rewrite everything again for nothing.
+                unchanged = (
+                    row.text_hash == payload["text_hash"]
+                    and row.embedding
+                    and (row.metadata or {}).get("embedding_model_version")
+                    == embedding_pipeline.model_version
+                )
+                if not unchanged:
+                    row.text_hash = payload["text_hash"]
+                    row.text = payload["text"]
+                    row.embedding = payload["embedding"]
+                    row.metadata = payload["metadata"]
+                    row.updated_at = now
+                    pending_entries.append(row)
             else:
-                await VectorIndexEntry(
-                    opportunity_id=opportunity.id,
-                    text_hash=payload["text_hash"],
-                    text=payload["text"],
-                    embedding=payload["embedding"],
-                    metadata=payload["metadata"],
-                    updated_at=now,
-                ).insert()
+                pending_entries.append(
+                    VectorIndexEntry(
+                        opportunity_id=opportunity.id,
+                        text_hash=payload["text_hash"],
+                        text=payload["text"],
+                        embedding=payload["embedding"],
+                        metadata=payload["metadata"],
+                        updated_at=now,
+                    )
+                )
+
+        await _flush(Opportunity, pending_opportunities)
+        await _flush(VectorIndexEntry, pending_entries)
 
         # Remove entries for opportunities that no longer exist.
         try:
@@ -262,6 +311,46 @@ class OpportunityVectorService:
 
         return True
 
+    async def _ensure_index(self) -> None:
+        """Index for a user request, without ever rebuilding inline.
+
+        `rebuild` only short-circuits when the corpus count is unchanged, and
+        the scraper adds rows continuously - so on a live system nearly every
+        request found the count different and reloaded all ~1,880 rows, each
+        carrying a 384-float embedding, then re-synced them. That is what made
+        the feed take 98-143 seconds.
+
+        A slightly stale index is the right trade here: the background
+        `embeddings.rebuild` job already refreshes it, and a request should read
+        whatever is current rather than pay to make it perfect.
+        """
+        if self.is_ready():
+            # Deliberately no refresh from here, not even a background one:
+            # kicking off a full rebuild per request just moved the same corpus
+            # transfer off the critical path and into contention with it. The
+            # scheduled `embeddings.rebuild` job owns refreshing.
+            return
+        # No index at all yet: this one request has to build it.
+        await self.rebuild()
+
+    def _schedule_background_refresh(self) -> None:
+        task = getattr(self, "_refresh_task", None)
+        if task is not None and not task.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._refresh_task = loop.create_task(self._background_refresh())
+
+    async def _background_refresh(self) -> None:
+        try:
+            await self.rebuild()
+        except Exception:
+            # A refresh failure must not surface on the request that triggered
+            # it; the index simply stays as it was.
+            pass
+
     async def rebuild(self, force: bool = False) -> None:
         async with self._lock:
             now = utc_now()
@@ -274,7 +363,14 @@ class OpportunityVectorService:
                 if count == self._last_build_count:
                     return
 
-            opportunities = await Opportunity.find_many().to_list()
+            # This is the one path that genuinely needs the embeddings; without
+            # them every row would look unembedded and be recomputed on each
+            # rebuild. with_vectors only exists on the Postgres query, so the
+            # Beanie path is left alone.
+            query = Opportunity.find_many()
+            if hasattr(query, "with_vectors"):
+                query = query.with_vectors()
+            opportunities = await query.to_list()
             if not opportunities:
                 self._vectors = np.empty((0, embedding_service.dimension), dtype=np.float32)
                 self._metas = []
@@ -410,7 +506,7 @@ class OpportunityVectorService:
         top_k: int = 10,
         filters: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
-        await self.rebuild()
+        await self._ensure_index()
 
         if not self._metas:
             return []
@@ -458,7 +554,7 @@ class OpportunityVectorService:
         top_k: int = 10,
         filters: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
-        await self.rebuild()
+        await self._ensure_index()
 
         if not self._metas:
             return []

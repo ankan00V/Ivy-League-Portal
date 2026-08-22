@@ -10,6 +10,36 @@ FRONTEND_PORT="${FRONTEND_PORT:-3002}"
 
 mkdir -p "${LOG_DIR}"
 
+# Load backend/.env into the environment before anything below runs.
+#
+# Every `export FOO="${FOO:-default}"` in this script was silently beating the
+# configured value, because pydantic ranks real environment variables above the
+# .env file. That produced four separate bugs in one session: the app served a
+# stale local Mongo instead of Atlas, ignored Upstash Redis and demanded a local
+# container, spent 40+ seconds per readiness probe retrying a ClickHouse host
+# that only existed locally, and ran the scraper after being told not to.
+#
+# Pre-seeding from .env makes those same `${FOO:-default}` expressions correct
+# rather than harmful: the configured value is already present, so the default
+# only applies when nothing is configured. Values already exported by the caller
+# still win, so `FOO=bar ./start...` keeps working.
+if [[ -f "${BACKEND_DIR}/.env" ]]; then
+  while IFS= read -r raw_line || [[ -n "${raw_line}" ]]; do
+    [[ "${raw_line}" =~ ^[[:space:]]*# ]] && continue
+    [[ "${raw_line}" =~ ^[[:space:]]*$ ]] && continue
+    [[ "${raw_line}" != *=* ]] && continue
+    env_key="${raw_line%%=*}"
+    env_key="${env_key//[[:space:]]/}"
+    [[ "${env_key}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    # Only fill gaps; an explicitly exported value keeps precedence.
+    [[ -n "${!env_key+x}" ]] && continue
+    env_value="${raw_line#*=}"
+    env_value="${env_value%\"}"; env_value="${env_value#\"}"
+    env_value="${env_value%\'}"; env_value="${env_value#\'}"
+    export "${env_key}=${env_value}"
+  done < "${BACKEND_DIR}/.env"
+fi
+
 ensure_mongo_keyfile() {
   local keyfile="${LOG_DIR}/mongo-keyfile"
   if [[ ! -f "${keyfile}" ]]; then
@@ -83,6 +113,10 @@ backend_serves_current_code() {
 
 stop_backend() {
   screen -S vidyaverse-backend -X quit >/dev/null 2>&1 || true
+  # The worker holds jobs that write to the same database, so it goes down with
+  # the API rather than being left behind to run against a restarting stack.
+  screen -S vidyaverse-worker -X quit >/dev/null 2>&1 || true
+  pkill -f "python -m app.worker" >/dev/null 2>&1 || true
   local pids attempt
   pids="$(lsof -nP -iTCP:"${BACKEND_PORT}" -sTCP:LISTEN -t 2>/dev/null || true)"
   [[ -n "${pids}" ]] || return 0
@@ -233,7 +267,17 @@ export BACKEND_INTERNAL_URL="${BACKEND_INTERNAL_URL:-http://127.0.0.1:${BACKEND_
 # services still pointed at localhost.
 # Split by whether the app can boot without them.
 NEEDS_LOCAL_SERVICES=()
-[[ "${MONGODB_URL}" == *"127.0.0.1"* || "${MONGODB_URL}" == *"localhost"* ]] && NEEDS_LOCAL_SERVICES+=(mongo)
+# Atlas is retired: with the Postgres ODM on, the app never opens a Mongo
+# connection, so starting a Mongo container is pure overhead - and once the
+# MONGODB_URL entry was commented out of .env, the localhost fallback below made
+# Docker a hard dependency again and failed the whole script on a machine that
+# does not need it. Matches the code default in app/core/config.py.
+ENV_POSTGRES_ODM="$(sed -n 's/^POSTGRES_ODM_ENABLED=//p' "${BACKEND_DIR}/.env" 2>/dev/null | head -n 1)"
+POSTGRES_ODM_ENABLED="${POSTGRES_ODM_ENABLED:-${ENV_POSTGRES_ODM:-true}}"
+# tr, not ${VAR,,}: macOS ships bash 3.2, where that expansion is a syntax error.
+if [[ "$(printf '%s' "${POSTGRES_ODM_ENABLED}" | tr '[:upper:]' '[:lower:]')" != "true" ]]; then
+  [[ "${MONGODB_URL}" == *"127.0.0.1"* || "${MONGODB_URL}" == *"localhost"* ]] && NEEDS_LOCAL_SERVICES+=(mongo)
+fi
 [[ "${REDIS_URL}" == *"127.0.0.1"* || "${REDIS_URL}" == *"localhost"* ]] && NEEDS_LOCAL_SERVICES+=(redis)
 
 # MinIO only backs model artifacts, and ensure_learned_ranker_artifact_ready
@@ -272,21 +316,68 @@ export LLM_PROVIDER="${LLM_PROVIDER:-openai_compatible}"
 export LLM_MODEL="${LLM_MODEL:-meta/llama-3.1-8b-instruct}"
 export RAG_LLM_MODEL="${RAG_LLM_MODEL:-${LLM_MODEL}}"
 
+# The worker is ensured separately from the backend: when a healthy backend is
+# reused, the fresh-start branch below never runs, and jobs would silently stop
+# being executed by anyone.
+worker_is_running() {
+  # Matching "python -m app.worker" alone is too loose: it also matches any
+  # wrapper carrying that text on its command line - screen's `bash -lc "..."`,
+  # a `timeout ...` invocation - and reported a running worker when none
+  # existed. Require the venv interpreter itself, and confirm the match is a
+  # Python process rather than a shell holding the string.
+  local pid
+  for pid in $(pgrep -f "venv/bin/python -m app.worker" 2>/dev/null); do
+    case "$(ps -p "${pid}" -o comm= 2>/dev/null)" in
+      *[Pp]ython*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+ensure_worker() {
+  if worker_is_running; then
+    echo "Reusing running VidyaVerse job worker."
+    return 0
+  fi
+  if command -v screen >/dev/null 2>&1; then
+    screen -dmS vidyaverse-worker bash -lc \
+      "cd \"${BACKEND_DIR}\" && JOBS_ENABLED=true exec \"${BACKEND_DIR}/venv/bin/python\" -m app.worker >> \"${LOG_DIR}/worker.log\" 2>&1"
+  else
+    (
+      cd "${BACKEND_DIR}"
+      JOBS_ENABLED=true exec nohup "${BACKEND_DIR}/venv/bin/python" -m app.worker
+    ) >"${LOG_DIR}/worker.log" 2>&1 &
+    echo "$!" > "${LOG_DIR}/worker.pid"
+  fi
+  echo "Started VidyaVerse job worker (jobs run outside the API process)."
+}
+
 if [[ "${BACKEND_REUSED}" -eq 0 ]]; then
   (
     cd "${BACKEND_DIR}"
     "${BACKEND_DIR}/venv/bin/python" scripts/validate_env.py
   )
+  # Jobs run in their own process, not inside the API.
+  #
+  # They shared an event loop before, and the heavy ones - embeddings.rebuild
+  # reads the whole corpus, scraper.run fetches hundreds of pages - starved
+  # every request alongside them. Measured on the same endpoint: 64s while a
+  # rebuild was running, 1.8s once it finished, and a Supabase round trip went
+  # from 71ms idle to 228ms under that load.
+  #
+  # The API still *schedules* jobs (enqueue is a single insert); JOBS_ENABLED
+  # only gates the polling loop that executes them, so pointing it at the
+  # worker moves the work without losing any of it.
   if command -v screen >/dev/null 2>&1; then
     screen -S vidyaverse-backend -X quit >/dev/null 2>&1 || true
     screen -dmS vidyaverse-backend bash -lc \
-      "cd \"${BACKEND_DIR}\" && exec \"${BACKEND_DIR}/venv/bin/python\" -m uvicorn app.main:app --host 127.0.0.1 --port \"${BACKEND_PORT}\" >> \"${LOG_DIR}/backend.log\" 2>&1"
+      "cd \"${BACKEND_DIR}\" && JOBS_ENABLED=false exec \"${BACKEND_DIR}/venv/bin/python\" -m uvicorn app.main:app --host 127.0.0.1 --port \"${BACKEND_PORT}\" >> \"${LOG_DIR}/backend.log\" 2>&1"
     BACKEND_PID=""
     rm -f "${LOG_DIR}/backend.pid"
   else
     (
       cd "${BACKEND_DIR}"
-      exec nohup "${BACKEND_DIR}/venv/bin/python" -m uvicorn app.main:app --host 127.0.0.1 --port "${BACKEND_PORT}"
+      JOBS_ENABLED=false exec nohup "${BACKEND_DIR}/venv/bin/python" -m uvicorn app.main:app --host 127.0.0.1 --port "${BACKEND_PORT}"
     ) >"${LOG_DIR}/backend.log" 2>&1 &
     BACKEND_PID="$!"
     echo "${BACKEND_PID}" > "${LOG_DIR}/backend.pid"
@@ -311,6 +402,8 @@ if [[ "${BACKEND_REUSED}" -eq 0 ]]; then
 else
   rm -f "${LOG_DIR}/backend.pid"
 fi
+
+ensure_worker
 
 if [[ ! -f "${FRONTEND_DIR}/.next/standalone/frontend/server.js" ]] || frontend_build_is_stale; then
   echo "Frontend production bundle missing or out of date; running npm build first."

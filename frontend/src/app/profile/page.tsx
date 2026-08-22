@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 
 import { CenteredPageSkeleton } from "@/components/LoadingSkeletons";
+import BackupEmailPanel from "@/components/BackupEmailPanel";
 import DeleteAccountPanel from "@/components/DeleteAccountPanel";
 import Sidebar from "@/components/Sidebar";
 import ResumeReadinessReview from "@/components/ResumeReadinessReview";
@@ -36,6 +37,7 @@ import TextField from "@/components/ui/TextField";
 import TaxonomyMultiSelect from "@/components/ui/TaxonomyMultiSelect";
 import ToggleRow from "@/components/ui/ToggleRow";
 import { useProfileData } from "@/hooks/useProfileData";
+import { landingPathForAccountType } from "@/lib/employer-portal";
 import { INDIAN_INSTITUTION_OPTIONS, OTHER_INSTITUTION_LABEL } from "@/lib/indian-institutions";
 import {
   EDUCATION_PROGRAM_GROUPS,
@@ -1393,6 +1395,8 @@ export default function ProfilePage() {
     <>
       {renderSectionHeader("Personal Details", "Where you are based, and your personal interests")}
 
+      <BackupEmailPanel />
+
       <div className="profile-address-card">
         <h3>Current Location</h3>
         <p className="profile-address-note">
@@ -1549,7 +1553,7 @@ export default function ProfilePage() {
               </div>
             </div>
             <div className="profile-header-actions">
-              <Link href={profile.account_type === "employer" ? "/employer/dashboard" : "/dashboard"} className="btn-secondary">
+              <Link href={landingPathForAccountType(profile.account_type)} className="btn-secondary">
                 Back
               </Link>
               <button type="button" className="btn-primary" onClick={() => void saveProfile()} disabled={saving}>
