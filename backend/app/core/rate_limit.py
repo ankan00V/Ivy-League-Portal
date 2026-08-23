@@ -6,7 +6,7 @@ from time import time
 from typing import Optional
 
 from app.core.config import settings
-from app.core.redis import get_redis
+from app.core.redis import get_cache_redis
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ async def check_rate_limit(
     now = int(time())
     window = now // 60
     key = _bucket_key(subject, action, str(window))
-    redis = get_redis()
+    redis = get_cache_redis()
     if redis is None:
         return _unavailable(action, "redis_unconfigured", fail_closed=fail_closed, limit=limit)
     try:
