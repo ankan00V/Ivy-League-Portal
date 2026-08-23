@@ -2280,12 +2280,10 @@ select.input-base {
    because the role track is the primary split and two equally loud tab rows stacked
    on each other read as one confusing control. Only tokens defined in :root are
    used; an undefined custom property silently invalidates the whole declaration. */
-.placement-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-bottom: 1.25rem;
-}
+/* .placement-tabs (the pill-row container) was removed with the pill row itself;
+   the placement filter is a dropdown now. .placement-tab survives because the
+   empty state still uses it for its "Show all locations" reset button. */
+
 
 .placement-tab {
   display: inline-flex;
@@ -2371,12 +2369,27 @@ select.input-base {
 /* Speciality filter: chips on desktop, dropdown on mobile.
    Both render the same multi-select state and CSS picks one, so a selection
    survives a viewport change instead of being reset by a remount. */
+/* Row holding the placement and speciality dropdowns. They replaced a 5-pill
+   and a 17-chip row: 22 controls under the three role tabs pushed the listings
+   below the fold and read as clutter. Wraps rather than scrolls, so a narrow
+   window stacks them instead of hiding one. */
+.feed-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 2rem;
+}
+
 .track-filter-select {
-  display: none;
+  display: flex;
   position: relative;
   align-items: center;
   gap: 0.6rem;
-  margin-bottom: 2rem;
+  /* Wide enough that the trigger label never truncates, but still allowed to
+     shrink so two sit side by side on a laptop. */
+  flex: 1 1 16rem;
+  max-width: 22rem;
 }
 
 .track-filter-trigger {
@@ -2441,6 +2454,19 @@ select.input-base {
   cursor: pointer;
 }
 
+/* Pushed to the right edge of the option so the numbers form a column the eye
+   can scan, rather than trailing each label at a different offset. */
+.track-filter-count {
+  margin-left: auto;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: var(--bg-surface-hover);
+  font-size: 0.8rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
 .track-filter-option:hover {
   background: var(--bg-surface-hover);
 }
@@ -2453,12 +2479,11 @@ select.input-base {
 }
 
 @media (max-width: 767px) {
-  .role-track-chips {
-    display: none;
-  }
-
+  /* The dropdowns are the only presentation at every width now, so this block
+     no longer swaps between two of them. It only stacks them full width. */
   .track-filter-select {
-    display: flex;
+    flex: 1 1 100%;
+    max-width: none;
   }
 }
 
@@ -2511,4 +2536,14 @@ select.input-base {
   font-weight: 800;
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
+}
+
+/* Sentinel below the card grid. An IntersectionObserver watches it and appends
+   the next page before it scrolls into view, so the feed extends without a
+   button and without ever mounting the whole corpus at once. */
+.feed-load-more {
+  padding: 1.5rem 0;
+  text-align: center;
+  font-weight: 700;
+  color: var(--text-secondary);
 }
