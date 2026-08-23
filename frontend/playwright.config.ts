@@ -24,6 +24,12 @@ export default defineConfig({
         command: "npm run dev -- --hostname 127.0.0.1 --port 3000",
         cwd: __dirname,
         url: "http://127.0.0.1:3000",
+        env: {
+          // Exercise the visible Turnstile branch without putting a production
+          // site key in CI. Individual tests replace the widget implementation.
+          NEXT_PUBLIC_TURNSTILE_SITE_KEY:
+            process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || "1x00000000000000000000AA",
+        },
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,
       },
