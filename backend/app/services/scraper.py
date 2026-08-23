@@ -2695,23 +2695,31 @@ class GreenhouseScraper:
         remains non-fatal - a discovery problem must never take the bootstrap
         boards down with it.
         """
-        try:
-            import psycopg2
+        async def _fetch_urls() -> list[str]:
+            import asyncpg
 
-            dsn = resolve_postgres_dsn()
-            conn = psycopg2.connect(dsn, connect_timeout=5)
+            conn = await asyncpg.connect(
+                resolve_postgres_dsn().replace("?sslmode=require", ""),
+                ssl="require",
+                timeout=5,
+                statement_cache_size=0,
+            )
             try:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "select url from app.opportunities "
-                        "where url ilike %s limit 2000",
-                        ("%greenhouse.io%",),
-                    )
-                    return discover_greenhouse_board_tokens(
-                        str(row[0] or "") for row in cur.fetchall()
-                    )
+                rows = await conn.fetch(
+                    "select url from app.opportunities where url ilike $1 limit 2000",
+                    "%greenhouse.io%",
+                )
+                return [str(row["url"] or "") for row in rows]
             finally:
-                conn.close()
+                await conn.close()
+
+        try:
+            # asyncpg rather than a sync driver: it is already a dependency, and
+            # psycopg2 is not declared in requirements.txt - it happens to be
+            # importable locally, which would have made this pass here and fail
+            # in CI. asyncio.run is safe because this whole method runs inside
+            # asyncio.to_thread, so the thread has no loop of its own.
+            return discover_greenhouse_board_tokens(asyncio.run(_fetch_urls()))
         except Exception as exc:
             logger.debug("greenhouse board discovery unavailable: %s", exc)
             return []
