@@ -24,7 +24,7 @@ from beanie.odm.operators.find.comparison import In
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from app.core.config import settings
+from app.core.config import settings, resolve_postgres_dsn
 from app.core.time import utc_now
 from app.services.opportunity_trust import apply_trust_assessment, apply_trust_assessment_preserving_review, assess_opportunity_trust
 from app.services.scraper_fetch_bridge import fetch_page_sync
@@ -43,16 +43,6 @@ class ParseResult:
     missing_fields: list[str] = field(default_factory=list)
     parse_errors: list[str] = field(default_factory=list)
 
-
-IVY_LEAGUE_FEEDS: list[tuple[str, str]] = [
-    ("Harvard University", "https://news.harvard.edu/gazette/feed/"),
-    ("Yale University", "https://news.yale.edu/news-rss"),
-    ("Princeton University", "https://www.princeton.edu/feed/"),
-    ("Columbia University", "https://news.columbia.edu/feed"),
-    ("University of Pennsylvania", "https://penntoday.upenn.edu/rss.xml"),
-    # Brown/Dartmouth primary news pages currently do not expose stable public RSS URLs.
-    ("Cornell University", "https://news.cornell.edu/taxonomy/term/81/feed"),
-]
 
 OPPORTUNITY_KEYWORDS = {
     "scholarship",
@@ -360,8 +350,13 @@ GENERIC_PORTAL_LISTINGS: list[dict[str, Any]] = [
         "label": "MakeIntern",
         "default_type": "Internship",
         "default_university": "MakeIntern",
+        # Was pointed at the site root, which is a category index: the extractor
+        # returned "Virtual Internships" and "Office Internships" - navigation,
+        # not postings - and 2,436 fetches over 228 runs produced 17 inserts.
+        # Postings live at /internship/detail/<slug>-<id>; measured 2026-08-23,
+        # the homepage links 9 of them and /internships links 20.
         "listings": [
-            "https://www.makeintern.com/",
+            "https://www.makeintern.com/internships",
         ],
     },
     {
@@ -371,15 +366,6 @@ GENERIC_PORTAL_LISTINGS: list[dict[str, Any]] = [
         "default_university": "LetsIntern",
         "listings": [
             "https://www.letsintern.com/",
-        ],
-    },
-    {
-        "source": "handshake",
-        "label": "Handshake",
-        "default_type": "Internship",
-        "default_university": "Handshake",
-        "listings": [
-            "https://joinhandshake.com/students/",
         ],
     },
     {
@@ -548,16 +534,6 @@ GENERIC_PORTAL_LISTINGS: list[dict[str, Any]] = [
             "https://remoteok.com/api",
         ],
     },
-    {
-        "source": "flexjobs",
-        "label": "FlexJobs",
-        "default_type": "Job",
-        "default_university": "FlexJobs",
-        # Recovered 2026-08-04: the timeouts/blocks were against a plain GET. Via Scrapling this returns HTTP 200 with ~273KB and 93 job links.
-        "listings": [
-            "https://www.flexjobs.com/",
-        ],
-    },
         {
         "source": "we_work_remotely",
         "label": "We Work Remotely",
@@ -619,15 +595,6 @@ GENERIC_PORTAL_LISTINGS: list[dict[str, Any]] = [
         "default_university": "Jobspresso",
         "listings": [
             "https://jobspresso.co/remote-work/",
-        ],
-    },
-    {
-        "source": "virtual_vocations",
-        "label": "Virtual Vocations",
-        "default_type": "Job",
-        "default_university": "Virtual Vocations",
-        "listings": [
-            "https://www.virtualvocations.com/jobs",
         ],
     },
         {
@@ -1904,153 +1871,6 @@ def is_early_career_opportunity(record: dict[str, Any]) -> bool:
     return bool(tags & {"intern", "internship", "entry level", "entry-level", "new grad", "graduate trainee"})
 
 
-class IvyLeagueRSSConnector:
-    def __init__(self, session: requests.Session | None = None) -> None:
-        self.session = session or _build_retry_session()
-        self.headers = {
-            "User-Agent": "Mozilla/5.0 (compatible; VidyaVerseIvyBot/1.0; +https://vidyaverse.local)",
-            "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml, */*",
-        }
-
-    def _parse_feed(self, xml_text: str) -> list[dict]:
-        entries: list[dict] = []
-        root = ET.fromstring(xml_text)
-
-        channel = root.find("channel")
-        if channel is not None:
-            for item in channel.findall("item"):
-                title = (item.findtext("title") or "").strip()
-                link = (item.findtext("link") or "").strip()
-                description = item.findtext("description") or item.findtext("content:encoded") or ""
-                published_at = _parse_datetime(item.findtext("pubDate"))
-                if title and link:
-                    entries.append(
-                        {
-                            "title": title,
-                            "link": link,
-                            "description": description,
-                            "published_at": published_at,
-                        }
-                    )
-            return entries
-
-        atom_entries = root.findall(".//{http://www.w3.org/2005/Atom}entry")
-        for entry in atom_entries:
-            title = (entry.findtext("{http://www.w3.org/2005/Atom}title") or "").strip()
-            link = ""
-            for link_tag in entry.findall("{http://www.w3.org/2005/Atom}link"):
-                href = (link_tag.attrib.get("href") or "").strip()
-                rel = (link_tag.attrib.get("rel") or "").strip()
-                if href and rel in {"", "alternate"}:
-                    link = href
-                    break
-            description = (
-                entry.findtext("{http://www.w3.org/2005/Atom}summary")
-                or entry.findtext("{http://www.w3.org/2005/Atom}content")
-                or ""
-            )
-            published_raw = (
-                entry.findtext("{http://www.w3.org/2005/Atom}published")
-                or entry.findtext("{http://www.w3.org/2005/Atom}updated")
-            )
-            published_at = _parse_datetime(published_raw)
-            if title and link:
-                entries.append(
-                    {
-                        "title": title,
-                        "link": link,
-                        "description": description,
-                        "published_at": published_at,
-                    }
-                )
-        return entries
-
-    def _looks_like_opportunity(self, title: str, description: str) -> bool:
-        text = f"{title} {description}".lower()
-        return any(keyword in text for keyword in OPPORTUNITY_KEYWORDS)
-
-    def _infer_opportunity_type(self, title: str, description: str) -> str:
-        return _infer_opportunity_type(title, description)
-
-    def fetch_ivy_league_opportunities(self, max_items_per_school: int = 12) -> list[dict]:
-        opportunities: list[dict] = []
-        seen_urls: set[str] = set()
-
-        for school_name, feed_url in IVY_LEAGUE_FEEDS:
-            try:
-                response = self.session.get(
-                    feed_url,
-                    headers=self.headers,
-                    timeout=settings.SCRAPER_TIMEOUT_SECONDS,
-                )
-                response.raise_for_status()
-                entries = self._parse_feed(response.text)
-            except Exception as exc:
-                logger.debug(
-                    "[IvyConnector] Failed feed for %s (%s): %s",
-                    school_name,
-                    feed_url,
-                    exc,
-                )
-                continue
-
-            school_count = 0
-            for entry in entries:
-                if school_count >= max_items_per_school:
-                    break
-                title = (entry.get("title") or "").strip()
-                link = (entry.get("link") or "").strip()
-                if not title or not link or link in seen_urls:
-                    continue
-
-                description = _strip_html(entry.get("description") or "")
-                if not self._looks_like_opportunity(title, description):
-                    continue
-
-                parsed_deadline = self._extract_deadline(description)
-                opportunity_type = self._infer_opportunity_type(title, description)
-                summary = description[:420] + ("..." if len(description) > 420 else "")
-                source_host = urlparse(link).netloc
-
-                opportunities.append(
-                    {
-                        "title": title,
-                        "description": f"{summary} [Source: {source_host}]",
-                        "url": link,
-                        "opportunity_type": opportunity_type,
-                        "university": school_name,
-                        "deadline": parsed_deadline,
-                        "source": "ivy_rss",
-                    }
-                )
-                seen_urls.add(link)
-                school_count += 1
-
-        return opportunities
-
-    def _extract_deadline(self, text: str) -> datetime | None:
-        date_patterns = [
-            r"deadline[:\s]+([A-Za-z]{3,9}\s+\d{1,2},\s+\d{4})",
-            r"apply by[:\s]+([A-Za-z]{3,9}\s+\d{1,2},\s+\d{4})",
-            r"applications close[:\s]+([A-Za-z]{3,9}\s+\d{1,2},\s+\d{4})",
-        ]
-        lowered = text.lower()
-        for pattern in date_patterns:
-            match = re.search(pattern, lowered, re.IGNORECASE)
-            if not match:
-                continue
-            candidate = match.group(1)
-            parsed = _parse_datetime(candidate)
-            if parsed:
-                return parsed
-            try:
-                parsed = datetime.strptime(candidate, "%B %d, %Y").replace(tzinfo=timezone.utc)
-                return parsed
-            except Exception:
-                continue
-        return None
-
-
 class UnstopScraper:
     def __init__(self, session: requests.Session | None = None) -> None:
         self.session = session or _build_retry_session()
@@ -2864,23 +2684,34 @@ class GreenhouseScraper:
     def _discovered_board_tokens(self) -> list[str]:
         """Board tokens harvested from Greenhouse URLs already in the corpus.
 
-        Read synchronously via pymongo because fetch_live_opportunities runs in a
-        worker thread (asyncio.to_thread), where the Beanie/motor client bound to
-        the main loop cannot be awaited. Failure is non-fatal: a discovery
-        problem must never take the bootstrap boards down with it.
+        Reads the serving database. This used to query MongoDB, which after the
+        Postgres cutover meant it harvested tokens from an abandoned corpus - and
+        because the failure path is deliberately silent, a dead Mongo just
+        returned nothing and discovery quietly fell back to the bootstrap list
+        forever. Same shape as the warehouse and dataset-snapshot bugs.
+
+        Still synchronous: fetch_live_opportunities runs inside asyncio.to_thread,
+        where the async client bound to the main loop cannot be awaited. Failure
+        remains non-fatal - a discovery problem must never take the bootstrap
+        boards down with it.
         """
         try:
-            from pymongo import MongoClient
+            import psycopg2
 
-            client = MongoClient(settings.MONGODB_URL, serverSelectionTimeoutMS=5000)
+            dsn = resolve_postgres_dsn()
+            conn = psycopg2.connect(dsn, connect_timeout=5)
             try:
-                rows = client[settings.MONGODB_DB_NAME].opportunities.find(
-                    {"url": {"$regex": "greenhouse\\.io", "$options": "i"}},
-                    {"url": 1},
-                ).limit(2000)
-                return discover_greenhouse_board_tokens(str(row.get("url") or "") for row in rows)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "select url from app.opportunities "
+                        "where url ilike %s limit 2000",
+                        ("%greenhouse.io%",),
+                    )
+                    return discover_greenhouse_board_tokens(
+                        str(row[0] or "") for row in cur.fetchall()
+                    )
             finally:
-                client.close()
+                conn.close()
         except Exception as exc:
             logger.debug("greenhouse board discovery unavailable: %s", exc)
             return []
@@ -3973,7 +3804,6 @@ class GenericOpportunityPortalScraper:
         return opportunities
 
 
-ivy_connector = IvyLeagueRSSConnector()
 unstop_scraper = UnstopScraper()
 naukri_scraper = NaukriScraper()
 internshala_scraper = InternshalaScraper()
@@ -4620,7 +4450,6 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
 
             base_fetch_results = await _collect_fetch_batch_results(
                 [
-                    asyncio.to_thread(ivy_connector.fetch_ivy_league_opportunities, 10),
                     fetch_unstop_batch(),
                     asyncio.to_thread(
                         naukri_scraper.fetch_it_jobs,
@@ -4660,7 +4489,6 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
             )
 
             (
-                ivy_result,
                 unstop_result,
                 naukri_result,
                 internshala_result,
@@ -4714,11 +4542,6 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
 
                 report_sources.append(source_report)
 
-            await _process_source_result(
-                source_key="ivy_rss",
-                source_label="Ivy League Feed",
-                result=ivy_result,
-            )
             await _process_source_result(
                 source_key="unstop",
                 source_label="Unstop",
