@@ -800,9 +800,15 @@ async def _refresh_operational_metrics() -> dict[str, Any]:
     from app.models.opportunity import Opportunity
     from app.services.scraper_health_service import scraper_health_service
 
-    opportunity_count = int(await Opportunity.find_many().count())
-    active_experiments = int(await Experiment.find_many({"status": {"$in": ["active", "running"]}}).count())
-    scraper_health = await scraper_health_service.source_health()
+    # Three independent reads against the same database. Sequentially they cost
+    # their sum (~0.57s warm, ~2.1s cold); concurrently they cost the slowest.
+    opportunity_count_raw, active_experiments_raw, scraper_health = await asyncio.gather(
+        Opportunity.find_many().count(),
+        Experiment.find_many({"status": {"$in": ["active", "running"]}}).count(),
+        scraper_health_service.source_health(),
+    )
+    opportunity_count = int(opportunity_count_raw)
+    active_experiments = int(active_experiments_raw)
     scraper_summary = dict(scraper_health.get("summary") or {})
     silent_failures = sum(int(row.get("silent_failures") or 0) for row in list(scraper_health.get("sources") or []))
 
@@ -895,22 +901,42 @@ async def health_check():
 async def readiness_check(request: Request, _auth: Any = Depends(_readiness_dependency)):
     """Full dependency readiness. Admin-authenticated outside local environments."""
     init_metrics()
-    checks = {
-        "mongodb": await _run_check("mongodb", lambda: _mongo_health(request), required=True),
-        "redis": await _run_check("redis", _redis_health, required=bool(settings.REDIS_URL)),
-        # Analytics, not serving. A warehouse outage degrades reporting, not the
-        # API - marking it required meant an unresolvable ClickHouse hostname
-        # reported the whole service as degraded while every user-facing path
-        # was healthy.
-        "clickhouse": await _run_check(
+
+    # Everything below is an independent read, and it used to be a chain of
+    # awaits: five dependency probes, then the operational counters, then
+    # warehouse freshness. Each waited for the one before it for no reason, so
+    # the endpoint cost their sum. Measured warm, that sum was ~1.5s against a
+    # slowest single member of ~0.46s, and the whole probe is on the hot path -
+    # start_local_production.sh gates on it, and it refused to reuse a perfectly
+    # healthy backend because the response did not arrive in time.
+    #
+    # Fanning them out makes the endpoint cost its slowest member instead.
+    #
+    # (ClickHouse is not the expensive one, despite being the check that fails:
+    # an unresolvable host errors in ~5ms. It is correctly non-required, so a
+    # warehouse outage still reports the API healthy.)
+    check_specs = (
+        ("mongodb", lambda: _mongo_health(request), True),
+        ("redis", _redis_health, bool(settings.REDIS_URL)),
+        (
             "clickhouse",
             _clickhouse_health,
-            required=bool(settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_REQUIRED_FOR_READINESS),
+            bool(settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_REQUIRED_FOR_READINESS),
         ),
-        "artifact_store": await _run_check("artifact_store", _artifact_store_health, required=False),
-        "queue": await _run_check("queue", _queue_health, required=bool(settings.JOBS_ENABLED)),
-    }
-    operational = await _refresh_operational_metrics()
+        ("artifact_store", _artifact_store_health, False),
+        ("queue", _queue_health, bool(settings.JOBS_ENABLED)),
+    )
+
+    check_results, operational, freshness = await asyncio.gather(
+        asyncio.gather(
+            *(_run_check(name, fn, required=required) for name, fn, required in check_specs)
+        ),
+        _refresh_operational_metrics(),
+        warehouse_export_service.freshness_status(),
+    )
+    # gather preserves input order, so zipping back against check_specs keeps the
+    # response keys stable for the smoke test and startup_check.sh.
+    checks = {name: result for (name, _fn, _required), result in zip(check_specs, check_results)}
     required_ok = all(bool(payload["ok"]) for payload in checks.values() if bool(payload.get("required")))
     started_at = getattr(request.app.state, "started_at", None)
     return {
@@ -941,7 +967,7 @@ async def readiness_check(request: Request, _auth: Any = Depends(_readiness_depe
             "clickhouse_enabled": bool(settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED),
             "clickhouse_host": settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST,
             "bi_tool_url": analytics_bi_tool_url(),
-            "freshness": await warehouse_export_service.freshness_status(),
+            "freshness": freshness,
         },
     }
 
