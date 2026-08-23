@@ -1208,6 +1208,34 @@ _NEWS_TITLE_PATTERNS = [
 ]
 
 
+# A bounty or grant *programme* is a standing pot of money, not a posting a
+# student applies to, and it is out of scope for the same reason scholarships
+# are. It reaches the feed anyway because the declared type is wrong rather than
+# out of scope: tensorhack_opportunities filed "HackerOne AI Red Teaming &
+# Bounties", "Immunefi Bug Bounties", "Algora OSS Bounties" and "Questbook
+# Grants & Bounties" all as opportunity_type="Internship", so every type-based
+# gate passed them. Three were retired by hand; the fourth was still live on the
+# Internships feed, which is what this catches.
+#
+# The role-noun test is what keeps it honest. "Bug Bounty Analyst" and "Security
+# Engineer - Bug Bounty Team" are real jobs and must survive, so the word alone
+# cannot be disqualifying - only the word with no role attached to it.
+_BOUNTY_PROGRAMME_RE = re.compile(r"\bbount(?:y|ies)\b", re.IGNORECASE)
+_ROLE_NOUN_RE = re.compile(
+    r"\b(intern|internship|engineer|analyst|developer|manager|researcher|"
+    r"specialist|associate|trainee|scientist|consultant|lead|architect)\b",
+    re.IGNORECASE,
+)
+
+
+def is_bounty_programme(title: str | None) -> bool:
+    """True for a bounty/grant programme listing, False for a bounty-adjacent role."""
+    text = str(title or "")
+    if not _BOUNTY_PROGRAMME_RE.search(text):
+        return False
+    return _ROLE_NOUN_RE.search(text) is None
+
+
 def is_in_scope_opportunity(record: dict[str, Any]) -> bool:
     """Reject opportunity types the product does not currently serve.
 
@@ -1219,6 +1247,11 @@ def is_in_scope_opportunity(record: dict[str, Any]) -> bool:
     something a student could apply to.
     """
     from app.services.opportunity_visibility import canonical_opportunity_type
+
+    # Checked before the type test on purpose: these rows carry a *wrong* type
+    # rather than an out-of-scope one, so the type test waves them through.
+    if is_bounty_programme(record.get("title")):
+        return False
 
     raw_type = record.get("opportunity_type")
     if not raw_type:
