@@ -86,12 +86,13 @@ def _validate_production_analytics_config() -> None:
 def validate_production_operational_config() -> None:
     if settings.ENVIRONMENT.strip().lower() != "production":
         return
-    mongo_url = (settings.MONGODB_URL or "").strip().lower()
     redis_url = (settings.REDIS_URL or "").strip().lower()
     if settings.SECRET_KEY.startswith("your_super_secret_key_here"):
         raise RuntimeError("SECRET_KEY must be set via environment in production.")
-    if mongo_url.startswith("mongodb://localhost") or mongo_url.startswith("mongodb://127.0.0.1"):
-        raise RuntimeError("Production requires managed MongoDB; MONGODB_URL cannot point at localhost.")
+    # The MongoDB guard that used to live here is gone: MONGODB_URL is unused
+    # under POSTGRES_ODM_ENABLED, but it defaults to mongodb://localhost:27017,
+    # so simply deleting the line from .env would have failed this check and
+    # blocked a production deploy for a database the app never contacts.
     if redis_url.startswith("redis://localhost") or redis_url.startswith("redis://127.0.0.1"):
         raise RuntimeError("Production requires managed Redis/Upstash; REDIS_URL cannot point at localhost.")
     _validate_production_analytics_config()

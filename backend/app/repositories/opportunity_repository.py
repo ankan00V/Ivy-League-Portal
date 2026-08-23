@@ -28,7 +28,7 @@ from typing import Any, Optional
 
 import asyncpg
 
-from app.core.config import settings
+from app.core.config import settings, resolve_postgres_dsn
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +62,7 @@ async def get_pool() -> asyncpg.Pool:
     """
     global _pool
     if _pool is None or _pool._closed:  # type: ignore[attr-defined]
-        dsn = settings.SUPABASE_DATABASE_URL or settings.NEON_DATABASE_URL
+        dsn = resolve_postgres_dsn()
         if not dsn:
             raise RuntimeError("no Postgres URL configured")
         _pool = await asyncpg.create_pool(
