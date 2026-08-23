@@ -44,7 +44,7 @@ test("@smoke login OTP request enforces 60s cooldown in UI", async ({ page }) =>
   await page.getByPlaceholder("Enter Email").fill("student@example.com");
   await page.getByRole("button", { name: /Continue with OTP/i }).click();
 
-  await expect(page.getByPlaceholder("123456")).toBeVisible();
+  await expect(page.getByPlaceholder("XXXXXX")).toBeVisible();
   await expect(page.getByText(/Didn't receive code\?/i)).toBeVisible();
   await expect(page.getByText(/Resend in 0[01]:[0-5]\d/i)).toBeVisible();
 });
@@ -71,7 +71,7 @@ test("@smoke signup requests OTP with its visible Turnstile token and uses inlin
   await page.getByPlaceholder("Re-enter password").fill("StrongPass1");
   await page.getByRole("button", { name: "Send OTP", exact: true }).click();
 
-  await expect(page.getByPlaceholder("123456")).toBeVisible();
+  await expect(page.getByPlaceholder("XXXXXX")).toBeVisible();
   await expect(page.getByRole("button", { name: "Verify OTP & Continue", exact: true })).toBeVisible();
   await expect(page.getByText(/Didn't receive code\?/i)).toBeVisible();
   await expect(page.getByText(/Resend in 0[01]:[0-5]\d/i)).toBeVisible();
