@@ -1134,24 +1134,44 @@ async def upload_resume(
     # into our form and does not expect to be sharing. Redaction fails open: on a
     # malformed document we store the original rather than block the upload, and
     # the fallback is logged.
-    storable, _redacted = strip_document_metadata(extension=extension, content=content)
+    # Everything from here to the parse below is CPU or disk bound, and all of it
+    # used to run inline in this coroutine. That does not merely make the upload
+    # slow for the uploader - it blocks the event loop, so a single resume freezes
+    # every other in-flight request for its whole duration. Measured on this
+    # machine: PDF metadata stripping and text extraction are tens to hundreds of
+    # ms, and the spaCy pass is ~1.0s on the first upload after boot (model load)
+    # and ~0.04s warm.
+    #
+    # asyncio.to_thread keeps each step exactly as written and simply moves it off
+    # the loop, so a slow or malformed document can no longer stall the server.
+    storable, _redacted = await asyncio.to_thread(
+        strip_document_metadata, extension=extension, content=content
+    )
 
     storage_key = f"{str(current_user.id)}_{uuid4().hex}{extension}"
     storage_path = _resume_storage_dir() / storage_key
-    storage_path.write_bytes(storable)
+    await asyncio.to_thread(storage_path.write_bytes, storable)
 
     previous_key = (profile.resume_storage_key or "").strip()
     if previous_key:
         previous_path = _resume_storage_dir() / previous_key
-        if previous_path.exists():
-            previous_path.unlink(missing_ok=True)
 
-    text = _extract_resume_text(extension=extension, content=content).strip()
+        def _remove_previous() -> None:
+            if previous_path.exists():
+                previous_path.unlink(missing_ok=True)
+
+        await asyncio.to_thread(_remove_previous)
+
+    text = (
+        await asyncio.to_thread(_extract_resume_text, extension=extension, content=content)
+    ).strip()
     if text:
         from app.services.ai_engine import ai_system
 
         try:
-            parsed_data = ai_system.parse_resume(text)
+            # spaCy NER: CPU bound, and it lazy-loads en_core_web_sm on the first
+            # call after boot. Off the loop for the same reason as the steps above.
+            parsed_data = await asyncio.to_thread(ai_system.parse_resume, text)
         except Exception as exc:
             # Auto-fill is best-effort: a parse failure must not block the upload.
             # It does have to be visible though - swallowing this silently meant a

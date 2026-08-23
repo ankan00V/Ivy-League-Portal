@@ -12,6 +12,8 @@ resume-readiness review while every upload still returned 200.
 """
 from __future__ import annotations
 
+import re
+
 from io import BytesIO
 
 import pytest
@@ -144,6 +146,15 @@ class TestUploadPathUsesRedaction:
 
         source = inspect.getsource(upload_resume)
         assert "strip_document_metadata" in source
-        assert "storage_path.write_bytes(storable)" in source, (
-            "upload_resume must persist the redacted bytes, not the uploaded ones."
+
+        # Match the argument, not the call syntax. This asserted the exact string
+        # "storage_path.write_bytes(storable)" and so failed the moment the write
+        # was moved off the event loop with asyncio.to_thread - a change that did
+        # not touch which bytes get written. What actually matters is that the
+        # redacted `storable` reaches disk and the raw `content` never does.
+        write_calls = re.findall(r"storage_path\.write_bytes[,(]\s*([A-Za-z_][A-Za-z0-9_]*)", source)
+        assert write_calls, "upload_resume must write the resume to storage_path."
+        assert all(arg == "storable" for arg in write_calls), (
+            "upload_resume must persist the redacted bytes, not the uploaded ones. "
+            f"write_bytes received: {write_calls}"
         )

@@ -30,6 +30,7 @@ from app.services.personalization.learned_ranker import learned_ranker
 from app.services.warehouse_export_service import warehouse_export_service
 from app.services.vector_service import opportunity_vector_service
 from app.services.reranker_service import reranker_service
+from app.services.ai_engine import ai_system
 from app.core.redis import close_redis, get_redis
 from app.core import metrics as metrics_module
 from app.core.metrics import (
@@ -615,6 +616,10 @@ async def _warmup_rag_components() -> None:
         query="warmup query",
         candidates=[{"title": "warmup a"}, {"title": "warmup b"}],
     )
+    # spaCy's en_core_web_sm, used by resume parsing rather than by RAG. It lazy
+    # loads on first use, which measured ~1.0s against ~0.04s warm, and the
+    # student who happens to upload first after a boot is the one who pays it.
+    await asyncio.to_thread(ai_system._ensure_nlp)
 
 # Compared on a stripped, lowercased value. Every production guard in this file
 # normalises before comparing, but these three did not - so ENVIRONMENT set to
