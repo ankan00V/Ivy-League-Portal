@@ -18,7 +18,6 @@ if str(BACKEND_ROOT) not in sys.path:
 from app.core.config import settings  # noqa: E402
 from app.services.scraper import (  # noqa: E402
     GENERIC_PORTAL_LISTINGS,
-    IVY_LEAGUE_FEEDS,
     UNSTOP_CATEGORIES,
     merged_portal_listings,
     freshersworld_scraper,
@@ -27,7 +26,6 @@ from app.services.scraper import (  # noqa: E402
     hack2skill_scraper,
     indeed_india_scraper,
     internshala_scraper,
-    ivy_connector,
     naukri_scraper,
     unstop_scraper,
 )
@@ -86,15 +84,6 @@ async def _run_sync(label: str, fn: Any, *args: Any, timeout: float, **kwargs: A
 
 async def audit_all(*, max_items: int, timeout_seconds: float, include_disabled: bool) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
-
-    rows.append(
-        await _run_sync(
-            "ivy_rss",
-            ivy_connector.fetch_ivy_league_opportunities,
-            max_items,
-            timeout=timeout_seconds,
-        )
-    )
 
     for category in UNSTOP_CATEGORIES:
         rows.append(

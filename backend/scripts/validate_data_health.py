@@ -19,7 +19,12 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from app.core.config import settings
 
-import _script_db
+# Support both `python scripts/validate_data_health.py` and importing this
+# operational check from the package-level test suite.
+try:
+    from scripts import _script_db
+except ImportError:  # Direct script execution keeps `scripts/` on sys.path.
+    import _script_db  # type: ignore[no-redef]
 from app.models.opportunity import Opportunity
 from app.models.opportunity_interaction import OpportunityInteraction
 from app.models.user import User

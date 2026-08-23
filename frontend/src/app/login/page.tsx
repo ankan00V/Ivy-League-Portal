@@ -660,12 +660,6 @@ export default function LoginPage() {
             >
               Continue with Google
             </button>
-            <button type="button" className="btn-secondary" disabled title="LinkedIn OAuth coming next" style={{ width: "100%", justifyContent: "center" }}>
-              Continue with LinkedIn
-            </button>
-            <button type="button" className="btn-secondary" disabled title="Microsoft OAuth coming next" style={{ width: "100%", justifyContent: "center" }}>
-              Continue with Microsoft
-            </button>
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", color: "var(--text-secondary)" }}>
@@ -695,7 +689,7 @@ export default function LoginPage() {
                     className="input-base"
                     value={otp}
                     onChange={(event) => setOtp(event.target.value)}
-                    placeholder="123456"
+                    placeholder="XXXXXX"
                     maxLength={6}
                     minLength={6}
                     required
@@ -860,7 +854,7 @@ export default function LoginPage() {
                 className="input-base"
                 value={resetOtp}
                 onChange={(event) => setResetOtp(event.target.value)}
-                placeholder="123456"
+                placeholder="XXXXXX"
                 maxLength={6}
                 minLength={6}
                 required

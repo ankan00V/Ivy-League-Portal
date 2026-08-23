@@ -323,13 +323,37 @@ worker_is_running() {
   # Matching "python -m app.worker" alone is too loose: it also matches any
   # wrapper carrying that text on its command line - screen's `bash -lc "..."`,
   # a `timeout ...` invocation - and reported a running worker when none
-  # existed. Require the venv interpreter itself, and confirm the match is a
-  # Python process rather than a shell holding the string.
-  local pid
-  for pid in $(pgrep -f "venv/bin/python -m app.worker" 2>/dev/null); do
-    case "$(ps -p "${pid}" -o comm= 2>/dev/null)" in
-      *[Pp]ython*) return 0 ;;
+  # existed.
+  #
+  # Match on "-m app.worker", NOT on the interpreter path. venv/bin/python is a
+  # symlink to the framework build, and macOS reports the resolved executable,
+  # so a worker's command line reads
+  #   /opt/homebrew/.../Python.app/Contents/MacOS/Python -m app.worker
+  # and never contains "venv/bin/python". The previous pattern required exactly
+  # that string, so it matched nothing, worker_is_running always answered "no",
+  # and every run of this script started another worker on top of the last.
+  # Thirty of them had accumulated by the time it was noticed - each holding an
+  # asyncpg pool against the hosted Postgres, until the connection limit was
+  # exhausted and the API could no longer get a connection to finish booting.
+  #
+  # comm is still checked so the screen/login wrappers carrying the same string
+  # in their argv are not mistaken for the worker itself, and cwd is checked so
+  # a worker from a different checkout is never adopted as this one's - argv
+  # alone cannot identify the project once the interpreter path is resolved.
+  local pid comm cwd
+  for pid in $(pgrep -f -- "-m app\.worker" 2>/dev/null); do
+    comm="$(ps -p "${pid}" -o comm= 2>/dev/null)"
+    case "${comm}" in
+      *[Pp]ython*) ;;
+      *) continue ;;
     esac
+    if command -v lsof >/dev/null 2>&1; then
+      cwd="$(lsof -a -d cwd -p "${pid}" -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1)"
+      if [[ -n "${cwd}" && "${cwd}" != "${BACKEND_DIR}" ]]; then
+        continue
+      fi
+    fi
+    return 0
   done
   return 1
 }

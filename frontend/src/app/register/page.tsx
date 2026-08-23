@@ -461,7 +461,7 @@ export default function RegisterPage() {
                 className="input-base"
                 value={otp}
                 onChange={(event) => setOtp(event.target.value.replace(/\D/g, ""))}
-                placeholder="123456"
+                placeholder="XXXXXX"
                 maxLength={6}
                 minLength={6}
                 inputMode="numeric"

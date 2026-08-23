@@ -971,6 +971,7 @@ CREATE TABLE IF NOT EXISTS app.scraper_run_logs (
     , items_updated bigint
     , items_deduplicated bigint
     , items_out_of_scope bigint
+    , items_non_posting bigint
     , parse_error_count bigint
     , error_samples jsonb DEFAULT '{}'::jsonb
     , p50_parse_time_ms double precision

@@ -6,13 +6,13 @@
     "status_code": 200,
     "final_url": "https://tensorhack.com/",
     "headers": {
-      "Age": "2041",
+      "Age": "2809",
       "Cache-Control": "public, max-age=0, must-revalidate",
       "Content-Encoding": "br",
       "Content-Security-Policy": "default-src 'self'; img-src 'self' data: https:; media-src 'self' https:; connect-src 'self' https://*.supabase.co https://vitals.vercel-insights.com; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'",
       "Content-Type": "text/html; charset=utf-8",
-      "Date": "Sat, 22 Aug 2026 03:36:07 GMT",
-      "Etag": "W/\"gxjoqm98x632z1\"",
+      "Date": "Sun, 23 Aug 2026 06:38:59 GMT",
+      "Etag": "W/\"jhd3rsxt243dvi\"",
       "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
       "Referrer-Policy": "strict-origin-when-cross-origin",
       "Server": "Vercel",
@@ -25,38 +25,38 @@
       "X-Nextjs-Stale-Time": "300",
       "X-Tensorhack-Release": "c8f5c0c5082a",
       "X-Vercel-Cache": "HIT",
-      "X-Vercel-Id": "bom1::iad1::ms77r-1787371808568-f03f5a7767a4",
+      "X-Vercel-Id": "bom1::iad1::7dvq8-1787469949755-22da1b7688aa",
       "Transfer-Encoding": "chunked"
     },
-    "content_length": 144318,
+    "content_length": 158465,
     "content_type": "text/html; charset=utf-8",
     "encoding": "utf-8"
   },
   "analysis": {
     "url": "https://tensorhack.com",
-    "html_length": 143819,
+    "html_length": 157948,
     "has_content": true,
     "keywords": {
       "opportunity_terms": {
         "internship": 0,
-        "intern": 17,
-        "hackathon": 355,
+        "intern": 26,
+        "hackathon": 388,
         "fellowship": 0,
         "opportunity": 0,
         "competition": 8,
-        "challenge": 45
+        "challenge": 49
       },
-      "total_opportunity_mentions": 425,
+      "total_opportunity_mentions": 471,
       "application_terms": {
         "apply": 0,
         "application": 4,
-        "deadline": 341,
+        "deadline": 403,
         "eligibility": 0,
         "register": 0,
-        "registration": 22,
+        "registration": 24,
         "submit": 10
       },
-      "total_application_mentions": 377
+      "total_application_mentions": 441
     },
     "structure": {
       "has_json_ld": true,
@@ -80,7 +80,7 @@
         "class": [
           "hero-v"
         ],
-        "text_preview": "source-linked\u00b7 163 open\u00b7 $4.7M in listed prizes\u00b7 linked sourcesHackathons worth your weekend.The source-backed index of AI hackathons, jobs and grant"
+        "text_preview": "source-linked\u00b7 194 open\u00b7 $7.1M in listed prizes\u00b7 linked sourcesHackathons worth your weekend.The source-backed index of AI hackathons, jobs and grant"
       },
       {
         "tag": "div",
@@ -88,14 +88,14 @@
           "wrap",
           "hero-v-inner"
         ],
-        "text_preview": "source-linked\u00b7 163 open\u00b7 $4.7M in listed prizes\u00b7 linked sourcesHackathons worth your weekend.The source-backed index of AI hackathons, jobs and grant"
+        "text_preview": "source-linked\u00b7 194 open\u00b7 $7.1M in listed prizes\u00b7 linked sourcesHackathons worth your weekend.The source-backed index of AI hackathons, jobs and grant"
       },
       {
         "tag": "div",
         "class": [
           "hero-v-left"
         ],
-        "text_preview": "source-linked\u00b7 163 open\u00b7 $4.7M in listed prizes\u00b7 linked sourcesHackathons worth your weekend.The source-backed index of AI hackathons, jobs and grant"
+        "text_preview": "source-linked\u00b7 194 open\u00b7 $7.1M in listed prizes\u00b7 linked sourcesHackathons worth your weekend.The source-backed index of AI hackathons, jobs and grant"
       },
       {
         "tag": "section",
@@ -104,7 +104,7 @@
           "section-cream",
           "seo-copy"
         ],
-        "text_preview": "ai hackathons: as of august 22, 2026, tensor hack tracks 163 open hackathons with $4.7M in source-listed prize money. next deadline: GENZ CAN HACK 202"
+        "text_preview": "ai hackathons: as of august 23, 2026, tensor hack tracks 194 open hackathons with $7.1M in source-listed prize money. next deadline: NEW YORK 2025 on"
       },
       {
         "tag": "div",
@@ -112,14 +112,14 @@
           "wrap",
           "seo-copy-wrap"
         ],
-        "text_preview": "ai hackathons: as of august 22, 2026, tensor hack tracks 163 open hackathons with $4.7M in source-listed prize money. next deadline: GENZ CAN HACK 202"
+        "text_preview": "ai hackathons: as of august 23, 2026, tensor hack tracks 194 open hackathons with $7.1M in source-listed prize money. next deadline: NEW YORK 2025 on"
       },
       {
         "tag": "div",
         "class": [
           "seo-intro"
         ],
-        "text_preview": "ai hackathons: as of august 22, 2026, tensor hack tracks 163 open hackathons with $4.7M in source-listed prize money. next deadline: GENZ CAN HACK 202"
+        "text_preview": "ai hackathons: as of august 23, 2026, tensor hack tracks 194 open hackathons with $7.1M in source-listed prize money. next deadline: NEW YORK 2025 on"
       },
       {
         "tag": "section",
@@ -145,7 +145,7 @@
           "section-ink",
           "entry"
         ],
-        "text_preview": "Across the stack01The index163open nowHackathonsSource-listed prizes and live deadlines, grouped by AI, web3, student, online and in-person tracks.ent"
+        "text_preview": "Across the stack01The index194open nowHackathonsSource-listed prizes and live deadlines, grouped by AI, web3, student, online and in-person tracks.ent"
       }
     ],
     "technical_details": {

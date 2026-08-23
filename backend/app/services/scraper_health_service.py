@@ -69,6 +69,7 @@ class ScraperHealthService:
             deduplicated_raw = source.get("deduplicated")
             deduplicated = max(0, int(deduplicated_raw)) if deduplicated_raw is not None else 0
             out_of_scope = max(0, int(source.get("out_of_scope") or 0))
+            non_posting = max(0, int(source.get("non_posting") or 0))
             status = _status_bucket("failed" if errors and fetched == 0 else source.get("status") or report.get("status"))
             parse_error_count = max(failed, int(source.get("parse_error_count") or 0), len(errors))
             parse_times = [float(item) for item in list(source.get("parse_times_ms") or []) if item is not None]
@@ -88,6 +89,7 @@ class ScraperHealthService:
                 items_updated=updated,
                 items_deduplicated=deduplicated,
                 items_out_of_scope=out_of_scope,
+                items_non_posting=non_posting,
                 parse_error_count=parse_error_count,
                 error_samples=[
                     {"message": message[:500], "source": source_name}

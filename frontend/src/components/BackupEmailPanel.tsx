@@ -167,7 +167,7 @@ export default function BackupEmailPanel() {
                         label="6-digit code"
                         value={otp}
                         onChange={(event) => setOtp(event.target.value.replace(/\D/g, "").slice(0, 6))}
-                        placeholder="123456"
+                        placeholder="XXXXXX"
                         inputMode="numeric"
                     />
                 ) : null}

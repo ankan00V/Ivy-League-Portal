@@ -201,6 +201,40 @@ class RAGService:
             },
         }
 
+    @staticmethod
+    def _no_strong_match_insight(query: str, top_score: Optional[float]) -> dict[str, Any]:
+        """Say the corpus has nothing, rather than ranking the least-bad rows.
+
+        Retrieval always returns its nearest neighbours, so an unanswerable
+        query still produces a full shortlist - and every layer above it then
+        treats that shortlist as an answer. Presenting a Codeforces round as a
+        "product and analytics competition" is worse than returning nothing:
+        it spends the reader's attention and teaches them the shortlist cannot
+        be trusted.
+
+        Deliberately carries no top_opportunities and no citations. Grounding
+        checks pass because abstaining is a correct outcome, not a failure.
+        """
+        return {
+            "summary": (
+                "No strong match. Nothing currently listed answers this closely enough "
+                "to shortlist, so the results have been withheld rather than ranked by "
+                "how near they happen to fall."
+            ),
+            "top_opportunities": [],
+            "deadline_urgency": "Not applicable - nothing was shortlisted.",
+            "recommended_action": (
+                "Try a broader phrasing, a different domain, or check back once more "
+                "sources have been ingested."
+            ),
+            "citations": [],
+            "safety": {"hallucination_checks_passed": True, "failed_checks": []},
+            "abstained": True,
+            "abstain_reason": "no_candidate_above_relevance_threshold",
+            "top_relevance_score": top_score,
+            "contract_version": "rag_insights.v1",
+        }
+
     def _heuristic_insight(self, query: str, results: list[dict[str, Any]]) -> dict[str, Any]:
         top = results[:3]
         top_opportunities: list[dict[str, Any]] = []
@@ -415,6 +449,20 @@ class RAGService:
         # If nothing was retrieved, skip expensive LLM invocation and return deterministic fallback.
         if not (retrieval_payload.get("results") or []):
             return self._heuristic_insight(query, retrieval_payload.get("results", []))
+
+        # Nothing retrieved is rare; nothing *relevant* retrieved is common, and
+        # until now looked identical to a good answer. Checked before the LLM
+        # call because there is no answer worth paying for here - the model
+        # would only be asked to justify rows the reranker already rejected.
+        if bool(getattr(settings, "RAG_ABSTAIN_ON_LOW_RELEVANCE", True)):
+            top_score = (retrieval_payload.get("retrieval_debug") or {}).get("top_rerank_score")
+            threshold = float(getattr(settings, "RAG_MIN_RELEVANCE_SCORE", -5.0))
+            if top_score is not None and float(top_score) < threshold:
+                logger.info(
+                    "Ask AI abstaining: best candidate scored %.3f, below %.3f, for query %r",
+                    float(top_score), threshold, query[:120],
+                )
+                return self._no_strong_match_insight(query, float(top_score))
 
         top_candidates = retrieval_payload.get("results", [])[:6]
         prompt = {
