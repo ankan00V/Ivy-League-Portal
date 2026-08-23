@@ -129,6 +129,10 @@ class AnalyticsWarehouseService:
         cohort_rows = await self._build_cohort_aggregates(interactions=interactions, traffic_type=normalized_traffic)
         feature_rows = await self._build_feature_store_rows(interactions=interactions, traffic_type=normalized_traffic)
         export_status = await warehouse_export_service.export(
+            # Hand over the rows already in memory; re-selecting them was a third
+            # of this job's egress against a metered database.
+            interactions_prefetched=interactions,
+            telemetry_prefetched=telemetry,
             lookback_days=safe_days,
             traffic_type=normalized_traffic,
         )

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from app.core.config import analytics_bi_tool_url, settings
@@ -134,7 +134,23 @@ class WarehouseExportService:
             .replace("{{ lookback_days }}", str(int(lookback_days)))
         )
 
-    async def export(self, *, lookback_days: int, traffic_type: str) -> dict[str, Any]:
+    async def export(
+        self,
+        *,
+        lookback_days: int,
+        traffic_type: str,
+        interactions_prefetched: list | None = None,
+        telemetry_prefetched: list | None = None,
+    ) -> dict[str, Any]:
+        """Write the raw + mart files for one traffic type.
+
+        The rebuild calls this immediately after selecting the same interactions
+        and telemetry for its own aggregation, so it passes them in rather than
+        making the export select them a second time. Egress on the serving
+        database is a metered resource here, and reading identical rows twice per
+        run was a third of the cost of the job. Called standalone (no prefetch),
+        it still queries for itself.
+        """
         if not self._enabled():
             return {"status": "disabled"}
 
@@ -146,21 +162,39 @@ class WarehouseExportService:
         raw_root.mkdir(parents=True, exist_ok=True)
         marts_root.mkdir(parents=True, exist_ok=True)
 
+        # lookback_days used to be accepted and ignored here, so every export read
+        # both full tables no matter what window the caller asked for. The rebuild
+        # filters to `since` and then this re-read everything anyway: ~218MB per
+        # run against a 300MB database, which is 4.4% of a 5GB monthly egress
+        # allowance for data the caller never asked for. Honour the parameter.
+        safe_days = max(1, min(int(lookback_days or 30), 365))
+        since = utc_now() - timedelta(days=safe_days)
+        since_day = since.date().isoformat()
+
         try:
-            interactions = [row.model_dump(mode="json") for row in await OpportunityInteraction.find_many(
-                OpportunityInteraction.traffic_type == traffic_type
-            ).to_list()]
-            telemetry = [row.model_dump(mode="json") for row in await RankingRequestTelemetry.find_many(
-                RankingRequestTelemetry.traffic_type == traffic_type
-            ).to_list()]
+            if interactions_prefetched is None:
+                interactions_prefetched = await OpportunityInteraction.find_many(
+                    OpportunityInteraction.traffic_type == traffic_type,
+                    OpportunityInteraction.created_at >= since,
+                ).to_list()
+            if telemetry_prefetched is None:
+                telemetry_prefetched = await RankingRequestTelemetry.find_many(
+                    RankingRequestTelemetry.traffic_type == traffic_type,
+                    RankingRequestTelemetry.created_at >= since,
+                ).to_list()
+            interactions = [row.model_dump(mode="json") for row in interactions_prefetched]
+            telemetry = [row.model_dump(mode="json") for row in telemetry_prefetched]
             feature_rows = [row.model_dump(mode="json") for row in await FeatureStoreRow.find_many(
-                FeatureStoreRow.traffic_type == traffic_type
+                FeatureStoreRow.traffic_type == traffic_type,
+                FeatureStoreRow.date >= since_day,
             ).to_list()]
             daily = [row.model_dump(mode="json") for row in await AnalyticsDailyAggregate.find_many(
-                AnalyticsDailyAggregate.traffic_type == traffic_type
+                AnalyticsDailyAggregate.traffic_type == traffic_type,
+                AnalyticsDailyAggregate.date >= since_day,
             ).to_list()]
             funnels = [row.model_dump(mode="json") for row in await AnalyticsFunnelAggregate.find_many(
-                AnalyticsFunnelAggregate.traffic_type == traffic_type
+                AnalyticsFunnelAggregate.traffic_type == traffic_type,
+                AnalyticsFunnelAggregate.date >= since_day,
             ).to_list()]
             cohorts = [row.model_dump(mode="json") for row in await AnalyticsCohortAggregate.find_many(
                 AnalyticsCohortAggregate.traffic_type == traffic_type
