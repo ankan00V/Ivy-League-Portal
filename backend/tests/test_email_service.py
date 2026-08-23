@@ -57,6 +57,10 @@ class TestEmailDeliveryRetries(unittest.IsolatedAsyncioTestCase):
         counter = Mock()
         counter.labels.return_value = Mock()
         with (
+            # Pin the transport: these exercise the SMTP path, and without this they
+            # inherit EMAIL_PROVIDER from the developer's .env (now "resend") and
+            # assert against the wrong branch.
+            patch.object(email_service.settings, "EMAIL_PROVIDER", "smtp"),
             patch.object(email_service.settings, "SMTP_SERVER", "smtp.gmail.com"),
             patch.object(email_service.settings, "SMTP_HOST", "smtp.gmail.com"),
             patch.object(email_service.settings, "SMTP_PORT", 587),
@@ -78,6 +82,10 @@ class TestEmailDeliveryRetries(unittest.IsolatedAsyncioTestCase):
 
     async def test_send_email_otp_retries_then_succeeds(self) -> None:
         with (
+            # Pin the transport: these exercise the SMTP path, and without this they
+            # inherit EMAIL_PROVIDER from the developer's .env (now "resend") and
+            # assert against the wrong branch.
+            patch.object(email_service.settings, "EMAIL_PROVIDER", "smtp"),
             patch.object(email_service.settings, "SMTP_SERVER", "smtp.gmail.com"),
             patch.object(email_service.settings, "SMTP_HOST", "smtp.gmail.com"),
             patch.object(email_service.settings, "SMTP_PORT", 587),
@@ -107,6 +115,10 @@ class TestEmailDeliveryRetries(unittest.IsolatedAsyncioTestCase):
 
     async def test_send_email_otp_raises_after_max_retries(self) -> None:
         with (
+            # Pin the transport: these exercise the SMTP path, and without this they
+            # inherit EMAIL_PROVIDER from the developer's .env (now "resend") and
+            # assert against the wrong branch.
+            patch.object(email_service.settings, "EMAIL_PROVIDER", "smtp"),
             patch.object(email_service.settings, "SMTP_SERVER", "smtp.gmail.com"),
             patch.object(email_service.settings, "SMTP_HOST", "smtp.gmail.com"),
             patch.object(email_service.settings, "SMTP_PORT", 587),
@@ -133,6 +145,10 @@ class TestEmailDeliveryRetries(unittest.IsolatedAsyncioTestCase):
 
     async def test_delivery_failure_logs_redacted_context(self) -> None:
         with (
+            # Pin the transport: these exercise the SMTP path, and without this they
+            # inherit EMAIL_PROVIDER from the developer's .env (now "resend") and
+            # assert against the wrong branch.
+            patch.object(email_service.settings, "EMAIL_PROVIDER", "smtp"),
             patch.object(email_service.settings, "SMTP_SERVER", "smtp.gmail.com"),
             patch.object(email_service.settings, "SMTP_HOST", "smtp.gmail.com"),
             patch.object(email_service.settings, "SMTP_PORT", 587),
@@ -157,6 +173,10 @@ class TestEmailDeliveryRetries(unittest.IsolatedAsyncioTestCase):
 
     async def test_send_email_otp_can_disable_tls_cert_validation(self) -> None:
         with (
+            # Pin the transport: these exercise the SMTP path, and without this they
+            # inherit EMAIL_PROVIDER from the developer's .env (now "resend") and
+            # assert against the wrong branch.
+            patch.object(email_service.settings, "EMAIL_PROVIDER", "smtp"),
             patch.object(email_service.settings, "SMTP_SERVER", "smtp.gmail.com"),
             patch.object(email_service.settings, "SMTP_HOST", "smtp.gmail.com"),
             patch.object(email_service.settings, "SMTP_PORT", 587),
