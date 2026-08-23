@@ -94,6 +94,16 @@ const COMPETITIVE_KEYWORDS = [
     "buildathon",
     "ctf",
 ];
+/* Cards rendered per page.
+
+   The grid used to map over every filtered listing, so switching a chip asked
+   React to reconcile up to 1500 card components in one commit - which is what
+   made filtering feel heavy no matter how cheap the filter itself became. The
+   surrounding memoisation was already doing its job; the cost had moved into
+   render. A page plus an IntersectionObserver sentinel keeps each commit to a
+   couple of dozen nodes and restores the instant feel. */
+const CARD_PAGE_SIZE = 24;
+
 const CAREER_KEYWORDS = ["internship", "intern", "job", "hiring", "developer", "engineer", "lead"];
 
 const buildOpportunitiesSignature = (items: Opportunity[]): string =>
@@ -185,6 +195,7 @@ export default function InternshipsJobsPage() {
     const [detailOpp, setDetailOpp] = useState<Opportunity | null>(null);
     const [trackKeywords, setTrackKeywords] = useState<string[]>([]);
     const [filterMenuOpen, setFilterMenuOpen] = useState(false);
+    const [placementMenuOpen, setPlacementMenuOpen] = useState(false);
     const [savedOpportunityIds, setSavedOpportunityIds] = useState<Record<string, boolean>>({});
     const [hiddenOpportunityIds, setHiddenOpportunityIds] = useState<Record<string, boolean>>({});
     const [imageFallbackMap, setImageFallbackMap] = useState<Record<string, boolean>>({});
@@ -510,11 +521,62 @@ export default function InternshipsJobsPage() {
         };
     }, [trackByOpportunityId]);
 
+    /* How many of the filtered rows are actually on screen. Reset whenever the
+       filters change, so narrowing the list never leaves the user scrolled into
+       a page that no longer exists.
+
+       Adjusted during render rather than in an effect. An effect would paint the
+       old page count once against the new filter and then immediately re-render,
+       which is the flicker this pagination exists to avoid - and React lints it
+       for that reason. Comparing against the previous signature applies the reset
+       in the same pass. */
+    const filterSignature = `${roleTrack}|${placement}|${activeTrackFilters
+        .map((filter) => filter.label)
+        .join(",")}`;
+    const [visibleCount, setVisibleCount] = useState(CARD_PAGE_SIZE);
+    const [renderedSignature, setRenderedSignature] = useState(filterSignature);
+    if (renderedSignature !== filterSignature) {
+        setRenderedSignature(filterSignature);
+        setVisibleCount(CARD_PAGE_SIZE);
+    }
+
+    const renderedOpportunities = useMemo(
+        () => visibleOpportunities.slice(0, visibleCount),
+        [visibleOpportunities, visibleCount],
+    );
+
+    const loadMoreRef = useRef<HTMLDivElement | null>(null);
+    useEffect(() => {
+        const node = loadMoreRef.current;
+        if (!node || renderedOpportunities.length >= visibleOpportunities.length) {
+            return;
+        }
+        const observer = new IntersectionObserver(
+            (entries) => {
+                if (entries.some((entry) => entry.isIntersecting)) {
+                    setVisibleCount((current) => current + CARD_PAGE_SIZE);
+                }
+            },
+            // Start the next page before the sentinel is actually reached, so the
+            // grid is already filled by the time the user scrolls to it.
+            { rootMargin: "600px 0px" },
+        );
+        observer.observe(node);
+        return () => observer.disconnect();
+    }, [renderedOpportunities.length, visibleOpportunities.length]);
+
     const trackerContext = useMemo(
         () => ({ surface: "internships_jobs_page", activeTab: roleTrack }),
         [roleTrack]
     );
-    useOpportunityFeedImpressions(visibleOpportunities, trackerContext);
+    /* Rendered rows, not filtered rows.
+       This was passed visibleOpportunities, so selecting a chip logged an
+       impression for every listing the filter matched - up to 1500 of them -
+       when the student had seen a couple of dozen. That inflates the denominator
+       of every CTR the ranking work is measured on, in a repo that has already
+       shipped one fabricated engagement number. An impression should mean the
+       card was put on screen, and after pagination that is exactly this slice. */
+    useOpportunityFeedImpressions(renderedOpportunities, trackerContext);
 
     const handleSave = async (opportunity: Opportunity) => {
         setSavedOpportunityIds((current) => ({ ...current, [opportunity.id]: true }));
@@ -1311,7 +1373,11 @@ export default function InternshipsJobsPage() {
         title: string,
         subtitle: string,
         items: Opportunity[],
-        variant: "competitive" | "career" | "other"
+        variant: "competitive" | "career" | "other",
+        // Rows matching the filter, which is not the same as rows on screen now.
+        // The badge has to keep reporting the former or pagination would look
+        // like the filter silently dropped listings.
+        totalCount: number = items.length,
     ) => {
         if (!items.length) {
             return null;
@@ -1339,7 +1405,7 @@ export default function InternshipsJobsPage() {
                             boxShadow: "var(--shadow-sm)",
                         }}
                     >
-                        {items.length} live
+                        {totalCount} live
                     </div>
                 </div>
                 <div
@@ -1363,6 +1429,11 @@ export default function InternshipsJobsPage() {
                         variant === "competitive" ? renderCompetitiveCard(opp, idx) : renderCareerCard(opp, idx)
                     )}
                 </div>
+                {items.length < totalCount && (
+                    <div ref={loadMoreRef} className="feed-load-more" aria-hidden="true">
+                        Loading more roles…
+                    </div>
+                )}
             </section>
         );
     };
@@ -1412,73 +1483,75 @@ export default function InternshipsJobsPage() {
                     ))}
                 </div>
 
-                {/* Placement filter. Sits below the role track because it answers a
-                    different question — where the work happens, not what the work
-                    is — and the two compose: Technical + Remote is a normal ask.
+                {/* Filter bar. The placement and speciality filters are both
+                    dropdowns now. As pill rows they were 5 and 17 controls
+                    stacked under the three role tabs - 25 competing targets
+                    before a single listing was visible, which pushed the feed
+                    off the first screen and read as clutter rather than choice.
 
-                    The counts intentionally do not add up to All. India/International
-                    is geography and Remote/Hybrid is work mode, so a remote role in
-                    Bengaluru is counted twice; and listings the backend cannot place
-                    are counted only under All. Forcing one bucket per listing would
-                    hide remote Indian internships from India, which is the first
-                    place a student looks. */}
-                <div className="placement-tabs" role="tablist" aria-label="Location and work mode">
-                    {PLACEMENT_TABS.map((tab) => (
-                        <button
-                            key={tab.key}
-                            type="button"
-                            role="tab"
-                            aria-selected={placement === tab.key}
-                            className={`placement-tab ${placement === tab.key ? "active" : ""}`}
-                            onClick={() => setPlacement(tab.key)}
-                        >
-                            {tab.label}
-                            <span className="placement-count">{placementCounts[tab.key]}</span>
-                        </button>
-                    ))}
-                </div>
-
-                {/* Speciality filter, two presentations of the same
-                    multi-select state. Chips on desktop, where the horizontal
-                    room exists and one tap is faster than opening a menu. The
-                    dropdown takes over under 768px, where eight-plus pills wrap
-                    into several rows and push the listings off screen. CSS
-                    decides which is visible, so the selection survives a resize. */}
-                {trackFilters.length > 0 && (
-                    <div className="role-track-chips" aria-label="Refine by speciality">
+                    Counts move onto the options inside each menu, where they
+                    still answer "how many would this give me" at the moment the
+                    student is choosing, without spending header width. */}
+                <div className="feed-filter-bar">
+                    <div className="track-filter-select">
                         <button
                             type="button"
-                            className={`role-track-chip ${trackKeywords.length === 0 ? "active" : ""}`}
-                            onClick={() => setTrackKeywords([])}
+                            className="track-filter-trigger"
+                            aria-expanded={placementMenuOpen}
+                            aria-haspopup="listbox"
+                            onClick={() => {
+                                setPlacementMenuOpen((open) => !open);
+                                setFilterMenuOpen(false);
+                            }}
                         >
-                            {roleTrack === "technical"
-                                ? "All technical"
-                                : roleTrack === "non_technical"
-                                  ? "All non-technical"
-                                  : "All specialities"}
+                            <span>
+                                {placement === "all"
+                                    ? "Location & work mode"
+                                    : PLACEMENT_TABS.find((tab) => tab.key === placement)?.label}
+                            </span>
+                            <ChevronDown size={16} aria-hidden="true" />
                         </button>
-                        {trackFilters.map((filter) => {
-                            const checked = trackKeywords.includes(filter.label);
-                            return (
+
+                        {placement !== "all" && (
+                            <button
+                                type="button"
+                                className="track-filter-clear"
+                                onClick={() => setPlacement("all")}
+                            >
+                                Clear
+                            </button>
+                        )}
+
+                        {placementMenuOpen && (
+                            <>
                                 <button
-                                    key={filter.label}
                                     type="button"
-                                    aria-pressed={checked}
-                                    className={`role-track-chip ${checked ? "active" : ""}`}
-                                    onClick={() =>
-                                        setTrackKeywords((current) =>
-                                            current.includes(filter.label)
-                                                ? current.filter((item) => item !== filter.label)
-                                                : [...current, filter.label],
-                                        )
-                                    }
-                                >
-                                    {filter.label}
-                                </button>
-                            );
-                        })}
+                                    className="track-filter-backdrop"
+                                    aria-label="Close location filter"
+                                    onClick={() => setPlacementMenuOpen(false)}
+                                />
+                                <div className="track-filter-menu" role="listbox">
+                                    {PLACEMENT_TABS.map((tab) => (
+                                        <label key={tab.key} className="track-filter-option">
+                                            <input
+                                                type="radio"
+                                                name="placement"
+                                                checked={placement === tab.key}
+                                                onChange={() => {
+                                                    setPlacement(tab.key);
+                                                    setPlacementMenuOpen(false);
+                                                }}
+                                            />
+                                            <span>{tab.label}</span>
+                                            <span className="track-filter-count">
+                                                {placementCounts[tab.key]}
+                                            </span>
+                                        </label>
+                                    ))}
+                                </div>
+                            </>
+                        )}
                     </div>
-                )}
 
                 {/* Speciality filter. A dropdown rather than another chip row:
                     a second row of pills read as a peer of the track tabs and
@@ -1546,6 +1619,7 @@ export default function InternshipsJobsPage() {
                         )}
                     </div>
                 )}
+                </div>
 
                 <AskAIPanel
                     surface="internships_jobs_page"
@@ -1573,8 +1647,9 @@ export default function InternshipsJobsPage() {
                         {renderSection(
                             "Jobs & Internships",
                             "Hiring-focused roles, internships, and career-track openings.",
-                            visibleOpportunities,
-                            "career"
+                            renderedOpportunities,
+                            "career",
+                            visibleOpportunities.length,
                         )}
                         {!visibleOpportunities.length && (
                             <div className="card-panel" style={{ padding: "1.5rem" }}>
