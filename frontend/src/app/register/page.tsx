@@ -10,7 +10,9 @@ import PasswordStrengthMeter from "@/components/PasswordStrengthMeter";
 import { apiUrl } from "@/lib/api";
 import { setAccessToken } from "@/lib/auth-session";
 import { getApiErrorMessage, getUnknownErrorMessage } from "@/lib/error-utils";
+import { EMPLOYER_PORTAL_ENABLED } from "@/lib/employer-portal";
 import { evaluatePasswordStrength } from "@/lib/password-strength";
+import { getTurnstileToken, mountTurnstile } from "@/lib/turnstile";
 
 type RegisterStep = "details" | "otp";
 type AccountType = "candidate" | "employer";
@@ -32,6 +34,13 @@ const REGISTER_VISUALS = {
   },
 };
 
+function formatCooldown(seconds: number): string {
+  const total = Math.max(0, Math.floor(seconds));
+  const mins = Math.floor(total / 60);
+  const secs = total % 60;
+  return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+}
+
 export default function RegisterPage() {
   const router = useRouter();
   const defaultOtpCooldownSeconds = 60;
@@ -49,12 +58,14 @@ export default function RegisterPage() {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [providers, setProviders] = useState<OAuthProviderStatus>({ google: false, linkedin: false, microsoft: false });
+  const [issuedTurnstileToken, setIssuedTurnstileToken] = useState<{ step: RegisterStep; token: string | null } | null>(null);
 
   const visual = useMemo(() => REGISTER_VISUALS[accountType], [accountType]);
   const normalizedEmail = useMemo(() => email.trim().toLowerCase(), [email]);
   const currentOtpKey = useMemo(() => `${accountType}:${normalizedEmail}`, [accountType, normalizedEmail]);
   const passwordStrength = useMemo(() => evaluatePasswordStrength(password), [password]);
   const passwordsMatch = password.length > 0 && password === confirmPassword;
+  const turnstileToken = issuedTurnstileToken?.step === step ? issuedTurnstileToken.token : null;
 
   React.useEffect(() => {
     const run = async () => {
@@ -71,6 +82,33 @@ export default function RegisterPage() {
     };
     void run();
   }, []);
+
+  React.useEffect(() => {
+    let dispose: (() => void) | null = null;
+    let cancelled = false;
+    const node = document.getElementById("turnstile-mount");
+    if (!node) {
+      return;
+    }
+
+    mountTurnstile(node, "signup_otp", (token) => {
+      if (!cancelled) {
+        setIssuedTurnstileToken({ step, token });
+      }
+    })
+      .then((cleanup) => {
+        dispose = cleanup;
+      })
+      .catch(() => {
+        // The submit path can request an explicit challenge if the inline
+        // widget is blocked. The API remains the final verifier in either case.
+      });
+
+    return () => {
+      cancelled = true;
+      dispose?.();
+    };
+  }, [step]);
 
   React.useEffect(() => {
     if (otpCooldownSeconds <= 0) {
@@ -135,10 +173,20 @@ export default function RegisterPage() {
         throw new Error(`Please wait ${otpCooldownSeconds}s before requesting another OTP.`);
       }
 
+      // A Turnstile token is single-use. The visible widget issues a fresh
+      // token for each step; the explicit challenge is only a recovery path if
+      // the widget script failed to load.
+      const verificationToken = turnstileToken ?? (await getTurnstileToken("signup_otp"));
+
       const res = await fetch(apiUrl("/api/v1/auth/send-otp"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: normalizedEmail, purpose: "signup", account_type: accountType }),
+        body: JSON.stringify({
+          email: normalizedEmail,
+          purpose: "signup",
+          account_type: accountType,
+          turnstile_token: verificationToken,
+        }),
       });
       const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
       if (!res.ok) {
@@ -286,30 +334,38 @@ export default function RegisterPage() {
         <div className="auth-right-pane" style={{ padding: "2rem", display: "flex", flexDirection: "column", gap: "1rem" }}>
           <h1 style={{ fontSize: "2.2rem", marginBottom: "0.35rem" }}>Create your account</h1>
 
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: "0.5rem",
-              background: "var(--bg-surface-hover)",
-              padding: "0.3rem",
-              borderRadius: "999px",
-              border: "2px solid var(--border-subtle)",
-              maxWidth: "360px",
-            }}
-          >
-            <button type="button" className={accountType === "candidate" ? "btn-primary" : "btn-secondary"} style={{ borderRadius: "999px", width: "100%" }} onClick={() => setAccountType("candidate")} disabled={loading || step === "otp"}>
-              Candidate
-            </button>
-            <button type="button" className={accountType === "employer" ? "btn-primary" : "btn-secondary"} style={{ borderRadius: "999px", width: "100%" }} onClick={() => setAccountType("employer")} disabled={loading || step === "otp"}>
-              Employer
-            </button>
-          </div>
-          {accountType === "employer" && (
-            <p style={{ color: "var(--text-secondary)", fontWeight: 700 }}>
-              Employer sign-up requires a corporate email domain.
-            </p>
+          {/* Account-type toggle is hidden while the employer portal is retired.
+              accountType stays pinned to "candidate", so every request below
+              keeps sending the field the API still expects. */}
+          {EMPLOYER_PORTAL_ENABLED && (
+            <>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "0.5rem",
+                background: "var(--bg-surface-hover)",
+                padding: "0.3rem",
+                borderRadius: "999px",
+                border: "2px solid var(--border-subtle)",
+                maxWidth: "360px",
+              }}
+            >
+              <button type="button" className={accountType === "candidate" ? "btn-primary" : "btn-secondary"} style={{ borderRadius: "999px", width: "100%" }} onClick={() => setAccountType("candidate")} disabled={loading || step === "otp"}>
+                Candidate
+              </button>
+              <button type="button" className={accountType === "employer" ? "btn-primary" : "btn-secondary"} style={{ borderRadius: "999px", width: "100%" }} onClick={() => setAccountType("employer")} disabled={loading || step === "otp"}>
+                Employer
+              </button>
+            </div>
+            {accountType === "employer" && (
+              <p style={{ color: "var(--text-secondary)", fontWeight: 700 }}>
+                Employer sign-up requires a corporate email domain.
+              </p>
+            )}
+            </>
           )}
+
 
           {error && (
             <div style={{ background: "rgba(239,68,68,0.08)", border: "2px solid #ef4444", color: "#b91c1c", borderRadius: "var(--radius-sm)", padding: "0.75rem" }}>
@@ -383,6 +439,8 @@ export default function RegisterPage() {
                 style={{ borderColor: confirmPassword.length === 0 || passwordsMatch ? undefined : "#ef4444" }}
               />
 
+              <div id="turnstile-mount" style={{ display: "grid", justifyContent: "center", minHeight: "1px" }} />
+
               <button
                 type="submit"
                 className="btn-primary"
@@ -402,27 +460,33 @@ export default function RegisterPage() {
                 type="text"
                 className="input-base"
                 value={otp}
-                onChange={(event) => setOtp(event.target.value)}
-                placeholder="123456"
+                onChange={(event) => setOtp(event.target.value.replace(/\D/g, ""))}
+                placeholder="XXXXXX"
                 maxLength={6}
                 minLength={6}
+                inputMode="numeric"
+                pattern="[0-9]{6}"
                 required
                 disabled={loading}
                 style={{ letterSpacing: "0.25em", textAlign: "center", fontWeight: 800 }}
               />
-              <button
-                type="button"
-                className="btn-secondary"
-                disabled={loading || otpCooldownSeconds > 0}
-                onClick={() => void requestOtp()}
-                style={{ width: "100%", justifyContent: "center" }}
-              >
-                {otpCooldownSeconds > 0 ? `Resend OTP in ${otpCooldownSeconds}s` : "Resend OTP"}
-              </button>
+
+              <div id="turnstile-mount" style={{ display: "grid", justifyContent: "center", minHeight: "1px" }} />
 
               <button type="submit" className="btn-primary" disabled={loading} style={{ width: "100%", justifyContent: "center", marginTop: "0.25rem" }}>
                 {loading ? "Verifying..." : "Verify OTP & Continue"}
               </button>
+
+              <p className="auth-resend-row">
+                Didn&apos;t receive code?{" "}
+                {otpCooldownSeconds > 0 ? (
+                  <span className="auth-resend-wait">Resend in {formatCooldown(otpCooldownSeconds)}</span>
+                ) : (
+                  <button type="button" className="auth-resend-link" disabled={loading} onClick={() => void requestOtp()}>
+                    Resend
+                  </button>
+                )}
+              </p>
 
               <button type="button" style={{ border: "none", background: "none", color: "var(--brand-primary)", fontWeight: 700, cursor: "pointer" }} onClick={() => setStep("details")}>
                 Edit details

@@ -1,7 +1,12 @@
 import { useEffect, useRef } from "react";
 
 import { getAccessToken } from "@/lib/auth-session";
-import { logOpportunityInteraction, type OpportunityInteractionInput, type OpportunityInteractionType } from "@/lib/opportunity-interactions";
+import {
+  logOpportunityInteraction,
+  logOpportunityInteractionsBatch,
+  type OpportunityInteractionInput,
+  type OpportunityInteractionType,
+} from "@/lib/opportunity-interactions";
 
 export interface FeedTrackedOpportunity {
   id: string;
@@ -19,12 +24,12 @@ export interface FeedTrackerContext {
   activeTab: string;
 }
 
-export async function logTrackedOpportunityEvent(
+function buildTrackedPayload(
   opportunity: FeedTrackedOpportunity,
   interactionType: OpportunityInteractionType,
   context: FeedTrackerContext
-): Promise<boolean> {
-  const payload: OpportunityInteractionInput = {
+): OpportunityInteractionInput {
+  return {
     opportunityId: opportunity.id,
     interactionType,
     rankingMode: opportunity.ranking_mode || "baseline",
@@ -39,7 +44,14 @@ export async function logTrackedOpportunityEvent(
       active_tab: context.activeTab,
     },
   };
-  return logOpportunityInteraction(payload);
+}
+
+export async function logTrackedOpportunityEvent(
+  opportunity: FeedTrackedOpportunity,
+  interactionType: OpportunityInteractionType,
+  context: FeedTrackerContext
+): Promise<boolean> {
+  return logOpportunityInteraction(buildTrackedPayload(opportunity, interactionType, context));
 }
 
 export function useOpportunityFeedImpressions(
@@ -62,9 +74,16 @@ export function useOpportunityFeedImpressions(
     }
 
     lastBatchRef.current = batchSignature;
-    void Promise.allSettled(
+    /* One request for the whole page, not one per card.
+       This fired Promise.allSettled over every visible listing, so a feed
+       showing 797 cards opened 797 simultaneous POSTs - and did it again on
+       every filter change, because narrowing the list changes the signature.
+       The feed rate limit is 100/min, so the page spent its time collecting
+       429s while the browser queued hundreds of connections. The batch
+       endpoint already existed on both sides; it just was not being used. */
+    void logOpportunityInteractionsBatch(
       opportunities.map((opportunity, idx) =>
-        logTrackedOpportunityEvent(
+        buildTrackedPayload(
           {
             ...opportunity,
             rank_position: opportunity.rank_position ?? idx + 1,

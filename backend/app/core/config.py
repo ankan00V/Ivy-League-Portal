@@ -1,4 +1,9 @@
 from pathlib import Path
+import logging
+import re
+import warnings
+
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional
 
@@ -46,7 +51,22 @@ class Settings(BaseSettings):
     AUTH_SESSION_REDIS_PREFIX: str = "vidyaverse:auth"
     AUTH_SESSION_ACTIVITY_UPDATE_INTERVAL_SECONDS: int = 60
     AUTH_COOKIE_ONLY_MODE: bool = False
+    # Student accounts must be created with a college address. Applied only at
+    # signup: existing accounts keep whatever they registered with, because
+    # enforcing it at login would lock out every account that predates the rule.
+    CANDIDATE_REQUIRE_INSTITUTIONAL_EMAIL: bool = True
+    # Off means "any domain that is not a consumer mailbox", which admits real
+    # college domains like lpu.in that carry no academic suffix. Turn on once
+    # the set of known college domains is complete enough to be strict.
+    CANDIDATE_INSTITUTIONAL_EMAIL_STRICT: bool = False
     ADMIN_BOOTSTRAP_ENABLED: bool = True
+
+    # The employer portal is retired, not deleted. There are zero employer
+    # accounts and zero employer-posted opportunities, while the only gate on
+    # employer powers was a non-freemail email domain -- so self-serve signup
+    # let anyone with a bought domain post straight into the candidate feed.
+    # Flip this to True to bring the whole workflow back; nothing was removed.
+    EMPLOYER_PORTAL_ENABLED: bool = False
     # Deliberately empty. This identity is reserved for the hidden admin control
     # plane, so baking a real address into source shipped one maintainer's
     # personal email to every clone of the repository and made it the admin
@@ -121,11 +141,12 @@ class Settings(BaseSettings):
     AUTH_AUDIT_RETENTION_DAYS: int = 90
     SESSION_RECORD_RETENTION_DAYS: int = 30
 
-    # Browser automation (Playwright) for auto-application flow
-    PLAYWRIGHT_HEADLESS: bool = True
+    # Playwright timeout for the Naukri listing fallback (scraper.py). The rest of
+    # this block - PLAYWRIGHT_HEADLESS, AUTO_SUBMIT_ENABLED,
+    # AUTO_APPLY_SCREENSHOT_DIR - configured an auto-application flow that was
+    # written and never wired to an endpoint; the service and its settings went
+    # together.
     PLAYWRIGHT_TIMEOUT_MS: int = 45000
-    AUTO_SUBMIT_ENABLED: bool = False
-    AUTO_APPLY_SCREENSHOT_DIR: str = "/tmp/vidyaverse-auto-apply"
 
     # Scraper reliability controls
     SCRAPER_AUTORUN_ENABLED: bool = True
@@ -339,6 +360,17 @@ class Settings(BaseSettings):
     
     # Celery & Redis
     REDIS_URL: str = "redis://localhost:6379/0"
+    # Optional second Redis for the online feature store. That store is the
+    # heavy writer (~2 commands per feature row, tens of thousands per warehouse
+    # rebuild) and it is disposable - every key is TTL'd and rebuildable. Auth
+    # sessions and their revocation keys are neither, so they must stay on one
+    # stable instance: moving them would log everyone out and, worse, silently
+    # un-revoke sessions revoked on the old instance. Falls back to REDIS_URL.
+    REDIS_FEATURE_STORE_URL: Optional[str] = None
+    # Optional third Redis for response cache and rate-limit counters. Also
+    # disposable: a cold cache just re-fetches, and resetting rate-limit windows
+    # costs at most one extra allowed request per window. Falls back to REDIS_URL.
+    REDIS_CACHE_URL: Optional[str] = None
     UPSTASH_REDIS_REST_URL: Optional[str] = None
     UPSTASH_REDIS_REST_TOKEN: Optional[str] = None
 
@@ -423,6 +455,17 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: Optional[str] = None
     SMTP_FROM_EMAIL: str = "noreply@vidyaverse.com"
     SMTP_FROM_NAME: Optional[str] = None
+
+    # Transactional email provider. Gmail SMTP was delivering auth mail from a
+    # consumer @gmail.com address, which Microsoft 365 tenants (every college
+    # domain this product requires at signup) filter hard -- verified sends were
+    # accepted by Gmail and never reached the inbox. "resend" sends over HTTPS
+    # from a domain we DKIM-sign ourselves. "smtp" keeps the old path.
+    EMAIL_PROVIDER: str = "smtp"
+    RESEND_API_KEY: Optional[str] = None
+    RESEND_API_BASE_URL: str = "https://api.resend.com"
+    RESEND_FROM_EMAIL: Optional[str] = None
+    RESEND_TIMEOUT_SECONDS: float = 20.0
     AUTH_OTP_FROM_EMAIL: Optional[str] = None  # compatibility alias
     AUTH_OTP_FROM_NAME: Optional[str] = None   # compatibility alias
     EMAIL_AUTH_SECRET: Optional[str] = None
@@ -485,7 +528,46 @@ class Settings(BaseSettings):
     RAG_REQUEST_TIMEOUT_SECONDS: float = 25.0
     RAG_RETRIEVAL_TIMEOUT_SECONDS: float = 45.0
     RAG_LLM_TIMEOUT_SECONDS: float = 15.0
+    # The model must close a JSON object containing up to three shortlist entries,
+    # each carrying a why_fit sentence and a citation URL. Source URLs run long
+    # (internshala slugs alone are ~120 characters), so 700 truncated every real
+    # response mid-string: json.loads then failed and the grounded answer was
+    # silently replaced by the canned heuristic. Measured completions land near
+    # 1,100 tokens; 2,000 leaves headroom without inviting a rambling answer.
+    RAG_LLM_MAX_TOKENS: int = 2000
     RAG_JUDGE_TIMEOUT_SECONDS: float = 8.0
+
+    # Cross-encoder reranking of the bi-encoder shortlist. The bi-encoder scores
+    # query and document independently, which is what lets it scan the corpus but
+    # also what let "product and analytics competitions" retrieve a Codeforces
+    # round at cosine 0.5. The cross-encoder reads the pair together and separates
+    # those two by ~20 logits.
+    #
+    # CANDIDATES is the shortlist depth handed to the reranker, not the answer
+    # size: retrieval over-fetches this many, the reranker reorders them, and the
+    # caller's top_k is applied afterwards. Too small and a good candidate never
+    # reaches the reranker; cost is linear in this number, so it is bounded.
+    RAG_RERANKER_ENABLED: bool = True
+    RAG_RERANKER_MODEL: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    RAG_RERANK_CANDIDATES: int = 40
+    # RRF damping. 60 is the value from the original TREC paper and is a plateau,
+    # not a tuned constant: it flattens the contribution of rank differences deep
+    # in the list so the fusion is decided by the top of each ranking.
+    RAG_RERANK_RRF_K: float = 60.0
+    # Below this cross-encoder score the shortlist is reported as "no strong
+    # match" instead of being presented as an answer. Cosine similarity cannot
+    # express this: the nearest vector is always returned, so "product and
+    # analytics competitions" scored 0.50 against a Codeforces round and the
+    # generator wrote it up as a shortlist.
+    #
+    # Measured on this corpus over 11 queries. Six the corpus can answer scored
+    # -1.03 to +4.71; five it genuinely cannot ("medieval Latin manuscript
+    # conservation fellowship", "commercial deep sea diving certification")
+    # scored -8.07 to -10.91. -5.0 sits in the middle of that 7-logit gap, so
+    # neither side is near the boundary. Re-measure if the corpus or the
+    # reranker model changes - the number is a property of both.
+    RAG_ABSTAIN_ON_LOW_RELEVANCE: bool = True
+    RAG_MIN_RELEVANCE_SCORE: float = -5.0
     RAG_OFFLINE_EVAL_DATASET_PATH: str = "backend/benchmarks/data/gold_temporal_holdout.jsonl"
     RAG_OFFLINE_MIN_RECALL_AT_K: float = 0.35
     RAG_ONLINE_MIN_POSITIVE_FEEDBACK_RATE: float = 0.55
@@ -590,7 +672,12 @@ class Settings(BaseSettings):
     RESUME_STORAGE_DIR: str = "backend/storage/resumes"
     RESUME_MAX_FILE_SIZE_MB: int = 8
     ANALYTICS_WAREHOUSE_AUTORUN_ENABLED: bool = True
-    ANALYTICS_WAREHOUSE_REBUILD_INTERVAL_HOURS: int = 24
+    # Must stay below ANALYTICS_WAREHOUSE_MAX_STALENESS_MINUTES (180) or the
+    # freshness gate cannot pass. At the previous 24h the marts were reported
+    # stale for 21 of every 24 hours even when every rebuild succeeded - the
+    # refresh cadence and the freshness SLO were describing different systems.
+    # A rebuild measured ~96s on this corpus, so 2h leaves an hour of grace.
+    ANALYTICS_WAREHOUSE_REBUILD_INTERVAL_HOURS: int = 2
 
     # Embeddings / semantic ranking
     EMBEDDING_PROVIDER: str = "sentence_transformers"  # sentence_transformers | openai | auto
@@ -730,6 +817,35 @@ class Settings(BaseSettings):
         case_sensitive=True,
     )
 
+    @model_validator(mode="after")
+    def _warn_on_incoherent_warehouse_cadence(self) -> "Settings":
+        """Refresh cadence must be able to satisfy the freshness SLO.
+
+        These two settings were 24h and 180min, so the marts were reported stale
+        for 21 of every 24 hours no matter how well the rebuild ran. The smoke
+        test showed a warehouse warning that no amount of fixing the exporter
+        could clear, because nothing was broken - the two numbers just described
+        different systems.
+
+        A warning rather than a hard failure: an operator may deliberately widen
+        the interval while accepting a stale gate, and refusing to boot over a
+        reporting threshold would be worse than saying so loudly.
+        """
+        interval_minutes = max(1, int(self.ANALYTICS_WAREHOUSE_REBUILD_INTERVAL_HOURS)) * 60
+        staleness_minutes = max(1, int(self.ANALYTICS_WAREHOUSE_MAX_STALENESS_MINUTES))
+        if self.ANALYTICS_WAREHOUSE_AUTORUN_ENABLED and interval_minutes >= staleness_minutes:
+            warnings.warn(
+                "ANALYTICS_WAREHOUSE_REBUILD_INTERVAL_HOURS="
+                f"{self.ANALYTICS_WAREHOUSE_REBUILD_INTERVAL_HOURS}h "
+                f"({interval_minutes}min) is not shorter than "
+                "ANALYTICS_WAREHOUSE_MAX_STALENESS_MINUTES="
+                f"{staleness_minutes}min, so the warehouse freshness gate will "
+                "report stale between rebuilds even when every rebuild succeeds.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        return self
+
 settings = Settings()
 
 
@@ -776,3 +892,65 @@ def analytics_bi_tool_url() -> Optional[str]:
 
 def smtp_from_name_value() -> Optional[str]:
     return (settings.SMTP_FROM_NAME or settings.AUTH_OTP_FROM_NAME or "").strip() or None
+
+
+logger = logging.getLogger(__name__)
+
+
+def _dsn_host(dsn: str) -> str:
+    """Host:port of a DSN, with credentials stripped - safe to log."""
+    match = re.search(r"@([^/?]+)", str(dsn or ""))
+    return match.group(1) if match else "unknown"
+
+
+def resolve_postgres_dsn() -> str:
+    """The serving Postgres DSN, chosen out loud instead of guessed.
+
+    This used to be `SUPABASE_DATABASE_URL or NEON_DATABASE_URL`. When the
+    Supabase URL went missing from .env, that expression did not fail - it
+    quietly served a stale Neon copy instead: 1,245 active opportunities rather
+    than 1,797, an empty feature store, and a vector index holding 5% of its
+    rows. Every health check passed. The app cannot tell "use the other database"
+    from "someone deleted a line", so it must not choose silently.
+
+    Now: no DSN is a hard failure, more than one is a warning naming both, and
+    the resolved host is always logged so the serving database is visible in the
+    first lines of startup.
+    """
+    candidates = [
+        ("SUPABASE_DATABASE_URL", settings.SUPABASE_DATABASE_URL),
+        ("NEON_DATABASE_URL", settings.NEON_DATABASE_URL),
+    ]
+    configured = [(name, str(value).strip()) for name, value in candidates if str(value or "").strip()]
+
+    if not configured:
+        raise RuntimeError(
+            "No Postgres DSN is configured. Set SUPABASE_DATABASE_URL (or "
+            "NEON_DATABASE_URL) in backend/.env. Refusing to start rather than "
+            "guess which database to serve."
+        )
+
+    name, dsn = configured[0]
+    if len(configured) > 1:
+        logger.warning(
+            "Multiple Postgres DSNs configured (%s). Serving from %s. Remove the "
+            "unused one so a deleted line cannot silently reroute the app to a "
+            "different database.",
+            ", ".join(n for n, _ in configured),
+            name,
+        )
+    logger.info("Serving Postgres from %s host=%s", name, _dsn_host(dsn))
+    return dsn
+
+
+def email_provider_value() -> str:
+    return (settings.EMAIL_PROVIDER or "smtp").strip().lower() or "smtp"
+
+
+def resend_from_email_value() -> str:
+    """Sender for Resend, which requires an address on the verified domain.
+
+    Falls back to the SMTP sender so a half-configured switch is caught by
+    Resend's own validation rather than silently sending as the wrong domain.
+    """
+    return (settings.RESEND_FROM_EMAIL or "").strip() or smtp_from_email_value()

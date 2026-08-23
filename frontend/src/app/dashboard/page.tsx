@@ -4,6 +4,7 @@ import Sidebar from "@/components/Sidebar";
 import { motion, useMotionValue, useTransform } from "framer-motion";
 import type { HTMLMotionProps } from "framer-motion";
 import { TrendingUp, Briefcase, ShieldCheck, Activity, Sparkles, Star, CircleAlert, CircleCheck, X, Loader2 } from "lucide-react";
+import { EMPLOYER_PORTAL_ENABLED } from "@/lib/employer-portal";
 import { apiUrl } from "@/lib/api";
 import { COOKIE_SESSION_SENTINEL, clearAccessToken, getAccessToken } from "@/lib/auth-session";
 import { useRouter } from "next/navigation";
@@ -292,7 +293,7 @@ export default function DashboardPage() {
 
             if (hasAuth) {
                 if (profileData) {
-                    if (String(profileData.account_type || "").toLowerCase() === "employer") {
+                    if (EMPLOYER_PORTAL_ENABLED && String(profileData.account_type || "").toLowerCase() === "employer") {
                         router.replace("/employer/dashboard");
                         return;
                     }

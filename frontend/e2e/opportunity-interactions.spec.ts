@@ -70,6 +70,17 @@ async function stubOpportunityRoutes(
       return;
     }
 
+    if (request.method() === "POST" && path.endsWith("/api/v1/opportunities/interactions/batch")) {
+      const body = request.postDataJSON() as { events?: InteractionPayload[] };
+      captured.push(...(body.events || []));
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ status: "ok" }),
+      });
+      return;
+    }
+
     if (request.method() === "POST" && path.endsWith("/api/v1/opportunities/interactions")) {
       const body = request.postDataJSON() as InteractionPayload;
       captured.push(body);

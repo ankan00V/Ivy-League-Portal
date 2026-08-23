@@ -44,8 +44,59 @@ test("@smoke login OTP request enforces 60s cooldown in UI", async ({ page }) =>
   await page.getByPlaceholder("Enter Email").fill("student@example.com");
   await page.getByRole("button", { name: /Continue with OTP/i }).click();
 
-  await expect(page.getByPlaceholder("123456")).toBeVisible();
-  await expect(page.getByRole("button", { name: /Resend OTP in (59|60)s/i })).toBeVisible();
+  await expect(page.getByPlaceholder("XXXXXX")).toBeVisible();
+  await expect(page.getByText(/Didn't receive code\?/i)).toBeVisible();
+  await expect(page.getByText(/Resend in 0[01]:[0-5]\d/i)).toBeVisible();
+});
+
+test("@smoke signup requests OTP with its visible Turnstile token and uses inline resend", async ({ page }) => {
+  await stubOAuthProviders(page);
+  await stubTurnstile(page);
+
+  let requestBody: Record<string, unknown> | null = null;
+  await page.route("**/api/v1/auth/send-otp", async (route) => {
+    requestBody = route.request().postDataJSON() as Record<string, unknown>;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ message: "OTP sent", cooldown_seconds: 60 }),
+    });
+  });
+
+  await page.goto("/register");
+  await page.getByPlaceholder("Bob").fill("Test");
+  await page.getByPlaceholder("Builder").fill("Student");
+  await page.getByPlaceholder("student@college.edu").fill("student@lpu.in");
+  await page.getByPlaceholder("Create a password").fill("StrongPass1");
+  await page.getByPlaceholder("Re-enter password").fill("StrongPass1");
+  await page.getByRole("button", { name: "Send OTP", exact: true }).click();
+
+  await expect(page.getByPlaceholder("XXXXXX")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Verify OTP & Continue", exact: true })).toBeVisible();
+  await expect(page.getByText(/Didn't receive code\?/i)).toBeVisible();
+  await expect(page.getByText(/Resend in 0[01]:[0-5]\d/i)).toBeVisible();
+  expect(requestBody).toMatchObject({
+    email: "student@lpu.in",
+    purpose: "signup",
+    account_type: "candidate",
+    turnstile_token: "playwright-turnstile-token",
+  });
+});
+
+test("signup reports a Turnstile load failure instead of leaving Send OTP pending", async ({ page }) => {
+  await stubOAuthProviders(page);
+  await page.route("https://challenges.cloudflare.com/**", async (route) => route.abort());
+
+  await page.goto("/register");
+  await page.getByPlaceholder("Bob").fill("Test");
+  await page.getByPlaceholder("Builder").fill("Student");
+  await page.getByPlaceholder("student@college.edu").fill("student@lpu.in");
+  await page.getByPlaceholder("Create a password").fill("StrongPass1");
+  await page.getByPlaceholder("Re-enter password").fill("StrongPass1");
+  await page.getByRole("button", { name: "Send OTP", exact: true }).click();
+
+  await expect(page.getByText("Unable to load Turnstile")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Send OTP", exact: true })).toBeEnabled();
 });
 
 test("@smoke unauthenticated users can view dashboard preview without forced login redirect", async ({ page }) => {
@@ -147,109 +198,14 @@ test("completed onboarding redirects users away from onboarding page", async ({ 
   await expect.poll(() => page.url()).toContain("/dashboard");
 });
 
-test("employer lifecycle update posts expected transition", async ({ page }) => {
+test("retired employer dashboard redirects to the candidate dashboard", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("auth_session_present", "1");
     localStorage.setItem("access_token_expires_at", String(Date.now() + 60 * 60 * 1000));
   });
 
-  let lifecycleStatus = "draft";
-  const capturedStatuses: string[] = [];
-
-  await page.route("**/api/v1/users/me/profile", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ account_type: "employer", first_name: "Ankan", company_name: "VidyaVerse" }),
-    });
-  });
-
-  await page.route("**/api/v1/employer/dashboard/summary", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        company_name: "VidyaVerse",
-        opportunities_posted: 1,
-        active_opportunities: lifecycleStatus === "published" ? 1 : 0,
-        total_applications: 0,
-        submitted_applications: 0,
-        pending_applications: 0,
-        auto_filled_applications: 0,
-        shortlisted_applications: 0,
-        rejected_applications: 0,
-        interview_applications: 0,
-        recent_applications: [],
-      }),
-    });
-  });
-
-  await page.route("**/api/v1/employer/opportunities", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify([
-        {
-          id: EMPLOYER_OPPORTUNITY_ID,
-          title: "Campus AI Internship",
-          description: "Build retrieval and ranking systems.",
-          opportunity_type: "Internship",
-          domain: "AI",
-          location: "Bengaluru",
-          eligibility: "CS students",
-          application_url: OPPORTUNITY_URL,
-          deadline: "2026-05-01T00:00:00.000Z",
-          lifecycle_status: lifecycleStatus,
-          applications_count: 0,
-          created_at: "2026-04-19T00:00:00.000Z",
-        },
-      ]),
-    });
-  });
-
-  await page.route("**/api/v1/employer/audit-logs?limit=25", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify([]),
-    });
-  });
-
-  await page.route(`**/api/v1/employer/opportunities/${EMPLOYER_OPPORTUNITY_ID}/lifecycle`, async (route) => {
-    const payload = route.request().postDataJSON() as { status?: string };
-    const nextStatus = String(payload.status || "draft");
-    capturedStatuses.push(nextStatus);
-    lifecycleStatus = nextStatus;
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        id: EMPLOYER_OPPORTUNITY_ID,
-        title: "Campus AI Internship",
-        description: "Build retrieval and ranking systems.",
-        opportunity_type: "Internship",
-        domain: "AI",
-        location: "Bengaluru",
-        eligibility: "CS students",
-        application_url: OPPORTUNITY_URL,
-        deadline: "2026-05-01T00:00:00.000Z",
-        lifecycle_status: lifecycleStatus,
-        applications_count: 0,
-        created_at: "2026-04-19T00:00:00.000Z",
-      }),
-    });
-  });
-
   await page.goto("/employer/dashboard");
-  await expect(page.getByText("Employer Command Center")).toBeVisible();
-
-  const lifecycleSelect = page.locator('section:has-text("Your Posted Opportunities") table tbody tr select').first();
-  await lifecycleSelect.selectOption("published");
-
-  await expect
-    .poll(() => capturedStatuses.includes("published"))
-    .toBeTruthy();
-  await expect(page.getByText("Lifecycle updated to published.")).toBeVisible();
+  await expect(page).toHaveURL(/\/dashboard$/);
 });
 
 test("apply flow persists application and redirects to opportunity URL", async ({ page }) => {

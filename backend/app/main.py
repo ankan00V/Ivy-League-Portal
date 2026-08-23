@@ -29,6 +29,8 @@ from app.services.model_artifact_service import model_artifact_service
 from app.services.personalization.learned_ranker import learned_ranker
 from app.services.warehouse_export_service import warehouse_export_service
 from app.services.vector_service import opportunity_vector_service
+from app.services.reranker_service import reranker_service
+from app.services.ai_engine import ai_system
 from app.core.redis import close_redis, get_redis
 from app.core import metrics as metrics_module
 from app.core.metrics import (
@@ -85,12 +87,13 @@ def _validate_production_analytics_config() -> None:
 def validate_production_operational_config() -> None:
     if settings.ENVIRONMENT.strip().lower() != "production":
         return
-    mongo_url = (settings.MONGODB_URL or "").strip().lower()
     redis_url = (settings.REDIS_URL or "").strip().lower()
     if settings.SECRET_KEY.startswith("your_super_secret_key_here"):
         raise RuntimeError("SECRET_KEY must be set via environment in production.")
-    if mongo_url.startswith("mongodb://localhost") or mongo_url.startswith("mongodb://127.0.0.1"):
-        raise RuntimeError("Production requires managed MongoDB; MONGODB_URL cannot point at localhost.")
+    # The MongoDB guard that used to live here is gone: MONGODB_URL is unused
+    # under POSTGRES_ODM_ENABLED, but it defaults to mongodb://localhost:27017,
+    # so simply deleting the line from .env would have failed this check and
+    # blocked a production deploy for a database the app never contacts.
     if redis_url.startswith("redis://localhost") or redis_url.startswith("redis://127.0.0.1"):
         raise RuntimeError("Production requires managed Redis/Upstash; REDIS_URL cannot point at localhost.")
     _validate_production_analytics_config()
@@ -603,6 +606,20 @@ async def _warmup_rag_components() -> None:
     await embedding_service.embed_query("warmup query")
     await nlp_service.classify_intent("data science internships")
     await opportunity_vector_service.rebuild(force=False)
+    # The cross-encoder is the most expensive of these to load: measured at ~30s
+    # for the first Ask AI request versus 2-3s once resident. Without this the
+    # first real user after every boot pays that, and RAG_LLM_TIMEOUT_SECONDS
+    # (12s in this environment) cuts them off before an answer is generated -
+    # so the cold request does not just feel slow, it silently degrades to the
+    # heuristic fallback. Scoring one trivial pair is enough to force the load.
+    await reranker_service.rerank(
+        query="warmup query",
+        candidates=[{"title": "warmup a"}, {"title": "warmup b"}],
+    )
+    # spaCy's en_core_web_sm, used by resume parsing rather than by RAG. It lazy
+    # loads on first use, which measured ~1.0s against ~0.04s warm, and the
+    # student who happens to upload first after a boot is the one who pays it.
+    await asyncio.to_thread(ai_system._ensure_nlp)
 
 # Compared on a stripped, lowercased value. Every production guard in this file
 # normalises before comparing, but these three did not - so ENVIRONMENT set to

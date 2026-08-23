@@ -20,7 +20,7 @@ from typing import Any, Optional
 
 import asyncpg
 
-from app.core.config import settings
+from app.core.config import settings, resolve_postgres_dsn
 from app.db.pg_odm import (
     UnsupportedQuery,
     build_where,
@@ -50,7 +50,7 @@ def _pool_size() -> int:
 async def get_pool() -> asyncpg.Pool:
     global _pool
     if _pool is None or _pool._closed:  # type: ignore[attr-defined]
-        dsn = settings.SUPABASE_DATABASE_URL or settings.NEON_DATABASE_URL
+        dsn = resolve_postgres_dsn()
         if not dsn:
             raise RuntimeError("no Postgres URL configured")
         _pool = await asyncpg.create_pool(
@@ -611,9 +611,35 @@ async def _delete_instance(instance) -> Any:
 
 
 async def _insert_many(model_cls, documents: list) -> Any:
-    inserted = [await _insert_instance(d) for d in documents]
+    """Route to bulk_save rather than looping single-row inserts.
+
+    This was `[await _insert_instance(d) for d in documents]` - one round trip
+    per document, sequentially, to a hosted Postgres. The analytics warehouse
+    rebuild writes its four marts through here, and on 36,948 interaction rows
+    it ran for over thirty minutes and then died with
+    `ConnectionDoesNotExistError: connection was closed in the middle of
+    operation`, because the connection does not survive that many serial
+    statements. The marts could therefore never refresh, and the freshness gate
+    reported stale forever with nothing in the logs to explain why.
+
+    bulk_save already solves this - it was written when the vector index rebuild
+    hit the same wall - so this is a routing fix, not a new mechanism.
+
+    One behavioural difference: bulk_save does not populate `_pg_row_id` on the
+    instances, because a chunked executemany has no RETURNING. A caller that
+    inserts many and then calls .save() on one of those same objects would
+    insert it a second time instead of updating. No current caller does that;
+    they insert and discard. Use .insert() per row if you need the id back.
+    """
+    from bson import ObjectId
+
+    for document in documents:
+        if getattr(document, "id", None) is None:
+            document.id = ObjectId()
+
+    await bulk_save(model_cls, list(documents))
     return type("InsertManyResult", (), {
-        "inserted_ids": [getattr(d, "id", None) for d in inserted]
+        "inserted_ids": [getattr(d, "id", None) for d in documents]
     })()
 
 

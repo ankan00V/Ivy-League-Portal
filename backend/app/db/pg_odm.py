@@ -41,6 +41,8 @@ from collections.abc import Mapping
 from datetime import date, datetime, timezone
 from typing import Any, Iterable
 
+from pydantic import BaseModel
+
 import asyncpg
 
 logger = logging.getLogger(__name__)
@@ -103,7 +105,45 @@ def _coerce(value: Any) -> Any:
         return value
     if isinstance(value, (list, tuple, set)):
         return [_coerce(v) for v in value]
+    if isinstance(value, BaseModel):
+        # Nested models must round-trip as JSON objects. Falling through to
+        # str() below wrote Experiment.variants as a list containing
+        # "name='ask_ai.v2' weight=1.0 traffic_fraction=None ..." - the repr of
+        # the model - which reloads as a str and made every later
+        # `v.name for v in experiment.variants` raise AttributeError. That
+        # exception surfaced inside ensure_defaults(), which main.py catches and
+        # prints, so the RAG template registry silently failed to initialise on
+        # every boot while the app reported a clean startup.
+        #
+        # mode="json" so datetimes and enums inside the nested model become JSON
+        # scalars rather than objects psycopg cannot adapt.
+        return value.model_dump(mode="json")
+    if isinstance(value, Mapping):
+        return {str(k): _coerce(v) for k, v in value.items()}
     return str(value)
+
+
+def _jsonable(value: Any) -> Any:
+    """Convert nested Pydantic models to plain JSON structures, leaving all else alone.
+
+    jsonb columns hand their value straight to the connection's json codec, whose
+    serializer falls back to str() for anything it does not recognise. A
+    list[ExperimentVariant] therefore persisted as
+    ["name='ask_ai.v2' weight=1.0 traffic_fraction=None ..."] - the repr of the
+    model. It reloaded as a str, so `v.name` raised AttributeError inside
+    ensure_defaults(), and main.py catches and prints that, which is why the RAG
+    template registry silently failed to initialise on every boot.
+
+    Only BaseModel instances are rewritten. Everything else is returned
+    unchanged so this cannot alter how any existing jsonb payload is stored.
+    """
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json")
+    if isinstance(value, Mapping):
+        return {k: _jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(v) for v in value]
+    return value
 
 
 def _col_ref(field: str, columns: dict[str, str] | None) -> tuple[str, bool]:
@@ -316,6 +356,39 @@ def record_to_document(record: asyncpg.Record) -> dict[str, Any]:
 
 
 
+_VALIDATION_NEEDED: dict[type, bool] = {}
+
+
+def _needs_validation(model_cls) -> bool:
+    """Whether this model has fields only validation can rebuild correctly.
+
+    Cached per class: the answer is a property of the model, and the check runs
+    on every row read otherwise.
+    """
+    cached = _VALIDATION_NEEDED.get(model_cls)
+    if cached is not None:
+        return cached
+    from pydantic import BaseModel
+
+    needed = False
+    for field in model_cls.model_fields.values():
+        annotation = field.annotation
+        candidates = [annotation, *getattr(annotation, "__args__", ())]
+        for candidate in candidates:
+            inner = getattr(candidate, "__args__", ())
+            candidates_inner = [candidate, *inner]
+            for value in candidates_inner:
+                if isinstance(value, type) and issubclass(value, BaseModel):
+                    needed = True
+                    break
+            if needed:
+                break
+        if needed:
+            break
+    _VALIDATION_NEEDED[model_cls] = needed
+    return needed
+
+
 def record_to_model(model_cls, record: asyncpg.Record):
     """Rebuild a model instance, merging `extras` under the real columns."""
     from beanie import PydanticObjectId
@@ -338,15 +411,22 @@ def record_to_model(model_cls, record: asyncpg.Record):
 
     known = set(model_cls.model_fields)
     payload = {k: v for k, v in data.items() if k in known}
-    try:
-        # Validation, not model_construct, so nested models are rebuilt as
-        # models. A jsonb column decodes to plain dicts, and model_construct
-        # keeps them that way - `experiment.variants` came back as a list of
-        # dicts and `v.name` raised on every one.
-        instance = model_cls.model_validate(payload)
-    except Exception:
-        # Rows migrated from Mongo can carry values a stricter model now
-        # rejects. Those must still load, or the whole read fails on one row.
+    if _needs_validation(model_cls):
+        try:
+            # Validation, not model_construct, so nested models are rebuilt as
+            # models. A jsonb column decodes to plain dicts, and model_construct
+            # keeps them that way - `experiment.variants` came back as a list of
+            # dicts and `v.name` raised on every one.
+            instance = model_cls.model_validate(payload)
+        except Exception:
+            # Rows migrated from Mongo can carry values a stricter model now
+            # rejects. Those must still load, or the whole read fails on one row.
+            instance = model_cls.model_construct(**payload)
+    else:
+        # No nested models to rebuild, so validation buys nothing and costs a
+        # lot: the vector index rebuild reads ~1,880 rows at a time on the event
+        # loop, and paying full validation for each one starved every concurrent
+        # request.
         instance = model_cls.model_construct(**payload)
     legacy = record.get("legacy_mongo_id") if "legacy_mongo_id" in record.keys() else None
     if legacy:
@@ -368,18 +448,23 @@ def coerce_for_column(value: Any, data_type: str) -> Any:
     if value is None:
         return None
     if is_vector_column(data_type):
-        # pgvector takes its literal text form, '[1,2,3]'. Handing it the raw
-        # list is what failed 48 upserts in a scrape cycle.
+        # Passed through as a list: the connection registers a pgvector codec
+        # that renders the literal form. Encoding here as well would produce a
+        # string the codec then re-encodes.
+        if isinstance(value, str):
+            return value or None
         if not isinstance(value, (list, tuple)) or not value:
             return None
         try:
-            return "[" + ",".join(f"{float(x):.6f}" for x in value) + "]"
+            return [float(x) for x in value]
         except (TypeError, ValueError):
             return None
     if data_type in ("json", "jsonb"):
         # Passed through as a Python object: the connection registers a json
         # codec, so encoding here would produce a JSON string containing JSON.
-        return value
+        # Nested Pydantic models are the one thing that codec cannot handle -
+        # see _jsonable.
+        return _jsonable(value)
     if data_type == "ARRAY":
         return [_coerce(v) for v in value] if isinstance(value, (list, tuple, set)) else None
     if data_type == "boolean":

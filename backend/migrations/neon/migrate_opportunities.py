@@ -182,7 +182,14 @@ def upsert_sql() -> str:
         f"${i+1}::vector" if c == "embedding" else (f"${i+1}::jsonb" if c == "extras" else f"${i+1}")
         for i, c in enumerate(COLUMNS)
     )
-    updates = ", ".join(f"{c} = EXCLUDED.{c}" for c in COLUMNS if c != "url")
+    # legacy_mongo_id is excluded as well as url. Two Mongo documents can share
+    # a URL - the corpus has such pairs - and on the url-conflict path this tried
+    # to overwrite the stored id with the incoming one, colliding with the unique
+    # constraint on a different row. The row already has an identity; the first
+    # one to arrive keeps it.
+    updates = ", ".join(
+        f"{c} = EXCLUDED.{c}" for c in COLUMNS if c not in ("url", "legacy_mongo_id")
+    )
     return (
         f"INSERT INTO app.opportunities ({cols}) VALUES ({params}) "
         f"ON CONFLICT (url) DO UPDATE SET {updates}"

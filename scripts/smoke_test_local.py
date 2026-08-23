@@ -4,6 +4,7 @@ import argparse
 import json
 import re
 import sys
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -81,7 +82,19 @@ def run_smoke(
 
     # /health is a static liveness probe; the dependency fan-out moved to
     # /health/ready, which is admin-authenticated outside local environments.
-    ready_status, health, ready_error = _get_json(f"{backend}/health/ready", timeout=timeout)
+    # Readiness fans out to Postgres, Redis, the queue and the artifact store,
+    # so it is slower than any single probe - and slower still while background
+    # jobs are running. A 10s budget timed out here and reported every
+    # dependency as "missing" when the payload simply had not arrived.
+    ready_status, health, ready_error = 0, None, ""
+    for attempt in range(3):
+        ready_status, health, ready_error = _get_json(
+            f"{backend}/health/ready", timeout=max(timeout, 45.0)
+        )
+        if ready_status == 200:
+            break
+        if attempt < 2:
+            time.sleep(5)
     health_payload = health if isinstance(health, dict) else {}
     results.append(
         SmokeResult(
@@ -141,7 +154,19 @@ def run_smoke(
         )
     )
 
-    status, opportunities, error = _get_json(f"{backend}/api/v1/opportunities/?limit=5", timeout=timeout)
+    # Retried, because the first request after a restart competes with the
+    # embedding model loading and the vector index building. A single attempt
+    # timed out there and failed the whole startup script on an app that was
+    # merely still warming up.
+    status, opportunities, error = 0, None, ""
+    for attempt in range(3):
+        status, opportunities, error = _get_json(
+            f"{backend}/api/v1/opportunities/?limit=5", timeout=max(timeout, 30.0)
+        )
+        if status == 200:
+            break
+        if attempt < 2:
+            time.sleep(5)
     if isinstance(opportunities, list):
         count = len(opportunities)
     elif isinstance(opportunities, dict):

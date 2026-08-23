@@ -36,7 +36,7 @@ class TestRateLimitFailureMode(unittest.IsolatedAsyncioTestCase):
         logging.disable(logging.NOTSET)
 
     async def test_auth_paths_fail_closed_when_redis_is_absent(self) -> None:
-        with patch.object(rate_limit_module, "get_redis", return_value=None):
+        with patch.object(rate_limit_module, "get_cache_redis", return_value=None):
             decision = await check_rate_limit(
                 subject="1.2.3.4", action="/auth/login", limit_per_minute=30, fail_closed=True
             )
@@ -46,7 +46,7 @@ class TestRateLimitFailureMode(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(decision.retry_after_seconds, 0)
 
     async def test_auth_paths_fail_closed_when_redis_errors(self) -> None:
-        with patch.object(rate_limit_module, "get_redis", return_value=_ExplodingRedis()):
+        with patch.object(rate_limit_module, "get_cache_redis", return_value=_ExplodingRedis()):
             decision = await check_rate_limit(
                 subject="1.2.3.4", action="/auth/login", limit_per_minute=30, fail_closed=True
             )
@@ -56,7 +56,7 @@ class TestRateLimitFailureMode(unittest.IsolatedAsyncioTestCase):
 
     async def test_non_auth_paths_still_degrade_open(self) -> None:
         """Browsing should survive a Redis outage; sign-in should not."""
-        with patch.object(rate_limit_module, "get_redis", return_value=None):
+        with patch.object(rate_limit_module, "get_cache_redis", return_value=None):
             decision = await check_rate_limit(
                 subject="1.2.3.4", action="/opportunities", limit_per_minute=240
             )
@@ -64,7 +64,7 @@ class TestRateLimitFailureMode(unittest.IsolatedAsyncioTestCase):
 
     async def test_failure_is_logged(self) -> None:
         logging.disable(logging.NOTSET)
-        with patch.object(rate_limit_module, "get_redis", return_value=None):
+        with patch.object(rate_limit_module, "get_cache_redis", return_value=None):
             with self.assertLogs("app.core.rate_limit", level="ERROR") as captured:
                 await check_rate_limit(
                     subject="1.2.3.4", action="/auth/login", limit_per_minute=30, fail_closed=True

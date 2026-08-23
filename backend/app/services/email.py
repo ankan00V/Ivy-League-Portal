@@ -10,7 +10,16 @@ from pathlib import Path
 import certifi
 
 from app.core import metrics
-from app.core.config import settings, smtp_from_email_value, smtp_from_name_value, smtp_server_value
+import httpx
+
+from app.core.config import (
+    email_provider_value,
+    resend_from_email_value,
+    settings,
+    smtp_from_email_value,
+    smtp_from_name_value,
+    smtp_server_value,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +147,61 @@ def _resolve_smtp_cert_bundle() -> str | None:
     return str(default_bundle).strip() or None
 
 
+async def _deliver_via_resend(
+    *, to_email: str, subject: str, text_body: str, html_body: str
+) -> str:
+    """Hand one message to Resend's HTTPS API and return its message id.
+
+    HTTPS rather than Resend's SMTP endpoint on purpose: port 587 is blocked or
+    intercepted on plenty of campus and corporate networks, and 443 is not.
+
+    Raises on anything short of a confirmed accept. A 2xx that carries no message
+    id is treated as a failure, not a success -- an unverified "sent" is the exact
+    failure this whole change exists to remove.
+    """
+    api_key = str(settings.RESEND_API_KEY or "").strip()
+    if not api_key:
+        raise RuntimeError("RESEND_API_KEY is not configured.")
+
+    from_email = resend_from_email_value()
+    from_name = smtp_from_name_value()
+    payload = {
+        "from": formataddr((from_name, from_email)) if from_name else from_email,
+        "to": [to_email],
+        "subject": subject,
+        "text": text_body,
+        "html": html_body,
+    }
+    base_url = str(settings.RESEND_API_BASE_URL or "https://api.resend.com").strip().rstrip("/")
+
+    async with httpx.AsyncClient(timeout=float(settings.RESEND_TIMEOUT_SECONDS)) as client:
+        response = await client.post(
+            f"{base_url}/emails",
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+        )
+
+    if response.status_code >= 400:
+        # Body may carry the reason (unverified domain, invalid key). Truncated
+        # because it is attacker-influenced and goes to logs.
+        raise RuntimeError(
+            f"Resend rejected the message: HTTP {response.status_code} {response.text[:200]}"
+        )
+
+    try:
+        body = response.json()
+    except ValueError as exc:
+        raise RuntimeError("Resend returned a non-JSON response") from exc
+
+    message_id = str((body or {}).get("id") or "").strip()
+    if not message_id:
+        raise RuntimeError("Resend accepted the request without returning a message id")
+    return message_id
+
+
 async def send_email_otp(to_email: str, otp: str):
     """
     Sends a 6-digit OTP code to the requested end-user for two-step authentication.
@@ -155,6 +219,51 @@ async def send_email_otp(to_email: str, otp: str):
     message["Subject"] = subject
     message.set_content(text_body)
     message.add_alternative(html_body, subtype="html")
+
+    provider = email_provider_value()
+    delivery_id = recipient_log_id(to_email)
+    max_attempts = max(1, int(getattr(settings, "OTP_EMAIL_MAX_RETRIES", 3)))
+
+    if provider == "resend":
+        last_error: Exception | None = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                message_id = await _deliver_via_resend(
+                    to_email=to_email,
+                    subject=subject,
+                    text_body=text_body,
+                    html_body=html_body,
+                )
+                logger.info(
+                    "OTP email accepted by resend delivery_id=%s attempt=%s message_id=%s",
+                    delivery_id,
+                    attempt,
+                    message_id,
+                )
+                _record_otp_delivery("sent")
+                return True
+            except Exception as exc:
+                last_error = exc
+                if attempt >= max_attempts:
+                    break
+                backoff_seconds = min(4.0, 0.6 * (2 ** (attempt - 1)))
+                logger.warning(
+                    "OTP email delivery retry provider=resend delivery_id=%s attempt=%s max_attempts=%s error_class=%s backoff_seconds=%.1f",
+                    delivery_id,
+                    attempt,
+                    max_attempts,
+                    exc.__class__.__name__,
+                    backoff_seconds,
+                )
+                await asyncio.sleep(backoff_seconds)
+        logger.error(
+            "OTP email delivery failed provider=resend delivery_id=%s attempts=%s error_class=%s",
+            delivery_id,
+            max_attempts,
+            last_error.__class__.__name__ if last_error else "Unknown",
+        )
+        _record_otp_delivery("failed")
+        raise last_error or RuntimeError("Unknown Resend delivery failure")
 
     smtp_server = smtp_server_value()
     if not smtp_server:
@@ -186,8 +295,6 @@ async def send_email_otp(to_email: str, otp: str):
     if settings.SMTP_PASSWORD:
         send_kwargs["password"] = settings.SMTP_PASSWORD
 
-    max_attempts = max(1, int(getattr(settings, "OTP_EMAIL_MAX_RETRIES", 3)))
-    delivery_id = recipient_log_id(to_email)
     last_error: Exception | None = None
     for attempt in range(1, max_attempts + 1):
         try:

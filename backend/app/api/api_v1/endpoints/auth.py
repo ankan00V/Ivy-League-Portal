@@ -17,7 +17,7 @@ from pydantic import BaseModel, EmailStr, field_validator
 
 from app.api.deps import get_current_admin_user, get_current_user
 from app.core.config import auth_cookie_only_mode_enabled, settings
-from app.core.email_policy import is_corporate_email
+from app.core.email_policy import is_corporate_email, is_institutional_email
 from app.core.redis_client import delete_otp, get_otp_cooldown_remaining, set_otp, validate_otp
 from app.core.security import create_access_token, get_password_hash, verify_password
 from app.models.auth_abuse_state import AuthAbuseState
@@ -55,10 +55,19 @@ def _scopes_for_user(user: User) -> list[str]:
     return scopes
 
 
-def _normalize_account_type(value: Optional[str], *, default: str = "candidate") -> str:
+def _normalize_account_type(
+    value: Optional[str], *, default: str = "candidate", stored: bool = False
+) -> str:
     candidate = str(value or default).strip().lower()
     if candidate not in VALID_ACCOUNT_TYPES:
         raise HTTPException(status_code=400, detail="account_type must be candidate or employer")
+    # Every request path funnels through here, so retiring the employer portal is
+    # enforced at this one point and fails closed: a route added later that forgets
+    # about the flag still cannot mint an employer. stored=True is the deliberate
+    # opt-out for a value read back off an existing row, which must keep
+    # normalizing so such an account stays readable, exportable, and deletable.
+    if candidate == "employer" and not stored and not settings.EMPLOYER_PORTAL_ENABLED:
+        raise HTTPException(status_code=400, detail="Employer accounts are not available.")
     return candidate
 
 
@@ -68,6 +77,47 @@ def _ensure_employer_corporate_email(email: str) -> None:
             status_code=400,
             detail="Employer signup/login requires a corporate email (personal providers are not allowed).",
         )
+
+
+def _ensure_candidate_institutional_email(email: str) -> None:
+    """Candidates sign up with a college address, not a personal mailbox.
+
+    Enforced only where an account is *created*. Existing accounts keep signing
+    in with whatever they registered under - three of the accounts already in
+    this database are on gmail, including the admin, and applying this at login
+    would lock them out of their own product.
+    """
+    if not settings.CANDIDATE_REQUIRE_INSTITUTIONAL_EMAIL:
+        return
+    if is_institutional_email(email, strict=settings.CANDIDATE_INSTITUTIONAL_EMAIL_STRICT):
+        return
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            "Sign up with your college email address. Personal providers such as "
+            "Gmail or Outlook are not accepted for a new student account - you can "
+            "add a personal address as a backup once you are signed in."
+        ),
+    )
+
+
+async def _find_user_by_login_email(email: str):
+    """Resolve a sign-in address to its account.
+
+    Accepts the primary address, or a secondary one the student has verified.
+    Unverified secondaries deliberately do not resolve: an address someone typed
+    but never proved they own must not become a way into the account.
+    """
+    normalized = str(email or "").strip().lower()
+    if not normalized:
+        return None
+    user = await User.find_one(User.email == normalized)
+    if user:
+        return user
+    return await User.find_one(
+        User.secondary_email == normalized,
+        User.secondary_email_verified == True,  # noqa: E712
+    )
 
 
 def _password_policy_issues(password: str) -> list[str]:
@@ -732,6 +782,8 @@ async def register_user(
         )
 
     _validate_password_policy(user_in.password)
+    if _normalize_account_type(getattr(user_in, "account_type", "candidate"), default="candidate") == "candidate":
+        _ensure_candidate_institutional_email(normalized_email)
     user = User(
         email=normalized_email,
         full_name=user_in.full_name,
@@ -778,7 +830,9 @@ async def login_access_token(
             headers={"Retry-After": str(max(1, lock.remaining_lock_seconds))},
         )
 
-    user = await User.find_one(User.email == normalized_email)
+    # Either address signs in: the college mail it was created with, or a
+    # personal one the student later verified.
+    user = await _find_user_by_login_email(normalized_email)
 
     passwordless_login_attempt = bool(user and _user_needs_password_setup(user))
     if not user or passwordless_login_attempt or not verify_password(form_data.password, user.hashed_password):
@@ -1425,6 +1479,7 @@ async def send_password_reset_otp(
         existing_account_type = _normalize_account_type(
             getattr(user, "account_type", "candidate"),
             default="candidate",
+            stored=True,
         )
         if payload.account_type and requested_account_type != existing_account_type:
             raise HTTPException(
@@ -1561,7 +1616,7 @@ async def reset_forgotten_password(
     if is_reserved_admin_email(normalized_email) and not bool(getattr(user, "is_admin", False)):
         raise HTTPException(status_code=403, detail="Admin identity is not provisioned")
 
-    existing_account_type = _normalize_account_type(getattr(user, "account_type", "candidate"), default="candidate")
+    existing_account_type = _normalize_account_type(getattr(user, "account_type", "candidate"), default="candidate", stored=True)
     requested_account_type = _normalize_account_type(payload.account_type, default=existing_account_type)
     if payload.account_type and requested_account_type != existing_account_type:
         raise HTTPException(
@@ -1667,7 +1722,7 @@ class AuthAbuseLockResponse(BaseModel):
 
 async def _validate_user_for_purpose(email: str, purpose: Literal["signup", "signin"]) -> User | None:
     _reject_reserved_admin_identity_for_public_auth(email)
-    user = await User.find_one(User.email == email)
+    user = await _find_user_by_login_email(email)
     if purpose == "signin" and not user:
         raise HTTPException(
             status_code=404,
@@ -1874,6 +1929,11 @@ async def oauth_google_callback(
 
         user = await User.find_one(User.email == email)
         if not user:
+            # Google sign-in creates the account on first use, so the rule has
+            # to apply here too - otherwise "sign in with Google" is an open
+            # door around it for any gmail address.
+            if account_type == "candidate":
+                _ensure_candidate_institutional_email(email)
             user = User(
                 email=email,
                 full_name=full_name,
@@ -1885,7 +1945,7 @@ async def oauth_google_callback(
             await user.insert()
             await ensure_system_username(user)
         else:
-            existing_account_type = _normalize_account_type(getattr(user, "account_type", "candidate"), default="candidate")
+            existing_account_type = _normalize_account_type(getattr(user, "account_type", "candidate"), default="candidate", stored=True)
             if account_type != existing_account_type:
                 raise ValueError(
                     f"This email is already registered as {existing_account_type}. "
@@ -1980,6 +2040,7 @@ async def send_otp(request: OTPSendRequest, http_request: Request = None):  # ty
         existing_account_type = _normalize_account_type(
             getattr(existing_user, "account_type", "candidate"),
             default="candidate",
+            stored=True,
         )
         if request.account_type and requested_account_type != existing_account_type:
             raise HTTPException(
@@ -1991,6 +2052,10 @@ async def send_otp(request: OTPSendRequest, http_request: Request = None):  # ty
     else:
         if requested_account_type == "employer":
             _ensure_employer_corporate_email(normalized_email)
+        else:
+            # Refuse before sending, so a personal address never receives a
+            # signup code it could not have completed anyway.
+            _ensure_candidate_institutional_email(normalized_email)
 
     cooldown_seconds = max(1, int(settings.OTP_SEND_COOLDOWN_SECONDS))
     remaining_cooldown = await get_otp_cooldown_remaining(
@@ -2131,6 +2196,7 @@ async def verify_otp(
         existing_account_type = _normalize_account_type(
             getattr(user, "account_type", "candidate"),
             default="candidate",
+            stored=True,
         )
         requested_account_type = _normalize_account_type(payload.account_type, default=existing_account_type)
         if payload.account_type and requested_account_type != existing_account_type:
@@ -2157,7 +2223,7 @@ async def verify_otp(
             email=normalized_email,
             account_type=_normalize_account_type(payload.account_type, default="candidate")
             if payload.purpose == "signup"
-            else _normalize_account_type(getattr(user, "account_type", "candidate"), default="candidate")
+            else _normalize_account_type(getattr(user, "account_type", "candidate"), default="candidate", stored=True)
             if user
             else None,
             purpose=payload.purpose,
@@ -2175,6 +2241,8 @@ async def verify_otp(
 
     if payload.purpose == "signup":
         account_type = _normalize_account_type(payload.account_type, default="candidate")
+        if account_type == "candidate":
+            _ensure_candidate_institutional_email(normalized_email)
         password = _validate_password_policy(payload.password or "")
         user = User(
             email=normalized_email,
@@ -2320,3 +2388,134 @@ async def list_auth_abuse_locks(
         )
         for row in rows
     ]
+
+
+class SecondaryEmailRequest(BaseModel):
+    email: EmailStr
+
+
+class SecondaryEmailVerifyRequest(BaseModel):
+    email: EmailStr
+    otp: str
+
+    @field_validator("otp")
+    @classmethod
+    def _otp_is_six_digits(cls, value: str) -> str:
+        candidate = str(value or "").strip()
+        if not candidate.isdigit() or len(candidate) != 6:
+            raise ValueError("OTP must be a 6-digit numeric code")
+        return candidate
+
+
+class SecondaryEmailResponse(BaseModel):
+    secondary_email: Optional[str] = None
+    secondary_email_verified: bool = False
+    message: Optional[str] = None
+    debug_otp: Optional[str] = None
+
+
+SECONDARY_EMAIL_PURPOSE = "secondary_email"
+
+
+@router.post("/secondary-email/send-otp", response_model=SecondaryEmailResponse)
+async def send_secondary_email_otp(
+    payload: SecondaryEmailRequest,
+    current_user: User = Depends(get_current_user),
+) -> Any:
+    """Start verification of a backup address for the signed-in account.
+
+    The college mailbox a student signs up with usually stops working when they
+    graduate, which would otherwise strand the account. This adds a second
+    address they can also sign in with - but only after proving they own it.
+    """
+    normalized = str(payload.email or "").strip().lower()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="A valid email address is required.")
+    if normalized == str(current_user.email or "").strip().lower():
+        raise HTTPException(status_code=400, detail="That is already your primary email.")
+    _reject_reserved_admin_identity_for_public_auth(normalized)
+
+    # The address must not already be a way into some other account, as either
+    # a primary or an already-verified secondary.
+    clash = await _find_user_by_login_email(normalized)
+    if clash and str(clash.id) != str(current_user.id):
+        raise HTTPException(
+            status_code=400,
+            detail="That email is already linked to another account.",
+        )
+
+    cooldown_seconds = max(1, int(settings.OTP_SEND_COOLDOWN_SECONDS))
+    remaining = await get_otp_cooldown_remaining(
+        normalized, purpose=SECONDARY_EMAIL_PURPOSE, cooldown_seconds=cooldown_seconds
+    )
+    if remaining > 0:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Please wait {remaining} seconds before requesting another code.",
+            headers={"Retry-After": str(remaining)},
+        )
+
+    otp = f"{secrets.randbelow(1_000_000):06d}"
+    await set_otp(normalized, otp, expire_seconds=OTP_EXPIRY_SECONDS, purpose=SECONDARY_EMAIL_PURPOSE)
+
+    debug_otp: str | None = None
+    try:
+        await send_email_otp(normalized, otp)
+    except Exception as exc:
+        environment = settings.ENVIRONMENT.strip().lower()
+        if settings.OTP_ALLOW_DEBUG_FALLBACK and environment in LOCAL_ENV_NAMES:
+            debug_otp = otp
+        else:
+            await delete_otp(normalized, purpose=SECONDARY_EMAIL_PURPOSE)
+            logger.warning(
+                "secondary email OTP delivery failed delivery_id=%s error_class=%s",
+                recipient_log_id(normalized),
+                exc.__class__.__name__,
+            )
+            raise HTTPException(status_code=502, detail="Could not send the verification code. Try again.")
+
+    # Deliberately not written to the user row yet. An unverified address in the
+    # database is a claim nobody has proved, and it would show up in the profile
+    # as though it were set. The OTP is keyed to the address itself, so holding
+    # nothing server-side loses nothing: only whoever opens that mailbox can
+    # complete the next step.
+    return SecondaryEmailResponse(
+        secondary_email=normalized,
+        secondary_email_verified=False,
+        message=f"Verification code sent. It expires in {OTP_EXPIRY_SECONDS // 60} minutes.",
+        debug_otp=debug_otp,
+    )
+
+
+@router.post("/secondary-email/verify", response_model=SecondaryEmailResponse)
+async def verify_secondary_email(
+    payload: SecondaryEmailVerifyRequest,
+    current_user: User = Depends(get_current_user),
+) -> Any:
+    """Confirm ownership, after which the address can be used to sign in."""
+    normalized = str(payload.email or "").strip().lower()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="A valid email address is required.")
+    if normalized == str(current_user.email or "").strip().lower():
+        raise HTTPException(status_code=400, detail="That is already your primary email.")
+
+    # Nothing was stored when the code was sent, so the code is the only proof
+    # required - and it only exists in the mailbox being claimed.
+    if not await validate_otp(normalized, payload.otp, purpose=SECONDARY_EMAIL_PURPOSE):
+        raise HTTPException(status_code=400, detail="Invalid or expired code.")
+
+    # Re-checked after the code is proven: another account could have claimed
+    # this address in the minutes between sending and verifying.
+    clash = await _find_user_by_login_email(normalized)
+    if clash and str(clash.id) != str(current_user.id):
+        raise HTTPException(status_code=400, detail="That email is already linked to another account.")
+
+    current_user.secondary_email = normalized
+    current_user.secondary_email_verified = True
+    await current_user.save()
+
+    return SecondaryEmailResponse(
+        secondary_email=normalized,
+        secondary_email_verified=True,
+        message="Backup email verified. You can now sign in with either address.",
+    )

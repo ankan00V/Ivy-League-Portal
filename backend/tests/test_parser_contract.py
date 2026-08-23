@@ -14,7 +14,6 @@ from app.services.scraper import (  # noqa: E402
     FreshersworldScraper,
     GenericOpportunityPortalScraper,
     InternshalaScraper,
-    IvyLeagueRSSConnector,
     UnstopScraper,
     is_early_career_opportunity,
     parse_result_from_record,
@@ -179,7 +178,7 @@ class TestParserContract(unittest.TestCase):
         self.assertEqual(promilo_result.item["location"], "Mumbai")
         self.assertEqual(promilo_result.item["stipend"], "Rs. 20,000 / month")
 
-    def test_unstop_json_fixture_and_ivy_rss_parse(self) -> None:
+    def test_unstop_json_fixture_parse(self) -> None:
         payload = json.loads(_fixture_text("unstop_search.json"))
         unstop_rows = UnstopScraper(session=DummyJsonSession(payload)).fetch_unstop_opportunities(max_items=1)
         self.assertEqual(len(unstop_rows), 1)
@@ -187,24 +186,6 @@ class TestParserContract(unittest.TestCase):
         self.assertEqual(unstop_result.item["source"], "unstop")
         self.assertEqual(unstop_result.item["university"], "Unstop")
         self.assertTrue(unstop_result.item["url"].startswith("https://unstop.com/hackathons/"))
-
-        feed_entries = IvyLeagueRSSConnector()._parse_feed(_fixture_text("ivy_rss.xml"))
-        self.assertEqual(len(feed_entries), 1)
-        rss_result = parse_result_from_record(
-            {
-                "title": feed_entries[0]["title"],
-                "description": feed_entries[0]["description"],
-                "url": feed_entries[0]["link"],
-                "opportunity_type": "Research",
-                "university": "Example University",
-                "deadline": "2026-06-30",
-                "created_at": feed_entries[0]["published_at"],
-                "tags": ["research", "fellowship"],
-                "source": "ivy_rss",
-            }
-        )
-        self.assertNotIn("posted_date", rss_result.missing_fields)
-        self.assertEqual(rss_result.item["source"], "ivy_rss")
 
     def test_remote_job_structured_feeds_apply_early_career_scope(self) -> None:
         scraper = GenericOpportunityPortalScraper()

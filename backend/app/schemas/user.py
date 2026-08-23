@@ -19,6 +19,10 @@ class UserResponse(UserBase):
     is_active: bool
     is_admin: bool
     needs_password_setup: bool = False
+    # Surfaced so the profile page can show whether a backup address is already
+    # confirmed, and only ask for verification when it is being changed.
+    secondary_email: Optional[str] = None
+    secondary_email_verified: bool = False
 
     @field_validator("id", mode="before")
     @classmethod

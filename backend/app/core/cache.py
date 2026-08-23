@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from app.core.config import settings
-from app.core.redis import get_redis
+from app.core.redis import get_cache_redis
 
 
 def _stable_hash(value: str) -> str:
@@ -60,7 +60,7 @@ class CacheManager:
         await cache_set_json(self.key(namespace, key), value, ttl_seconds=int(ttl_seconds))
 
     async def delete(self, namespace: str, key: str) -> int:
-        redis = get_redis()
+        redis = get_cache_redis()
         if redis is None:
             return 0
         try:
@@ -69,7 +69,7 @@ class CacheManager:
             return 0
 
     async def delete_pattern(self, namespace: str, pattern: str = "*") -> int:
-        redis = get_redis()
+        redis = get_cache_redis()
         if redis is None:
             return 0
         match = self.key(namespace, pattern)
@@ -93,7 +93,7 @@ class CacheManager:
         return deleted
 
     async def stats(self, namespace: str) -> CacheStats:
-        redis = get_redis()
+        redis = get_cache_redis()
         hits = await self._read_stat(namespace, "hits")
         misses = await self._read_stat(namespace, "misses")
         total = hits + misses
@@ -113,7 +113,7 @@ class CacheManager:
         )
 
     async def publish_model_update(self, model_version: str) -> int:
-        redis = get_redis()
+        redis = get_cache_redis()
         if redis is None:
             return 0
         payload = json.dumps({"event": "model_update", "model_version": str(model_version)}, separators=(",", ":"))
@@ -145,7 +145,7 @@ class CacheManager:
         }
 
     async def _increment_stat(self, namespace: str, metric: str) -> None:
-        redis = get_redis()
+        redis = get_cache_redis()
         if redis is None:
             return
         try:
@@ -154,7 +154,7 @@ class CacheManager:
             return
 
     async def _read_stat(self, namespace: str, metric: str) -> int:
-        redis = get_redis()
+        redis = get_cache_redis()
         if redis is None:
             return 0
         try:
@@ -169,7 +169,7 @@ class CacheManager:
 async def cache_get_bytes(key: str) -> Optional[bytes]:
     if not settings.CACHE_ENABLED:
         return None
-    redis = get_redis()
+    redis = get_cache_redis()
     if redis is None:
         return None
     try:
@@ -182,7 +182,7 @@ async def cache_get_bytes(key: str) -> Optional[bytes]:
 async def cache_set_bytes(key: str, value: bytes, ttl_seconds: int) -> None:
     if not settings.CACHE_ENABLED:
         return
-    redis = get_redis()
+    redis = get_cache_redis()
     if redis is None:
         return
     try:

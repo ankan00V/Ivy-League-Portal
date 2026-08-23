@@ -16,6 +16,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.core.config import settings
+from app.models.profile import Profile
 from app.models.analytics_cohort_aggregate import AnalyticsCohortAggregate
 from app.models.analytics_daily_aggregate import AnalyticsDailyAggregate
 from app.models.analytics_funnel_aggregate import AnalyticsFunnelAggregate
@@ -54,6 +55,13 @@ MODELS = [
     AnalyticsCohortAggregate,
     FeatureStoreRow,
     WarehouseExportRun,
+    # Profile is not exported, but the export reads it to resolve analytics
+    # consent. Leaving it unregistered made Profile.find_all() raise
+    # CollectionWasNotInitialized - whose str() is empty, so the log line read
+    # "Could not resolve analytics consent: " with nothing after it. Consent
+    # fails closed by design, so every user row was dropped (75,609 of them) and
+    # the run still reported status: ok.
+    Profile,
 ]
 
 

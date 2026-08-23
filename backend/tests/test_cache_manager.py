@@ -53,7 +53,7 @@ class TestCacheManager(unittest.IsolatedAsyncioTestCase):
         redis = FakeRedis()
         manager = CacheManager(prefix="test")
 
-        with patch("app.core.cache.get_redis", return_value=redis):
+        with patch("app.core.cache.get_cache_redis", return_value=redis):
             self.assertIsNone(await manager.get_json("user:profile", "u1"))
             await manager.set_json("user:profile", "u1", {"name": "A"}, ttl_seconds=60)
             self.assertEqual(await manager.get_json("user:profile", "u1"), {"name": "A"})
@@ -67,7 +67,7 @@ class TestCacheManager(unittest.IsolatedAsyncioTestCase):
         redis = FakeRedis()
         manager = CacheManager(prefix="test")
 
-        with patch("app.core.cache.get_redis", return_value=redis):
+        with patch("app.core.cache.get_cache_redis", return_value=redis):
             await manager.set_json("opps:feed:candidates", "u1:a", {"ids": []}, ttl_seconds=60)
             await manager.set_json("opps:feed:candidates", "u1:b", {"ids": []}, ttl_seconds=60)
             deleted = await manager.delete_pattern("opps:feed:candidates", "u1:*")

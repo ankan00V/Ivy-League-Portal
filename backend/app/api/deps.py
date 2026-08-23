@@ -201,6 +201,11 @@ async def get_current_employer_user(
 ) -> User:
     if not current_user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
+    # Belt and braces: the router is not mounted while the portal is retired, so
+    # this should be unreachable. It exists so that re-mounting the router alone,
+    # without consciously flipping the flag, cannot quietly reopen the workflow.
+    if not settings.EMPLOYER_PORTAL_ENABLED:
+        raise HTTPException(status_code=404, detail="Not Found")
     if not current_user.is_admin and str(getattr(current_user, "account_type", "candidate")).strip().lower() != "employer":
         raise HTTPException(status_code=403, detail="Employer account required")
     if (

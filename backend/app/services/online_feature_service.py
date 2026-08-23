@@ -5,7 +5,7 @@ from typing import Iterable
 
 from app.core.config import settings
 from app.core import metrics as metrics_module
-from app.core.redis import get_redis
+from app.core.redis import get_redis, get_feature_store_redis
 from app.core.time import utc_now
 from app.models.feature_store_row import FeatureStoreRow
 
@@ -44,7 +44,7 @@ class OnlineFeatureService:
     async def publish_rows(self, rows: Iterable[FeatureStoreRow]) -> int:
         if not self._enabled():
             return 0
-        redis = get_redis()
+        redis = get_feature_store_redis()
         if redis is None:
             if metrics_module.ONLINE_FEATURE_PUBLISH_TOTAL is not None:
                 metrics_module.ONLINE_FEATURE_PUBLISH_TOTAL.labels(target="redis", status="skipped").inc()
@@ -52,6 +52,7 @@ class OnlineFeatureService:
 
         safe_ttl = max(60, int(settings.ONLINE_FEATURES_TTL_SECONDS))
         published = 0
+        expiring_user_keys: set[str] = set()
         async with redis.pipeline(transaction=False) as pipe:
             for row in rows:
                 user_id = str(row.user_id or "").strip()
@@ -63,8 +64,15 @@ class OnlineFeatureService:
                 payload = self._serialize_row(row)
                 pipe.set(feature_key, payload, ex=safe_ttl)
                 pipe.hset(user_index_key, opportunity_id, payload)
-                pipe.expire(user_index_key, safe_ttl)
+                # EXPIRE targets the per-user index, not the row, so issuing it
+                # inside the loop repeated the same command once per row: 36,987
+                # rows across 5 users sent ~37k identical EXPIREs and burned a
+                # third of the request quota per rebuild. Once per user is
+                # equivalent, and is applied after that user's fields are set.
+                expiring_user_keys.add(user_index_key)
                 published += 1
+            for user_index_key in expiring_user_keys:
+                pipe.expire(user_index_key, safe_ttl)
             if published > 0:
                 await pipe.execute()
 

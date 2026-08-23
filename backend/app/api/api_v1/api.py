@@ -1,4 +1,6 @@
 from fastapi import APIRouter
+
+from app.core.config import settings
 from app.api.api_v1.endpoints import (
     admin,
     analytics,
@@ -29,7 +31,11 @@ api_router.include_router(chat.router, prefix="/chat", tags=["chat"])
 api_router.include_router(experiments.router, prefix="/experiments", tags=["experiments"])
 api_router.include_router(mlops.router, prefix="/mlops", tags=["mlops"])
 api_router.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
-api_router.include_router(employer.router, prefix="/employer", tags=["employer"])
+# Employer portal is retired but intentionally kept on disk. Not mounting the
+# router is what actually closes the 14 endpoints; the account_type gate in
+# auth.py stops the accounts, and this stops anything that already holds a token.
+if settings.EMPLOYER_PORTAL_ENABLED:
+    api_router.include_router(employer.router, prefix="/employer", tags=["employer"])
 api_router.include_router(analytics.router, prefix="/analytics", tags=["analytics"])
 api_router.include_router(rag_governance.router, prefix="/rag-governance", tags=["rag-governance"])
 api_router.include_router(security.router, prefix="/security", tags=["security"])

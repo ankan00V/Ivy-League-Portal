@@ -2,8 +2,8 @@
 
 > AI-powered opportunity intelligence platform that helps students discover, prioritize, and act on internships, jobs, hackathons, competitions, workshops, and conferences.
 
-**Last updated:** August 10, 2026
-**Status:** Active build, production-readiness gates enabled
+**Code/status updated:** August 22, 2026. Dated benchmark and data-snapshot sections retain their original evidence dates.
+**Status:** Active local build, production-readiness gates enabled
 
 ## 1) Executive Summary
 VidyaVerse is a full-stack AI/ML system, not just a listings app.
@@ -162,7 +162,9 @@ class node_mongo,node_redis,node_warehouse,node_delivery toneIndigo
 ### Product
 - Guest-accessible dashboard preview for unauthenticated users.
 - Personalized dashboard behavior for signed-in users.
-- Candidate + employer user journeys.
+- Candidate-first user journey. The employer portal and its API routes are disabled by default while that workflow is retired.
+- New candidate accounts use an institutional email address; after sign-up, a student can verify a personal backup email and use either address to sign in.
+- OTP send/resend requests use a visible Cloudflare Turnstile challenge, server-side verification, 60-second cooldowns, and an inline resend control beneath verification.
 - Ask AI opportunity assistant.
 - Explainable recommendations on both opportunity feeds: users can see profile-aligned reasons, advisory eligibility context, and hide unsuitable listings while the feedback is recorded for future ranking improvements. Matching uses the candidate's degree, graduation year, skills, roles, locations, stipend expectation, and controlled availability preference.
 - Candidate-only Resume Readiness Review: an on-demand, deterministic analysis of an uploaded resume with an explainable `0–100` clarity/readability score, category evidence, strengths, weak spots, and improvements. It is advisory only—not a hiring prediction, eligibility decision, or opportunity-ranking signal—and does not persist extracted resume text or review output.
@@ -171,7 +173,7 @@ class node_mongo,node_redis,node_warehouse,node_delivery toneIndigo
 
 ### AI/ML
 - Multi-source ingestion with semantic deduplication.
-- Vector retrieval + NLP intent/NER support.
+- Vector retrieval + NLP intent/NER support, with a guarded second-stage cross-encoder reranker and canonical-reference grounding for RAG answers.
 - Ranking modes: `baseline`, `semantic`, `ml`, `ab`.
 - Learned ranker retraining, drift checks, and activation policy.
 - Offline benchmark and online parity/champion-challenger gates.
@@ -327,8 +329,7 @@ Latest drift report: `n/a`
 - Analytics warehouse: the eight marts exist under `backend/storage/warehouse/marts/` and are served to the analytics API from DuckDB. They were **last materialized on July 29, 2026**, so `check_warehouse_release_gate` should not be assumed `fresh` today.
 - **ClickHouse is disabled and unused.** Stated plainly because the stack table used to imply otherwise. It was only ever a write-only mirror: `warehouse_export_service` pushed eight mart tables to it and nothing read them back — the analytics API reads DuckDB (`read_mart`), and the only other clients were a health probe and a release gate. Its intended consumer, an external BI tool, does not exist (`ANALYTICS_BI_TOOL_URL` still points at `localhost:3001`). The managed instance was a 30-day trial that expired; its hostname has returned `NXDOMAIN` since roughly mid-July and the last successful export was **2026-06-19**, which nothing noticed. The volume never justified it either: all eight marts together are **441 KB**, where ClickHouse is built for billions of rows and DuckDB is the correct tool by orders of magnitude. The integration is retained behind `ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED=False`, the export now isolates the mirror push so a dead endpoint cannot fail a successful mart build, and the readiness probe no longer gates on it.
 - Backend full suite baseline: **583 passing tests, 114 subtests passed, 0 failing** (local run on August 10, 2026).
-- Frontend lint: **passing**
-- Frontend production build: **passing**
+- Current release validation (August 22): frontend lint and production build passed; three browser OTP scenarios passed; 15 focused backend OTP tests passed.
 - Security and release gates: **active in CI**
 
 ## 8) Reliability and Security Posture

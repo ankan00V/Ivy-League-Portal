@@ -46,6 +46,18 @@ class RAGInsights(BaseModel):
     recommended_action: str = Field(min_length=1)
     citations: list[RAGCitation] = Field(default_factory=list)
     safety: RAGSafetyReport = Field(default_factory=RAGSafetyReport)
+
+    # Abstention is a first-class outcome, not an empty answer. Retrieval always
+    # returns its nearest neighbours, so a query the corpus cannot answer still
+    # produces a full shortlist; without these fields a caller cannot tell
+    # "nothing relevant exists" from "here are the three best matches", and the
+    # UI renders the least-bad rows as though they were an answer.
+    abstained: bool = Field(default=False)
+    abstain_reason: Optional[str] = None
+    # Best cross-encoder score across the shortlist. Absolute, unlike cosine
+    # similarity, which is why it can support a threshold at all.
+    top_relevance_score: Optional[float] = None
+
     contract_version: str = Field(default="rag_insights.v1")
 
 

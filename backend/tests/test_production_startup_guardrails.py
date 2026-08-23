@@ -9,10 +9,40 @@ class TestProductionStartupGuardrails(unittest.TestCase):
         with (
             patch("app.main.settings.ENVIRONMENT", "production"),
             patch("app.main.settings.SECRET_KEY", "not-a-placeholder"),
-            patch("app.main.settings.MONGODB_URL", "mongodb://localhost:27017"),
+            patch("app.main.settings.REDIS_URL", "redis://localhost:6379/0"),
         ):
-            with self.assertRaisesRegex(RuntimeError, "managed MongoDB"):
+            with self.assertRaisesRegex(RuntimeError, "managed Redis"):
                 validate_production_operational_config()
+
+    def test_unset_mongodb_url_does_not_block_production(self) -> None:
+        """Mongo is not a dependency any more, so it must not gate a deploy.
+
+        MONGODB_URL defaults to mongodb://localhost:27017, and the old guard
+        rejected exactly that. Once the app moved to Postgres the variable became
+        unused, which meant deleting the now-pointless line from .env would fail
+        this check and block a production deploy over a database the app never
+        contacts. Removing the guard is the point; this test stops it coming back.
+        """
+        with (
+            patch("app.main.settings.ENVIRONMENT", "production"),
+            patch("app.main.settings.SECRET_KEY", "not-a-placeholder"),
+            patch("app.main.settings.MONGODB_URL", "mongodb://localhost:27017"),
+            patch("app.main.settings.REDIS_URL", "rediss://managed-redis.example.com:6379/0"),
+            patch("app.main.settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED", True),
+            patch("app.main.settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST", "clickhouse.cloud"),
+            patch("app.main.settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME", "clickhouse-user"),
+            patch("app.main.settings.ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD", "clickhouse-pass"),
+            patch("app.main.settings.MLOPS_MODEL_ARTIFACT_S3_REGION", "us-east-1"),
+            patch("app.main.settings.MLOPS_MODEL_ARTIFACT_S3_ACCESS_KEY_ID", "key"),
+            patch("app.main.settings.MLOPS_MODEL_ARTIFACT_S3_SECRET_ACCESS_KEY", "secret"),
+            patch("app.main.settings.LLM_API_KEY", "llm-key"),
+            patch("app.main.settings.GOOGLE_OAUTH_CLIENT_ID", "client"),
+            patch("app.main.settings.GOOGLE_OAUTH_CLIENT_SECRET", "secret"),
+            patch("app.main.settings.SMTP_REQUIRE_AUTH", True),
+            patch("app.main.settings.SMTP_USER", "smtp-user"),
+            patch("app.main.settings.SMTP_PASSWORD", "smtp-pass"),
+        ):
+            validate_production_operational_config()
 
     def test_accepts_complete_managed_dependency_config(self) -> None:
         with (

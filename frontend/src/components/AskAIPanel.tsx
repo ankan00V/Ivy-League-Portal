@@ -712,6 +712,23 @@ export default function AskAIPanel({ surface, suggestedQueries }: AskAIPanelProp
             </div>
           ) : null}
 
+          {response.insights.top_opportunities.length === 0 ? (
+            /* Abstention is an answer, so it gets a rendered state rather than an
+               empty grid. Retrieval always returns its nearest neighbours, so
+               without this the panel showed the least-bad rows as a shortlist. */
+            <div
+              className="card-panel"
+              style={{ background: "var(--bg-base)", display: "grid", gap: "0.45rem", padding: "1.1rem" }}
+            >
+              <div style={{ fontSize: "0.78rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-secondary)" }}>
+                No strong match
+              </div>
+              <div style={{ fontWeight: 700, color: "var(--text-secondary)" }}>
+                {response.insights.recommended_action}
+              </div>
+            </div>
+          ) : null}
+
           <div style={{ display: "grid", gap: "0.85rem" }}>
             {response.insights.top_opportunities.map((item, index) => (
               <article key={item.opportunity_id} className="card-panel" style={{ display: "grid", gap: "0.8rem", background: "var(--bg-base)" }}>
