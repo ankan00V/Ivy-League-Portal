@@ -28,7 +28,7 @@ from typing import Any, Optional
 
 import asyncpg
 
-from app.core.config import settings, resolve_postgres_dsn
+from app.core.config import settings, resolve_postgres_dsn, postgres_connect_args
 
 logger = logging.getLogger(__name__)
 
@@ -65,9 +65,10 @@ async def get_pool() -> asyncpg.Pool:
         dsn = resolve_postgres_dsn()
         if not dsn:
             raise RuntimeError("no Postgres URL configured")
+        connect_dsn, ssl_mode = postgres_connect_args(dsn)
         _pool = await asyncpg.create_pool(
-            dsn.replace("?sslmode=require", ""),
-            ssl="require",
+            connect_dsn,
+            ssl=ssl_mode,
             # Opened eagerly and never grown: a new connection needs a DNS
             # lookup, and during a scrape that lookup fails outright.
             min_size=max(4, int(settings.NEON_POOL_MAX_SIZE)),

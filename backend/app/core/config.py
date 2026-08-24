@@ -903,6 +903,26 @@ def _dsn_host(dsn: str) -> str:
     return match.group(1) if match else "unknown"
 
 
+def postgres_connect_args(dsn: str) -> tuple[str, object]:
+    """Split a DSN into (dsn_without_sslmode, asyncpg ssl argument).
+
+    ssl="require" was hardcoded at both pool sites, which meant the app could
+    not connect to any Postgres that speaks plain TCP - a local container, or a
+    CI service - no matter what the DSN asked for. asyncpg would demand TLS the
+    server does not offer and the connection just failed. That is why the
+    release-blocking gates could not be given a real database to run against.
+
+    Supabase and Neon both require TLS, so "require" stays the default; only an
+    explicit sslmode=disable opts out. The parameter is stripped from the DSN
+    because asyncpg takes it as a keyword argument instead.
+    """
+    text = str(dsn or "")
+    match = re.search(r"[?&]sslmode=([A-Za-z-]+)", text)
+    mode = match.group(1).lower() if match else "require"
+    cleaned = re.sub(r"([?&])sslmode=[A-Za-z-]+&?", r"\1", text).rstrip("?&")
+    return cleaned, (False if mode == "disable" else "require")
+
+
 def resolve_postgres_dsn() -> str:
     """The serving Postgres DSN, chosen out loud instead of guessed.
 

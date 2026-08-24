@@ -20,7 +20,7 @@ from typing import Any, Optional
 
 import asyncpg
 
-from app.core.config import settings, resolve_postgres_dsn
+from app.core.config import settings, resolve_postgres_dsn, postgres_connect_args
 from app.db.pg_odm import (
     UnsupportedQuery,
     build_where,
@@ -53,9 +53,10 @@ async def get_pool() -> asyncpg.Pool:
         dsn = resolve_postgres_dsn()
         if not dsn:
             raise RuntimeError("no Postgres URL configured")
+        connect_dsn, ssl_mode = postgres_connect_args(dsn)
         _pool = await asyncpg.create_pool(
-            dsn.replace("?sslmode=require", ""),
-            ssl="require",
+            connect_dsn,
+            ssl=ssl_mode,
             # min_size == max_size on purpose. Opening a connection resolves
             # the host, and a scrape keeps the resolver busy enough that the
             # lookup fails outright - `gaierror` from _get_new_connection, mid
