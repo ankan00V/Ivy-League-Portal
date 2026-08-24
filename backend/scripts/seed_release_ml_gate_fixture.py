@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+from urllib.parse import urlparse
 import sys
 from datetime import timedelta
 from pathlib import Path
@@ -15,7 +16,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from app.core.config import settings
+from app.core.config import resolve_postgres_dsn, settings
 from app.core.time import utc_now
 from app.models.assistant_audit_event import AssistantAuditEvent
 from app.models.experiment import Experiment
@@ -35,6 +36,28 @@ CI_DB_MARKERS = ("ci", "test", "fixture", "release_gate")
 def _is_safe_fixture_db(name: str) -> bool:
     normalized = (name or "").strip().lower()
     return bool(normalized) and any(marker in normalized for marker in CI_DB_MARKERS)
+
+
+def _postgres_database_name(dsn: str) -> str:
+    """Database name from a DSN, for the fixture-marker safety check."""
+    path = urlparse(str(dsn or "")).path or ""
+    return path.lstrip("/").strip()
+
+
+async def _truncate_fixture_tables(models: list) -> None:
+    """Empty the tables this fixture seeds. Callers gate this on _is_safe_fixture_db."""
+    import asyncpg
+
+    from app.core.config import postgres_connect_args
+
+    tables = sorted({getattr(getattr(m, "Settings", None), "name", "") for m in models} - {""})
+    connect_dsn, ssl_mode = postgres_connect_args(resolve_postgres_dsn())
+    conn = await asyncpg.connect(connect_dsn, ssl=ssl_mode, statement_cache_size=0)
+    try:
+        for table in tables:
+            await conn.execute(f'TRUNCATE TABLE app."{table}" CASCADE')
+    finally:
+        await conn.close()
 
 
 def _created_at(index: int, *, days: int):
@@ -401,9 +424,53 @@ async def _main() -> int:
     )
     args = parser.parse_args()
 
-    db_name = settings.MONGODB_DB_NAME
-    client = AsyncIOMotorClient(settings.MONGODB_URL)
-    try:
+    MODELS = [
+        AssistantAuditEvent,
+        Experiment,
+        FeatureStoreRow,
+        ModelDriftReport,
+        Opportunity,
+        OpportunityInteraction,
+        Profile,
+        RankingModelVersion,
+        RankingRequestTelemetry,
+        User,
+    ]
+
+    # Seed whichever database is actually serving. This connected to Mongo
+    # unconditionally, so after the Postgres cutover the release-blocking gates
+    # were seeded into a database the app no longer reads - the gates then ran
+    # against whatever Postgres happened to hold, which is how they came to fail
+    # on every push to main.
+    client = None
+    if settings.POSTGRES_ODM_ENABLED:
+        from app.db import pg_documents
+
+        dsn = resolve_postgres_dsn()
+        db_name = _postgres_database_name(dsn)
+        if args.reset:
+            # Postgres cannot drop the database it is connected to, so reset
+            # means truncating the seeded tables. That is destructive enough to
+            # keep the original guard: the target must look like a fixture
+            # database, or the run is refused. Pointing this at production and
+            # passing --reset would empty it.
+            if not args.allow_reset_non_ci and not _is_safe_fixture_db(db_name):
+                print(
+                    json.dumps(
+                        {
+                            "status": "blocked",
+                            "reason": "Refusing to reset a database without a CI/test/fixture marker.",
+                            "database": db_name,
+                        },
+                        indent=2,
+                    )
+                )
+                return 2
+            await _truncate_fixture_tables(MODELS)
+        pg_documents.install(MODELS)
+    else:
+        db_name = settings.MONGODB_DB_NAME
+        client = AsyncIOMotorClient(settings.MONGODB_URL)
         if args.reset:
             if not args.allow_reset_non_ci and not _is_safe_fixture_db(db_name):
                 print(
@@ -419,21 +486,9 @@ async def _main() -> int:
                 return 2
             await client.drop_database(db_name)
 
-        await init_beanie(
-            database=client[db_name],
-            document_models=[
-                AssistantAuditEvent,
-                Experiment,
-                FeatureStoreRow,
-                ModelDriftReport,
-                Opportunity,
-                OpportunityInteraction,
-                Profile,
-                RankingModelVersion,
-                RankingRequestTelemetry,
-                User,
-            ],
-        )
+        await init_beanie(database=client[db_name], document_models=MODELS)
+
+    try:
 
         days = max(1, min(int(args.days), 90))
         impressions_per_mode = max(220, int(args.impressions_per_mode))
@@ -470,7 +525,9 @@ async def _main() -> int:
         )
         return 0
     finally:
-        client.close()
+        # None under POSTGRES_ODM_ENABLED: Mongo was never contacted.
+        if client is not None:
+            client.close()
 
 
 if __name__ == "__main__":

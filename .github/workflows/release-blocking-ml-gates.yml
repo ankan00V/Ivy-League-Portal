@@ -10,18 +10,30 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
-      mongo:
-        image: mongo:7
+      # Postgres, not Mongo. The app moved to Postgres, but this job kept
+      # provisioning a Mongo container - so the release-blocking gates were
+      # seeding and reading a database the app no longer uses, and failed on
+      # every push once the DSN resolution stopped guessing.
+      #
+      # pgvector rather than plain postgres: the schema declares
+      # CREATE EXTENSION vector alongside pg_trgm.
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ivy_league_release_gate_ci
         ports:
-          - 27017:27017
+          - 5432:5432
         options: >-
-          --health-cmd "mongosh --quiet --eval 'db.adminCommand(\"ping\").ok' || exit 1"
+          --health-cmd "pg_isready -U postgres"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
     env:
-      MONGODB_URL: mongodb://localhost:27017
-      MONGODB_DB_NAME: ivy_league_release_gate_ci
+      # sslmode=disable because a CI container speaks plain TCP. Supabase and
+      # Neon carry no sslmode and so still default to require.
+      SUPABASE_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ivy_league_release_gate_ci?sslmode=disable
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -43,6 +55,13 @@ jobs:
       # proves nothing about how real students behave. The real-traffic answer comes
       # from real-traffic-rollout-readiness.yml, which reads production and does not
       # seed anything.
+      - name: Apply Postgres schema
+        run: |
+          for file in backend/migrations/neon/*.sql; do
+            echo "applying $file"
+            psql "$SUPABASE_DATABASE_URL" -v ON_ERROR_STOP=1 -f "$file"
+          done
+
       - name: Seed deterministic ML release gate fixture
         run: python backend/scripts/seed_release_ml_gate_fixture.py --days 14 --reset
 
