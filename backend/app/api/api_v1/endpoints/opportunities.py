@@ -31,6 +31,7 @@ from app.models.traffic import TrafficType
 from app.models.user import User
 from app.schemas.rag import RAGAskResponse
 from app.services.opportunity_placement import classify_placement
+from app.services.role_classification import classify_role_track
 from app.services.ai_engine import ai_system
 from app.services.cold_start import ColdStartDecision, cold_start_profile_builder
 from app.services.evaluation_service import evaluation_service
@@ -98,6 +99,32 @@ class OpportunityResponse(OpportunityCreate):
     created_at: datetime
     updated_at: Optional[datetime] = None
     last_seen_at: Optional[datetime] = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def role_track(self) -> str:
+        """Technical vs non-technical, computed here rather than in the browser.
+
+        The feed classified this client-side, and the classifier reads
+        `description`. That single dependency is why the page fetched all ~1500
+        active listings: it needed the whole corpus, with bodies, just to label
+        the two track tabs and their counts.
+
+        description averages 703 B and extras 613 B, so a feed request moved
+        3.36 MB out of Postgres. A 5.5 GB monthly egress budget covers about
+        1,600 of those, which is how one developer exhausted the Supabase free
+        tier at 16.86 GB. Returning the answer as a short string lets the client
+        stop asking for bodies.
+
+        Parity with the TypeScript original is enforced by
+        tests/test_role_classification_parity.py, which runs both and diffs.
+        """
+        return classify_role_track(
+            title=self.title,
+            description=self.description,
+            tags=self.tags,
+            opportunity_type=self.opportunity_type,
+        )
 
     @computed_field  # type: ignore[prop-decorator]
     @property
