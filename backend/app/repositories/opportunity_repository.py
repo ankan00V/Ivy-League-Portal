@@ -166,6 +166,149 @@ async def load_active_opportunities(
     return [_to_model(r) for r in rows]
 
 
+async def load_opportunity_page(
+    *,
+    portal: str | None = None,
+    domain: str | None = None,
+    role_track: str | None = None,
+    placement: str | None = None,
+    specialities: list[str] | None = None,
+    page: int = 1,
+    per_page: int = 12,
+) -> tuple[list, int]:
+    """One page of the feed, filtered and counted in SQL. Returns (rows, total).
+
+    The feed used to fetch every active listing and filter in the browser, which
+    moved 3.36 MB out of Postgres per request and exhausted a 5.5 GB monthly
+    egress allowance in roughly 1,600 page loads. Filtering here is only possible
+    because role_track and feed_categories are stored columns now - as computed
+    properties they could not appear in a WHERE clause, so the corpus had to be
+    loaded before anything could be excluded.
+
+    `total` is the count of rows matching the filter, not the page size. The
+    pager needs it to render page numbers, and it is a second query rather than
+    a window function because COUNT(*) over the same indexed predicate is cheap
+    and keeps the row query's plan simple.
+    """
+    pool = await get_pool()
+    clauses = ["opportunity_status = 'active'"]
+    params: list[Any] = []
+
+    if domain:
+        params.append(domain)
+        clauses.append(f"domain = ${len(params)}")
+
+    normalized_portal = str(portal or "").strip().lower()
+    if normalized_portal in {"career", "competitive", "other"}:
+        params.append(normalized_portal)
+        clauses.append(f"portal_category = ${len(params)}")
+
+    normalized_track = str(role_track or "").strip().lower()
+    if normalized_track in {"technical", "non_technical"}:
+        params.append(normalized_track)
+        clauses.append(f"role_track = ${len(params)}")
+
+    normalized_placement = str(placement or "").strip().lower()
+    if normalized_placement in {"india", "remote", "hybrid", "international"}:
+        params.append(normalized_placement)
+        # Array containment, so a remote role in Bengaluru still matches both
+        # india and remote rather than being forced into one bucket.
+        clauses.append(f"feed_categories @> ARRAY[${len(params)}]::text[]")
+
+    keywords = [k.strip().lower() for k in (specialities or []) if k and k.strip()]
+    if keywords:
+        # OR across selections: picking Software and Data & AI widens the list.
+        # Matched against title only. The speciality chips were matched against
+        # descriptions client-side, and reintroducing that here would mean a
+        # sequential scan of every body on every page request - the cost this
+        # change exists to remove.
+        ors = []
+        for keyword in keywords:
+            params.append(f"%{keyword}%")
+            ors.append(f"lower(title) LIKE ${len(params)}")
+        clauses.append("(" + " OR ".join(ors) + ")")
+
+    where = " AND ".join(clauses)
+    safe_per_page = max(1, min(int(per_page), 100))
+    offset = max(0, (max(1, int(page)) - 1) * safe_per_page)
+
+    async with pool.acquire() as conn:
+        total = int(await conn.fetchval(
+            f"SELECT count(*) FROM app.opportunities WHERE {where}", *params
+        ) or 0)
+        params.extend([safe_per_page, offset])
+        rows = await conn.fetch(
+            f"SELECT {_SELECT} FROM app.opportunities WHERE {where} "
+            f"ORDER BY last_seen_at DESC NULLS LAST, created_at DESC "
+            f"LIMIT ${len(params)-1} OFFSET ${len(params)}",
+            *params,
+        )
+    return [_to_model(r) for r in rows], total
+
+
+async def feed_facet_counts(
+    *, portal: str | None = None, role_track: str | None = None
+) -> dict[str, Any]:
+    """Counts for the filter controls, aggregated in SQL.
+
+    The tab and pill counts were derived by classifying the whole corpus in the
+    browser, which is the other half of why every listing was downloaded. Two
+    GROUP BY queries return the same numbers in a few hundred bytes.
+
+    Placement counts respect the selected role track but not the placement pill
+    itself, so each pill shows how many listings it would yield rather than how
+    many are showing now.
+    """
+    pool = await get_pool()
+    clauses = ["opportunity_status = 'active'"]
+    params: list[Any] = []
+
+    normalized_portal = str(portal or "").strip().lower()
+    if normalized_portal in {"career", "competitive", "other"}:
+        params.append(normalized_portal)
+        clauses.append(f"portal_category = ${len(params)}")
+    where = " AND ".join(clauses)
+
+    track_params = list(params)
+    track_clauses = list(clauses)
+    normalized_track = str(role_track or "").strip().lower()
+    if normalized_track in {"technical", "non_technical"}:
+        track_params.append(normalized_track)
+        track_clauses.append(f"role_track = ${len(track_params)}")
+    track_where = " AND ".join(track_clauses)
+
+    async with pool.acquire() as conn:
+        track_rows = await conn.fetch(
+            f"SELECT role_track, count(*) AS n FROM app.opportunities WHERE {where} GROUP BY 1",
+            *params,
+        )
+        placement_rows = await conn.fetch(
+            f"SELECT unnest(feed_categories) AS cat, count(*) AS n "
+            f"FROM app.opportunities WHERE {track_where} GROUP BY 1",
+            *track_params,
+        )
+        track_total = int(await conn.fetchval(
+            f"SELECT count(*) FROM app.opportunities WHERE {track_where}", *track_params
+        ) or 0)
+
+    tracks = {str(r["role_track"] or "unknown"): int(r["n"]) for r in track_rows}
+    placements = {str(r["cat"]): int(r["n"]) for r in placement_rows}
+    return {
+        "tracks": {
+            "all": sum(tracks.values()),
+            "technical": tracks.get("technical", 0),
+            "non_technical": tracks.get("non_technical", 0),
+        },
+        "placements": {
+            "all": track_total,
+            "india": placements.get("india", 0),
+            "remote": placements.get("remote", 0),
+            "hybrid": placements.get("hybrid", 0),
+            "international": placements.get("international", 0),
+        },
+    }
+
+
 async def count_active() -> int:
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -199,6 +342,11 @@ _WRITE_COLUMNS = [
     "canonical_url_hash", "canonical_key", "title_company_location_hash",
     "duplicate_cluster_key", "deadline", "published_at", "created_at",
     "updated_at", "last_seen_at",
+    # Facets, written here so the feed can filter and count in SQL instead of
+    # loading the corpus into the browser. Omitting them from this list is not a
+    # missing optimisation - it silently reverts the backfill, because every
+    # INSERT leaves the columns NULL and the scraper re-inserts constantly.
+    "role_track", "feed_categories",
 ]
 
 _NUMERIC = {"trust_score", "risk_score", "source_count", "duplicate_count",
@@ -215,6 +363,44 @@ def _write_value(model, column: str):
     if column == "legacy_mongo_id":
         raw = getattr(model, "id", None)
         return str(raw) if raw else None
+    # Derived at write time from the same classifiers the API used to run per
+    # request. The scraped model carries no such attribute, so these are
+    # computed rather than read.
+    if column == "role_track":
+        from app.services.role_classification import classify_role_track
+
+        return classify_role_track(
+            title=getattr(model, "title", None),
+            description=getattr(model, "description", None),
+            tags=getattr(model, "tags", None),
+            opportunity_type=getattr(model, "opportunity_type", None),
+        )
+    if column == "portal_category":
+        # Persisted rather than derived per request. resolve_opportunity_portal
+        # falls back to the type/title/description when the column is NULL, and
+        # 946 active rows relied on that fallback - so a SQL filter on the raw
+        # column silently dropped every one of them from the career feed.
+        from app.services.opportunity_visibility import resolve_opportunity_portal
+
+        return resolve_opportunity_portal(
+            opportunity_type=getattr(model, "opportunity_type", None),
+            title=getattr(model, "title", None),
+            description=getattr(model, "description", None),
+            portal_category=value,
+        )
+    if column == "feed_categories":
+        from app.services.opportunity_placement import classify_placement
+
+        return list(
+            classify_placement(
+                location=getattr(model, "location", None),
+                work_mode=getattr(model, "work_mode", None),
+                title=getattr(model, "title", None),
+                description=getattr(model, "description", None),
+                source=getattr(model, "source", None),
+            )
+            or []
+        )
     if value is None:
         return None
     if column in _ARRAYS:

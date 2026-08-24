@@ -1176,6 +1176,61 @@ async def calibrate_feed_taste(
     )
 
 
+class OpportunityPageResponse(BaseModel):
+    """One page of the feed plus the totals the pager and filter chips need."""
+
+    items: list[OpportunityResponse]
+    total: int
+    page: int
+    per_page: int
+    pages: int
+    facets: dict[str, Any]
+
+
+@router.get("/page", response_model=OpportunityPageResponse)
+async def read_opportunity_page(
+    page: int = 1,
+    per_page: int = 12,
+    portal: Optional[Literal["career", "competitive", "other"]] = None,
+    domain: Optional[str] = None,
+    role_track: Optional[Literal["technical", "non_technical"]] = None,
+    placement: Optional[Literal["india", "remote", "hybrid", "international"]] = None,
+    specialities: Optional[str] = None,
+) -> Any:
+    """Paged feed. Filters and counts run in SQL, so one page is one small read.
+
+    The list endpoint returns every matching row, and the client filtered and
+    counted over the whole corpus. That moved 3.36 MB out of Postgres per
+    request - a 5.5 GB monthly egress allowance covers roughly 1,600 of them,
+    which is how the Supabase project was restricted at 16.86 GB with a single
+    developer using it. Twelve rows is about 27 KB.
+
+    `specialities` is a comma-separated list, matched against the title. The
+    chips matched descriptions client-side; doing that in SQL would mean a
+    sequential scan of every body per request, which is the cost this removes.
+    Narrower, and honest about being narrower.
+    """
+    await _ensure_live_feed_if_stale()
+    from app.repositories import opportunity_repository
+
+    keywords = [part for part in (specialities or "").split(",") if part.strip()]
+    rows, total = await opportunity_repository.load_opportunity_page(
+        portal=portal, domain=domain, role_track=role_track,
+        placement=placement, specialities=keywords,
+        page=page, per_page=per_page,
+    )
+    facets = await opportunity_repository.feed_facet_counts(portal=portal, role_track=role_track)
+    safe_per_page = max(1, min(int(per_page), 100))
+    return {
+        "items": rows,
+        "total": total,
+        "page": max(1, int(page)),
+        "per_page": safe_per_page,
+        "pages": max(1, -(-total // safe_per_page)),  # ceil, so a partial last page still counts
+        "facets": facets,
+    }
+
+
 @router.get("", response_model=list[OpportunityResponse], include_in_schema=False)
 @router.get("/", response_model=list[OpportunityResponse])
 async def read_opportunities(
