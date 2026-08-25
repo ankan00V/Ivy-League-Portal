@@ -228,6 +228,45 @@ function hydrateVolunteerEntries(raw: unknown): VolunteerEntryValue[] {
   });
 }
 
+type ExperienceEntryValue = {
+  title: string; organization: string; location: string;
+  location_type: string; employment_type: string; is_current: boolean;
+  start_month: number | null; start_year: number | null;
+  end_month: number | null; end_year: number | null;
+  highlights: string; skills: string[];
+};
+
+const EMPTY_EXPERIENCE_ENTRY: ExperienceEntryValue = {
+  title: "", organization: "", location: "", location_type: "", employment_type: "",
+  is_current: false, start_month: null, start_year: null,
+  end_month: null, end_year: null, highlights: "", skills: [],
+};
+
+const EMPLOYMENT_TYPES: [string, string][] = [
+  ["full_time", "Full-time"], ["part_time", "Part-time"], ["internship", "Internship"],
+  ["freelance", "Freelance"], ["contract", "Contract"], ["apprenticeship", "Apprenticeship"],
+  ["seasonal", "Seasonal"],
+];
+
+const LOCATION_TYPES: [string, string][] = [
+  ["on_site", "On-site"], ["hybrid", "Hybrid"], ["remote", "Remote"],
+];
+
+function hydrateExperienceEntries(raw: unknown): ExperienceEntryValue[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((item) => {
+    const row = (item || {}) as Record<string, unknown>;
+    return {
+      title: toText(row.title), organization: toText(row.organization),
+      location: toText(row.location), location_type: toText(row.location_type),
+      employment_type: toText(row.employment_type), is_current: Boolean(row.is_current),
+      start_month: toNullableNumber(row.start_month), start_year: toNullableNumber(row.start_year),
+      end_month: toNullableNumber(row.end_month), end_year: toNullableNumber(row.end_year),
+      highlights: toText(row.highlights), skills: toSkillList(row.skills),
+    };
+  });
+}
+
 type ProfilePayload = {
   account_type: AccountType;
   first_name: string;
@@ -267,6 +306,7 @@ type ProfilePayload = {
   achievements: string;
   education: string;
   education_entries: EducationEntryValue[];
+  experience_entries: ExperienceEntryValue[];
   project_entries: ProjectEntryValue[];
   certification_entries: CertificationEntryValue[];
   honor_entries: HonorEntryValue[];
@@ -323,6 +363,7 @@ type ProfileUpdatePayload = {
   achievements?: string;
   education?: string;
   education_entries?: EducationEntryValue[];
+  experience_entries?: ExperienceEntryValue[];
   project_entries?: ProjectEntryValue[];
   certification_entries?: CertificationEntryValue[];
   honor_entries?: HonorEntryValue[];
@@ -522,6 +563,7 @@ function hydrateProfilePayload(profilePayload: Record<string, unknown>): Profile
     achievements: toText(profilePayload.achievements),
     education: toText(profilePayload.education),
     education_entries: hydrateEducationEntries(profilePayload.education_entries),
+    experience_entries: hydrateExperienceEntries(profilePayload.experience_entries),
     project_entries: hydrateProjectEntries(profilePayload.project_entries),
     certification_entries: hydrateCertificationEntries(profilePayload.certification_entries),
     honor_entries: hydrateHonorEntries(profilePayload.honor_entries),
@@ -568,6 +610,9 @@ function buildProfileUpdatePayload(profile: ProfilePayload): ProfileUpdatePayloa
   // Always sent, so clearing the last entry actually deletes it server-side.
   // Entries with no school are dropped: an empty card the user never filled in
   // should not become a blank row on their profile.
+  payload.experience_entries = profile.experience_entries
+    .filter((entry) => entry.title.trim().length > 0 || entry.organization.trim().length > 0)
+    .map((entry) => ({ ...entry, skills: entry.skills.map((v) => v.trim()).filter(Boolean) }));
   payload.project_entries = profile.project_entries
     .filter((entry) => entry.name.trim().length > 0)
     .map((entry) => ({ ...entry, skills: entry.skills.map((s) => s.trim()).filter(Boolean) }));
@@ -689,6 +734,11 @@ export default function ProfilePage() {
   const [activeSection, setActiveSection] = useState<SectionKey>("basic");
   const [copyCurrentAddress, setCopyCurrentAddress] = useState(false);
   const [hobbyInput, setHobbyInput] = useState("");
+  // Accomplishments holds four independent lists. Rendering them all expanded
+  // made the page grow without bound as entries were added - four lists of
+  // cards on one screen - so only one opens at a time.
+  const [openAccomplishmentGroup, setOpenAccomplishmentGroup] =
+    useState<"projects" | "certifications" | "honors" | "volunteering" | null>("projects");
   const [selectedUniversity, setSelectedUniversity] = useState<string>("");
 
   const [profile, setProfile] = useState<ProfilePayload>({
@@ -730,6 +780,7 @@ export default function ProfilePage() {
     achievements: "",
     education: "",
     education_entries: [],
+    experience_entries: [],
     project_entries: [],
     certification_entries: [],
     honor_entries: [],
@@ -1665,17 +1716,84 @@ export default function ProfilePage() {
     </>
   );
 
-  const renderWorkSection = () => (
-    <>
-      {renderSectionHeader("Work Experience", "Role details and summary of your work")}
-      <div className="profile-field-grid two">
-        <TextField
-          wrapperClassName="profile-field"
-          label="Current Job Role"
-          value={profile.current_job_role}
-          onChange={(event) => updateProfile("current_job_role", event.target.value)}
-          placeholder="IT Analyst / SDE Intern / Product Intern"
-        />
+  const renderWorkSection = () => {
+    const roles = listUpdater("experience_entries");
+    return (
+      <>
+        {renderSectionHeader("Work Experience", "Roles, internships, and what you did in them")}
+
+        {profile.experience_entries.length === 0 ? (
+          <p className="profile-entry-empty">No roles added yet.</p>
+        ) : null}
+
+        {profile.experience_entries.map((entry, index) =>
+          renderEntryCard(
+            entry.title.trim() || entry.organization.trim() || `Role ${index + 1}`,
+            index,
+            () => roles.remove(index),
+            (
+              <>
+                <div className="profile-field-grid two">
+                  <TextField wrapperClassName="profile-field" label="Title" required value={entry.title}
+                    onChange={(e) => roles.patch(index, { title: e.target.value })}
+                    placeholder="Ex: SDE Intern" />
+                  <TextField wrapperClassName="profile-field" label="Company or organization" required
+                    value={entry.organization}
+                    onChange={(e) => roles.patch(index, { organization: e.target.value })}
+                    placeholder="Ex: Stripe" />
+                </div>
+                <div className="profile-field-grid two">
+                  <SelectField wrapperClassName="profile-field" label="Employment type"
+                    value={entry.employment_type}
+                    onChange={(e) => roles.patch(index, { employment_type: e.target.value })}>
+                    <option value="">Select</option>
+                    {EMPLOYMENT_TYPES.map(([value, label]) => (
+                      <option key={value} value={value}>{label}</option>
+                    ))}
+                  </SelectField>
+                  <SelectField wrapperClassName="profile-field" label="Location type"
+                    value={entry.location_type}
+                    onChange={(e) => roles.patch(index, { location_type: e.target.value })}>
+                    <option value="">Select</option>
+                    {LOCATION_TYPES.map(([value, label]) => (
+                      <option key={value} value={value}>{label}</option>
+                    ))}
+                  </SelectField>
+                </div>
+                <TextField wrapperClassName="profile-field" label="Location" value={entry.location}
+                  onChange={(e) => roles.patch(index, { location: e.target.value })}
+                  placeholder="Ex: Bengaluru, India" />
+                <label className="profile-entry-checkbox">
+                  <input type="checkbox" checked={entry.is_current}
+                    onChange={(e) => roles.patch(index, { is_current: e.target.checked })} />
+                  <span>I am currently working in this role</span>
+                </label>
+                <div className="profile-field-grid two">
+                  {renderMonthYearPair("Start date", entry.start_month, entry.start_year,
+                    (v) => roles.patch(index, { start_month: v }),
+                    (v) => roles.patch(index, { start_year: v }))}
+                  {entry.is_current
+                    ? null
+                    : renderMonthYearPair("End date", entry.end_month, entry.end_year,
+                        (v) => roles.patch(index, { end_month: v }),
+                        (v) => roles.patch(index, { end_year: v }))}
+                </div>
+                <TextareaField wrapperClassName="profile-field" label="Highlights" rows={5}
+                  value={entry.highlights}
+                  onChange={(e) => roles.patch(index, { highlights: e.target.value })}
+                  placeholder="Impact, ownership, tools used, and outcomes." />
+                {renderSkillsField(entry.skills, (next) => roles.patch(index, { skills: next }))}
+              </>
+            )
+          )
+        )}
+
+        <button type="button" className="btn-secondary profile-entry-add"
+          onClick={() => roles.add(EMPTY_EXPERIENCE_ENTRY)}>+ Add role</button>
+
+        {/* Total experience stays a plain field: it is a self-reported summary
+            the ranker reads, not something derivable from the roles above while
+            a student is still filling them in. */}
         <TextField
           wrapperClassName="profile-field"
           label="Total Work Experience"
@@ -1683,17 +1801,9 @@ export default function ProfilePage() {
           onChange={(event) => updateProfile("total_work_experience", event.target.value)}
           placeholder="6 months / 1.5 years"
         />
-      </div>
-      <TextareaField
-        wrapperClassName="profile-field"
-        label="Experience Summary"
-        rows={6}
-        value={profile.experience_summary}
-        onChange={(event) => updateProfile("experience_summary", event.target.value)}
-        placeholder="Describe impact, ownership, tools used, and outcomes."
-      />
-    </>
-  );
+      </>
+    );
+  };
 
   // Generic list helpers: every accomplishment list is add / patch-at-index /
   // remove-at-index, so they share one implementation rather than four copies.
@@ -1736,6 +1846,36 @@ export default function ProfilePage() {
     </div>
   );
 
+  const renderCollapsibleGroup = (
+    key: "projects" | "certifications" | "honors" | "volunteering",
+    title: string,
+    count: number,
+    children: React.ReactNode
+  ) => {
+    const open = openAccomplishmentGroup === key;
+    return (
+      <div className={`profile-entry-group ${open ? "is-open" : ""}`}>
+        <button
+          type="button"
+          className="profile-entry-group-toggle"
+          aria-expanded={open}
+          onClick={() => setOpenAccomplishmentGroup(open ? null : key)}
+        >
+          <span className="profile-entry-group-label">
+            {title}
+            {/* The count is what makes a collapsed group readable: without it a
+                closed section gives no clue whether anything is in there. */}
+            <span className="profile-entry-group-count">{count}</span>
+          </span>
+          <span className="profile-entry-group-chevron" aria-hidden="true">
+            {open ? "\u2212" : "+"}
+          </span>
+        </button>
+        {open ? <div className="profile-entry-group-body">{children}</div> : null}
+      </div>
+    );
+  };
+
   const renderSkillsField = (skills: string[], onChange: (next: string[]) => void) => (
     <TextField
       wrapperClassName="profile-field"
@@ -1762,7 +1902,8 @@ export default function ProfilePage() {
           "Projects, certifications, awards, and volunteering"
         )}
 
-        <h3 className="profile-entry-group-title">Projects</h3>
+        {renderCollapsibleGroup("projects", "Projects", profile.project_entries.length, (
+          <>
         {profile.project_entries.length === 0 ? (
           <p className="profile-entry-empty">No projects added yet.</p>
         ) : null}
@@ -1816,8 +1957,12 @@ export default function ProfilePage() {
         )}
         <button type="button" className="btn-secondary profile-entry-add"
           onClick={() => projects.add(EMPTY_PROJECT_ENTRY)}>+ Add project</button>
+          </>
+        ))}
 
-        <h3 className="profile-entry-group-title">Licenses &amp; certifications</h3>
+
+        {renderCollapsibleGroup("certifications", "Licenses &amp; certifications", profile.certification_entries.length, (
+          <>
         {profile.certification_entries.length === 0 ? (
           <p className="profile-entry-empty">No certifications added yet.</p>
         ) : null}
@@ -1854,8 +1999,12 @@ export default function ProfilePage() {
         )}
         <button type="button" className="btn-secondary profile-entry-add"
           onClick={() => certs.add(EMPTY_CERTIFICATION_ENTRY)}>+ Add certification</button>
+          </>
+        ))}
 
-        <h3 className="profile-entry-group-title">Honors &amp; awards</h3>
+
+        {renderCollapsibleGroup("honors", "Honors &amp; awards", profile.honor_entries.length, (
+          <>
         {profile.honor_entries.length === 0 ? (
           <p className="profile-entry-empty">No honors added yet.</p>
         ) : null}
@@ -1882,8 +2031,12 @@ export default function ProfilePage() {
         )}
         <button type="button" className="btn-secondary profile-entry-add"
           onClick={() => honors.add(EMPTY_HONOR_ENTRY)}>+ Add honor</button>
+          </>
+        ))}
 
-        <h3 className="profile-entry-group-title">Volunteering</h3>
+
+        {renderCollapsibleGroup("volunteering", "Volunteering", profile.volunteer_entries.length, (
+          <>
         {profile.volunteer_entries.length === 0 ? (
           <p className="profile-entry-empty">No volunteering added yet.</p>
         ) : null}
@@ -1931,6 +2084,9 @@ export default function ProfilePage() {
         )}
         <button type="button" className="btn-secondary profile-entry-add"
           onClick={() => volunteering.add(EMPTY_VOLUNTEER_ENTRY)}>+ Add volunteering</button>
+          </>
+        ))}
+
       </>
     );
   };
