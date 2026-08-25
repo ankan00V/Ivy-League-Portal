@@ -66,6 +66,168 @@ type SectionKey =
   | "personal"
   | "social";
 
+/** One education entry. Mirrors backend EducationEntry (models/profile.py). */
+type EducationEntryValue = {
+  school: string;
+  degree: string;
+  field_of_study: string;
+  start_month: number | null;
+  start_year: number | null;
+  end_month: number | null;
+  end_year: number | null;
+  grade: string;
+  activities: string;
+  description: string;
+  skills: string[];
+};
+
+const EMPTY_EDUCATION_ENTRY: EducationEntryValue = {
+  school: "",
+  degree: "",
+  field_of_study: "",
+  start_month: null,
+  start_year: null,
+  end_month: null,
+  end_year: null,
+  grade: "",
+  activities: "",
+  description: "",
+  skills: [],
+};
+
+const MONTH_OPTIONS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+// Wide enough for a school start and an expected graduation a few years out.
+const YEAR_OPTIONS = (() => {
+  const now = new Date().getFullYear();
+  const years: number[] = [];
+  for (let year = now + 8; year >= now - 60; year -= 1) {
+    years.push(year);
+  }
+  return years;
+})();
+
+function hydrateEducationEntries(raw: unknown): EducationEntryValue[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw.map((item) => {
+    const row = (item || {}) as Record<string, unknown>;
+    return {
+      school: toText(row.school),
+      degree: toText(row.degree),
+      field_of_study: toText(row.field_of_study),
+      start_month: toNullableNumber(row.start_month),
+      start_year: toNullableNumber(row.start_year),
+      end_month: toNullableNumber(row.end_month),
+      end_year: toNullableNumber(row.end_year),
+      grade: toText(row.grade),
+      activities: toText(row.activities),
+      description: toText(row.description),
+      skills: Array.isArray(row.skills) ? row.skills.map((s) => toText(s)).filter(Boolean) : [],
+    };
+  });
+}
+
+/** Accomplishment entries. Mirror the backend models in models/profile.py. */
+type ProjectEntryValue = {
+  name: string; description: string; url: string; is_current: boolean;
+  start_month: number | null; start_year: number | null;
+  end_month: number | null; end_year: number | null; skills: string[];
+};
+type CertificationEntryValue = {
+  name: string; issuing_organization: string;
+  issue_month: number | null; issue_year: number | null;
+  expiry_month: number | null; expiry_year: number | null;
+  credential_id: string; credential_url: string; skills: string[];
+};
+type HonorEntryValue = {
+  title: string; issuer: string;
+  issue_month: number | null; issue_year: number | null; description: string;
+};
+type VolunteerEntryValue = {
+  organization: string; role: string; cause: string; is_current: boolean;
+  start_month: number | null; start_year: number | null;
+  end_month: number | null; end_year: number | null; description: string;
+};
+
+const EMPTY_PROJECT_ENTRY: ProjectEntryValue = {
+  name: "", description: "", url: "", is_current: false,
+  start_month: null, start_year: null, end_month: null, end_year: null, skills: [],
+};
+const EMPTY_CERTIFICATION_ENTRY: CertificationEntryValue = {
+  name: "", issuing_organization: "", issue_month: null, issue_year: null,
+  expiry_month: null, expiry_year: null, credential_id: "", credential_url: "", skills: [],
+};
+const EMPTY_HONOR_ENTRY: HonorEntryValue = {
+  title: "", issuer: "", issue_month: null, issue_year: null, description: "",
+};
+const EMPTY_VOLUNTEER_ENTRY: VolunteerEntryValue = {
+  organization: "", role: "", cause: "", is_current: false,
+  start_month: null, start_year: null, end_month: null, end_year: null, description: "",
+};
+
+function toSkillList(raw: unknown): string[] {
+  return Array.isArray(raw) ? raw.map((s) => toText(s)).filter(Boolean) : [];
+}
+
+function hydrateProjectEntries(raw: unknown): ProjectEntryValue[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((item) => {
+    const row = (item || {}) as Record<string, unknown>;
+    return {
+      name: toText(row.name), description: toText(row.description), url: toText(row.url),
+      is_current: Boolean(row.is_current),
+      start_month: toNullableNumber(row.start_month), start_year: toNullableNumber(row.start_year),
+      end_month: toNullableNumber(row.end_month), end_year: toNullableNumber(row.end_year),
+      skills: toSkillList(row.skills),
+    };
+  });
+}
+
+function hydrateCertificationEntries(raw: unknown): CertificationEntryValue[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((item) => {
+    const row = (item || {}) as Record<string, unknown>;
+    return {
+      name: toText(row.name), issuing_organization: toText(row.issuing_organization),
+      issue_month: toNullableNumber(row.issue_month), issue_year: toNullableNumber(row.issue_year),
+      expiry_month: toNullableNumber(row.expiry_month), expiry_year: toNullableNumber(row.expiry_year),
+      credential_id: toText(row.credential_id), credential_url: toText(row.credential_url),
+      skills: toSkillList(row.skills),
+    };
+  });
+}
+
+function hydrateHonorEntries(raw: unknown): HonorEntryValue[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((item) => {
+    const row = (item || {}) as Record<string, unknown>;
+    return {
+      title: toText(row.title), issuer: toText(row.issuer),
+      issue_month: toNullableNumber(row.issue_month), issue_year: toNullableNumber(row.issue_year),
+      description: toText(row.description),
+    };
+  });
+}
+
+function hydrateVolunteerEntries(raw: unknown): VolunteerEntryValue[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((item) => {
+    const row = (item || {}) as Record<string, unknown>;
+    return {
+      organization: toText(row.organization), role: toText(row.role), cause: toText(row.cause),
+      is_current: Boolean(row.is_current),
+      start_month: toNullableNumber(row.start_month), start_year: toNullableNumber(row.start_year),
+      end_month: toNullableNumber(row.end_month), end_year: toNullableNumber(row.end_year),
+      description: toText(row.description),
+    };
+  });
+}
+
 type ProfilePayload = {
   account_type: AccountType;
   first_name: string;
@@ -104,6 +266,11 @@ type ProfilePayload = {
   interest_graph: string[];
   achievements: string;
   education: string;
+  education_entries: EducationEntryValue[];
+  project_entries: ProjectEntryValue[];
+  certification_entries: CertificationEntryValue[];
+  honor_entries: HonorEntryValue[];
+  volunteer_entries: VolunteerEntryValue[];
   certificates: string;
   projects: string;
   responsibilities: string;
@@ -155,6 +322,11 @@ type ProfileUpdatePayload = {
   interest_graph?: string[];
   achievements?: string;
   education?: string;
+  education_entries?: EducationEntryValue[];
+  project_entries?: ProjectEntryValue[];
+  certification_entries?: CertificationEntryValue[];
+  honor_entries?: HonorEntryValue[];
+  volunteer_entries?: VolunteerEntryValue[];
   certificates?: string;
   projects?: string;
   responsibilities?: string;
@@ -349,6 +521,11 @@ function hydrateProfilePayload(profilePayload: Record<string, unknown>): Profile
     interest_graph: toStringArray(profilePayload.interest_graph),
     achievements: toText(profilePayload.achievements),
     education: toText(profilePayload.education),
+    education_entries: hydrateEducationEntries(profilePayload.education_entries),
+    project_entries: hydrateProjectEntries(profilePayload.project_entries),
+    certification_entries: hydrateCertificationEntries(profilePayload.certification_entries),
+    honor_entries: hydrateHonorEntries(profilePayload.honor_entries),
+    volunteer_entries: hydrateVolunteerEntries(profilePayload.volunteer_entries),
     certificates: toText(profilePayload.certificates),
     projects: toText(profilePayload.projects),
     responsibilities: toText(profilePayload.responsibilities),
@@ -387,6 +564,28 @@ function buildProfileUpdatePayload(profile: ProfilePayload): ProfileUpdatePayloa
         .filter(([key, value]) => key.length > 0 && value.length > 0)
     ),
   };
+
+  // Always sent, so clearing the last entry actually deletes it server-side.
+  // Entries with no school are dropped: an empty card the user never filled in
+  // should not become a blank row on their profile.
+  payload.project_entries = profile.project_entries
+    .filter((entry) => entry.name.trim().length > 0)
+    .map((entry) => ({ ...entry, skills: entry.skills.map((s) => s.trim()).filter(Boolean) }));
+  payload.certification_entries = profile.certification_entries
+    .filter((entry) => entry.name.trim().length > 0)
+    .map((entry) => ({ ...entry, skills: entry.skills.map((s) => s.trim()).filter(Boolean) }));
+  payload.honor_entries = profile.honor_entries.filter((entry) => entry.title.trim().length > 0);
+  payload.volunteer_entries = profile.volunteer_entries.filter(
+    (entry) => entry.organization.trim().length > 0 || entry.role.trim().length > 0
+  );
+
+  payload.education_entries = profile.education_entries
+    .filter((entry) => entry.school.trim().length > 0)
+    .map((entry) => ({
+      ...entry,
+      school: entry.school.trim(),
+      skills: entry.skills.map((skill) => skill.trim()).filter(Boolean),
+    }));
 
   if (profile.user_type) {
     payload.user_type = profile.user_type;
@@ -530,6 +729,11 @@ export default function ProfilePage() {
     interest_graph: [],
     achievements: "",
     education: "",
+    education_entries: [],
+    project_entries: [],
+    certification_entries: [],
+    honor_entries: [],
+    volunteer_entries: [],
     certificates: "",
     projects: "",
     responsibilities: "",
@@ -1290,31 +1494,174 @@ export default function ProfilePage() {
     </>
   );
 
+  const updateEducationEntry = (index: number, patch: Partial<EducationEntryValue>) => {
+    updateProfile(
+      "education_entries",
+      profile.education_entries.map((entry, position) =>
+        position === index ? { ...entry, ...patch } : entry
+      )
+    );
+  };
+
+  const addEducationEntry = () => {
+    updateProfile("education_entries", [...profile.education_entries, { ...EMPTY_EDUCATION_ENTRY }]);
+  };
+
+  const removeEducationEntry = (index: number) => {
+    updateProfile(
+      "education_entries",
+      profile.education_entries.filter((_, position) => position !== index)
+    );
+  };
+
+  const renderMonthYearPair = (
+    legend: string,
+    month: number | null,
+    year: number | null,
+    onMonth: (value: number | null) => void,
+    onYear: (value: number | null) => void
+  ) => (
+    <div className="profile-field">
+      <span className="profile-entry-legend">{legend}</span>
+      <div className="profile-field-grid two">
+        <SelectField
+          wrapperClassName="profile-field"
+          label="Month"
+          value={month === null ? "" : String(month)}
+          onChange={(event) => onMonth(event.target.value ? Number(event.target.value) : null)}
+        >
+          <option value="">Month</option>
+          {MONTH_OPTIONS.map((name, position) => (
+            <option key={name} value={position + 1}>{name}</option>
+          ))}
+        </SelectField>
+        <SelectField
+          wrapperClassName="profile-field"
+          label="Year"
+          value={year === null ? "" : String(year)}
+          onChange={(event) => onYear(event.target.value ? Number(event.target.value) : null)}
+        >
+          <option value="">Year</option>
+          {YEAR_OPTIONS.map((value) => (
+            <option key={value} value={value}>{value}</option>
+          ))}
+        </SelectField>
+      </div>
+    </div>
+  );
+
   const renderEducationSection = () => (
     <>
       {renderSectionHeader("Education", "Academic background and qualifications")}
-      <div className="profile-field-grid two">
-        {isStudentUniversityFlow
-          ? renderUniversityField("Institution", "Type your university name manually")
-          : (
-              <TextField
-                wrapperClassName="profile-field"
-                label="Institution"
-                value={profile.college_name}
-                onChange={(event) => updateProfile("college_name", event.target.value)}
-                placeholder="College / University"
-              />
+
+      {profile.education_entries.length === 0 ? (
+        <p className="profile-entry-empty">
+          No education added yet. Add your school, college, or any other qualification.
+        </p>
+      ) : null}
+
+      {profile.education_entries.map((entry, index) => (
+        <div className="profile-entry-card" key={`education-${index}`}>
+          <div className="profile-entry-card-head">
+            <span className="profile-entry-card-title">
+              {entry.school.trim() || `Education ${index + 1}`}
+            </span>
+            <button
+              type="button"
+              className="btn-secondary profile-entry-remove"
+              onClick={() => removeEducationEntry(index)}
+            >
+              Remove
+            </button>
+          </div>
+
+          <div className="profile-field-grid two">
+            <TextField
+              wrapperClassName="profile-field"
+              label="School"
+              required
+              value={entry.school}
+              onChange={(event) => updateEducationEntry(index, { school: event.target.value })}
+              placeholder="Ex: Lovely Professional University"
+            />
+            <TextField
+              wrapperClassName="profile-field"
+              label="Degree"
+              value={entry.degree}
+              onChange={(event) => updateEducationEntry(index, { degree: event.target.value })}
+              placeholder="Ex: Bachelor of Technology"
+            />
+          </div>
+
+          <TextField
+            wrapperClassName="profile-field"
+            label="Field of study"
+            value={entry.field_of_study}
+            onChange={(event) => updateEducationEntry(index, { field_of_study: event.target.value })}
+            placeholder="Ex: Computer Science"
+          />
+
+          <div className="profile-field-grid two">
+            {renderMonthYearPair(
+              "Start date",
+              entry.start_month,
+              entry.start_year,
+              (value) => updateEducationEntry(index, { start_month: value }),
+              (value) => updateEducationEntry(index, { start_year: value })
             )}
-        {renderCourseField()}
-      </div>
-      <TextareaField
-        wrapperClassName="profile-field"
-        label="Education Details"
-        rows={6}
-        value={profile.education}
-        onChange={(event) => updateProfile("education", event.target.value)}
-        placeholder="Include major highlights: CGPA, thesis, coursework, and relevant milestones."
-      />
+            {renderMonthYearPair(
+              "End date (or expected)",
+              entry.end_month,
+              entry.end_year,
+              (value) => updateEducationEntry(index, { end_month: value }),
+              (value) => updateEducationEntry(index, { end_year: value })
+            )}
+          </div>
+
+          <TextField
+            wrapperClassName="profile-field"
+            label="Grade"
+            value={entry.grade}
+            onChange={(event) => updateEducationEntry(index, { grade: event.target.value })}
+            placeholder="Ex: 8.16 CGPA"
+          />
+
+          <TextareaField
+            wrapperClassName="profile-field"
+            label="Activities and societies"
+            rows={3}
+            value={entry.activities}
+            onChange={(event) => updateEducationEntry(index, { activities: event.target.value })}
+            placeholder="Ex: Coding club, robotics team, student council"
+          />
+
+          <TextareaField
+            wrapperClassName="profile-field"
+            label="Description"
+            rows={4}
+            value={entry.description}
+            onChange={(event) => updateEducationEntry(index, { description: event.target.value })}
+            placeholder="Coursework, thesis, and milestones worth calling out."
+          />
+
+          <TextField
+            wrapperClassName="profile-field"
+            label="Skills"
+            helper="Comma separated. These also feed your Skills section."
+            value={entry.skills.join(", ")}
+            onChange={(event) =>
+              updateEducationEntry(index, {
+                skills: event.target.value.split(",").map((skill) => skill.trim()).filter(Boolean),
+              })
+            }
+            placeholder="Ex: Python, Data Structures, DBMS"
+          />
+        </div>
+      ))}
+
+      <button type="button" className="btn-secondary profile-entry-add" onClick={addEducationEntry}>
+        + Add education
+      </button>
     </>
   );
 
@@ -1348,48 +1695,245 @@ export default function ProfilePage() {
     </>
   );
 
-  const renderAccomplishmentsSection = () => (
-    <>
-      {renderSectionHeader("Accomplishments & Initiatives", "Certifications, projects, and leadership initiatives")}
-      <div className="profile-field-grid two">
-        <TextareaField
-          wrapperClassName="profile-field"
-          label="Achievements"
-          rows={5}
-          value={profile.achievements}
-          onChange={(event) => updateProfile("achievements", event.target.value)}
-          placeholder="Scholarships, competition ranks, notable wins"
-        />
-        <TextareaField
-          wrapperClassName="profile-field"
-          label="Certificates"
-          rows={5}
-          value={profile.certificates}
-          onChange={(event) => updateProfile("certificates", event.target.value)}
-          placeholder="Certifications from Oracle, Cisco, Coursera, etc."
-        />
-      </div>
+  // Generic list helpers: every accomplishment list is add / patch-at-index /
+  // remove-at-index, so they share one implementation rather than four copies.
+  const listUpdater = <K extends keyof ProfilePayload>(field: K) => ({
+    patch: (index: number, patch: Record<string, unknown>) =>
+      updateProfile(
+        field,
+        (profile[field] as unknown as Record<string, unknown>[]).map((entry, position) =>
+          position === index ? { ...entry, ...patch } : entry
+        ) as ProfilePayload[K]
+      ),
+    add: (blank: Record<string, unknown>) =>
+      updateProfile(field, [
+        ...(profile[field] as unknown as Record<string, unknown>[]),
+        { ...blank },
+      ] as ProfilePayload[K]),
+    remove: (index: number) =>
+      updateProfile(
+        field,
+        (profile[field] as unknown as Record<string, unknown>[]).filter(
+          (_, position) => position !== index
+        ) as ProfilePayload[K]
+      ),
+  });
 
-      <div className="profile-field-grid two">
-        <TextareaField
-          wrapperClassName="profile-field"
-          label="Projects"
-          rows={5}
-          value={profile.projects}
-          onChange={(event) => updateProfile("projects", event.target.value)}
-          placeholder="Major projects with short outcomes"
-        />
-        <TextareaField
-          wrapperClassName="profile-field"
-          label="Responsibilities / Initiatives"
-          rows={5}
-          value={profile.responsibilities}
-          onChange={(event) => updateProfile("responsibilities", event.target.value)}
-          placeholder="Leadership positions, clubs, volunteering, mentoring"
-        />
+  const renderEntryCard = (
+    title: string,
+    index: number,
+    onRemove: () => void,
+    children: React.ReactNode
+  ) => (
+    <div className="profile-entry-card" key={`${title}-${index}`}>
+      <div className="profile-entry-card-head">
+        <span className="profile-entry-card-title">{title}</span>
+        <button type="button" className="btn-secondary profile-entry-remove" onClick={onRemove}>
+          Remove
+        </button>
       </div>
-    </>
+      {children}
+    </div>
   );
+
+  const renderSkillsField = (skills: string[], onChange: (next: string[]) => void) => (
+    <TextField
+      wrapperClassName="profile-field"
+      label="Skills"
+      helper="Comma separated. These also feed your Skills section."
+      value={skills.join(", ")}
+      onChange={(event) =>
+        onChange(event.target.value.split(",").map((skill) => skill.trim()).filter(Boolean))
+      }
+      placeholder="Ex: FastAPI, PostgreSQL"
+    />
+  );
+
+  const renderAccomplishmentsSection = () => {
+    const projects = listUpdater("project_entries");
+    const certs = listUpdater("certification_entries");
+    const honors = listUpdater("honor_entries");
+    const volunteering = listUpdater("volunteer_entries");
+
+    return (
+      <>
+        {renderSectionHeader(
+          "Accomplishments & Initiatives",
+          "Projects, certifications, awards, and volunteering"
+        )}
+
+        <h3 className="profile-entry-group-title">Projects</h3>
+        {profile.project_entries.length === 0 ? (
+          <p className="profile-entry-empty">No projects added yet.</p>
+        ) : null}
+        {profile.project_entries.map((entry, index) =>
+          renderEntryCard(entry.name.trim() || `Project ${index + 1}`, index, () => projects.remove(index), (
+            <>
+              <TextField
+                wrapperClassName="profile-field"
+                label="Project name"
+                required
+                value={entry.name}
+                onChange={(event) => projects.patch(index, { name: event.target.value })}
+                placeholder="Ex: VidyaVerse"
+              />
+              <TextareaField
+                wrapperClassName="profile-field"
+                label="Description"
+                rows={4}
+                value={entry.description}
+                onChange={(event) => projects.patch(index, { description: event.target.value })}
+                placeholder="What it does and what it achieved."
+              />
+              <TextField
+                wrapperClassName="profile-field"
+                label="Link"
+                value={entry.url}
+                onChange={(event) => projects.patch(index, { url: event.target.value })}
+                placeholder="https://"
+              />
+              <label className="profile-entry-checkbox">
+                <input
+                  type="checkbox"
+                  checked={entry.is_current}
+                  onChange={(event) => projects.patch(index, { is_current: event.target.checked })}
+                />
+                <span>I am currently working on this project</span>
+              </label>
+              <div className="profile-field-grid two">
+                {renderMonthYearPair("Start date", entry.start_month, entry.start_year,
+                  (v) => projects.patch(index, { start_month: v }),
+                  (v) => projects.patch(index, { start_year: v }))}
+                {entry.is_current
+                  ? null
+                  : renderMonthYearPair("End date", entry.end_month, entry.end_year,
+                      (v) => projects.patch(index, { end_month: v }),
+                      (v) => projects.patch(index, { end_year: v }))}
+              </div>
+              {renderSkillsField(entry.skills, (next) => projects.patch(index, { skills: next }))}
+            </>
+          ))
+        )}
+        <button type="button" className="btn-secondary profile-entry-add"
+          onClick={() => projects.add(EMPTY_PROJECT_ENTRY)}>+ Add project</button>
+
+        <h3 className="profile-entry-group-title">Licenses &amp; certifications</h3>
+        {profile.certification_entries.length === 0 ? (
+          <p className="profile-entry-empty">No certifications added yet.</p>
+        ) : null}
+        {profile.certification_entries.map((entry, index) =>
+          renderEntryCard(entry.name.trim() || `Certification ${index + 1}`, index, () => certs.remove(index), (
+            <>
+              <div className="profile-field-grid two">
+                <TextField wrapperClassName="profile-field" label="Name" required value={entry.name}
+                  onChange={(e) => certs.patch(index, { name: e.target.value })}
+                  placeholder="Ex: Redis Associate Developer" />
+                <TextField wrapperClassName="profile-field" label="Issuing organization"
+                  value={entry.issuing_organization}
+                  onChange={(e) => certs.patch(index, { issuing_organization: e.target.value })}
+                  placeholder="Ex: Redis" />
+              </div>
+              <div className="profile-field-grid two">
+                {renderMonthYearPair("Issue date", entry.issue_month, entry.issue_year,
+                  (v) => certs.patch(index, { issue_month: v }),
+                  (v) => certs.patch(index, { issue_year: v }))}
+                {renderMonthYearPair("Expiration date", entry.expiry_month, entry.expiry_year,
+                  (v) => certs.patch(index, { expiry_month: v }),
+                  (v) => certs.patch(index, { expiry_year: v }))}
+              </div>
+              <div className="profile-field-grid two">
+                <TextField wrapperClassName="profile-field" label="Credential ID" value={entry.credential_id}
+                  onChange={(e) => certs.patch(index, { credential_id: e.target.value })} />
+                <TextField wrapperClassName="profile-field" label="Credential URL" value={entry.credential_url}
+                  onChange={(e) => certs.patch(index, { credential_url: e.target.value })}
+                  placeholder="https://" />
+              </div>
+              {renderSkillsField(entry.skills, (next) => certs.patch(index, { skills: next }))}
+            </>
+          ))
+        )}
+        <button type="button" className="btn-secondary profile-entry-add"
+          onClick={() => certs.add(EMPTY_CERTIFICATION_ENTRY)}>+ Add certification</button>
+
+        <h3 className="profile-entry-group-title">Honors &amp; awards</h3>
+        {profile.honor_entries.length === 0 ? (
+          <p className="profile-entry-empty">No honors added yet.</p>
+        ) : null}
+        {profile.honor_entries.map((entry, index) =>
+          renderEntryCard(entry.title.trim() || `Honor ${index + 1}`, index, () => honors.remove(index), (
+            <>
+              <div className="profile-field-grid two">
+                <TextField wrapperClassName="profile-field" label="Title" required value={entry.title}
+                  onChange={(e) => honors.patch(index, { title: e.target.value })}
+                  placeholder="Ex: Rank 2 - Graph Cadence" />
+                <TextField wrapperClassName="profile-field" label="Issuer" value={entry.issuer}
+                  onChange={(e) => honors.patch(index, { issuer: e.target.value })}
+                  placeholder="Ex: AlgoUniversity" />
+              </div>
+              {renderMonthYearPair("Issue date", entry.issue_month, entry.issue_year,
+                (v) => honors.patch(index, { issue_month: v }),
+                (v) => honors.patch(index, { issue_year: v }))}
+              <TextareaField wrapperClassName="profile-field" label="Description" rows={4}
+                value={entry.description}
+                onChange={(e) => honors.patch(index, { description: e.target.value })}
+                placeholder="What the award was for." />
+            </>
+          ))
+        )}
+        <button type="button" className="btn-secondary profile-entry-add"
+          onClick={() => honors.add(EMPTY_HONOR_ENTRY)}>+ Add honor</button>
+
+        <h3 className="profile-entry-group-title">Volunteering</h3>
+        {profile.volunteer_entries.length === 0 ? (
+          <p className="profile-entry-empty">No volunteering added yet.</p>
+        ) : null}
+        {profile.volunteer_entries.map((entry, index) =>
+          renderEntryCard(
+            entry.role.trim() || entry.organization.trim() || `Volunteering ${index + 1}`,
+            index,
+            () => volunteering.remove(index),
+            (
+              <>
+                <div className="profile-field-grid two">
+                  <TextField wrapperClassName="profile-field" label="Organization" required
+                    value={entry.organization}
+                    onChange={(e) => volunteering.patch(index, { organization: e.target.value })}
+                    placeholder="Ex: Red Cross" />
+                  <TextField wrapperClassName="profile-field" label="Role" required value={entry.role}
+                    onChange={(e) => volunteering.patch(index, { role: e.target.value })}
+                    placeholder="Ex: Educator" />
+                </div>
+                <TextField wrapperClassName="profile-field" label="Cause" value={entry.cause}
+                  onChange={(e) => volunteering.patch(index, { cause: e.target.value })}
+                  placeholder="Ex: Environment" />
+                <label className="profile-entry-checkbox">
+                  <input type="checkbox" checked={entry.is_current}
+                    onChange={(e) => volunteering.patch(index, { is_current: e.target.checked })} />
+                  <span>I am currently volunteering in this role</span>
+                </label>
+                <div className="profile-field-grid two">
+                  {renderMonthYearPair("Start date", entry.start_month, entry.start_year,
+                    (v) => volunteering.patch(index, { start_month: v }),
+                    (v) => volunteering.patch(index, { start_year: v }))}
+                  {entry.is_current
+                    ? null
+                    : renderMonthYearPair("End date", entry.end_month, entry.end_year,
+                        (v) => volunteering.patch(index, { end_month: v }),
+                        (v) => volunteering.patch(index, { end_year: v }))}
+                </div>
+                <TextareaField wrapperClassName="profile-field" label="Description" rows={4}
+                  value={entry.description}
+                  onChange={(e) => volunteering.patch(index, { description: e.target.value })}
+                  placeholder="What you did and the impact it had." />
+              </>
+            )
+          )
+        )}
+        <button type="button" className="btn-secondary profile-entry-add"
+          onClick={() => volunteering.add(EMPTY_VOLUNTEER_ENTRY)}>+ Add volunteering</button>
+      </>
+    );
+  };
 
   const renderPersonalSection = () => (
     <>

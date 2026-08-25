@@ -19,12 +19,18 @@ from app.api.deps import get_current_active_user
 from app.core.cache import cache_manager
 from app.core.config import settings
 from app.core.email_policy import is_corporate_email
-from app.models.profile import Profile
+from app.models.profile import EducationEntry, ExperienceEntry, Profile, ProjectEntry, CertificationEntry, HonorEntry, VolunteerEntry
 from app.models.user import User
 from app.schemas.user import UserResponse
 from app.services.account_deletion_service import erase_account
 from app.services.document_redaction import strip_document_metadata
 from app.services.intelligence import calculate_incoscore
+from app.services.incoscore import (
+    MIN_COHORT_FOR_PERCENTILE,
+    band_for,
+    percentile_of,
+    score_profile_with_outcomes,
+)
 from app.services.privacy_consent_service import apply_consent_change
 from app.services.resume_review_service import review_resume
 from app.services.username_service import ensure_system_username
@@ -167,6 +173,12 @@ class ProfileUpdate(BaseModel):
     interest_graph: Optional[list[str] | str] = None
     achievements: Optional[str] = None
     education: Optional[str] = None
+    education_entries: Optional[list[EducationEntry]] = None
+    experience_entries: Optional[list[ExperienceEntry]] = None
+    project_entries: Optional[list[ProjectEntry]] = None
+    certification_entries: Optional[list[CertificationEntry]] = None
+    honor_entries: Optional[list[HonorEntry]] = None
+    volunteer_entries: Optional[list[VolunteerEntry]] = None
     certificates: Optional[str] = None
     projects: Optional[str] = None
     responsibilities: Optional[str] = None
@@ -367,6 +379,12 @@ class ProfileResponse(BaseModel):
     interest_graph: list[str] = Field(default_factory=list)
     achievements: Optional[str] = None
     education: Optional[str] = None
+    education_entries: Optional[list[EducationEntry]] = None
+    experience_entries: Optional[list[ExperienceEntry]] = None
+    project_entries: Optional[list[ProjectEntry]] = None
+    certification_entries: Optional[list[CertificationEntry]] = None
+    honor_entries: Optional[list[HonorEntry]] = None
+    volunteer_entries: Optional[list[VolunteerEntry]] = None
     certificates: Optional[str] = None
     projects: Optional[str] = None
     responsibilities: Optional[str] = None
@@ -402,8 +420,13 @@ class RankingSummaryResponse(BaseModel):
     incoscore: float
     rank: int
     total_users: int
-    top_percent: float
-    percentile: float
+    # Null until the cohort is big enough for a percentile to mean anything.
+    # The dashboard shows the band in the meantime, matching the leaderboard
+    # rather than quoting "Top 17%" off a population of six.
+    top_percent: Optional[float] = None
+    percentile: Optional[float] = None
+    band: Optional[str] = None
+    cohort_ready: bool = False
     updated_at: datetime
 
 
@@ -451,6 +474,10 @@ class LeaderboardEntry(BaseModel):
     full_name: Optional[str] = None
     handle: str
     incoscore: float
+    # Percentile once the cohort is large enough to mean anything; until then
+    # the band carries the interpretation instead of a misleading "top 20%".
+    percentile: Optional[float] = None
+    band: Optional[str] = None
 
 
 class AccountDeletionRequest(BaseModel):
@@ -731,7 +758,12 @@ async def _build_ranking_summary(profile: Profile) -> RankingSummaryResponse:
         ).count()
     )
     rank = max(1, higher_count + 1)
-    top_percent, percentile = _compute_rank_stats(rank=rank, total_users=total_users)
+    cohort_ready = total_users >= MIN_COHORT_FOR_PERCENTILE
+    top_percent, percentile = (
+        _compute_rank_stats(rank=rank, total_users=total_users)
+        if cohort_ready
+        else (None, None)
+    )
 
     return RankingSummaryResponse(
         account_scope=scope,
@@ -740,6 +772,8 @@ async def _build_ranking_summary(profile: Profile) -> RankingSummaryResponse:
         total_users=total_users,
         top_percent=top_percent,
         percentile=percentile,
+        band=band_for(float(profile.incoscore or 0.0)),
+        cohort_ready=cohort_ready,
         updated_at=datetime.now(timezone.utc),
     )
 
@@ -865,6 +899,83 @@ def _sync_profile_identity(profile: Profile, user: User) -> None:
             profile.company_name = candidate or None
 
 
+def _sync_flat_fields_from_entries(profile: Profile) -> None:
+    """Mirror the primary education/experience entry onto the flat columns.
+
+    college_name, course, course_specialization, passout_year, current_job_role
+    and experience_summary are read by personalization and the ranker
+    (services/personalization/feature_builder.py). Introducing the structured
+    lists without this would have left those inputs frozen at whatever the user
+    last typed into the old single-value form, so recommendations would quietly
+    drift from the profile the user can see.
+
+    Only fills from the entry the user is most likely to mean: the newest
+    education, and the current role (or newest, if none is marked current).
+    Existing values are overwritten because the entry list is now the source of
+    truth for these.
+
+    Skills named on an entry also join the profile-level skills string, which is
+    what LinkedIn does and what users expect from "they'll also appear in your
+    Skills section".
+    """
+
+    def _as_model(entry, model):
+        """Entries can arrive as dicts from a raw DB row or an unvalidated patch."""
+        return model(**entry) if isinstance(entry, dict) else entry
+
+    profile.education_entries = [_as_model(e, EducationEntry) for e in (profile.education_entries or [])]
+    profile.experience_entries = [_as_model(e, ExperienceEntry) for e in (profile.experience_entries or [])]
+    profile.project_entries = [_as_model(e, ProjectEntry) for e in (profile.project_entries or [])]
+    profile.certification_entries = [_as_model(e, CertificationEntry) for e in (profile.certification_entries or [])]
+    profile.honor_entries = [_as_model(e, HonorEntry) for e in (profile.honor_entries or [])]
+    profile.volunteer_entries = [_as_model(e, VolunteerEntry) for e in (profile.volunteer_entries or [])]
+
+    def _sort_key(entry) -> tuple:
+        return (entry.end_year or entry.start_year or 0, entry.end_month or entry.start_month or 0)
+
+    education = sorted(profile.education_entries or [], key=_sort_key, reverse=True)
+    if education:
+        primary = education[0]
+        profile.college_name = primary.school or profile.college_name
+        profile.course = primary.degree or profile.course
+        profile.course_specialization = primary.field_of_study or profile.course_specialization
+        if primary.end_year:
+            profile.passout_year = primary.end_year
+            if profile.graduation_year is None:
+                profile.graduation_year = primary.end_year
+
+    experience = list(profile.experience_entries or [])
+    if experience:
+        current = [e for e in experience if e.is_current]
+        primary = (current or sorted(experience, key=_sort_key, reverse=True))[0]
+        profile.current_job_role = primary.title or profile.current_job_role
+        if primary.highlights:
+            profile.experience_summary = primary.highlights
+
+    # Skills attached to any entry also surface in the profile-level Skills
+    # section, matching what the form promises the user ("These also feed your
+    # Skills section"). Merge-only: a skill is never removed here, because the
+    # Skills box is user-owned text and silently deleting from it would be worse
+    # than leaving a stale entry behind.
+    entry_skills: list[str] = []
+    for entry in (
+        list(profile.education_entries or [])
+        + list(profile.experience_entries or [])
+        + list(profile.project_entries or [])
+        + list(profile.certification_entries or [])
+    ):
+        entry_skills.extend(getattr(entry, "skills", None) or [])
+    if entry_skills:
+        existing = [s.strip() for s in str(profile.skills or "").split(",") if s.strip()]
+        merged = list(existing)
+        seen = {s.lower() for s in existing}
+        for skill in entry_skills:
+            if skill.lower() not in seen:
+                merged.append(skill)
+                seen.add(skill.lower())
+        profile.skills = ", ".join(merged)
+
+
 def _apply_profile_patch(*, profile: Profile, user: User, payload: ProfileUpdate) -> None:
     updates = payload.model_dump(exclude_unset=True)
     for immutable_resume_field in ("resume_url", "resume_filename", "resume_content_type", "resume_uploaded_at"):
@@ -882,11 +993,23 @@ def _apply_profile_patch(*, profile: Profile, user: User, payload: ProfileUpdate
     # later and so a withdrawal is distinguishable from never having agreed.
     consent_decision = updates.pop("consent_data_processing", None)
 
+    # model_dump() flattens nested models to dicts and setattr on a Document does
+    # not re-validate, so these two would land as lists of dicts and every later
+    # entry.attribute access would raise. Take them from the validated payload.
     for field, value in updates.items():
+        if field == "education_entries" and payload.education_entries is not None:
+            profile.education_entries = list(payload.education_entries)
+            continue
+        if field == "experience_entries" and payload.experience_entries is not None:
+            profile.experience_entries = list(payload.experience_entries)
+            continue
         setattr(profile, field, value)
 
     if consent_decision is not None:
         apply_consent_change(profile, granted=bool(consent_decision))
+
+    if "education_entries" in updates or "experience_entries" in updates:
+        _sync_flat_fields_from_entries(profile)
 
     if "graduation_year" in updates and updates.get("graduation_year") is not None and profile.passout_year is None:
         profile.passout_year = int(updates["graduation_year"])
@@ -956,7 +1079,6 @@ def _apply_profile_patch(*, profile: Profile, user: User, payload: ProfileUpdate
     profile.onboarding_completed = is_complete
     profile.onboarding_step = "complete" if is_complete else next_step
     profile.onboarding_completed_at = datetime.now(timezone.utc) if is_complete else None
-    profile.incoscore = calculate_incoscore(profile)
 
 
 async def _get_or_create_profile_for_user(user: User) -> Profile:
@@ -977,7 +1099,7 @@ async def _get_or_create_profile_for_user(user: User) -> Profile:
         first_name=first_name,
         last_name=last_name,
     )
-    profile.incoscore = calculate_incoscore(profile)
+    profile.incoscore = (await score_profile_with_outcomes(profile)).total
     is_complete, _progress, _missing, next_step = _compute_onboarding_status(profile)
     profile.onboarding_completed = is_complete
     profile.onboarding_step = "complete" if is_complete else next_step
@@ -1072,6 +1194,9 @@ async def update_profile_me(
     """
     profile = await _get_or_create_profile_for_user(current_user)
     _apply_profile_patch(profile=profile, user=current_user, payload=profile_in)
+    # Scored here rather than inside the sync patch helper so every save
+    # gets the same number, including the activity uplift.
+    profile.incoscore = (await score_profile_with_outcomes(profile)).total
     await current_user.save()
     await profile.save()
     await cache_manager.invalidate_after_profile_update(user_id=str(current_user.id))
@@ -1088,6 +1213,9 @@ async def update_onboarding_me(
     """
     profile = await _get_or_create_profile_for_user(current_user)
     _apply_profile_patch(profile=profile, user=current_user, payload=profile_in)
+    # Scored here rather than inside the sync patch helper so every save
+    # gets the same number, including the activity uplift.
+    profile.incoscore = (await score_profile_with_outcomes(profile)).total
     await current_user.save()
     await profile.save()
     await cache_manager.invalidate_after_profile_update(user_id=str(current_user.id))
@@ -1196,7 +1324,7 @@ async def upload_resume(
     profile.onboarding_completed = is_complete
     profile.onboarding_step = "complete" if is_complete else next_step
     profile.onboarding_completed_at = datetime.now(timezone.utc) if is_complete else None
-    profile.incoscore = calculate_incoscore(profile)
+    profile.incoscore = (await score_profile_with_outcomes(profile)).total
 
     await profile.save()
     await cache_manager.invalidate_after_profile_update(user_id=str(current_user.id))
@@ -1279,7 +1407,7 @@ async def delete_resume(
     profile.onboarding_completed = is_complete
     profile.onboarding_step = "complete" if is_complete else next_step
     profile.onboarding_completed_at = datetime.now(timezone.utc) if is_complete else None
-    profile.incoscore = calculate_incoscore(profile)
+    profile.incoscore = (await score_profile_with_outcomes(profile)).total
     await profile.save()
     await cache_manager.invalidate_after_profile_update(user_id=str(current_user.id))
     return profile
@@ -1357,6 +1485,8 @@ async def get_leaderboard(
         for user in await User.find(In(User.id, user_ids)).to_list():
             users_by_id[user.id] = user
 
+    cohort = [float(p.incoscore or 0.0) for p in profiles]
+
     leaderboard: list[LeaderboardEntry] = []
     for rank, profile in enumerate(profiles, start=1):
         user = users_by_id.get(profile.user_id)
@@ -1374,6 +1504,8 @@ async def get_leaderboard(
                 full_name=user.full_name,
                 handle=handle,
                 incoscore=profile.incoscore,
+                percentile=percentile_of(float(profile.incoscore or 0.0), cohort),
+                band=band_for(float(profile.incoscore or 0.0)),
             )
         )
         if len(leaderboard) >= safe_limit:

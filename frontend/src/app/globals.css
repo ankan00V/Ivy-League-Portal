@@ -1400,6 +1400,30 @@ select.input-base {
 /* Repeatable profile entries (education, and the accomplishment lists).
    Each entry is a bordered card so a list of three degrees reads as three
    things rather than one long run of inputs. */
+/* Group heading inside a section that holds several lists (Projects,
+   Certifications, Honors, Volunteering all live under Accomplishments). */
+.profile-entry-group-title {
+  font-size: 1.15rem;
+  font-weight: 700;
+  margin: 2rem 0 0.9rem;
+}
+
+.profile-entry-group-title:first-of-type {
+  margin-top: 0.5rem;
+}
+
+.profile-entry-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-weight: 600;
+}
+
+.profile-entry-checkbox input {
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
 .profile-entry-card {
   border: 2px solid var(--border-subtle);
   border-radius: var(--radius-sm);
