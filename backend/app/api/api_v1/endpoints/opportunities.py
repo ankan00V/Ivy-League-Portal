@@ -1744,8 +1744,12 @@ TRACKING_REQUIRED_TYPES = ALLOWED_INTERACTION_TYPES - {"view"}
 async def _prepare_interaction_event(
     payload: InteractionEventCreate,
     current_user: User,
+    opportunity: Optional[Opportunity] = None,
 ) -> dict[str, Any]:
-    opportunity = await Opportunity.get(payload.opportunity_id)
+    # `opportunity` lets a batch caller pass a row it has already fetched. The
+    # single-event path leaves it None and behaves exactly as before.
+    if opportunity is None:
+        opportunity = await Opportunity.get(payload.opportunity_id)
     if not opportunity:
         raise HTTPException(status_code=404, detail="Opportunity not found")
 
@@ -1839,8 +1843,46 @@ async def log_opportunity_interactions_batch(
     payload: InteractionBatchCreate,
     current_user: User = Depends(get_current_active_user),
 ) -> Any:
-    prepared = [await _prepare_interaction_event(event, current_user) for event in payload.events]
-    inserted = [await _log_prepared_interaction(event) for event in prepared]
+    # Both of these were sequential comprehensions: one SELECT per event to load
+    # the opportunity, then one INSERT per event. A feed page sends up to 48
+    # impressions, so that was ~96 round trips in series to Postgres in
+    # ap-southeast-2. Measured on the running stack: ~200s per batch, which the
+    # Next proxy aborted at its 30s timeout and reported to the browser as
+    # "Upstream backend unavailable". The endpoint was answering 200 the whole
+    # time - nobody was waiting long enough to see it.
+    #
+    # One query for every opportunity, then the inserts concurrently.
+    # Fetched concurrently rather than as a single IN query on purpose.
+    # `In(Opportunity.id, ...)` needs Beanie's class-level expression fields,
+    # which are only attached once init_beanie has run - the endpoint unit tests
+    # construct the model directly and it raises AttributeError there. Latency is
+    # what matters here and gather already collapses N round trips into roughly
+    # one, so the extra queries cost little and the endpoint stays testable.
+    unique_ids = list({str(e.opportunity_id): e.opportunity_id
+                       for e in payload.events if e.opportunity_id}.values())
+    fetched = await asyncio.gather(
+        *(Opportunity.get(oid) for oid in unique_ids), return_exceptions=True
+    )
+    # Keyed by the id that was asked for, not by row.id. Reading an attribute off
+    # the fetched object assumes it is a real Opportunity, and the endpoint test
+    # patches Opportunity.get to return a bare sentinel - so that raised
+    # AttributeError instead of the 400 the test was asserting, turning a
+    # validation contract into a crash.
+    by_id = {
+        str(oid): row
+        for oid, row in zip(unique_ids, fetched)
+        if row is not None and not isinstance(row, BaseException)
+    }
+
+    prepared = [
+        await _prepare_interaction_event(
+            event, current_user, opportunity=by_id.get(str(event.opportunity_id))
+        )
+        for event in payload.events
+    ]
+    # gather, not a loop: these are independent inserts and the round trip
+    # dominates each one.
+    inserted = list(await asyncio.gather(*(_log_prepared_interaction(e) for e in prepared)))
     return {
         "status": "ok",
         "inserted": len(inserted),
