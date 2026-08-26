@@ -66,7 +66,11 @@ class Settings(BaseSettings):
     # employer powers was a non-freemail email domain -- so self-serve signup
     # let anyone with a bought domain post straight into the candidate feed.
     # Flip this to True to bring the whole workflow back; nothing was removed.
-    EMPLOYER_PORTAL_ENABLED: bool = False
+    # Re-enabled for the Academia-Industry collaboration workflow, which
+    # requires industries to post their own openings. Publishing to the
+    # candidate feed is gated on a verified careers-page claim, so turning
+    # this on does not restore the self-serve hole it was retired for.
+    EMPLOYER_PORTAL_ENABLED: bool = True
     # Deliberately empty. This identity is reserved for the hidden admin control
     # plane, so baking a real address into source shipped one maintainer's
     # personal email to every clone of the repository and made it the admin
@@ -697,6 +701,11 @@ class Settings(BaseSettings):
     # survive GIL starvation from the scrape threads and the pgbouncer in
     # front of Supabase; one full-table read does not.
     VECTOR_LOAD_PAGE_SIZE: int = 500
+    # Skill demand is derived from the live corpus by the skills.demand_refresh
+    # job. Slow cadence: a full pass costs ~45s and what it measures moves
+    # over weeks.
+    SKILL_DEMAND_REFRESH_ENABLED: bool = True
+    SKILL_DEMAND_REFRESH_INTERVAL_HOURS: int = 12
     MONGODB_ATLAS_VECTOR_SEARCH: bool = False
     MONGODB_ATLAS_VECTOR_INDEX_NAME: str = "opportunity_embedding_index"
     VECTOR_INDEX_STALE_HOURS: int = 6

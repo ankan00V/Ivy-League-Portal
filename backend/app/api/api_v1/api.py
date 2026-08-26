@@ -14,6 +14,7 @@ from app.api.api_v1.endpoints import (
     opportunities,
     rag_governance,
     security,
+    skills,
     social,
     source_discovery_admin,
     sources,
@@ -27,6 +28,7 @@ api_router.include_router(users.router, prefix="/users", tags=["users"])
 api_router.include_router(opportunities.router, prefix="/opportunities", tags=["opportunities"])
 api_router.include_router(applications.router, prefix="/applications", tags=["applications"])
 api_router.include_router(social.router, prefix="/social", tags=["social"])
+api_router.include_router(skills.router, prefix="/skills", tags=["skills"])
 api_router.include_router(chat.router, prefix="/chat", tags=["chat"])
 api_router.include_router(experiments.router, prefix="/experiments", tags=["experiments"])
 api_router.include_router(mlops.router, prefix="/mlops", tags=["mlops"])

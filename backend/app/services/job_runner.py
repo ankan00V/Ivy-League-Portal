@@ -432,6 +432,15 @@ async def _job_embeddings_rebuild(payload: dict[str, Any]) -> dict[str, Any]:
     return await embedding_pipeline.rebuild_vector_index_if_stale(force=bool(payload.get("force") or False))
 
 
+async def _job_skill_demand_refresh(payload: dict[str, Any]) -> dict[str, Any]:
+    from app.services.skill_demand import refresh_demand_snapshots
+
+    return await refresh_demand_snapshots(
+        min_postings=int(payload.get("min_postings") or 3),
+        limit=int(payload.get("limit") or 60),
+    )
+
+
 async def _job_description_enrichment(payload: dict[str, Any]) -> dict[str, Any]:
     """Improve unusable descriptions from the opportunity's own detail page.
 
@@ -727,6 +736,7 @@ def register_default_jobs() -> None:
     job_runner.register("opportunities.quality_pipeline", _job_opportunity_quality)
     job_runner.register("opportunities.dedup_scan", _job_opportunities_dedup_scan)
     job_runner.register("embeddings.rebuild", _job_embeddings_rebuild)
+    job_runner.register("skills.demand_refresh", _job_skill_demand_refresh)
     job_runner.register("opportunities.enrich_descriptions", _job_description_enrichment)
     job_runner.register("mlops.retrain", _job_mlops_retrain)
     job_runner.register("mlops.drift", _job_mlops_drift)

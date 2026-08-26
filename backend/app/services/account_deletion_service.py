@@ -42,6 +42,7 @@ from typing import Any, Literal
 from beanie import Document, PydanticObjectId
 
 from app.models.application import Application
+from app.models.skill_assessment import SkillAssessment
 from app.models.application_outcome import ApplicationOutcome
 from app.models.ask_ai_query_snapshot import AskAIQuerySnapshot
 from app.models.ask_ai_saved_query import AskAISavedQuery
@@ -128,6 +129,16 @@ ERASURE_RULES: tuple[ErasureRule, ...] = (
         document=Application,
         disposition="erase",
         rationale="An application is a statement of intent by a named person to a named employer.",
+    ),
+    ErasureRule(
+        document=SkillAssessment,
+        disposition="erase",
+        rationale=(
+            "A self-assessment is the person's own account of what they can and "
+            "cannot do, plus the gaps derived from it. Nothing downstream needs "
+            "it once they leave, and aggregate skill demand is computed from "
+            "postings rather than from students, so erasing costs no analytics."
+        ),
     ),
     ErasureRule(
         document=ApplicationOutcome,

@@ -392,6 +392,28 @@ async def lifespan(app: FastAPI):
                 next_run_time=datetime.now(timezone.utc),
             )
 
+        if settings.SKILL_DEMAND_REFRESH_ENABLED:
+
+            async def _enqueue_skill_demand_refresh() -> None:
+                await job_runner.enqueue(
+                    job_type="skills.demand_refresh",
+                    payload={},
+                    max_attempts=2,
+                    dedupe_key="skills.demand_refresh",
+                )
+
+            # Slow cadence on purpose: this reads the whole corpus through the
+            # skill extractor (~45s), and what it measures - what employers are
+            # advertising for - moves over weeks, not minutes.
+            scheduler.add_job(
+                _enqueue_skill_demand_refresh,
+                "interval",
+                hours=max(1, int(settings.SKILL_DEMAND_REFRESH_INTERVAL_HOURS)),
+                id="skill_demand_refresh_job",
+                replace_existing=True,
+                next_run_time=datetime.now(timezone.utc),
+            )
+
         if settings.DESCRIPTION_ENRICHMENT_ENABLED:
 
             async def _enqueue_description_enrichment() -> None:

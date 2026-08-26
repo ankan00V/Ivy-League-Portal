@@ -26,6 +26,7 @@ from app.models.duplicate_merge_event import DuplicateMergeEvent
 from app.models.evaluation_run import EvaluationRun
 from app.models.experiment import Experiment, ExperimentAssignment
 from app.models.feature_store_row import FeatureStoreRow
+from app.models.skill_assessment import SkillAssessment, SkillDemandSnapshot
 from app.models.impact_event import ImpactEvent
 from app.models.knowledge_chunk import KnowledgeChunk
 from app.models.mlops_incident import MlopsIncident
@@ -101,6 +102,8 @@ DOCUMENT_MODELS = [
     AnalyticsFunnelAggregate,
     AnalyticsCohortAggregate,
     FeatureStoreRow,
+    SkillDemandSnapshot,
+    SkillAssessment,
     MlopsIncident,
     AssistantConversationTurn,
     AssistantMemoryState,
