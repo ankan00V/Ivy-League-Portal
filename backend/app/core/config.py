@@ -689,6 +689,10 @@ class Settings(BaseSettings):
     SEMANTIC_DEDUP_THRESHOLD: float = 0.9
     VECTOR_STORE_PROVIDER: str = "mongo"  # mongo | memory
     VECTOR_STORE_PERSISTENCE_ENABLED: bool = True
+    # Rows per committed write during a vector rebuild. Chunking is what
+    # makes the rebuild resumable: the job runs under a timeout, and a
+    # single end-of-run flush loses every row when that timeout fires.
+    VECTOR_FLUSH_BATCH_SIZE: int = 200
     MONGODB_ATLAS_VECTOR_SEARCH: bool = False
     MONGODB_ATLAS_VECTOR_INDEX_NAME: str = "opportunity_embedding_index"
     VECTOR_INDEX_STALE_HOURS: int = 6

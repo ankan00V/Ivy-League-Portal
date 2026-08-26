@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from hashlib import md5
 from datetime import datetime, timedelta
 from typing import Any, Iterable, Optional
@@ -22,6 +23,8 @@ try:
     import faiss  # type: ignore
 except Exception:
     faiss = None
+
+logger = logging.getLogger(__name__)
 
 
 def _opportunity_to_text(opportunity: Opportunity) -> str:
@@ -50,6 +53,34 @@ async def _flush(model_cls, instances: list) -> int:
         else:
             await instance.save()
     return len(instances)
+
+
+async def _flush_in_batches(model_cls, instances: list, *, label: str) -> int:
+    """Flush in committed chunks so a cancelled rebuild keeps what it finished.
+
+    The rebuild used to accumulate every changed row and write it in a single
+    _flush at the very end. That made the job all-or-nothing: it is run under a
+    JOBS_HANDLER_TIMEOUT_SECONDS deadline, and when the deadline fired mid-write
+    the whole batch was lost, so the next run recomputed exactly the same rows
+    and lost them again. embeddings.rebuild died that way 93 times in a row -
+    each attempt doing real work, none of it ever landing.
+
+    Chunking does not make the work faster; it makes it cumulative. Every chunk
+    that lands stays landed, so a run that only gets halfway leaves half the
+    backlog permanently drained and the next run starts smaller.
+    """
+    if not instances:
+        return 0
+    size = max(1, int(getattr(settings, "VECTOR_FLUSH_BATCH_SIZE", 200)))
+    written = 0
+    for start in range(0, len(instances), size):
+        chunk = instances[start : start + size]
+        written += await _flush(model_cls, chunk)
+        if len(instances) > size:
+            logger.info(
+                "vector rebuild: flushed %s/%s %s rows", written, len(instances), label
+            )
+    return written
 
 
 class OpportunityVectorService:
@@ -197,8 +228,8 @@ class OpportunityVectorService:
                     )
                 )
 
-        await _flush(Opportunity, pending_opportunities)
-        await _flush(VectorIndexEntry, pending_entries)
+        await _flush_in_batches(Opportunity, pending_opportunities, label="opportunity")
+        await _flush_in_batches(VectorIndexEntry, pending_entries, label="vector entry")
 
         # Remove entries for opportunities that no longer exist.
         try:
