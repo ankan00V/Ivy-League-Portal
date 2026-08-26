@@ -39,7 +39,10 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-VALID_ACCOUNT_TYPES = {"candidate", "employer"}
+# Imported rather than redeclared: this file and auth.py each kept their own
+# copy, and a type valid at signup but invalid at profile update (or the
+# reverse, which is a hole) was one careless edit away.
+from app.core.account_types import KNOWN_ACCOUNT_TYPES as VALID_ACCOUNT_TYPES  # noqa: E402
 VALID_USER_TYPES = {"school_student", "college_student", "fresher", "professional"}
 VALID_HIRING_FOR = {"myself", "others"}
 VALID_AVAILABILITY = {"immediately", "within_1_month", "within_3_months", "exploring"}

@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.core.config import settings
 from app.api.api_v1.endpoints import (
+    academia,
     admin,
     analytics,
     applications,
@@ -29,6 +30,9 @@ api_router.include_router(opportunities.router, prefix="/opportunities", tags=["
 api_router.include_router(applications.router, prefix="/applications", tags=["applications"])
 api_router.include_router(social.router, prefix="/social", tags=["social"])
 api_router.include_router(skills.router, prefix="/skills", tags=["skills"])
+# Academician and institution portals, each gated by its own flag for the
+# same reason the employer portal is.
+api_router.include_router(academia.router, prefix="/academia", tags=["academia"])
 api_router.include_router(chat.router, prefix="/chat", tags=["chat"])
 api_router.include_router(experiments.router, prefix="/experiments", tags=["experiments"])
 api_router.include_router(mlops.router, prefix="/mlops", tags=["mlops"])

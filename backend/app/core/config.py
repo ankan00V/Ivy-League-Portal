@@ -70,6 +70,13 @@ class Settings(BaseSettings):
     # requires industries to post their own openings. Publishing to the
     # candidate feed is gated on a verified careers-page claim, so turning
     # this on does not restore the self-serve hole it was retired for.
+    # Academicians (FDPs, faculty internships, consultancy) and institutions
+    # (cohort dashboards) are the two roles problem statement 26044 asks for
+    # beyond students and industry. Gated individually for the same reason
+    # the employer portal is: each hands out powers a self-serve signup
+    # should not grant silently.
+    FACULTY_PORTAL_ENABLED: bool = True
+    INSTITUTION_PORTAL_ENABLED: bool = True
     EMPLOYER_PORTAL_ENABLED: bool = True
     # Deliberately empty. This identity is reserved for the hidden admin control
     # plane, so baking a real address into source shipped one maintainer's
