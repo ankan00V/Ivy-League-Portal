@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -12,6 +13,8 @@ from app.models.opportunity import Opportunity
 from app.models.user import User
 from app.services.interaction_service import interaction_service
 from app.services.opportunity_visibility import is_student_visible_opportunity
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -138,6 +141,20 @@ async def apply_to_opportunity(
             traffic_type="real",
         )
     except Exception:
-        pass
-    
+        # An apply is the strongest positive label this product produces, and the
+        # learned ranker has almost none of them. Losing one silently is how a
+        # training set quietly stops growing while every dashboard stays green.
+        #
+        # Still not fatal: the application itself is already written, and failing
+        # the request here would turn a telemetry problem into the user losing an
+        # application they just made. So it is logged loudly and the response
+        # proceeds.
+        logger.exception(
+            "Failed to record apply interaction; training label lost "
+            "(user_id=%s opportunity_id=%s application_id=%s)",
+            current_user.id,
+            opp.id,
+            application.id,
+        )
+
     return _serialize_application_response(application=application, opportunity=opp)

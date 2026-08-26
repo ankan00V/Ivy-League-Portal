@@ -1,4 +1,5 @@
 from __future__ import annotations
+import logging
 
 from collections import defaultdict
 from dataclasses import dataclass
@@ -17,6 +18,8 @@ from app.services.interaction_service import funnel_event_type
 from app.models.ranking_request_telemetry import RankingRequestTelemetry
 from app.services.online_feature_service import online_feature_service
 from app.services.warehouse_export_service import warehouse_export_service
+
+logger = logging.getLogger(__name__)
 
 
 def _day_key(value: datetime) -> str:
@@ -458,7 +461,23 @@ class AnalyticsWarehouseService:
 
         if docs:
             await FeatureStoreRow.insert_many(docs)
-            await online_feature_service.publish_rows(docs)
+            # The durable rows are already committed above. publish_rows only warms
+            # a Redis cache that is TTL'd and rebuildable from exactly those rows,
+            # so letting it fail the whole rebuild trades the training table for a
+            # cache miss - which is what happened when the feature-store Redis hit
+            # its request quota: 2,300 rows landed in Postgres and the job still
+            # exited non-zero.
+            #
+            # Deliberately caught, unlike the apply-label write: there the data is
+            # lost if the write fails, here it is not.
+            try:
+                await online_feature_service.publish_rows(docs)
+            except Exception:
+                logger.exception(
+                    "Online feature publish failed for %s rows; durable rows are "
+                    "committed and the cache will refill on the next rebuild",
+                    len(docs),
+                )
         return len(docs)
 
 
