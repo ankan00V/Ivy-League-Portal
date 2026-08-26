@@ -279,5 +279,56 @@ class TestDomainMatching(unittest.TestCase):
         self.assertEqual(domain_key("   "), "")
 
 
+class TestPersonalTraitsAreNotSkills(unittest.TestCase):
+    """A student must never be told they have a gap in "motivated".
+
+    Job adverts are full of personal qualities and the extractor returns them as
+    confidently as it returns "python". A real assessment against the live
+    corpus produced gaps including motivated, talented, dependable, enthusiastic
+    and professional - none of which can be acted on, and all of which are the
+    first thing a reader notices.
+    """
+
+    def test_personal_qualities_are_rejected(self) -> None:
+        for trait in (
+            "motivated",
+            "talented",
+            "dependable",
+            "enthusiastic",
+            "professional",
+            "creative",
+            "tech-savvy",
+            "passionate",
+        ):
+            with self.subTest(trait=trait):
+                self.assertIsNone(normalise_skill(trait))
+
+    def test_qualifications_are_rejected(self) -> None:
+        # A degree is not something a student closes a gap on this semester.
+        for term in ("mba", "btech", "phd", "bams", "diploma", "graduate"):
+            with self.subTest(term=term):
+                self.assertIsNone(normalise_skill(term))
+
+    def test_bare_generic_nouns_are_rejected(self) -> None:
+        for term in ("quality", "support", "execution", "errors", "learn", "tools"):
+            with self.subTest(term=term):
+                self.assertIsNone(normalise_skill(term))
+
+    def test_real_skills_are_not_caught_by_these_filters(self) -> None:
+        # The filters must not take the neighbouring genuine competency with
+        # them: "quality" goes, "quality control" stays.
+        for skill in (
+            "quality control",
+            "analytical thinking",
+            "problem solving",
+            "communication",
+            "machine learning",
+            "microsoft excel",
+            "panchakarma",
+        ):
+            with self.subTest(skill=skill):
+                self.assertEqual(normalise_skill(skill), skill)
+
+
 if __name__ == "__main__":
     unittest.main()

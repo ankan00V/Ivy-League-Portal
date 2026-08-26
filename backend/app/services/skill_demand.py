@@ -127,6 +127,80 @@ GLOBAL_DOMAIN = "__all__"
 # Below this a demand table cannot support a questionnaire worth answering.
 MIN_USABLE_SKILLS = 6
 
+# Personal qualities, not competencies. Postings are full of them ("motivated,
+# talented, dependable self-starter"), and the extractor returns them as
+# confidently as it returns "python". Left in, a student is told they have a
+# skill gap in "motivated" and "talented" - which is not advice, cannot be acted
+# on, and is the first thing anyone reading the screen will notice.
+_PERSONAL_TRAITS: frozenset[str] = frozenset(
+    {
+        "motivated",
+        "self motivated",
+        "talented",
+        "dependable",
+        "enthusiastic",
+        "professional",
+        "passionate",
+        "hardworking",
+        "hard working",
+        "reliable",
+        "creative",
+        "accurate",
+        "tech savvy",
+        "tech-savvy",
+        "detail oriented",
+        "proactive",
+        "dynamic",
+        "energetic",
+        "flexible",
+        "punctual",
+        "ambitious",
+        "confident",
+        "friendly",
+        "smart",
+        "talent",
+    }
+)
+
+# Qualifications and bare generic nouns. A degree is not a skill a student can
+# go and learn this semester, and one-word abstractions like "quality" or
+# "support" name a department rather than a competency.
+_NON_SKILL_TERMS: frozenset[str] = frozenset(
+    {
+        "mba",
+        "bba",
+        "btech",
+        "b tech",
+        "mtech",
+        "phd",
+        "bams",
+        "mbbs",
+        "graduate",
+        "postgraduate",
+        "degree",
+        "diploma",
+        "certification",
+        "quality",
+        "support",
+        "execution",
+        "errors",
+        "learn",
+        "learning",
+        "work",
+        "team",
+        "job",
+        "role",
+        "skills",
+        "experience",
+        "knowledge",
+        "ability",
+        "tasks",
+        "tools",
+        "agent",
+        "documentation",
+    }
+)
+
 _MAX_SKILL_WORDS = 3
 _MAX_SKILL_CHARS = 40
 _MIN_SKILL_CHARS = 2
@@ -167,6 +241,8 @@ def normalise_skill(raw: str) -> Optional[str]:
     if value in SOFT_SKILLS:
         return value
     if value in _SECTOR_TERMS:
+        return None
+    if value in _PERSONAL_TRAITS or value in _NON_SKILL_TERMS:
         return None
     if any(value.startswith(lead) for lead in _FRAGMENT_LEADS):
         return None

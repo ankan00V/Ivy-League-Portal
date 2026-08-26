@@ -2,7 +2,7 @@
 import Sidebar from "@/components/Sidebar";
 import React, { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Compass, Target, TrendingUp, AlertTriangle, Loader2 } from "lucide-react";
+import { Compass, Target, TrendingUp, AlertTriangle, Loader2, BookOpen } from "lucide-react";
 import { apiUrl } from "@/lib/api";
 import { createAuthenticatedFetchInit, getAccessToken } from "@/lib/auth-session";
 
@@ -35,6 +35,25 @@ interface Adjustment {
     claimed: number;
     recorded: number;
     reason: string;
+}
+
+interface Recommendation {
+    program_id: string;
+    title: string;
+    provider: string;
+    url?: string | null;
+    program_format: string;
+    duration_weeks?: number | null;
+    is_free: boolean;
+    certificate_offered: boolean;
+    closes_gaps: string[];
+    score: number;
+}
+
+interface RecommendationPayload {
+    status: "ok" | "no_assessment" | "no_programs" | "no_matching_programs";
+    detail: string;
+    recommendations: Recommendation[];
 }
 
 interface AssessmentResult {
@@ -83,6 +102,7 @@ export default function SkillsPage() {
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [programs, setPrograms] = useState<RecommendationPayload | null>(null);
 
     useEffect(() => {
         // Everything lives inside the effect so nothing calls setState in the
@@ -98,10 +118,14 @@ export default function SkillsPage() {
                     return;
                 }
                 const init = createAuthenticatedFetchInit({}, token);
-                const [qRes, latestRes] = await Promise.all([
+                const [qRes, latestRes, programsRes] = await Promise.all([
                     fetch(apiUrl("/api/v1/skills/questionnaire"), init),
                     fetch(apiUrl("/api/v1/skills/assessment/latest"), init),
+                    fetch(apiUrl("/api/v1/learning/recommended"), init),
                 ]);
+                if (!cancelled && programsRes.ok) {
+                    setPrograms((await programsRes.json()) as RecommendationPayload);
+                }
                 if (cancelled) return;
 
                 if (!qRes.ok) {
@@ -172,6 +196,17 @@ export default function SkillsPage() {
                 return;
             }
             setResult((await res.json()) as AssessmentResult);
+            // The gaps just changed, so the recommendations built from them are
+            // stale. Refetching is cheaper than explaining why they disagree.
+            try {
+                const rec = await fetch(
+                    apiUrl("/api/v1/learning/recommended"),
+                    createAuthenticatedFetchInit({}, token),
+                );
+                if (rec.ok) setPrograms((await rec.json()) as RecommendationPayload);
+            } catch {
+                // Recommendations are supplementary; the assessment result stands.
+            }
             window.scrollTo({ top: 0, behavior: "smooth" });
         } catch (err) {
             setError(err instanceof Error ? err.message : "Could not submit.");
@@ -343,6 +378,66 @@ export default function SkillsPage() {
                         </motion.section>
                     )}
                 </AnimatePresence>
+
+                {programs && result && (
+                    <section style={{ ...panelStyle(), padding: "1.75rem", marginBottom: "2rem" }}>
+                        <div style={{ ...labelStyle(), display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.5rem" }}>
+                            <BookOpen size={16} /> Programmes that close these gaps
+                        </div>
+                        <p style={{ color: "var(--text-secondary)", fontWeight: 600, fontSize: "0.9rem", marginBottom: "1rem" }}>
+                            Ranked by the value of the gaps each one closes, not by how many skills
+                            it advertises.
+                        </p>
+
+                        {programs.status !== "ok" && (
+                            // Each empty case says which it is. "No programmes published yet"
+                            // and "none of them match you" are different problems with
+                            // different fixes, and one empty list cannot mean both.
+                            <p style={{ color: "var(--text-primary)", fontWeight: 700 }}>{programs.detail}</p>
+                        )}
+
+                        {programs.recommendations.map((program) => (
+                            <div
+                                key={program.program_id}
+                                style={{ ...panelStyle(), padding: "0.85rem 1.1rem", marginBottom: "0.6rem", background: "var(--bg-base)" }}
+                            >
+                                <div style={{ display: "flex", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap" }}>
+                                    <div style={{ flex: "1 1 300px" }}>
+                                        <div style={{ fontWeight: 800, color: "var(--text-primary)" }}>{program.title}</div>
+                                        <div style={{ color: "var(--text-secondary)", fontWeight: 600, fontSize: "0.9rem" }}>
+                                            {program.provider} · {program.program_format}
+                                            {program.duration_weeks != null ? ` · ${program.duration_weeks} weeks` : ""}
+                                            {program.is_free ? " · free" : ""}
+                                            {program.certificate_offered ? " · certificate" : ""}
+                                        </div>
+                                        <div style={{ color: "var(--text-primary)", fontWeight: 700, fontSize: "0.85rem", marginTop: "0.35rem" }}>
+                                            Closes: {program.closes_gaps.join(", ")}
+                                        </div>
+                                    </div>
+                                    {program.url && (
+                                        <a
+                                            href={program.url}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            style={{
+                                                ...panelStyle(),
+                                                padding: "0.3rem 0.7rem",
+                                                fontSize: "0.8rem",
+                                                fontWeight: 800,
+                                                background: "var(--brand-primary)",
+                                                color: "var(--text-primary)",
+                                                textDecoration: "none",
+                                                alignSelf: "flex-start",
+                                            }}
+                                        >
+                                            Open
+                                        </a>
+                                    )}
+                                </div>
+                            </div>
+                        ))}
+                    </section>
+                )}
 
                 {questionnaire && (
                     <section style={{ ...panelStyle(), padding: "1.75rem" }}>

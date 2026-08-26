@@ -27,6 +27,7 @@ from app.models.evaluation_run import EvaluationRun
 from app.models.experiment import Experiment, ExperimentAssignment
 from app.models.feature_store_row import FeatureStoreRow
 from app.models.skill_assessment import SkillAssessment, SkillDemandSnapshot
+from app.models.learning_program import LearningProgram
 from app.models.impact_event import ImpactEvent
 from app.models.knowledge_chunk import KnowledgeChunk
 from app.models.mlops_incident import MlopsIncident
@@ -104,6 +105,7 @@ DOCUMENT_MODELS = [
     FeatureStoreRow,
     SkillDemandSnapshot,
     SkillAssessment,
+    LearningProgram,
     MlopsIncident,
     AssistantConversationTurn,
     AssistantMemoryState,

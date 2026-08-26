@@ -11,6 +11,7 @@ from app.api.api_v1.endpoints import (
     employer,
     experiments,
     jobs,
+    learning,
     mlops,
     opportunities,
     rag_governance,
@@ -30,6 +31,7 @@ api_router.include_router(opportunities.router, prefix="/opportunities", tags=["
 api_router.include_router(applications.router, prefix="/applications", tags=["applications"])
 api_router.include_router(social.router, prefix="/social", tags=["social"])
 api_router.include_router(skills.router, prefix="/skills", tags=["skills"])
+api_router.include_router(learning.router, prefix="/learning", tags=["learning"])
 # Academician and institution portals, each gated by its own flag for the
 # same reason the employer portal is.
 api_router.include_router(academia.router, prefix="/academia", tags=["academia"])
