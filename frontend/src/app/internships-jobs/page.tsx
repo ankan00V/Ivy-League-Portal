@@ -103,11 +103,36 @@ const COMPETITIVE_KEYWORDS = [
    React to reconcile up to 1500 card components in one commit. Worse, getting
    those rows cost 3.36 MB of Postgres egress per request. Discrete pages fix
    both: one page is one small query and one small commit. */
+/** Floor between two identical feed requests. Below the 60s poll, above a render. */
+const MIN_REFETCH_MS = 10_000;
 const DEFAULT_PER_PAGE = 12;
 /** Offered in the "Records per page" control. Capped at 100 by the API. */
 const PER_PAGE_OPTIONS = [12, 24, 48, 96];
 
 const CAREER_KEYWORDS = ["internship", "intern", "job", "hiring", "developer", "engineer", "lead"];
+
+/* Deadlines render identically on the server and in the browser.
+
+   These called toLocaleDateString(undefined, ...), and `undefined` means "use
+   whatever locale the runtime defaults to". Node resolves that differently from
+   a student's browser, and the timezone differs too, so the server sent one
+   string and React rendered another - which is React error #418, the hydration
+   mismatch that was in the console on this page.
+
+   Pinned to en-IN because the corpus is India-focused, and to UTC because a
+   deadline is a date rather than a moment: formatting a midnight-UTC deadline in
+   a local timezone can move it a day in either direction. */
+const DEADLINE_LOCALE = "en-IN";
+
+function formatDeadline(
+    value: string | null | undefined,
+    options: Intl.DateTimeFormatOptions,
+): string | null {
+    if (!value) return null;
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return parsed.toLocaleDateString(DEADLINE_LOCALE, { timeZone: "UTC", ...options });
+}
 
 const buildOpportunitiesSignature = (items: Opportunity[]): string =>
     items
@@ -199,6 +224,32 @@ export default function InternshipsJobsPage() {
     const [trackKeywords, setTrackKeywords] = useState<string[]>([]);
     const [filterMenuOpen, setFilterMenuOpen] = useState(false);
     const [placementMenuOpen, setPlacementMenuOpen] = useState(false);
+    /* The key of the request currently in flight.
+
+       Several things ask the feed to refresh - the filter/page effect, the
+       polling interval, the visibility handler - and on mount more than one of
+       them fires within the same few hundred milliseconds. That was harmless
+       when the whole corpus was fetched once and cached; now every duplicate is
+       a real query against Postgres, and worse, the concurrent ones queue behind
+       each other in a small connection pool until the 8s client timeout aborts
+       them. An aborted fetch leaves the feed empty, which switches the poller
+       from 60s to its 15s retry, which fires more of them.
+
+       Collapsing identical in-flight requests breaks that loop at the source. */
+    const inFlightKeyRef = useRef<string | null>(null);
+    /* When the same request last completed, so an identical one cannot be issued
+       again immediately.
+
+       The in-flight guard alone only collapses requests that overlap. Measured in
+       the browser, something re-triggers the fetch on nearly every render, so the
+       requests simply queued nose to tail instead: eleven of them in 66 seconds,
+       each starting as the previous finished. A floor caps that regardless of how
+       many triggers there are, without me having to find every one.
+
+       Keyed by the query string, so changing page or filter is never delayed -
+       that is a different key and goes out immediately. Only a repeat of the
+       identical request waits. */
+    const lastFetchRef = useRef<{ key: string; at: number }>({ key: "", at: 0 });
     const [page, setPage] = useState(1);
     const [perPage, setPerPage] = useState(DEFAULT_PER_PAGE);
     const [totalCount, setTotalCount] = useState(0);
@@ -257,6 +308,13 @@ export default function InternshipsJobsPage() {
         roleTrack !== "all" || placement !== "all" || trackKeywords.length > 0;
 
     const fetchOpportunities = useEffectEvent(async () => {
+        // Whether THIS call is the one that claimed the in-flight slot. A
+        // duplicate returns early, but `finally` still runs, so without this it
+        // would clear a key it never set and release the guard while the real
+        // request was still open - which made the guard do nothing at all.
+        let ownsInFlight = false;
+        // requestKey is built inside the try; the finally needs it too.
+        let requestKeyForRelease = "";
         try {
             /* One page, filtered and counted by the API.
 
@@ -272,6 +330,18 @@ export default function InternshipsJobsPage() {
             if (roleTrack !== "all") params.set("role_track", roleTrack);
             if (placement !== "all") params.set("placement", placement);
             if (trackKeywords.length > 0) params.set("specialities", trackKeywords.join(","));
+
+            const requestKey = params.toString();
+            if (inFlightKeyRef.current === requestKey) {
+                return;
+            }
+            const previous = lastFetchRef.current;
+            if (previous.key === requestKey && Date.now() - previous.at < MIN_REFETCH_MS) {
+                return;
+            }
+            inFlightKeyRef.current = requestKey;
+            requestKeyForRelease = requestKey;
+            ownsInFlight = true;
 
             const token = getAccessToken();
             const paged = await fetchJsonWithTimeout<{
@@ -341,6 +411,15 @@ export default function InternshipsJobsPage() {
                 void triggerLiveRefresh();
             }
         } finally {
+            // Released here, not at the return sites. The function exits from
+            // several places - the success path returns early, the empty path
+            // falls through, the catch handles a thrown error - and a key left
+            // set on any one of them would block every later refresh of the same
+            // page for the life of the component.
+            if (ownsInFlight) {
+                inFlightKeyRef.current = null;
+                lastFetchRef.current = { key: requestKeyForRelease, at: Date.now() };
+            }
             setLoading(false);
         }
     });
@@ -800,10 +879,7 @@ export default function InternshipsJobsPage() {
                         </span>
                         <span style={{ color: "#ffffff", fontWeight: 700, fontSize: "0.85rem" }}>
                             {opp.deadline
-                                ? `Closes ${new Date(opp.deadline).toLocaleDateString(undefined, {
-                                      month: "short",
-                                      day: "numeric",
-                                  })}`
+                                ? `Closes ${formatDeadline(opp.deadline, { month: "short", day: "numeric" })}`
                                 : "Rolling basis"}
                         </span>
                     </div>
@@ -915,11 +991,7 @@ export default function InternshipsJobsPage() {
                             <span style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.9rem", color: "var(--text-secondary)", fontWeight: 700 }}>
                                 <Calendar size={14} />
                                 {opp.deadline
-                                    ? new Date(opp.deadline).toLocaleDateString(undefined, {
-                                          month: "short",
-                                          day: "numeric",
-                                          year: "numeric",
-                                      })
+                                    ? formatDeadline(opp.deadline, { month: "short", day: "numeric", year: "numeric" })
                                     : "Rolling Basis"}
                             </span>
                         </div>
@@ -1083,11 +1155,7 @@ export default function InternshipsJobsPage() {
                             </div>
                             <div style={{ fontWeight: 800, color: "var(--text-primary)" }}>
                                 {opp.deadline
-                                    ? new Date(opp.deadline).toLocaleDateString(undefined, {
-                                          month: "short",
-                                          day: "numeric",
-                                          year: "numeric",
-                                      })
+                                    ? formatDeadline(opp.deadline, { month: "short", day: "numeric", year: "numeric" })
                                     : "Rolling Basis"}
                             </div>
                         </div>
@@ -1254,7 +1322,7 @@ export default function InternshipsJobsPage() {
                             ["Domain", opp.domain || "General"],
                             ["Type", opp.opportunity_type || "Opportunity"],
                             ["Deadline", opp.deadline
-                                ? new Date(opp.deadline).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+                                ? formatDeadline(opp.deadline, { month: "short", day: "numeric", year: "numeric" })
                                 : "Rolling Basis"],
                         ].map(([label, value]) => (
                             <div key={label}>
