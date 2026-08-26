@@ -16,6 +16,8 @@ import {
   Trophy,
   X,
   Compass,
+  GraduationCap,
+  Building2,
 } from "lucide-react";
 
 import BrandLogo from "@/components/BrandLogo";
@@ -28,17 +30,27 @@ type NavLink = {
   name: string;
   href: string;
   icon: React.ReactNode;
+  /** Roles that should see this link. Empty means everyone. */
+  roles?: string[];
   mobileLabel?: string;
 };
 
+// Links carry the roles that should see them. An academician handed the student
+// feed, or a student shown a cohort dashboard they cannot open, are both
+// navigation that only leads to a refusal.
+const STUDENT_ONLY = ["candidate"];
+const EVERY_ROLE: string[] = [];
+
 const links: NavLink[] = [
-  { name: "Dashboard", href: "/dashboard", icon: <LayoutDashboard size={18} />, mobileLabel: "Home" },
-  { name: "Opportunities", href: "/opportunities", icon: <Target size={18} />, mobileLabel: "Opps" },
-  { name: "Internships/Jobs", href: "/internships-jobs", icon: <Briefcase size={18} />, mobileLabel: "Jobs" },
-  { name: "Applications", href: "/applications", icon: <FileText size={18} />, mobileLabel: "Applied" },
-  { name: "Skill Gaps", href: "/skills", icon: <Compass size={18} />, mobileLabel: "Skills" },
-  { name: "Social Network", href: "/social", icon: <Globe size={18} />, mobileLabel: "Social" },
-  { name: "Leaderboard", href: "/leaderboard", icon: <Trophy size={18} /> },
+  { name: "Dashboard", href: "/dashboard", icon: <LayoutDashboard size={18} />, mobileLabel: "Home", roles: EVERY_ROLE },
+  { name: "Opportunities", href: "/opportunities", icon: <Target size={18} />, mobileLabel: "Opps", roles: STUDENT_ONLY },
+  { name: "Internships/Jobs", href: "/internships-jobs", icon: <Briefcase size={18} />, mobileLabel: "Jobs", roles: STUDENT_ONLY },
+  { name: "Applications", href: "/applications", icon: <FileText size={18} />, mobileLabel: "Applied", roles: STUDENT_ONLY },
+  { name: "Skill Gaps", href: "/skills", icon: <Compass size={18} />, mobileLabel: "Skills", roles: STUDENT_ONLY },
+  { name: "Faculty Portal", href: "/faculty", icon: <GraduationCap size={18} />, mobileLabel: "Faculty", roles: ["faculty"] },
+  { name: "Cohort", href: "/institution", icon: <Building2 size={18} />, mobileLabel: "Cohort", roles: ["institution"] },
+  { name: "Social Network", href: "/social", icon: <Globe size={18} />, mobileLabel: "Social", roles: EVERY_ROLE },
+  { name: "Leaderboard", href: "/leaderboard", icon: <Trophy size={18} />, roles: STUDENT_ONLY },
 ];
 
 const mobilePrimaryLinks = links.slice(0, 5);
@@ -48,6 +60,7 @@ export default function Sidebar() {
   const router = useRouter();
   const { theme, toggleTheme } = useTheme();
   const [rankingSummary, setRankingSummary] = useState<RankingSummary | null>(null);
+  const [accountType, setAccountType] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const isHydrated = useSyncExternalStore(
     () => () => {},
@@ -57,6 +70,29 @@ export default function Sidebar() {
 
   useEffect(() => {
     let cancelled = false;
+
+    // Which links to show depends on the role. Until it is known the student
+    // navigation is shown, which is right for the overwhelming majority and
+    // wrong only briefly for the rest.
+    const loadAccountType = async () => {
+      const token = getAccessToken();
+      if (!token) return;
+      try {
+        const res = await fetch(
+          apiUrl("/api/v1/users/me/profile"),
+          createAuthenticatedFetchInit({}, token),
+        );
+        if (!res.ok) return;
+        const payload = (await res.json()) as { account_type?: string | null };
+        if (!cancelled) {
+          setAccountType(String(payload?.account_type ?? "candidate").trim().toLowerCase());
+        }
+      } catch {
+        // A role we cannot read leaves the shared links only, which every
+        // account can open.
+      }
+    };
+    void loadAccountType();
 
     const loadRankingSummary = async () => {
       const token = getAccessToken();
@@ -99,7 +135,7 @@ export default function Sidebar() {
     window.addEventListener("focus", handleRefresh);
     document.addEventListener("visibilitychange", handleRefresh);
 
-    return () => {
+  return () => {
       cancelled = true;
       window.clearInterval(interval);
       window.removeEventListener("focus", handleRefresh);
@@ -144,6 +180,21 @@ export default function Sidebar() {
     router.replace("/login");
   };
 
+  // Which links this account should see. Roles are checked here rather than by
+  // hiding pages, so navigation never offers a route that answers 403.
+  //
+  // An unknown role falls back to the student navigation rather than to nothing.
+  // The role is read from an authenticated request, so it is null for a signed
+  // out or expired session and for any hiccup on that one endpoint - and the
+  // first version of this stripped the sidebar down to two links whenever that
+  // happened. A faculty member seeing a student link for a moment is a much
+  // smaller failure than every user losing their navigation.
+  const effectiveRole = accountType || "candidate";
+  const visibleLinks = links.filter((link) => {
+    if (!link.roles || link.roles.length === 0) return true;
+    return link.roles.includes(effectiveRole);
+  });
+
   return (
     <>
       <div className="app-shell-nav-root">
@@ -153,7 +204,7 @@ export default function Sidebar() {
           </div>
 
           <nav className="sidebar-links" aria-label="Primary">
-            {links.map((link) => {
+            {visibleLinks.map((link) => {
               const isActive = pathname === link.href;
               return (
                 <Link
@@ -222,7 +273,7 @@ export default function Sidebar() {
         </div>
 
         <nav className="mobile-drawer-links" aria-label="Mobile navigation">
-          {links.map((link) => {
+          {visibleLinks.map((link) => {
             const isActive = pathname === link.href;
             return (
               <Link
