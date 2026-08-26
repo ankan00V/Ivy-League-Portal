@@ -132,6 +132,21 @@ _MAX_SKILL_CHARS = 40
 _MIN_SKILL_CHARS = 2
 
 
+
+def domain_key(domain: str) -> str:
+    """Canonical form for matching a domain across sources.
+
+    Profiles store the student's domain upper-cased ("AI AND MACHINE LEARNING")
+    while opportunities store it title-cased ("AI and Machine Learning"). An
+    exact match between the two never succeeds, so every student silently fell
+    through to the whole-market table while the UI explained, confidently and
+    wrongly, that their domain had too few postings. Matching on a canonical key
+    is the only thing standing between this feature and looking like it works
+    for everyone while working for no one.
+    """
+    return re.sub(r"\s+", " ", str(domain or "").strip()).casefold()
+
+
 def normalise_skill(raw: str) -> Optional[str]:
     """Return a clean skill name, or None if this is not one.
 
@@ -269,6 +284,7 @@ async def refresh_demand_snapshots(*, min_postings: int = 3, limit: int = 60) ->
             continue
         await SkillDemandSnapshot(
             domain=domain,
+            domain_key=domain_key(domain),
             skills=[
                 {
                     "skill": item.skill,
@@ -309,7 +325,9 @@ async def latest_snapshot(domain: str):
         if not candidate:
             continue
         rows = (
-            await SkillDemandSnapshot.find_many(SkillDemandSnapshot.domain == candidate)
+            await SkillDemandSnapshot.find_many(
+                SkillDemandSnapshot.domain_key == domain_key(candidate)
+            )
             .sort("-created_at")
             .limit(1)
             .to_list()

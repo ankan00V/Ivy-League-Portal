@@ -32,7 +32,7 @@ from app.services.skill_assessment_service import (
     build_questionnaire,
     corroborate,
 )
-from app.services.skill_demand import normalise_skill, rank_demand
+from app.services.skill_demand import domain_key, normalise_skill, rank_demand
 
 
 def _profile(**kwargs):
@@ -251,6 +251,32 @@ class TestGapAnalysis(unittest.TestCase):
         )
         self.assertIn("python", [row.skill for row in result.strengths])
         self.assertGreaterEqual(result.corroborated["python"], CLAIM_THRESHOLD)
+
+
+class TestDomainMatching(unittest.TestCase):
+    """Profiles and the corpus disagree on casing; lookups must not.
+
+    Profiles store "AI AND MACHINE LEARNING"; opportunities store "AI and
+    Machine Learning". Matching the display values found nothing, so every
+    student fell through to the whole-market table while the UI told them their
+    domain had too few postings. It looked exactly like the feature working.
+    """
+
+    def test_profile_casing_matches_corpus_casing(self) -> None:
+        self.assertEqual(
+            domain_key("AI AND MACHINE LEARNING"),
+            domain_key("AI and Machine Learning"),
+        )
+
+    def test_whitespace_does_not_break_matching(self) -> None:
+        self.assertEqual(domain_key("  Data   Science "), domain_key("Data Science"))
+
+    def test_distinct_domains_stay_distinct(self) -> None:
+        self.assertNotEqual(domain_key("Engineering"), domain_key("Data Science"))
+
+    def test_blank_domain_is_empty_not_a_match_for_everything(self) -> None:
+        self.assertEqual(domain_key(None), "")
+        self.assertEqual(domain_key("   "), "")
 
 
 if __name__ == "__main__":

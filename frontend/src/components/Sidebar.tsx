@@ -4,7 +4,6 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import {
-  BarChart3,
   Briefcase,
   FileText,
   Globe,
@@ -16,6 +15,7 @@ import {
   Target,
   Trophy,
   X,
+  Compass,
 } from "lucide-react";
 
 import BrandLogo from "@/components/BrandLogo";
@@ -36,9 +36,9 @@ const links: NavLink[] = [
   { name: "Opportunities", href: "/opportunities", icon: <Target size={18} />, mobileLabel: "Opps" },
   { name: "Internships/Jobs", href: "/internships-jobs", icon: <Briefcase size={18} />, mobileLabel: "Jobs" },
   { name: "Applications", href: "/applications", icon: <FileText size={18} />, mobileLabel: "Applied" },
+  { name: "Skill Gaps", href: "/skills", icon: <Compass size={18} />, mobileLabel: "Skills" },
   { name: "Social Network", href: "/social", icon: <Globe size={18} />, mobileLabel: "Social" },
   { name: "Leaderboard", href: "/leaderboard", icon: <Trophy size={18} /> },
-  { name: "Experiments", href: "/experiments", icon: <BarChart3 size={18} /> },
 ];
 
 const mobilePrimaryLinks = links.slice(0, 5);
@@ -122,7 +122,11 @@ export default function Sidebar() {
     };
   }, [drawerOpen]);
 
-  const globalRankTitle = rankingSummary ? `Top ${formatTopPercent(rankingSummary.top_percent)}%` : "--";
+  const globalRankTitle = rankingSummary
+    ? rankingSummary.top_percent != null
+      ? `Top ${formatTopPercent(rankingSummary.top_percent)}%`
+      : rankingSummary.band || "--"
+    : "--";
   const globalRankSubtitle = rankingSummary
     ? `Rank #${rankingSummary.rank} of ${rankingSummary.total_users}`
     : "Live rank unavailable";

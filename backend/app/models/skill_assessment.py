@@ -40,6 +40,10 @@ class SkillDemandSnapshot(Document):
     """Ranked skill demand for one domain, derived from live postings."""
 
     domain: str = Field(json_schema_extra={"index": True}, min_length=1, max_length=120)
+    # Case-folded form of `domain`, used for every lookup. Profiles and the
+    # corpus disagree on casing, so matching on the display value silently
+    # matched nothing at all.
+    domain_key: str = Field(default="", json_schema_extra={"index": True}, max_length=120)
     # Rows of {skill, postings, share, is_soft}, ranked by share descending.
     skills: list[dict[str, Any]] = Field(default_factory=list)
     postings_analysed: int = Field(default=0, ge=0)
