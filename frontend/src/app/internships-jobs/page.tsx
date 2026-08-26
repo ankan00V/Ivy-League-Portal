@@ -357,7 +357,13 @@ export default function InternshipsJobsPage() {
 
     useEffect(() => {
         const timeoutId = window.setTimeout(() => {
-            void fetchOpportunities();
+            // Deliberately no fetchOpportunities() here. The effect below already
+            // runs on mount - page, perPage and the filters all have initial
+            // values - so calling it here too fired two identical requests for
+            // every page view. Verified in the browser's network panel: each
+            // navigation produced a matched pair. Harmless before paging, when
+            // the corpus was fetched once; now that a request is the unit of
+            // egress, it was doubling the thing this work exists to reduce.
             void triggerLiveRefresh();
         }, 0);
         return () => window.clearTimeout(timeoutId);
