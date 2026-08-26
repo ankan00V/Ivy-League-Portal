@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from hashlib import md5
 from datetime import datetime, timedelta
 from typing import Any, Iterable, Optional
@@ -383,7 +384,23 @@ class OpportunityVectorService:
             pass
 
     async def rebuild(self, force: bool = False) -> None:
+        # Phase timings, because the failure mode here is a silent one. This job
+        # died 93 times in a row and every autopsy had the same single line of
+        # evidence - "job_timeout:900.0s" - which says the deadline passed but
+        # not what was slow, or even whether the job had started doing anything.
+        # A rebuild that measures 58s standalone and >900s in the worker cannot
+        # be told apart from one blocked on the lock below without these.
+        started = time.monotonic()
+        waited_for_lock = False
+        if self._lock.locked():
+            waited_for_lock = True
+            logger.info("vector rebuild: another rebuild holds the lock; waiting")
         async with self._lock:
+            if waited_for_lock:
+                logger.info(
+                    "vector rebuild: acquired lock after %.1fs", time.monotonic() - started
+                )
+            lock_acquired = time.monotonic()
             now = utc_now()
             if (
                 not force
@@ -402,6 +419,11 @@ class OpportunityVectorService:
             if hasattr(query, "with_vectors"):
                 query = query.with_vectors()
             opportunities = await query.to_list()
+            logger.info(
+                "vector rebuild: loaded %s opportunities in %.1fs",
+                len(opportunities),
+                time.monotonic() - lock_acquired,
+            )
             if not opportunities:
                 self._vectors = np.empty((0, embedding_service.dimension), dtype=np.float32)
                 self._metas = []
@@ -411,7 +433,12 @@ class OpportunityVectorService:
                 return
 
             texts = [_opportunity_to_text(opportunity) for opportunity in opportunities]
+            sync_started = time.monotonic()
             vectors = await self._sync_persistent_vectors(opportunities=opportunities, texts=texts)
+            logger.info(
+                "vector rebuild: synced persistent vectors in %.1fs",
+                time.monotonic() - sync_started,
+            )
             if vectors is None:
                 vectors = await embedding_service.embed_texts(texts)
             vectors = np.asarray(vectors, dtype=np.float32)
@@ -454,6 +481,11 @@ class OpportunityVectorService:
             self._index = index
             self._last_build_count = len(opportunities)
             self._last_build_at = now
+            logger.info(
+                "vector rebuild: complete, %s vectors in %.1fs total",
+                len(vectors),
+                time.monotonic() - started,
+            )
 
     async def _atlas_search(
         self,
