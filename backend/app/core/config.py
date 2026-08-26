@@ -693,6 +693,10 @@ class Settings(BaseSettings):
     # makes the rebuild resumable: the job runs under a timeout, and a
     # single end-of-run flush loses every row when that timeout fires.
     VECTOR_FLUSH_BATCH_SIZE: int = 200
+    # Rows per page when the rebuild reads the corpus. Small statements
+    # survive GIL starvation from the scrape threads and the pgbouncer in
+    # front of Supabase; one full-table read does not.
+    VECTOR_LOAD_PAGE_SIZE: int = 500
     MONGODB_ATLAS_VECTOR_SEARCH: bool = False
     MONGODB_ATLAS_VECTOR_INDEX_NAME: str = "opportunity_embedding_index"
     VECTOR_INDEX_STALE_HOURS: int = 6

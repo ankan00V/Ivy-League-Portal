@@ -56,6 +56,38 @@ async def _flush(model_cls, instances: list) -> int:
     return len(instances)
 
 
+async def _load_opportunities_paged() -> list[Opportunity]:
+    """Read the corpus a page at a time instead of in one statement.
+
+    The rebuild shares the worker with the scrape batches, which run their
+    blocking HTTP in threads. Those threads hold the GIL in bursts, and asyncpg
+    decodes results on the event loop, so one statement returning every
+    opportunity with its 384-float vector gets starved: the same query measures
+    1.7s per 500 rows idle and over 578s for the full table while a scrape batch
+    is running - long enough that the job's own deadline fires before the load
+    returns, which is why the failure left no trace beyond "job_timeout".
+
+    Pages are small enough to finish between those bursts, and short statements
+    are also what the pgbouncer in front of Supabase tolerates - a full-table
+    read is what "connection was closed in the middle of operation" was.
+    Ordering by _id keeps paging stable while the scraper writes.
+    """
+    page_size = max(1, int(getattr(settings, "VECTOR_LOAD_PAGE_SIZE", 500)))
+    loaded: list[Opportunity] = []
+    while True:
+        query = Opportunity.find_many()
+        if hasattr(query, "with_vectors"):
+            query = query.with_vectors()
+        page = await query.sort("_id").skip(len(loaded)).limit(page_size).to_list()
+        if not page:
+            break
+        loaded.extend(page)
+        if len(page) < page_size:
+            break
+        logger.info("vector rebuild: loaded %s opportunities so far", len(loaded))
+    return loaded
+
+
 async def _flush_in_batches(model_cls, instances: list, *, label: str) -> int:
     """Flush in committed chunks so a cancelled rebuild keeps what it finished.
 
@@ -415,10 +447,7 @@ class OpportunityVectorService:
             # them every row would look unembedded and be recomputed on each
             # rebuild. with_vectors only exists on the Postgres query, so the
             # Beanie path is left alone.
-            query = Opportunity.find_many()
-            if hasattr(query, "with_vectors"):
-                query = query.with_vectors()
-            opportunities = await query.to_list()
+            opportunities = await _load_opportunities_paged()
             logger.info(
                 "vector rebuild: loaded %s opportunities in %.1fs",
                 len(opportunities),
