@@ -33,6 +33,9 @@ class Opportunity(Document):
     domain: Optional[str] = None
     university: Optional[str] = None
     source: Optional[str] = None
+    #: Inherited from the source that produced this row. Rows predating this
+    #: column carry no value and are read as "student", which is what they are.
+    audience: str = Field(default="student", json_schema_extra={"index": True})
     source_id: Optional[str] = Field(default=None, json_schema_extra={"index": True})
     seen_on: list[str] = Field(default_factory=list)
     source_count: int = Field(default=1, ge=1)

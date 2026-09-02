@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import get_current_active_user
 from app.core.account_types import FACULTY, INSTITUTION
+from app.core.audiences import FACULTY as AUDIENCE_FACULTY, audience_matches
 from app.core.config import settings
 from app.models.application import Application
 from app.models.opportunity import Opportunity
@@ -151,6 +152,11 @@ class FacultyOpportunity(BaseModel):
 class FacultyFeedResponse(BaseModel):
     total: int
     scanned: int
+    #: How many came from sources that serve academicians, versus rescued from
+    #: the student corpus by keyword. The second number shrinking towards zero
+    #: is what "faculty sources are working" looks like.
+    from_faculty_sources: int = 0
+    from_keyword_fallback: int = 0
     opportunities: list[FacultyOpportunity]
 
 
@@ -161,11 +167,19 @@ async def faculty_opportunities(
 ) -> Any:
     _require_role(current_user, FACULTY, enabled=bool(settings.FACULTY_PORTAL_ENABLED))
 
-    # Paged for the same reason the vector rebuild is: one statement over the
-    # whole table competes with the scrape batches and gets starved.
+    # Two passes, in priority order.
+    #
+    # Faculty-audience sources are the real answer: a source that serves
+    # academicians produces academician opportunities, and reading the column is
+    # exact. The keyword matcher is kept as a fallback over student-audience rows
+    # because the corpus predates the column and does occasionally carry a
+    # professorship that a student scraper happened to pick up - but it is a
+    # salvage operation, not the mechanism. When faculty sources are producing,
+    # this endpoint stops depending on it.
     page_size = 500
     loaded = 0
-    matches: list[Opportunity] = []
+    by_audience: list[Opportunity] = []
+    by_keyword: list[Opportunity] = []
     scanned = 0
     while True:
         page = await Opportunity.find_many().sort("-created_at").skip(loaded).limit(page_size).to_list()
@@ -176,15 +190,20 @@ async def faculty_opportunities(
             if str(getattr(opportunity, "opportunity_status", "") or "") != "active":
                 continue
             scanned += 1
-            if _looks_faculty_facing(opportunity):
-                matches.append(opportunity)
-        if len(page) < page_size or len(matches) >= limit * 3:
+            if audience_matches(getattr(opportunity, "audience", None), AUDIENCE_FACULTY):
+                by_audience.append(opportunity)
+            elif _looks_faculty_facing(opportunity):
+                by_keyword.append(opportunity)
+        if len(page) < page_size:
             break
 
+    matches = by_audience + by_keyword
     selected = matches[:limit]
     return FacultyFeedResponse(
         total=len(matches),
         scanned=scanned,
+        from_faculty_sources=len(by_audience),
+        from_keyword_fallback=len(by_keyword),
         opportunities=[
             FacultyOpportunity(
                 id=str(row.id),

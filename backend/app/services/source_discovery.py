@@ -24,6 +24,7 @@ from pymongo.errors import DuplicateKeyError
 from app.core.async_limits import LoopLocalLockMap, LoopLocalSemaphore
 from app.core.url_guard import BlockedTargetURL, assert_public_http_url
 from app.services.scrapling_client import scrapling_client
+from app.core.audiences import normalise_audience
 from app.core.config import settings
 from app.core.redis import get_redis
 from app.core.time import utc_now
@@ -279,6 +280,9 @@ class DiscoveryCandidate(BaseModel):
     name: Optional[str] = None
     source_type: Optional[str] = None
     discovered_by: Optional[str] = None
+    # Carried from the seed so the DiscoveredSource this becomes knows who it
+    # serves. Defaults to student, which is what every pre-existing source is.
+    audience: str = "student"
 
 
 class QualificationCheckResult(BaseModel):
@@ -1368,6 +1372,7 @@ class SourceDiscoveryEngine:
                         discovery_query=seed.company_name,
                         name=seed.company_name,
                         source_type="company_careers",
+                        audience=getattr(seed, "audience", "student") or "student",
                     )
                 )
         return candidates
@@ -1556,6 +1561,7 @@ class SourceDiscoveryEngine:
             discovery_method=candidate.method,
             discovery_query=candidate.discovery_query,
             discovered_by=candidate.discovered_by or "system",
+            audience=normalise_audience(getattr(candidate, "audience", None)),
             requires_admin_review=candidate.method == DiscoveryMethod.user_submission,
         )
         try:
@@ -2506,6 +2512,10 @@ class TrustScoringEngine:
                 "stipend": payload.get("stipend_text") or payload.get("stipend"),
                 "tags": payload.get("tags") or [],
                 "opportunity_type": str(payload.get("opportunity_type") or "Job").title(),
+                # Inherited from the source rather than inferred from the text.
+                # A title cannot reliably say whether a posting is for a student
+                # or a professor; the site it came from can.
+                "audience": normalise_audience(getattr(source, "audience", None)),
             }
             # Promoted rows previously bypassed enrichment entirely, so they
             # landed without canonical_key or duplicate_cluster_key and were
