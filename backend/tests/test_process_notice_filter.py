@@ -89,5 +89,58 @@ class TestRealOpeningsSurvive(unittest.TestCase):
         self.assertTrue(is_process_notice("ADMIT   CARD for written exam"))
 
 
+class TestNavigationLabelsAreRejected(unittest.TestCase):
+    """A page's own navigation extracts identically to its listings.
+
+    "Announcements" came out of IISc's recruitment page alongside the real
+    postdoctoral and instructor openings, because the section headings sit in the
+    same markup as the vacancies filed under them. A feed of opportunities whose
+    first row is "Announcements" tells a reader immediately that nobody looked.
+    """
+
+    def test_section_headings_are_rejected(self) -> None:
+        from app.services.source_discovery import is_navigation_label
+
+        for title in (
+            "Announcements",
+            "Careers",
+            "Current Openings",
+            "Notices",
+            "View all",
+            "Contract/Project Staff",
+            "Tenders",
+        ):
+            with self.subTest(title=title):
+                self.assertTrue(is_navigation_label(title), title)
+
+    def test_a_category_name_inside_a_real_title_is_kept(self) -> None:
+        # The distinction the whole-title match exists for: "Faculty positions"
+        # is a heading, "Special Recruitment Drive ... for Faculty positions" is
+        # an opening. A substring rule would take both.
+        from app.services.source_discovery import is_navigation_label
+
+        for title in (
+            "Special Recruitment Drive for SC/ST/OBC-NCL/EWS/PWD categories for Faculty positions",
+            "Recruitment for the position of Instructor for MSc Chemical Sciences Programme",
+            "Postdoctoral Fellowship Programmes",
+            "Appointment of Director of Indian Institute of Science Education & Research",
+            "Assistant Professor - Department of Ayurveda",
+        ):
+            with self.subTest(title=title):
+                self.assertFalse(is_navigation_label(title), title)
+
+    def test_empty_input_is_not_a_label(self) -> None:
+        from app.services.source_discovery import is_navigation_label
+
+        for title in ("", "   ", None):
+            with self.subTest(title=title):
+                self.assertFalse(is_navigation_label(title))
+
+    def test_trailing_punctuation_and_case_do_not_hide_a_label(self) -> None:
+        from app.services.source_discovery import is_navigation_label
+
+        self.assertTrue(is_navigation_label("  ANNOUNCEMENTS:  "))
+
+
 if __name__ == "__main__":
     unittest.main()

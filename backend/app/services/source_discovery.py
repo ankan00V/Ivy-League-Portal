@@ -311,6 +311,72 @@ _PROCESS_NOTICE_TERMS: tuple[str, ...] = (
 )
 
 
+# Section headings and index links, which are not opportunities either.
+#
+# A recruitment page's own navigation extracts identically to its listings:
+# "Announcements", "Contract/Project Staff", "Staff Recruitment Regular/On
+# Deputation Contractual Positions" all came out of IISc's page alongside the
+# real postdoctoral and instructor openings. They are the categories the
+# vacancies are filed under, not vacancies.
+#
+# Matched on the whole normalised title rather than as substrings, because
+# "Faculty positions" is a heading and "Special Recruitment Drive for Faculty
+# positions" is a real opening - the difference is whether the title says
+# anything beyond the category name.
+_NAVIGATION_LABELS: frozenset[str] = frozenset(
+    {
+        "announcements",
+        "announcement",
+        "notices",
+        "notice board",
+        "news",
+        "news and events",
+        "archive",
+        "archives",
+        "careers",
+        "career",
+        "jobs",
+        "vacancies",
+        "recruitment",
+        "recruitments",
+        "opportunities",
+        "openings",
+        "current openings",
+        "job openings",
+        "apply now",
+        "read more",
+        "click here",
+        "view all",
+        "more",
+        "home",
+        "faculty positions",
+        "staff positions",
+        "contract/project staff",
+        "project staff",
+        "regular positions",
+        "advertisements",
+        "tenders",
+    }
+)
+
+
+def is_navigation_label(title: str) -> bool:
+    """Whether this row is a section heading rather than a posting."""
+    text = " ".join(str(title or "").split()).lower().strip(" .:-–—|")
+    if not text:
+        return False
+    if text in _NAVIGATION_LABELS:
+        return True
+    # A title that is only a category name plus filler words is still a
+    # category. Six words is generous for a heading and short for a real
+    # posting, which normally names a role, a department or a number.
+    if len(text.split()) <= 6 and text.rstrip("s") in {
+        label.rstrip("s") for label in _NAVIGATION_LABELS
+    }:
+        return True
+    return False
+
+
 def is_process_notice(title: str) -> bool:
     """Whether this row is recruitment paperwork rather than an opening."""
     text = " ".join(str(title or "").split()).lower()
@@ -2743,6 +2809,7 @@ class TemplateDrivenScraper:
             if row.get("title")
             and row.get("apply_url")
             and not is_process_notice(row.get("title"))
+            and not is_navigation_label(row.get("title"))
         ]
         return ScraperRunResult(items=valid, items_parsed=len(valid), parse_success_rate=1.0 if rows else 0.0)
 
@@ -2830,6 +2897,7 @@ class TemplateDrivenScraper:
             if row.get("title")
             and row.get("apply_url")
             and not is_process_notice(row.get("title"))
+            and not is_navigation_label(row.get("title"))
         ]
             return ScraperRunResult(items=valid, items_parsed=len(valid), parse_success_rate=(len(valid) / max(1, len(rows))))
         rows = await extractor._extract_ats(
@@ -2843,6 +2911,7 @@ class TemplateDrivenScraper:
             if row.get("title")
             and row.get("apply_url")
             and not is_process_notice(row.get("title"))
+            and not is_navigation_label(row.get("title"))
         ]
         return ScraperRunResult(items=valid, items_parsed=len(valid), parse_success_rate=(len(valid) / max(1, len(rows))))
 
@@ -2889,6 +2958,7 @@ class TemplateDrivenScraper:
             if row.get("title")
             and row.get("apply_url")
             and not is_process_notice(row.get("title"))
+            and not is_navigation_label(row.get("title"))
         ]
         return ScraperRunResult(
             items=valid,
