@@ -1,9 +1,13 @@
 # VidyaVerse
 
-> AI-powered opportunity intelligence platform that helps students discover, prioritize, and act on internships, jobs, hackathons, competitions, workshops, and conferences.
+> AI-powered academia-industry platform. Students discover and act on internships, jobs and competitions; industry posts openings and learning programmes; academicians find FDPs, fellowships and consultancy; institutions track their own cohort's progress.
 
 **Code/status updated:** September 2, 2026. Dated benchmark and data-snapshot sections retain their original evidence dates — figures measured on 2026-08-10 still say so, because restating an old measurement under a new date is how a number stops being evidence.
 **Status:** Active local build, production-readiness gates enabled. Not deployed: there is no hosted instance, so every figure below was measured against a local stack talking to the live database.
+
+**Since the September 2 update:** the platform went from two roles to four - student, industry, academician, institution - each with its own sign-up, onboarding fields and landing page. Skill assessment, gap analysis and industry learning programmes were added, all derived from the live corpus rather than authored lists. Sources now carry an audience, so each role's feed is a lookup on a column instead of keyword-matching titles in one shared corpus; 27 academician and 4 institution sources were seeded alongside 23 more student sources, plus 16 AYUSH institutions and Ayurveda manufacturers for the Ministry of Ayush problem statement this build targets.
+
+Two discovery bugs found in the process are worth recording. Sources were being fetched at a hostname nobody serves - `normalize_url` strips `www.` for identity and the stripped host was then used to fetch, so four of seven academic sources scored 36 on reachability and would have been rejected on every future run however good the site was. And `opportunity_density`, the heaviest check at 25 of 100, counted only jobs vocabulary, which capped every institution source at exactly 59.0 against a threshold of 60: no institution source could ever have qualified, and the rejection read "low_qualification_score" as though the site were poor.
 
 **Since the August 22 update:** the database moved to a new Supabase project (56 tables verified row by row); the internships feed pages server-side, taking a feed view from 3.55 MB to 16.6 KB; and the pay-to-apply trust detector was corrected after measuring at precision 0.17 — it had been hiding real Paytm and Razorpay internships while catching no fraud.
 
@@ -164,9 +168,14 @@ class node_mongo,node_redis,node_warehouse,node_delivery toneIndigo
 ### Product
 - Guest-accessible dashboard preview for unauthenticated users.
 - Personalized dashboard behavior for signed-in users.
-- Candidate-first user journey. The employer portal and its API routes are disabled by default while that workflow is retired.
+- Four roles: student, industry, academician, institution. Each has its own sign-up fields, its own definition of a complete profile, and its own landing page. An institution is never asked for its skills.
+- The employer portal is live again. It was retired because its only gate was a non-freemail email address, which let anyone with a bought domain post into the candidate feed. Publishing now requires a verified careers-page claim - a token placed on the company's own domain - so verification gates reach rather than access: an unverified employer may draft and edit, but not reach students.
 - New candidate accounts use an institutional email address; after sign-up, a student can verify a personal backup email and use either address to sign in.
 - OTP send/resend requests use a visible Cloudflare Turnstile challenge, server-side verification, 60-second cooldowns, and an inline resend control beneath verification.
+- Skill assessment and gap analysis. The questionnaire is generated from the live corpus rather than authored, so the skills a student is asked about are the ones employers are advertising for in their domain right now; each question carries its evidence ("named in 101 live postings in this domain"). Measured over the corpus: 1,996 active postings, 12 domains, 43.6% of postings yielding at least one usable skill, ~67s for a full pass, which is why it is a scheduled job. Self-ratings are corroborated against evidence already in the profile and an unsupported claim is recorded lower, with the adjustment shown to the student rather than applied silently.
+- Industry learning programmes, matched to the gaps an assessment found. Ranking is by the value of the gaps a programme closes, not by how many skills it advertises; programmes that close none of a student's gaps are dropped rather than ranked last.
+- Academician portal: FDPs, postdocs, consultancy and academic research, filtered out of the corpus rather than mixed into the student feed.
+- Institution cohort dashboard, aggregate only. Cohort membership is matched on both email domain and a normalised institution name, because five accounts in this database spell one university four ways and three of the five signed up on gmail. Aggregates below five students are refused with a reason rather than rendered as zeroes - an average across two students identifies both, and "too few to anonymise" and "your students have done nothing" must not look the same.
 - Ask AI opportunity assistant.
 - Explainable recommendations on both opportunity feeds: users can see profile-aligned reasons, advisory eligibility context, and hide unsuitable listings while the feedback is recorded for future ranking improvements. Matching uses the candidate's degree, graduation year, skills, roles, locations, stipend expectation, and controlled availability preference.
 - Candidate-only Resume Readiness Review: an on-demand, deterministic analysis of an uploaded resume with an explainable `0–100` clarity/readability score, category evidence, strengths, weak spots, and improvements. It is advisory only—not a hiring prediction, eligibility decision, or opportunity-ranking signal—and does not persist extracted resume text or review output.
@@ -349,6 +358,10 @@ Latest drift report: `n/a`
 - Without the real production secrets and deployed service endpoints, production can be validated only up to contract/readiness checks, not proven live.
 
 ## 10) What Is In Progress
+**The academician feed is still served by keyword fallback, not by academician sources.** 14 faculty sources qualify - AICTE, four NITTTRs, ICMR, DST, IIT Bombay/Delhi/Kanpur/Madras, IISc, JNU, ICSSR, INFLIBNET - and none has yet produced an opportunity. The cause is not the pipeline: IIT Bombay's careers page qualifies at 88.5 and its extraction learns a parser at 0.851 confidence, then yields zero rows. Indian academic recruitment is published as PDF notices inside government-CMS table layouts, and the extractor is built for structured job boards. Until that is solved the endpoint reports the split honestly - `from_faculty_sources` against `from_keyword_fallback` - so the number can be checked rather than assumed.
+
+**AYUSH sources are seeded but only three qualify.** CCRAS (83.5), Himalaya (68.5) and ITRA (63.5) are through; the rest fail because several ministry portals build their vacancy menus in JavaScript that a plain fetch does not see, two are unreachable from this network, and two trip spam signals. Their thresholds were left alone: lowering a quality bar so that one's own seeds pass is how the bar stops meaning anything.
+
 - Increase sustained real-user traffic volume for stronger statistical confidence.
 - Complete full staging secret and ownership wiring across environments.
 - Expand multi-role staging E2E matrix (success + failure + recovery paths).
