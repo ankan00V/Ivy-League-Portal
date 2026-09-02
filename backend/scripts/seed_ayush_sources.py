@@ -63,7 +63,7 @@ INSTITUTIONS: tuple[AyushSeed, ...] = (
     ),
     AyushSeed(
         "Central Council for Research in Ayurvedic Sciences", "ccras.nic.in",
-        "https://ccras.nic.in/", "government", "large", "ayush_institution",
+        "https://ccras.nic.in/recruitment-and-results/", "government", "large", "ayush_institution",
         "Apex Ayurveda research body; recruits research officers and fellows.",
     ),
     AyushSeed(
@@ -82,7 +82,7 @@ INSTITUTIONS: tuple[AyushSeed, ...] = (
         "Homoeopathy research positions.",
     ),
     AyushSeed(
-        "National Institute of Ayurveda, Jaipur", "nia.nic.in", "https://nia.nic.in/",
+        "National Institute of Ayurveda, Jaipur", "nia.nic.in", "https://recruitment.niajaipur.com/",
         "government", "large", "ayush_institution",
         "Deemed university; PG and research vacancies.",
     ),
@@ -93,7 +93,7 @@ INSTITUTIONS: tuple[AyushSeed, ...] = (
     ),
     AyushSeed(
         "Morarji Desai National Institute of Yoga", "yogamdniy.nic.in",
-        "https://yogamdniy.nic.in/", "government", "medium", "ayush_institution",
+        "https://yogamdniy.nic.in/vacancy", "government", "medium", "ayush_institution",
         "Yoga therapy and instructor roles.",
     ),
     AyushSeed(
@@ -153,8 +153,39 @@ INDUSTRY: tuple[AyushSeed, ...] = (
 ALL_SEEDS: tuple[AyushSeed, ...] = INSTITUTIONS + INDUSTRY
 
 
+# Words that indicate a page actually advertises positions, rather than merely
+# belonging to an organisation that has some.
+_OPPORTUNITY_SIGNALS = (
+    "vacanc",
+    "recruit",
+    "advertisement",
+    "applications are invited",
+    "walk-in",
+    "walk in",
+    "engagement",
+    "post of",
+    "appointment",
+    "career",
+    "fellowship",
+    "job",
+)
+
+
 async def probe(seed: AyushSeed, *, timeout: float) -> tuple[bool, str]:
-    """Does this source actually respond? Reported, never assumed."""
+    """Does this source respond, and does it look like it advertises anything?
+
+    The first version of this checked only that the host answered, which is the
+    wrong property. Every seed passed, and then qualification rejected 14 of 16 -
+    ayush.gov.in scored 58 against a threshold of 60 with
+    `opportunity_density: candidate_items=0`, because a ministry homepage is a
+    homepage. The probe had confirmed the sites were up, which nobody doubted,
+    and said nothing about whether they carried vacancies.
+
+    So the content check is the point of this function now. A seed that responds
+    but shows no sign of advertising positions is reported as thin, because the
+    pipeline will reject it and the operator should know that here rather than
+    from a status column days later.
+    """
     import httpx
 
     headers = {"User-Agent": "Mozilla/5.0 (compatible; VidyaVerse/1.0; +seed-check)"}
@@ -165,8 +196,16 @@ async def probe(seed: AyushSeed, *, timeout: float) -> tuple[bool, str]:
             response = await client.get(seed.careers_url)
             # 403/401 still proves the host exists and serves; discovery has
             # stealth fetchers for those. A DNS or connect failure does not.
-            ok = response.status_code < 500
-            return ok, f"HTTP {response.status_code}"
+            if response.status_code >= 500:
+                return False, f"HTTP {response.status_code}"
+            body = (response.text or "").lower()
+            signals = sum(1 for term in _OPPORTUNITY_SIGNALS if term in body)
+            if signals == 0:
+                # Not a hard failure: many government portals build their menus
+                # in JavaScript, which the render-capable scraper sees and this
+                # plain fetch does not.
+                return True, f"HTTP {response.status_code}, no vacancy wording visible"
+            return True, f"HTTP {response.status_code}, {signals} vacancy signal(s)"
     except Exception as exc:  # noqa: BLE001 - the reason is the output
         return False, type(exc).__name__
 
