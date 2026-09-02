@@ -9,6 +9,7 @@ import FieldGrid from "@/components/ui/FieldGrid";
 import FormSection from "@/components/ui/FormSection";
 import PillGroup from "@/components/ui/PillGroup";
 import ToggleRow from "@/components/ui/ToggleRow";
+import type { AccountType } from "@/lib/account-roles";
 import { useOnboardingFlow } from "@/hooks/useOnboardingFlow";
 import {
   EDUCATION_PROGRAM_GROUPS,
@@ -19,7 +20,6 @@ import {
 import { landingPathForAccountType } from "@/lib/employer-portal";
 import { INDIAN_INSTITUTION_OPTIONS, OTHER_INSTITUTION_LABEL } from "@/lib/indian-institutions";
 
-type AccountType = "candidate" | "employer";
 type UserType = "school_student" | "college_student" | "fresher" | "professional";
 
 type ProfilePayload = {
@@ -51,6 +51,17 @@ type ProfilePayload = {
   prefer_wfh: boolean;
   consent_data_processing: boolean;
   consent_updates: boolean;
+  // Academician
+  department: string;
+  designation: string;
+  specialisation: string;
+  vidwan_id: string;
+  // Institution
+  institution_type: string;
+  aishe_code: string;
+  institution_city: string;
+  institution_state: string;
+  contact_designation: string;
   resume_url: string;
   resume_filename: string;
   resume_uploaded_at: string;
@@ -495,6 +506,15 @@ export default function OnboardingPage() {
     last_name: "",
     mobile: "",
     country_code: "+91",
+    department: "",
+    designation: "",
+    specialisation: "",
+    vidwan_id: "",
+    institution_type: "",
+    aishe_code: "",
+    institution_city: "",
+    institution_state: "",
+    contact_designation: "",
     user_type: "",
     domain: "",
     course: "",
@@ -558,7 +578,10 @@ export default function OnboardingPage() {
     resolveRouteForAccountType: resolveOnboardingRouteForAccountType,
   });
 
-  const totalSteps = profile.account_type === "employer" ? 2 : 3;
+  // Students get the third step, which is skills and interests. The other
+  // three roles have no use for it: an institution does not have skills.
+  const NON_STUDENT_ROLES = ["employer", "faculty", "institution"];
+  const totalSteps = NON_STUDENT_ROLES.includes(profile.account_type) ? 2 : 3;
   const visual = useMemo(() => ONBOARDING_VISUALS[(step - 1) % ONBOARDING_VISUALS.length], [step]);
   const fieldOfStudyOptions = useMemo(
     () => getFieldOfStudyOptions(profile.course, profile.domain),
@@ -594,6 +617,21 @@ export default function OnboardingPage() {
     !missingConsent;
 
   const canContinueStep2 = (() => {
+    if (profile.account_type === "faculty") {
+      return (
+        profile.college_name.trim().length > 0 &&
+        profile.department.trim().length > 0 &&
+        profile.designation.trim().length > 0
+      );
+    }
+    if (profile.account_type === "institution") {
+      return (
+        profile.college_name.trim().length > 0 &&
+        profile.institution_type.trim().length > 0 &&
+        profile.aishe_code.trim().length > 0 &&
+        profile.contact_designation.trim().length > 0
+      );
+    }
     if (profile.account_type === "employer") {
       return (
         profile.company_name.trim().length > 0 &&
@@ -1029,6 +1067,130 @@ export default function OnboardingPage() {
                       )}
                     </div>
                   </FormSection>
+                )}
+
+                {profile.account_type === "faculty" && (
+                  <>
+                    <FormSection label="Institution">
+                      <input
+                        className="input-base"
+                        value={profile.college_name}
+                        onChange={(e) => updateProfile("college_name", e.target.value)}
+                        placeholder="Where you teach"
+                      />
+                    </FormSection>
+
+                    <FormSection label="Department">
+                      <input
+                        className="input-base"
+                        value={profile.department}
+                        onChange={(e) => updateProfile("department", e.target.value)}
+                        placeholder="e.g. Computer Science, Dravyaguna"
+                      />
+                    </FormSection>
+
+                    <FormSection label="Designation">
+                      <select
+                        className="input-base"
+                        value={profile.designation}
+                        onChange={(e) => updateProfile("designation", e.target.value)}
+                      >
+                        <option value="">Select one</option>
+                        {["Assistant Professor", "Associate Professor", "Professor", "Lecturer", "Reader", "Head of Department", "Dean", "Principal", "Research Associate"].map((role) => (
+                          <option key={role} value={role}>{role}</option>
+                        ))}
+                      </select>
+                    </FormSection>
+
+                    <FormSection label="Area of specialisation">
+                      <input
+                        className="input-base"
+                        value={profile.specialisation}
+                        onChange={(e) => updateProfile("specialisation", e.target.value)}
+                        placeholder="What you research or teach"
+                      />
+                    </FormSection>
+
+                    <FormSection label="Vidwan ID (optional)">
+                      <input
+                        className="input-base"
+                        value={profile.vidwan_id}
+                        onChange={(e) => updateProfile("vidwan_id", e.target.value)}
+                        placeholder="INFLIBNET expert database ID"
+                      />
+                    </FormSection>
+                  </>
+                )}
+
+                {profile.account_type === "institution" && (
+                  <>
+                    <FormSection label="Institution name">
+                      <input
+                        className="input-base"
+                        value={profile.college_name}
+                        onChange={(e) => updateProfile("college_name", e.target.value)}
+                        placeholder="Official registered name"
+                      />
+                    </FormSection>
+
+                    <FormSection label="Institution type">
+                      <select
+                        className="input-base"
+                        value={profile.institution_type}
+                        onChange={(e) => updateProfile("institution_type", e.target.value)}
+                      >
+                        <option value="">Select one</option>
+                        {["Central University", "State University", "Deemed University", "Private University", "Autonomous College", "Affiliated College", "Institute of National Importance", "Polytechnic", "AYUSH Institution"].map((kind) => (
+                          <option key={kind} value={kind}>{kind}</option>
+                        ))}
+                      </select>
+                    </FormSection>
+
+                    <FormSection label="AISHE code">
+                      <input
+                        className="input-base"
+                        value={profile.aishe_code}
+                        onChange={(e) => updateProfile("aishe_code", e.target.value)}
+                        placeholder="e.g. U-0123"
+                      />
+                      <p style={{ color: "var(--text-secondary)", fontWeight: 600, fontSize: "0.85rem", marginTop: "0.35rem" }}>
+                        Issued by the Ministry of Education when your institution registers on the
+                        AISHE portal. Required because it is the one detail here that can be checked
+                        against an official list.
+                      </p>
+                    </FormSection>
+
+                    <FormSection label="City">
+                      <input
+                        className="input-base"
+                        value={profile.institution_city}
+                        onChange={(e) => updateProfile("institution_city", e.target.value)}
+                        placeholder="City"
+                      />
+                    </FormSection>
+
+                    <FormSection label="State">
+                      <input
+                        className="input-base"
+                        value={profile.institution_state}
+                        onChange={(e) => updateProfile("institution_state", e.target.value)}
+                        placeholder="State"
+                      />
+                    </FormSection>
+
+                    <FormSection label="Your designation">
+                      <input
+                        className="input-base"
+                        value={profile.contact_designation}
+                        onChange={(e) => updateProfile("contact_designation", e.target.value)}
+                        placeholder="e.g. Registrar, Placement Officer"
+                      />
+                      <p style={{ color: "var(--text-secondary)", fontWeight: 600, fontSize: "0.85rem", marginTop: "0.35rem" }}>
+                        The account belongs to the institution, so we record who is operating it
+                        separately from the institution itself.
+                      </p>
+                    </FormSection>
+                  </>
                 )}
 
                 {profile.account_type === "employer" && (

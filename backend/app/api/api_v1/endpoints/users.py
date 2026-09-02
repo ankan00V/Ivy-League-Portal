@@ -149,6 +149,21 @@ class ProfileUpdate(BaseModel):
     college_name: Optional[str] = None
     company_name: Optional[str] = None
     company_website: Optional[str] = None
+    # Academician fields. Nullable like everything else here: a student profile
+    # leaves these empty and an academician leaves the student ones empty.
+    department: Optional[str] = None
+    designation: Optional[str] = None
+    specialisation: Optional[str] = None
+    teaching_experience_years: Optional[int] = None
+    vidwan_id: Optional[str] = None
+    # Institution fields.
+    institution_type: Optional[str] = None
+    aishe_code: Optional[str] = None
+    institution_city: Optional[str] = None
+    institution_state: Optional[str] = None
+    institution_website: Optional[str] = None
+    contact_designation: Optional[str] = None
+    student_strength: Optional[int] = None
     company_size: Optional[str] = None
     company_description: Optional[str] = None
     hiring_for: Optional[str] = None
@@ -554,6 +569,24 @@ def _required_onboarding_checks(profile: Profile) -> list[tuple[str, bool]]:
         checks.append(("company_name", bool((profile.company_name or "").strip())))
         checks.append(("current_job_role", bool((profile.current_job_role or "").strip())))
         checks.append(("hiring_for", str(profile.hiring_for or "").strip().lower() in VALID_HIRING_FOR))
+    elif profile.account_type == "faculty":
+        # Where they teach and what they teach. Not skills, not a preferred work
+        # mode - an academician answering the student questions is filling in
+        # somebody else's form.
+        checks.append(("college_name", bool((profile.college_name or "").strip())))
+        checks.append(("department", bool((profile.department or "").strip())))
+        checks.append(("designation", bool((profile.designation or "").strip())))
+    elif profile.account_type == "institution":
+        # The account holder is an organisation, so its identity is the
+        # institution's and the human filling the form is recorded separately.
+        checks.append(("college_name", bool((profile.college_name or "").strip())))
+        checks.append(("institution_type", bool((profile.institution_type or "").strip())))
+        # The Ministry of Education's own identifier. Required because it is the
+        # one field on this form that can later be checked against an
+        # authoritative list rather than taken on trust - which matters for the
+        # only role that reads data about other people's students.
+        checks.append(("aishe_code", bool((profile.aishe_code or "").strip())))
+        checks.append(("contact_designation", bool((profile.contact_designation or "").strip())))
 
     return checks
 
@@ -570,7 +603,10 @@ def _compute_onboarding_status(profile: Profile) -> tuple[bool, int, list[str], 
 
 
 def _normalize_account_scope(account_type: Optional[str]) -> str:
-    return "employer" if str(account_type or "").strip().lower() == "employer" else "candidate"
+    # Kept two-valued on purpose: this drives candidate-vs-employer branching in
+    # the profile API, and the two later roles want the non-candidate shape.
+    value = str(account_type or "").strip().lower()
+    return "employer" if value in {"employer", "faculty", "institution"} else "candidate"
 
 
 def _resume_storage_dir() -> Path:

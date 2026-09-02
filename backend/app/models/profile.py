@@ -245,6 +245,34 @@ class Profile(Document):
     company_website: Optional[str] = None
     company_size: Optional[str] = None
     company_description: Optional[str] = None
+
+    # --- Academician -------------------------------------------------------
+    # A faculty profile is described by where they teach and what they teach,
+    # not by a skills list and a job-role preference. Asking an academician for
+    # their "preferred work mode" is asking a question from somebody else's form.
+    department: Optional[str] = None
+    designation: Optional[str] = None
+    specialisation: Optional[str] = None
+    teaching_experience_years: Optional[int] = Field(default=None, ge=0, le=70)
+    #: Vidwan is INFLIBNET's national expert database; most Indian academics
+    #: already have an id there, and it is the closest thing to a portable
+    #: academic identity in this system.
+    vidwan_id: Optional[str] = None
+
+    # --- Institution -------------------------------------------------------
+    institution_type: Optional[str] = None
+    #: The Ministry of Education's own identifier, issued when an institution
+    #: registers on the AISHE portal. Every recognised higher education
+    #: institution in India has one, which makes it the only field here that can
+    #: later be checked against an authoritative list rather than trusted.
+    aishe_code: Optional[str] = None
+    institution_city: Optional[str] = None
+    institution_state: Optional[str] = None
+    institution_website: Optional[str] = None
+    #: The human filling the form is not the account holder here - the
+    #: institution is - so their role has to be recorded separately.
+    contact_designation: Optional[str] = None
+    student_strength: Optional[int] = Field(default=None, ge=0, le=1_000_000)
     hiring_for: Optional[str] = None  # myself | others
     goals: list[str] = Field(default_factory=list)
     career_intent: list[str] = Field(default_factory=list)
