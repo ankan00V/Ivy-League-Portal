@@ -20,6 +20,10 @@ from app.api.deps import get_current_admin_user, get_current_user
 from app.core.config import auth_cookie_only_mode_enabled, settings
 from app.core.account_types import (
     ACCOUNT_TYPE_LABELS,
+    CANDIDATE,
+    EMPLOYER,
+    FACULTY,
+    INSTITUTION,
     KNOWN_ACCOUNT_TYPES,
     account_type_enabled,
     describe_allowed,
@@ -101,6 +105,26 @@ def _ensure_employer_corporate_email(email: str) -> None:
             status_code=400,
             detail="Employer signup/login requires a corporate email (personal providers are not allowed).",
         )
+
+
+def _ensure_email_policy_for_account_type(account_type: str, email: str) -> None:
+    """Apply the address rule that goes with this role.
+
+    Previously this was an if/elif over candidate and employer, so the two roles
+    added later were the only ones with no rule at all - and one of them reads
+    cohort data about other people's students. A dispatch keyed on the role means
+    adding a role without deciding its rule is a visible omission rather than an
+    open door.
+    """
+    role = str(account_type or "").strip().lower()
+    if role == EMPLOYER:
+        _ensure_employer_corporate_email(email)
+    elif role in {CANDIDATE, FACULTY, INSTITUTION}:
+        # Academicians and institutions are held to the same bar as students:
+        # an address at the organisation they claim to belong to, not a consumer
+        # mailbox. It is the weakest check that is still worth something, and
+        # the institution portal additionally scopes every read to this domain.
+        _ensure_candidate_institutional_email(email)
 
 
 def _ensure_candidate_institutional_email(email: str) -> None:
@@ -818,13 +842,21 @@ async def register_user(
         )
 
     _validate_password_policy(user_in.password)
-    if _normalize_account_type(getattr(user_in, "account_type", "candidate"), default="candidate") == "candidate":
-        _ensure_candidate_institutional_email(normalized_email)
+    # This used to compute the account type, use it to pick an email rule, and
+    # then hardcode "candidate" on the row. Registering as an employer returned
+    # 200 and produced a candidate account, which is the worst kind of wrong
+    # answer: the caller is told it worked and finds out later, from a portal
+    # that refuses them. _normalize_account_type still refuses roles whose flag
+    # is off, so honouring the request does not widen what can be created.
+    account_type = _normalize_account_type(
+        getattr(user_in, "account_type", "candidate"), default="candidate"
+    )
+    _ensure_email_policy_for_account_type(account_type, normalized_email)
     user = User(
         email=normalized_email,
         full_name=user_in.full_name,
         hashed_password=get_password_hash(user_in.password),
-        account_type="candidate",
+        account_type=account_type,
         auth_provider="password",
     )
     await user.insert()
@@ -1967,7 +1999,7 @@ async def oauth_google_callback(
 
         full_name = str(id_info.get("name") or "").strip() or email.split("@")[0]
 
-        if account_type == "employer":
+        if account_type == EMPLOYER:
             _ensure_employer_corporate_email(email)
 
         user = await User.find_one(User.email == email)
@@ -1975,8 +2007,7 @@ async def oauth_google_callback(
             # Google sign-in creates the account on first use, so the rule has
             # to apply here too - otherwise "sign in with Google" is an open
             # door around it for any gmail address.
-            if account_type == "candidate":
-                _ensure_candidate_institutional_email(email)
+            _ensure_email_policy_for_account_type(account_type, email)
             user = User(
                 email=email,
                 full_name=full_name,
