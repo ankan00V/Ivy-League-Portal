@@ -444,9 +444,24 @@ class TestPaymentPatternPrecision(unittest.TestCase):
     """
 
     def _flagged(self, text: str) -> bool:
-        from app.services.opportunity_trust import PAYMENT_PATTERNS
+        """Ask the detector, not one of the lists it happens to consult.
 
-        return any(re.search(pattern, text, re.IGNORECASE) for pattern in PAYMENT_PATTERNS)
+        This matched PAYMENT_PATTERNS directly, which made it a test of where the
+        regexes live rather than of what the detector decides. Naming a payment
+        rail has since moved out of that list - on its own it is not evidence,
+        and treating it as evidence was hiding real Paytm and Razorpay
+        internships - so the assertion has to run the decision that now spans
+        both lists.
+        """
+        from app.services.opportunity_trust import (
+            PAYMENT_PATTERNS,
+            _mentions_payment_demand,
+        )
+
+        lowered = text.lower()
+        if any(re.search(pattern, lowered, re.IGNORECASE) for pattern in PAYMENT_PATTERNS):
+            return True
+        return _mentions_payment_demand(lowered)
 
     def test_legitimate_postings_are_not_flagged(self) -> None:
         for text in (
