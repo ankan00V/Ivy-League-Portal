@@ -2,8 +2,10 @@
 
 > AI-powered opportunity intelligence platform that helps students discover, prioritize, and act on internships, jobs, hackathons, competitions, workshops, and conferences.
 
-**Code/status updated:** August 22, 2026. Dated benchmark and data-snapshot sections retain their original evidence dates.
-**Status:** Active local build, production-readiness gates enabled
+**Code/status updated:** September 2, 2026. Dated benchmark and data-snapshot sections retain their original evidence dates — figures measured on 2026-08-10 still say so, because restating an old measurement under a new date is how a number stops being evidence.
+**Status:** Active local build, production-readiness gates enabled. Not deployed: there is no hosted instance, so every figure below was measured against a local stack talking to the live database.
+
+**Since the August 22 update:** the database moved to a new Supabase project (56 tables verified row by row); the internships feed pages server-side, taking a feed view from 3.55 MB to 16.6 KB; and the pay-to-apply trust detector was corrected after measuring at precision 0.17 — it had been hiding real Paytm and Razorpay internships while catching no fraud.
 
 ## 1) Executive Summary
 VidyaVerse is a full-stack AI/ML system, not just a listings app.
