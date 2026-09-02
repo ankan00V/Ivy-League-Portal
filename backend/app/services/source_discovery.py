@@ -598,7 +598,26 @@ class SourceHttpClient:
         # Applied here rather than only in _fetch_direct so the render providers
         # are covered by the same check; theirs inspects literal IPs only, which
         # a hostname resolving to a private address walks straight past.
-        normalized = assert_public_http_url(normalized)
+        try:
+            normalized = assert_public_http_url(normalized)
+        except Exception:
+            # The apex host did not survive validation - typically because it
+            # does not resolve at all. normalize_url strips "www." for identity,
+            # and several academic and government sites publish only on www, so
+            # the canonical form points at a host that was never intended to
+            # serve. iitm.ac.in and nitttrkol.ac.in both fail here while their
+            # www hosts answer 200.
+            #
+            # The www variant is validated by the same guard rather than
+            # skipping it. This is a second candidate URL getting a full check,
+            # not an exemption: a host that resolves to a private or reserved
+            # address is still refused, whatever its name.
+            parsed_apex = urlparse(normalized)
+            if parsed_apex.netloc.startswith("www."):
+                raise
+            normalized = assert_public_http_url(
+                urlunparse(parsed_apex._replace(netloc=f"www.{parsed_apex.netloc}"))
+            )
         domain = normalize_domain(urlparse(normalized).netloc)
         lock = self._domain_locks.get(domain)
         async with self._global_semaphore:
@@ -683,6 +702,38 @@ class SourceHttpClient:
                 self._last_domain_request[domain] = time.monotonic()
                 if direct_page is not None:
                     return direct_page
+
+                # Last resort: try the www host.
+                #
+                # normalize_url canonicalises the host through normalize_domain,
+                # which strips "www." so that www.x.ac.in and x.ac.in are one
+                # source rather than two. That is right for identity and wrong
+                # for fetching: a great many Indian government and university
+                # sites serve only on www and refuse the apex outright. Measured
+                # on the seeded academic sources, four of seven - nitttrkol,
+                # ugc, tifr and iitm - answered 200 on www and ConnectError or
+                # ConnectTimeout on the apex, so they scored 36 on reachability
+                # and were rejected permanently however good the site was.
+                #
+                # Retried here rather than by changing normalize_url, because
+                # that function also feeds opportunity dedupe keys and splitting
+                # www from apex there would let the same posting in twice.
+                if direct_error is not None and not domain.startswith("www."):
+                    parsed = urlparse(normalized)
+                    if not parsed.netloc.startswith("www."):
+                        www_url = urlunparse(parsed._replace(netloc=f"www.{parsed.netloc}"))
+                        try:
+                            www_page = await self._fetch_direct(www_url, timeout)
+                        except Exception:
+                            www_page = None
+                        if www_page is not None:
+                            logger.info(
+                                "reached %s only on the www host; apex failed with %s",
+                                domain,
+                                type(direct_error).__name__,
+                            )
+                            return www_page
+
                 assert direct_error is not None
                 raise direct_error
 
