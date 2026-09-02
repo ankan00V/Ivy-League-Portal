@@ -273,6 +273,52 @@ class DiscoveryRunSummary(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
 
+# Recruitment *process* notices, which are not opportunities.
+#
+# Academic and government recruitment pages interleave vacancies with the
+# paperwork of past ones: admit cards, merit lists, results, provisional
+# eligibility lists, answer keys. Extraction cannot tell them apart by shape -
+# they sit in the same list, with the same markup, and often the same wording
+# minus one noun. IISc's page produced twelve candidate rows of which the real
+# openings were a postdoctoral programme, an instructor post and a faculty
+# recruitment drive; the rest were admit cards and merit lists.
+#
+# A student or academician shown "Third Revised Merit List" in a feed of
+# opportunities has been shown something they cannot apply to, which is worse
+# than showing them nothing: it teaches them the feed is not worth reading.
+_PROCESS_NOTICE_TERMS: tuple[str, ...] = (
+    "admit card",
+    "merit list",
+    "answer key",
+    "result of the recruitment",
+    "provisional list",
+    "list of eligible",
+    "not eligible",
+    "shortlisted candidates",
+    "cut-off",
+    "cut off marks",
+    "interview schedule",
+    "exam schedule",
+    "written exam",
+    "corrigendum",
+    "addendum",
+    "postponed",
+    "cancelled",
+    "declared",
+    "score card",
+    "final selection list",
+    "waiting list",
+)
+
+
+def is_process_notice(title: str) -> bool:
+    """Whether this row is recruitment paperwork rather than an opening."""
+    text = " ".join(str(title or "").split()).lower()
+    if not text:
+        return False
+    return any(term in text for term in _PROCESS_NOTICE_TERMS)
+
+
 class DiscoveryCandidate(BaseModel):
     url: str
     method: DiscoveryMethod
@@ -2691,7 +2737,13 @@ class TemplateDrivenScraper:
                 [_safe_json_loads(script.string or script.get_text() or "") for script in soup.find_all("script", attrs={"type": "application/ld+json"})]
             )
         ]
-        valid = [row for row in rows if row.get("title") and row.get("apply_url")]
+        valid = [
+            row
+            for row in rows
+            if row.get("title")
+            and row.get("apply_url")
+            and not is_process_notice(row.get("title"))
+        ]
         return ScraperRunResult(items=valid, items_parsed=len(valid), parse_success_rate=1.0 if rows else 0.0)
 
     async def _scrape_ats(self, registration: ScraperRegistration, method: str) -> ScraperRunResult:
@@ -2772,14 +2824,26 @@ class TemplateDrivenScraper:
                 ]
             else:
                 rows = []
-            valid = [row for row in rows if row.get("title") and row.get("apply_url")]
+            valid = [
+            row
+            for row in rows
+            if row.get("title")
+            and row.get("apply_url")
+            and not is_process_notice(row.get("title"))
+        ]
             return ScraperRunResult(items=valid, items_parsed=len(valid), parse_success_rate=(len(valid) / max(1, len(rows))))
         rows = await extractor._extract_ats(
             {"method": method, "slug": str((registration.parser_template or {}).get("ats_slug") or registration.domain.split(".")[0])},
             source,
             registration.careers_url,
         )
-        valid = [row for row in rows if row.get("title") and row.get("apply_url")]
+        valid = [
+            row
+            for row in rows
+            if row.get("title")
+            and row.get("apply_url")
+            and not is_process_notice(row.get("title"))
+        ]
         return ScraperRunResult(items=valid, items_parsed=len(valid), parse_success_rate=(len(valid) / max(1, len(rows))))
 
     async def _scrape_with_css_template(self, registration: ScraperRegistration) -> ScraperRunResult:
@@ -2819,7 +2883,13 @@ class TemplateDrivenScraper:
                     )
             except Exception as exc:
                 errors.append(f"{page_url}:{exc}")
-        valid = [row for row in rows if row.get("title") and row.get("apply_url")]
+        valid = [
+            row
+            for row in rows
+            if row.get("title")
+            and row.get("apply_url")
+            and not is_process_notice(row.get("title"))
+        ]
         return ScraperRunResult(
             items=valid,
             items_parsed=len(valid),
