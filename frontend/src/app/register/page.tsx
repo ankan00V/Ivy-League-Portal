@@ -333,7 +333,7 @@ export default function RegisterPage() {
           <div>
             <h2 style={{ fontSize: "2rem", marginBottom: "0.4rem", color: "#111" }}>{visual.heading}</h2>
             <p style={{ color: "rgba(0,0,0,0.78)", fontWeight: 600 }}>
-              Verify with OTP and complete a guided profile setup to unlock personalized recommendations.
+              {accountRole(accountType)?.signupPromise}
             </p>
           </div>
         </aside>
@@ -407,11 +407,11 @@ export default function RegisterPage() {
 
           {step === "details" ? (
             <form onSubmit={handleSendOtp} style={{ display: "grid", gap: "0.85rem" }}>
-              <label style={{ fontWeight: 700 }}>First Name</label>
-              <input type="text" className="input-base" value={firstName} onChange={(event) => setFirstName(event.target.value)} placeholder="Bob" required disabled={loading} />
+              <label style={{ fontWeight: 700 }}>{accountRole(accountType)?.nameLabel.first}</label>
+              <input type="text" className="input-base" value={firstName} onChange={(event) => setFirstName(event.target.value)} placeholder={accountRole(accountType)?.nameLabel.firstPlaceholder} required disabled={loading} />
 
-              <label style={{ fontWeight: 700 }}>Last Name</label>
-              <input type="text" className="input-base" value={lastName} onChange={(event) => setLastName(event.target.value)} placeholder="Builder" disabled={loading} />
+              <label style={{ fontWeight: 700 }}>{accountRole(accountType)?.nameLabel.last}</label>
+              <input type="text" className="input-base" value={lastName} onChange={(event) => setLastName(event.target.value)} placeholder={accountRole(accountType)?.nameLabel.lastPlaceholder} disabled={loading} />
 
               <label style={{ fontWeight: 700 }}>Email</label>
               <input
@@ -419,7 +419,7 @@ export default function RegisterPage() {
                 className="input-base"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
-                placeholder={accountType === "employer" ? "name@company.com" : "student@college.edu"}
+                placeholder={accountRole(accountType)?.emailPlaceholder}
                 required
                 disabled={loading}
               />

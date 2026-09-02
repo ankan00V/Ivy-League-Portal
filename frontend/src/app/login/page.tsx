@@ -681,7 +681,7 @@ export default function LoginPage() {
                 className="input-base"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
-                placeholder={accountType === "employer" ? "name@company.com" : "Enter Email"}
+                placeholder={accountRole(accountType)?.emailPlaceholder ?? "Enter Email"}
                 required
                 disabled={loading || step === "otp"}
               />
@@ -750,7 +750,7 @@ export default function LoginPage() {
                 className="input-base"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
-                placeholder={accountType === "employer" ? "name@company.com" : "Enter Email"}
+                placeholder={accountRole(accountType)?.emailPlaceholder ?? "Enter Email"}
                 required
                 disabled={loading}
               />
@@ -809,7 +809,7 @@ export default function LoginPage() {
                 className="input-base"
                 value={resetEmail}
                 onChange={(event) => setResetEmail(event.target.value)}
-                placeholder={accountType === "employer" ? "name@company.com" : "Enter Email"}
+                placeholder={accountRole(accountType)?.emailPlaceholder ?? "Enter Email"}
                 required
                 disabled={loading}
               />
