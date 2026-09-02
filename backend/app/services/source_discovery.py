@@ -1694,7 +1694,9 @@ class SourceQualificationService:
         details["https"] = self._https_check(source.url).model_dump()
         details["domain_age"] = (await self._domain_age_check(source.domain)).model_dump()
         details["content_language"] = self._content_language_check(html).model_dump()
-        details["opportunity_density"] = self._opportunity_density_check(html).model_dump()
+        details["opportunity_density"] = self._opportunity_density_check(
+            html, audience=getattr(source, "audience", "student")
+        ).model_dump()
         details["spam_signals"] = self._spam_signals_check(source.domain, html).model_dump()
         details["structured_data_quality"] = self._structured_data_quality_check(html).model_dump()
 
@@ -1779,7 +1781,37 @@ class SourceQualificationService:
         except Exception:
             return QualificationCheckResult(score=50, passed=True, notes="language_unknown")
 
-    def _opportunity_density_check(self, html: str) -> QualificationCheckResult:
+    # What counts as "an opportunity" depends on who the source serves.
+    #
+    # The jobs vocabulary is correct for students and wrong for institutions. An
+    # accreditation body or ranking portal advertises schemes, calls for
+    # proposals and collaborations, never vacancies, so it scores 0 on density -
+    # and density carries the largest weight, 25 of 100. Every other check can be
+    # perfect and the total still lands on exactly 59.0 against a threshold of
+    # 60. NIRF and AIM both did. No institution source could ever have passed,
+    # and the rejection reason said "low_qualification_score", which reads like
+    # a bad site rather than a vocabulary that does not describe it.
+    #
+    # Faculty sit between the two: FDPs and fellowships are advertised in the
+    # language of both.
+    DENSITY_TERMS: dict[str, tuple[str, ...]] = {
+        "student": ("apply", "intern", "job", "role", "opening", "hiring"),
+        "faculty": (
+            "apply", "vacanc", "recruit", "faculty", "fellowship", "professor",
+            "post of", "advertisement", "walk-in", "grant",
+        ),
+        "institution": (
+            "scheme", "call for", "proposal", "grant", "collaborat", "accredit",
+            "programme", "initiative", "apply", "circular", "notification", "empanel",
+        ),
+    }
+
+    def _opportunity_density_check(
+        self, html: str, *, audience: str = "student"
+    ) -> QualificationCheckResult:
+        terms = self.DENSITY_TERMS.get(
+            normalise_audience(audience), self.DENSITY_TERMS["student"]
+        )
         soup = BeautifulSoup(html or "", "html.parser")
         schema_jobs = self._schema_jobpostings(soup)
         if schema_jobs:
@@ -1799,7 +1831,7 @@ class SourceQualificationService:
                 text = element.get_text(" ", strip=True).lower()
                 if len(text) < 20:
                     continue
-                if any(term in text for term in ["apply", "intern", "job", "role", "opening", "hiring"]):
+                if any(term in text for term in terms):
                     candidate_count += 1
             if candidate_count >= 10:
                 break

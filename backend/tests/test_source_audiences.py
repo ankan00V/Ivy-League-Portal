@@ -117,5 +117,57 @@ class TestModelsCarryTheColumn(unittest.TestCase):
                 self.assertEqual(model.model_fields["audience"].default, STUDENT)
 
 
+class TestDensityVocabularyIsAudienceAware(unittest.TestCase):
+    """"An opportunity" means different words to different audiences.
+
+    opportunity_density carries the largest weight in qualification, 25 of 100,
+    and counted only jobs vocabulary. An accreditation body or ranking portal
+    advertises schemes, calls for proposals and collaborations, never vacancies,
+    so it scored zero - and with every other check perfect the total landed on
+    exactly 59.0 against a threshold of 60. NIRF and AIM both did. No institution
+    source could ever have passed, and the rejection read
+    "low_qualification_score", which sounds like a bad site rather than a
+    vocabulary that does not describe it.
+    """
+
+    def _terms(self, audience: str):
+        from app.services.source_discovery import SourceQualificationService
+
+        return SourceQualificationService.DENSITY_TERMS[audience]
+
+    def test_every_audience_has_a_vocabulary(self) -> None:
+        for audience in (STUDENT, FACULTY, INSTITUTION):
+            with self.subTest(audience=audience):
+                self.assertTrue(self._terms(audience))
+
+    def test_student_vocabulary_is_unchanged(self) -> None:
+        # The student corpus is the one that was working; this change must not
+        # move its scores at all.
+        self.assertEqual(
+            self._terms(STUDENT), ("apply", "intern", "job", "role", "opening", "hiring")
+        )
+
+    def test_institution_vocabulary_covers_what_institutions_publish(self) -> None:
+        terms = self._terms(INSTITUTION)
+        for expected in ("scheme", "call for", "proposal", "collaborat", "accredit"):
+            with self.subTest(term=expected):
+                self.assertIn(expected, terms)
+
+    def test_faculty_vocabulary_covers_academic_postings(self) -> None:
+        terms = self._terms(FACULTY)
+        for expected in ("faculty", "fellowship", "professor", "vacanc"):
+            with self.subTest(term=expected):
+                self.assertIn(expected, terms)
+
+    def test_unknown_audience_falls_back_to_student_vocabulary(self) -> None:
+        from app.services.source_discovery import SourceQualificationService
+
+        service = SourceQualificationService
+        self.assertEqual(
+            service.DENSITY_TERMS.get(normalise_audience("nonsense")),
+            service.DENSITY_TERMS[STUDENT],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
