@@ -718,7 +718,23 @@ class Settings(BaseSettings):
     VECTOR_INDEX_STALE_HOURS: int = 6
     EMBEDDING_BATCH_SIZE: int = 64
     EMBEDDING_AUTORUN_ENABLED: bool = True
-    EMBEDDING_REBUILD_INTERVAL_MINUTES: int = 60
+    # Matched to VECTOR_INDEX_STALE_HOURS rather than set independently.
+    #
+    # This was 60 while the index only considered itself stale after 6 hours, so
+    # the job fired five times more often than the staleness policy asked for -
+    # and every one of those was a full reload. rebuild() skips work only when the
+    # row count is unchanged, and the scraper inserts on a 30 minute cycle, so the
+    # count always differed and the guard never fired.
+    #
+    # Each reload reads the whole corpus with its vectors: 9.3 MB of opportunities
+    # plus 6.7 MB of embeddings, about 16 MB a time. Hourly that is ~384 MB/day
+    # against a 5 GB monthly egress allowance, which is most of it - far more than
+    # the feed the paging work was aimed at.
+    #
+    # The cost of the slower cadence is that a newly scraped listing can take up to
+    # six hours to become semantically searchable. The feed itself is unaffected:
+    # it reads Postgres directly and shows new rows immediately.
+    EMBEDDING_REBUILD_INTERVAL_MINUTES: int = 360
     USER_EMBEDDING_INTERACTION_THRESHOLD: int = 5
     USER_EMBEDDING_HALF_LIFE_DAYS: int = 7
 

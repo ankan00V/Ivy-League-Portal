@@ -1219,7 +1219,24 @@ async def read_opportunity_page(
         placement=placement, specialities=keywords,
         page=page, per_page=per_page,
     )
-    facets = await opportunity_repository.feed_facet_counts(portal=portal, role_track=role_track)
+    # Cached briefly. These are two GROUP BY scans over the whole active corpus
+    # and they run on every feed request - every page click, every filter, every
+    # 60s poll - while the numbers only move when the scraper writes, every 30
+    # minutes. Uncached they were a measurable share of the read volume that
+    # exhausted the egress allowance.
+    #
+    # Keyed by the two inputs that change the answer. 120s is short enough that a
+    # scrape shows up within the same visit and long enough to collapse a burst
+    # of clicks into one scan.
+    facet_cache_key = cache_key("feed_facets", str(portal or "all"), str(role_track or "all"))
+    facets = await cache_get_json(facet_cache_key)
+    if not facets:
+        facets = await opportunity_repository.feed_facet_counts(portal=portal, role_track=role_track)
+        # Best effort: a cache write failure must not fail the feed.
+        try:
+            await cache_set_json(facet_cache_key, facets, ttl_seconds=120)
+        except Exception:
+            logger.warning("feed facet cache write failed", exc_info=True)
     safe_per_page = max(1, min(int(per_page), 100))
     return {
         "items": rows,
