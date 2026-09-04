@@ -784,18 +784,24 @@ async def _build_ranking_summary(profile: Profile) -> RankingSummaryResponse:
     scope = _normalize_account_scope(profile.account_type)
     scope_filter = {"account_type": scope}
 
-    total_users = int(await Profile.find(scope_filter).count())
-    if total_users <= 0:
-        total_users = 1
-
-    higher_count = int(
-        await Profile.find(
+    # Two counts that do not depend on each other, so they wait together rather
+    # than one after the other. Each is a round trip to the pooled database at
+    # ~350ms, and this runs on every dashboard load.
+    total_raw, higher_raw = await asyncio.gather(
+        Profile.find(scope_filter).count(),
+        Profile.find(
             {
                 "account_type": scope,
                 "incoscore": {"$gt": float(profile.incoscore)},
             }
-        ).count()
+        ).count(),
     )
+
+    total_users = int(total_raw)
+    if total_users <= 0:
+        total_users = 1
+
+    higher_count = int(higher_raw)
     rank = max(1, higher_count + 1)
     cohort_ready = total_users >= MIN_COHORT_FOR_PERCENTILE
     top_percent, percentile = (
