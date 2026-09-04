@@ -230,7 +230,7 @@ export default function FacultyPage() {
                         <p style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
                             {feed.scanned.toLocaleString()} live postings were scanned and none were aimed
                             at academicians. Every source currently feeding this corpus targets student
-                            roles; faculty-facing sources are still being added.
+                            roles; most academician postings are published as PDF notices a parser cannot read, so this feed is recovered from the wider corpus by matching.
                         </p>
                     </div>
                 )}

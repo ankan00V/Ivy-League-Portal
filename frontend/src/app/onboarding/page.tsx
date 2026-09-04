@@ -167,25 +167,27 @@ const UNIVERSITY_OPTION_BY_UPPERCASE = new Map<string, string>(
   UNIVERSITY_OPTIONS.map((item) => [item.toLocaleUpperCase("en-IN"), item]),
 );
 
-const UPPERCASE_TEXT_FIELDS = new Set<keyof ProfilePayload>([
-  "first_name",
-  "last_name",
-  "domain",
-  "course",
-  "current_job_role",
-  "total_work_experience",
-  "college_name",
-  "company_name",
-  "company_size",
-  "company_description",
-  "preferred_roles",
-  "preferred_locations",
-  "bio",
-  "skills",
-  "interests",
-  "achievements",
-  "education",
-]);
+// Empty on purpose, and the repo's own working agreement says why:
+// "Display-casing belongs in CSS."
+//
+// This set drove uppercaseProfileText over every keystroke. Two consequences,
+// both live:
+//
+//   * free-text prose was shouted back at the user as they typed it - the
+//     required "About Me" textarea, plus achievements, education, projects,
+//     certificates, responsibilities and the employer's company description;
+//   * names were stored in whatever case this produced, which is why the
+//     leaderboard showed "ANKAN GHOSH" one row above "ankan ghosh".
+//
+// The taxonomy fields were removed from the profile page's copy of this set
+// earlier, after stored "ENGINEERING" stopped matching the option
+// "Engineering" and every dropdown silently broke - but the onboarding copy
+// kept them, so the same value was still being written on the way in.
+//
+// Nothing needs the transform now: readers compare case-insensitively, and
+// text-transform does the display job without touching what is stored. Values
+// already uppercased in the database stay as they are; this stops new ones.
+const UPPERCASE_TEXT_FIELDS = new Set<keyof ProfilePayload>([]);
 
 const ONBOARDING_VISUALS = [
   "https://images.unsplash.com/photo-1529074963764-98f45c47344b?auto=format&fit=crop&w=1200&q=80",

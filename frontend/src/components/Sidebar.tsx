@@ -53,7 +53,15 @@ const links: NavLink[] = [
   { name: "Leaderboard", href: "/leaderboard", icon: <Trophy size={18} />, roles: STUDENT_ONLY },
 ];
 
-const mobilePrimaryLinks = links.slice(0, 5);
+// Intentionally NOT computed here.
+//
+// This was `links.slice(0, 5)` - the full list, before role filtering - so the
+// mobile bottom bar offered Dashboard, Opportunities, Internships/Jobs,
+// Applications and Skill Gaps to every account including faculty and
+// institution. Those routes do not 403; they serve the student feed to an
+// academician, which is the same mis-scoping as the leaderboard bug. It is
+// derived from visibleLinks inside the component instead, where the role is
+// known.
 
 export default function Sidebar() {
   const pathname = usePathname();
@@ -163,8 +171,14 @@ export default function Sidebar() {
       ? `Top ${formatTopPercent(rankingSummary.top_percent)}%`
       : rankingSummary.band || "--"
     : "--";
+  // The backend already withholds the percentile below MIN_COHORT_FOR_PERCENTILE
+  // because a percentile over a handful of people is noise. Printing the raw
+  // "#N of M" underneath handed the reader the same noise with a smaller
+  // denominator - with the demo accounts it read "Rank #1 of 3".
   const globalRankSubtitle = rankingSummary
-    ? `Rank #${rankingSummary.rank} of ${rankingSummary.total_users}`
+    ? rankingSummary.cohort_ready
+      ? `Rank #${rankingSummary.rank} of ${rankingSummary.total_users}`
+      : "Cohort too small to rank yet"
     : "Live rank unavailable";
 
   const themeLabel = useMemo(() => {
@@ -194,6 +208,8 @@ export default function Sidebar() {
     if (!link.roles || link.roles.length === 0) return true;
     return link.roles.includes(effectiveRole);
   });
+  // The mobile bar is the first five links this role can actually open.
+  const mobilePrimaryLinks = visibleLinks.slice(0, 5);
 
   return (
     <>
@@ -226,7 +242,7 @@ export default function Sidebar() {
               <span>{themeLabel}</span>
             </button>
             <div className="sidebar-rank-card">
-              <div className="sidebar-rank-title">Global Rank</div>
+              <div className="sidebar-rank-title">Your cohort</div>
               <div className="sidebar-rank-value">{globalRankTitle}</div>
               <div className="sidebar-rank-detail">{globalRankSubtitle}</div>
             </div>
@@ -291,7 +307,7 @@ export default function Sidebar() {
 
         <div className="mobile-drawer-foot">
           <div className="sidebar-rank-card">
-            <div className="sidebar-rank-title">Global Rank</div>
+            <div className="sidebar-rank-title">Your cohort</div>
             <div className="sidebar-rank-value">{globalRankTitle}</div>
             <div className="sidebar-rank-detail">{globalRankSubtitle}</div>
           </div>

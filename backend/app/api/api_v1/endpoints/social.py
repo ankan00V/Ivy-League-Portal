@@ -39,8 +39,20 @@ class CommentResponse(BaseModel):
 
 @router.get("/posts", response_model=list[PostResponse])
 async def read_posts(
-    skip: int = 0, limit: int = 50, domain: Optional[str] = None
+    skip: int = 0,
+    limit: int = 50,
+    domain: Optional[str] = None,
+    current_user: User = Depends(get_current_active_user),
 ) -> Any:
+    """Requires authentication.
+
+    These two routes were the only non-auth endpoints outside auth.py and the
+    CSP report sink. They returned every post's body and its author's user_id,
+    with `skip` paging through the whole collection - the same shape as the
+    leaderboard defect, whose own docstring says leaving it open "made it an
+    unauthenticated directory and enumerator over the entire user base". That
+    was fixed on one endpoint and left open one file over.
+    """
     safe_limit = max(1, min(limit, 100))
     if domain:
         posts = await Post.find_many(Post.domain == domain).sort("-created_at").skip(skip).limit(safe_limit).to_list()
@@ -76,7 +88,11 @@ async def like_post(
 
 
 @router.get("/posts/{id}/comments", response_model=list[CommentResponse])
-async def list_post_comments(id: PydanticObjectId) -> Any:
+async def list_post_comments(
+    id: PydanticObjectId,
+    current_user: User = Depends(get_current_active_user),
+) -> Any:
+    """Requires authentication, for the same reason as the feed above."""
     post = await Post.get(id)
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")

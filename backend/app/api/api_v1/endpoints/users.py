@@ -44,6 +44,8 @@ router = APIRouter()
 # reverse, which is a hole) was one careless edit away.
 from app.core.account_types import (  # noqa: E402
     KNOWN_ACCOUNT_TYPES as VALID_ACCOUNT_TYPES,
+    PRIVILEGED_ACCOUNT_TYPES,
+    account_type_enabled,
     resolve_account_type,
 )
 VALID_USER_TYPES = {"school_student", "college_student", "fresher", "professional"}
@@ -784,7 +786,16 @@ def _compute_rank_stats(*, rank: int, total_users: int) -> tuple[float, float]:
 
 
 async def _build_ranking_summary(profile: Profile) -> RankingSummaryResponse:
-    scope = _normalize_account_scope(profile.account_type)
+    # The same four-valued scope the leaderboard uses.
+    #
+    # This used _normalize_account_scope, which is deliberately two-valued - it
+    # collapses employer, faculty and institution into one "employer" shape so
+    # the profile forms can branch on candidate-vs-not. Using it here meant an
+    # academician's sidebar counted the employer population while the board
+    # 200 pixels away listed academicians: two numbers on one screen, from
+    # different populations, neither saying which. That is the defect the
+    # leaderboard fix was for, and fixing only one side left it half-open.
+    scope = resolve_account_type(profile.account_type)
     scope_filter = {"account_type": scope}
 
     # Two counts that do not depend on each other, so they wait together rather
@@ -1075,16 +1086,48 @@ def _apply_profile_patch(*, profile: Profile, user: User, payload: ProfileUpdate
     # real name and email through the employer application routes and CSV export.
     # Employer status is now granted by an admin only.
     if payload.account_type and payload.account_type in VALID_ACCOUNT_TYPES and user.account_type != payload.account_type:
-        if str(payload.account_type).strip().lower() == "employer" and not settings.EMPLOYER_PORTAL_ENABLED:
-            raise HTTPException(status_code=400, detail="Employer accounts are not available.")
-        if str(payload.account_type).strip().lower() == "employer" and not user.is_admin:
-            raise HTTPException(
-                status_code=403,
-                detail=(
-                    "Employer accounts are approved manually. Contact support to have "
-                    "your organisation verified."
-                ),
-            )
+        requested = str(payload.account_type).strip().lower()
+        # Gated on the role set, not on one role's name.
+        #
+        # This check read `== "employer"` twice. It was written when the
+        # platform had two roles, and faculty and institution were added later
+        # and fell straight through to the write below. The escalation was one
+        # request:
+        #
+        #   PUT /users/me/profile {"account_type": "institution",
+        #                          "college_name": "<any university>"}
+        #
+        # then GET /academia/institution/cohort, whose only check is
+        # _require_role reading this same field. That returns another
+        # university's aggregate - average readiness, profile completion,
+        # application counts and ranked skill gaps for their students.
+        #
+        # Every one of these roles reads other people's data, which is the
+        # property that mattered for employer and matters identically here.
+        if requested in PRIVILEGED_ACCOUNT_TYPES:
+            if not account_type_enabled(requested):
+                raise HTTPException(
+                    status_code=400, detail=f"{requested.capitalize()} accounts are not available."
+                )
+            if not user.is_admin:
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        f"{requested.capitalize()} accounts are approved manually. Contact "
+                        "support to have your organisation verified."
+                    ),
+                )
+            # The signup path applies an email rule per role and this path never
+            # did, so an approved account could still be moved to a role its
+            # address would have been refused for at registration.
+            #
+            # Imported here rather than at module scope: the rule lives with the
+            # registration flow that owns it, and an endpoint module importing
+            # another endpoint module at import time is a circular-import
+            # waiting to be introduced by whichever one grows next.
+            from app.api.api_v1.endpoints.auth import _ensure_email_policy_for_account_type
+
+            _ensure_email_policy_for_account_type(requested, user.email)
         user.account_type = payload.account_type
 
     if str(profile.account_type or "").strip().lower() == "employer":

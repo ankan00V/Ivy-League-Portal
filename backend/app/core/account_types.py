@@ -33,6 +33,22 @@ ACCOUNT_TYPE_LABELS: dict[str, str] = {
 }
 
 
+#: Roles that read data belonging to other people, and must therefore never be
+#: self-granted.
+#:
+#: Named as a set rather than checked one role at a time, because checking one
+#: at a time is exactly how the escalation happened: the profile endpoint tested
+#: `account_type == "employer"` twice, faculty and institution were added to the
+#: platform later, and both fell through to the write. A candidate could PUT
+#: themselves to `institution`, set `college_name` to any university, and read
+#: that university's cohort aggregate.
+#:
+#: Anything added to KNOWN_ACCOUNT_TYPES in future is privileged unless it is
+#: candidate - the default is the safe direction, so a new role cannot be
+#: self-granted by being forgotten here.
+PRIVILEGED_ACCOUNT_TYPES: frozenset[str] = frozenset(KNOWN_ACCOUNT_TYPES - {CANDIDATE})
+
+
 def account_type_enabled(account_type: str) -> bool:
     """Whether new accounts of this type may be created right now.
 

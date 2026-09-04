@@ -116,7 +116,7 @@ export default function OpportunitiesPage() {
                     border: `2px solid ${isVerified ? "#86efac" : "#facc15"}`,
                 }}
             >
-                {isVerified ? "Verified Source" : "Source Check Pending"}
+                {isVerified ? "Signals found" : "No signals found"}
             </span>
         );
     };
@@ -125,8 +125,8 @@ export default function OpportunitiesPage() {
         const trustScore = Math.max(0, Math.min(100, Number(opp.trust_score || 0)));
         const evidence = Array.isArray(opp.verification_evidence) ? opp.verification_evidence[0] : null;
         return {
-            scoreLabel: `${trustScore}/100 source confidence`,
-            evidenceLabel: evidence || "Organizer, host, and listing source are being continuously checked.",
+            scoreLabel: `Risk heuristic: ${trustScore}/100`,
+            evidenceLabel: evidence || "No corroborating signal was found for this listing\u2019s host or organiser.",
         };
     };
 

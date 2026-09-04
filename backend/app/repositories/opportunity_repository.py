@@ -166,6 +166,31 @@ async def load_active_opportunities(
     return [_to_model(r) for r in rows]
 
 
+#: The visibility rule, as SQL.
+#:
+#: Every other read path funnels through `is_student_visible_opportunity`, which
+#: additionally requires a published lifecycle, a deadline that has not passed,
+#: and a trust verdict that is not blocking. The paged feed - the primary public
+#: one - had only `opportunity_status = 'active'` and applied no Python filter to
+#: the rows it returned, so it was one row away from serving a listing the trust
+#: system had flagged.
+#:
+#: Measured on the live corpus when this was written: 0 of 2,242 active rows fell
+#: foul of any of the four predicates, so nothing was leaking that day. That is a
+#: statement about today's data, not about the query, and it is exactly the kind
+#: of gap that is discovered by the first row that trips it.
+#:
+#: NULLs are treated the way `ensure_opportunity_trust` treats a missing
+#: assessment - as unreviewed and visible - so scraped rows that predate trust
+#: scoring keep behaving as they do everywhere else.
+STUDENT_VISIBILITY_CLAUSES: tuple[str, ...] = (
+    "coalesce(lifecycle_status, 'published') = 'published'",
+    "(deadline IS NULL OR deadline >= now())",
+    "coalesce(trust_status, 'unreviewed') IN ('verified', 'unreviewed')",
+    "coalesce(risk_score, 0) < 75",
+)
+
+
 async def load_opportunity_page(
     *,
     portal: str | None = None,
@@ -191,7 +216,7 @@ async def load_opportunity_page(
     and keeps the row query's plan simple.
     """
     pool = await get_pool()
-    clauses = ["opportunity_status = 'active'"]
+    clauses = ["opportunity_status = 'active'", *STUDENT_VISIBILITY_CLAUSES]
     params: list[Any] = []
 
     if domain:
@@ -260,7 +285,7 @@ async def feed_facet_counts(
     many are showing now.
     """
     pool = await get_pool()
-    clauses = ["opportunity_status = 'active'"]
+    clauses = ["opportunity_status = 'active'", *STUDENT_VISIBILITY_CLAUSES]
     params: list[Any] = []
 
     normalized_portal = str(portal or "").strip().lower()

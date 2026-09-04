@@ -145,7 +145,7 @@ export default function LeaderboardPage() {
                 <header style={{ marginBottom: "2rem" }}>
                     <h1 style={{ fontSize: "2.75rem", marginBottom: "0.5rem" }}>InCoScore Leaderboard</h1>
                     <p style={{ color: "var(--text-secondary)", fontSize: "1.05rem" }}>
-                        Global competency ranking generated from skills, achievements, and academic profile strength.
+                        Competency ranking within your own {roleLabel.toLowerCase()} cohort, from skills, achievements and profile strength. Accounts with no score yet are not ranked.
                     </p>
                 </header>
 
@@ -182,7 +182,7 @@ export default function LeaderboardPage() {
                             {searchLoading && <p style={{ margin: 0 }}>Searching ranks...</p>}
                             {!searchLoading && searchError && <p style={{ margin: 0 }}>{searchError}</p>}
                             {!searchLoading && !searchError && searchResults.length === 0 && (
-                                <p style={{ margin: 0 }}>No matching student found.</p>
+                                <p style={{ margin: 0 }}>No matching {roleLabel.toLowerCase()} found.</p>
                             )}
                             {!searchLoading && !searchError && searchResults.length > 0 && (
                                 <div style={{ overflowX: "auto" }}>
@@ -202,7 +202,7 @@ export default function LeaderboardPage() {
                                                         #{entry.rank}
                                                     </td>
                                                     <td style={{ padding: "0.75rem 0.35rem", fontWeight: 600 }}>
-                                                        {entry.full_name || "Student"}
+                                                        {entry.full_name || roleLabel}
                                                     </td>
                                                     <td style={{ padding: "0.75rem 0.35rem", color: "var(--text-secondary)" }}>
                                                         @{entry.handle}
@@ -256,7 +256,7 @@ export default function LeaderboardPage() {
                                                 </span>
                                             </td>
                                             <td style={{ padding: "0.9rem 1.25rem", fontWeight: 600 }}>
-                                                {entry.full_name || "Student"}
+                                                {entry.full_name || roleLabel}
                                             </td>
                                             <td style={{ padding: "0.9rem 1.25rem", color: "var(--text-secondary)" }}>
                                                 @{entry.handle}

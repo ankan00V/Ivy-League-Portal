@@ -417,24 +417,27 @@ const UNIVERSITY_OPTION_BY_UPPERCASE = new Map<string, string>(
    and a <select> holding "B.TECH (BACHELOR OF TECHNOLOGY)" matched no <option
    value> and rendered blank. Those fields now store the canonical label, and
    the display-uppercasing is done in CSS where it belongs. */
-const UPPERCASE_TEXT_FIELDS = new Set<keyof ProfilePayload>([
-  "first_name",
-  "last_name",
-  "total_work_experience",
-  "experience_summary",
-  "college_name",
-  "company_name",
-  "company_size",
-  "company_description",
-  "bio",
-  "achievements",
-  "education",
-  "certificates",
-  "projects",
-  "responsibilities",
-  "current_address_region",
-  "permanent_address_region",
-]);
+// Empty on purpose, and the repo's own working agreement says why:
+// "Display-casing belongs in CSS."
+//
+// This set drove uppercaseProfileText over every keystroke. Two consequences,
+// both live:
+//
+//   * free-text prose was shouted back at the user as they typed it - the
+//     required "About Me" textarea, plus achievements, education, projects,
+//     certificates, responsibilities and the employer's company description;
+//   * names were stored in whatever case this produced, which is why the
+//     leaderboard showed "ANKAN GHOSH" one row above "ankan ghosh".
+//
+// The taxonomy fields were removed from the profile page's copy of this set
+// earlier, after stored "ENGINEERING" stopped matching the option
+// "Engineering" and every dropdown silently broke - but the onboarding copy
+// kept them, so the same value was still being written on the way in.
+//
+// Nothing needs the transform now: readers compare case-insensitively, and
+// text-transform does the display job without touching what is stored. Values
+// already uppercased in the database stay as they are; this stops new ones.
+const UPPERCASE_TEXT_FIELDS = new Set<keyof ProfilePayload>([]);
 
 const SOCIAL_LINK_FIELDS: Array<{ key: string; label: string; placeholder: string }> = [
   { key: "linkedin", label: "LinkedIn", placeholder: "https://linkedin.com/in/username" },
