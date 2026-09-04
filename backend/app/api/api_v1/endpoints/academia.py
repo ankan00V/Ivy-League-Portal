@@ -34,7 +34,11 @@ from app.models.opportunity import Opportunity
 from app.models.profile import Profile
 from app.models.skill_assessment import SkillAssessment
 from app.models.user import User
-from app.services.curriculum_signal import build_funnel, build_signal
+from app.services.curriculum_signal import (
+    MIN_ASSESSED_FOR_COVERAGE,
+    build_funnel,
+    build_signal,
+)
 from app.services.skill_demand import latest_snapshot as latest_demand_snapshot
 from app.services.academia_service import (
     MIN_COHORT_SIZE,
@@ -321,6 +325,11 @@ class CohortResponse(BaseModel):
     #: no job board can produce, and the problem statement's actual ask.
     curriculum_signal: list[dict[str, Any]] = Field(default_factory=list)
     signal_domain: Optional[str] = None
+    #: Why the signal is empty, when it is. A hidden section reads as broken,
+    #: and "not enough students assessed yet" is a different problem from "your
+    #: students have no gaps" - the first is fixed by asking them to take the
+    #: assessment, the second not at all.
+    signal_reason: Optional[str] = None
 
 
 def institution_domain_for_signal(rows: list[dict[str, Any]]) -> str:
@@ -439,6 +448,19 @@ async def institution_cohort(
         if snapshot is not None
         else []
     )
+    signal_reason = None
+    if not signal:
+        assessed = len(corroborated_levels)
+        if snapshot is None:
+            signal_reason = "Skill demand has not been computed yet."
+        elif assessed < MIN_ASSESSED_FOR_COVERAGE:
+            signal_reason = (
+                f"{assessed} of your students have taken the skill assessment. "
+                f"At least {MIN_ASSESSED_FOR_COVERAGE} are needed before coverage "
+                "means anything - below that a percentage is noise with a decimal point."
+            )
+        else:
+            signal_reason = "No skill has enough assessed students in common to compare yet."
 
     funnel = build_funnel(
         cohort_size=aggregate.cohort_size,
@@ -454,6 +476,7 @@ async def institution_cohort(
         available=True,
         funnel=[vars(stage) for stage in funnel],
         curriculum_signal=[vars(item) for item in signal],
+        signal_reason=signal_reason,
         signal_domain=getattr(snapshot, "domain", None),
         cohort_size=aggregate.cohort_size,
         matched_by_domain=aggregate.matched_by_domain,

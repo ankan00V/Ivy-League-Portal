@@ -47,6 +47,7 @@ interface Cohort {
     funnel: FunnelStage[];
     curriculum_signal: SkillSignal[];
     signal_domain?: string | null;
+    signal_reason?: string | null;
 }
 
 function panelStyle(): React.CSSProperties {
@@ -306,6 +307,23 @@ export default function InstitutionPage() {
                                 </div>
                             );
                         })}
+                    </section>
+                )}
+
+                {cohort && cohort.available && cohort.curriculum_signal.length === 0 && cohort.signal_reason && (
+                    // Shown rather than hidden. An absent section reads as
+                    // broken, and "not enough students assessed" is fixed by
+                    // asking them to take it - which nobody does if the page
+                    // never mentions it.
+                    <section style={{ ...panelStyle(), padding: "1.5rem", marginTop: "1.5rem" }}>
+                        <div style={{ ...labelStyle(), display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.5rem" }}>
+                            <BookOpenCheck size={16} /> Curriculum signal
+                        </div>
+                        <p style={{ color: "var(--text-primary)", fontWeight: 700 }}>{cohort.signal_reason}</p>
+                        <p style={{ color: "var(--text-secondary)", fontWeight: 600, marginTop: "0.6rem", fontSize: "0.9rem" }}>
+                            Once enough students have been assessed, this compares what employers are
+                            advertising for against what your students can actually evidence.
+                        </p>
                     </section>
                 )}
 

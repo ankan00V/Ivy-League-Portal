@@ -76,6 +76,15 @@ const LEVEL_LABELS: Record<number, string> = {
 
 const GLOBAL_DOMAIN = "__all__";
 
+/** A score needs a word next to it. 19/100 is meaningless on its own, and the
+ *  bands are deliberately blunt: this is guidance, not a grade. */
+function readinessBand(score: number): string {
+    if (score >= 75) return "Strong";
+    if (score >= 50) return "Ready";
+    if (score >= 25) return "Developing";
+    return "Early";
+}
+
 function panelStyle(): React.CSSProperties {
     return {
         border: "2px solid var(--border-subtle)",
@@ -308,9 +317,22 @@ export default function SkillsPage() {
                                     {result.readiness_score}
                                     <span style={{ fontSize: "1.25rem" }}>/100</span>
                                 </span>
+                                <span style={{ ...panelStyle(), padding: "0.25rem 0.7rem", ...labelStyle(), background: "var(--brand-primary)" }}>
+                                    {readinessBand(result.readiness_score)}
+                                </span>
                                 <span style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
                                     weighted by how often each skill appears in real postings
                                 </span>
+                            </div>
+
+                            {/* The score as a position on a scale rather than a bare
+                                number. 19 out of 100 means nothing until you can see
+                                where it sits and that the scale is demand-weighted. */}
+                            <div style={{ marginTop: "0.9rem", height: "1.5rem", border: "2px solid var(--border-subtle)", borderRadius: "var(--radius-sm)", background: "var(--bg-base)", position: "relative", overflow: "hidden" }}>
+                                <div style={{ height: "100%", width: `${Math.max(1.5, Math.min(100, result.readiness_score))}%`, background: "var(--brand-primary)" }} />
+                                {[25, 50, 75].map((mark) => (
+                                    <div key={mark} style={{ position: "absolute", left: `${mark}%`, top: 0, bottom: 0, width: "2px", background: "var(--border-subtle)", opacity: 0.6 }} />
+                                ))}
                             </div>
 
                             {result.adjustments.length > 0 && (
@@ -359,20 +381,29 @@ export default function SkillsPage() {
                                     <p style={{ color: "var(--text-secondary)", fontWeight: 600, fontSize: "0.9rem", marginBottom: "0.75rem" }}>
                                         Ranked by demand, not by how far behind you are.
                                     </p>
-                                    {result.gaps.slice(0, 8).map((row) => (
-                                        <div key={row.skill} style={{ ...panelStyle(), padding: "0.6rem 0.85rem", marginBottom: "0.5rem" }}>
-                                            <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem" }}>
-                                                <span style={{ fontWeight: 700, color: "var(--text-primary)" }}>{row.skill}</span>
-                                                <span style={{ color: "var(--text-secondary)", fontWeight: 700 }}>
-                                                    {(row.demand_share * 100).toFixed(1)}% of postings
-                                                </span>
+                                    {result.gaps.slice(0, 8).map((row, index) => {
+                                        const widest = result.gaps[0]?.priority || row.priority || 1;
+                                        const weight = Math.max(6, Math.round((row.priority / widest) * 100));
+                                        return (
+                                            <div key={row.skill} style={{ ...panelStyle(), padding: "0.65rem 0.85rem", marginBottom: "0.5rem" }}>
+                                                <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap" }}>
+                                                    <span style={{ fontWeight: 700, color: "var(--text-primary)" }}>
+                                                        <span style={{ color: "var(--text-secondary)", fontWeight: 800 }}>{index + 1}.</span>{" "}
+                                                        {row.skill}{row.is_soft ? " · soft" : ""}
+                                                    </span>
+                                                    <span style={{ color: "var(--text-secondary)", fontWeight: 700, fontSize: "0.85rem" }}>
+                                                        {(row.demand_share * 100).toFixed(1)}% of postings · you: {LEVEL_LABELS[row.level]}
+                                                    </span>
+                                                </div>
+                                                {/* Bar length is the priority - demand times how far
+                                                    behind you are - so the first row is genuinely the
+                                                    one worth a semester, not merely the lowest score. */}
+                                                <div style={{ marginTop: "0.4rem", height: "0.55rem", border: "2px solid var(--border-subtle)", borderRadius: "var(--radius-sm)", background: "var(--bg-base)", overflow: "hidden" }}>
+                                                    <div style={{ height: "100%", width: `${weight}%`, background: "var(--brand-primary)" }} />
+                                                </div>
                                             </div>
-                                            <div style={{ color: "var(--text-secondary)", fontWeight: 600, fontSize: "0.85rem" }}>
-                                                you: {LEVEL_LABELS[row.level]}
-                                                {row.is_soft ? " · soft skill" : ""}
-                                            </div>
-                                        </div>
-                                    ))}
+                                        );
+                                    })}
                                 </div>
                             </div>
                         </motion.section>
@@ -450,7 +481,27 @@ export default function SkillsPage() {
                             </span>
                         </div>
 
-                        {questionnaire.questions.map((question) => (
+                        {/* Fifteen questions is enough that a reader wants to know
+                            how far in they are before committing to the next one. */}
+                        <div style={{ height: "0.5rem", border: "2px solid var(--border-subtle)", borderRadius: "var(--radius-sm)", background: "var(--bg-base)", overflow: "hidden", marginBottom: "1.5rem" }}>
+                            <div style={{ height: "100%", width: `${Math.round((answered / Math.max(1, questionnaire.questions.length)) * 100)}%`, background: "var(--brand-primary)", transition: "width 160ms" }} />
+                        </div>
+
+                        {/* Technical and soft are asked separately because they are
+                            answered differently: one is "have I used this", the other
+                            is "how do I work". Fifteen ungrouped rows read as a form;
+                            two labelled groups read as an assessment. */}
+                        {(["technical", "soft"] as const).map((group) => {
+                            const rows = questionnaire.questions.filter((q) =>
+                                group === "soft" ? q.is_soft : !q.is_soft,
+                            );
+                            if (rows.length === 0) return null;
+                            return (
+                                <div key={group} style={{ marginBottom: "1.5rem" }}>
+                                    <div style={{ ...labelStyle(), marginBottom: "0.9rem", color: "var(--text-secondary)" }}>
+                                        {group === "soft" ? "How you work" : "What you have worked with"} · {rows.length}
+                                    </div>
+                                    {rows.map((question) => (
                             <div key={question.skill} style={{ marginBottom: "1.25rem", paddingBottom: "1.25rem", borderBottom: "2px solid var(--border-subtle)" }}>
                                 <div style={{ display: "flex", gap: "0.6rem", alignItems: "baseline", flexWrap: "wrap" }}>
                                     <span style={{ fontWeight: 800, color: "var(--text-primary)", fontSize: "1.05rem" }}>
@@ -493,6 +544,9 @@ export default function SkillsPage() {
                                 </div>
                             </div>
                         ))}
+                                </div>
+                            );
+                        })}
 
                         <button
                             type="button"
