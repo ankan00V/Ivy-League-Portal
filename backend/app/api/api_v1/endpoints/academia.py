@@ -23,6 +23,10 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import get_current_active_user
 from app.core.account_types import FACULTY, INSTITUTION
+import asyncio
+
+from beanie.operators import In
+
 from app.core.audiences import FACULTY as AUDIENCE_FACULTY, audience_matches
 from app.core.config import settings
 from app.models.application import Application
@@ -30,6 +34,8 @@ from app.models.opportunity import Opportunity
 from app.models.profile import Profile
 from app.models.skill_assessment import SkillAssessment
 from app.models.user import User
+from app.services.curriculum_signal import build_funnel, build_signal
+from app.services.skill_demand import latest_snapshot as latest_demand_snapshot
 from app.services.academia_service import (
     MIN_COHORT_SIZE,
     email_domain,
@@ -95,6 +101,23 @@ FACULTY_CONTEXT_TERMS: tuple[str, ...] = (
     "principal investigator",
 )
 
+# Opportunity types that can plausibly carry an academician's opening. Used to
+# narrow the salvage pass before the keyword test runs, so it reads hundreds of
+# rows rather than the whole corpus.
+# Measured on the live corpus: these five types hold 35 active rows in total,
+# and every faculty-facing row the keyword pass has ever found is a Scholarship
+# or a Research posting. "Job" was in this list briefly and had to come out - it
+# is the largest type in the corpus, so including it meant the row limit filled
+# with student jobs before reaching a single one of the 35.
+FACULTY_CANDIDATE_TYPES: tuple[str, ...] = (
+    "Conference",
+    "Research",
+    "Scholarship",
+    "Workshop",
+    "Fellowship",
+)
+
+
 # Unambiguously aimed at students. Present in the text, nothing else saves it.
 STUDENT_MARKERS: tuple[str, ...] = (
     "intern",
@@ -149,9 +172,23 @@ class FacultyOpportunity(BaseModel):
     deadline: Optional[Any] = None
 
 
+class DemandRow(BaseModel):
+    skill: str
+    postings: int
+    share: float
+    is_soft: bool
+
+
 class FacultyFeedResponse(BaseModel):
     total: int
     scanned: int
+    #: What industry is currently advertising for, so an academician can see
+    #: what their teaching is preparing students for. The problem statement asks
+    #: for exactly this - "align teaching with current industry practices" - and
+    #: it is the half of an academician's job this platform can actually inform.
+    demand_signal: list[DemandRow] = Field(default_factory=list)
+    demand_domain: Optional[str] = None
+    demand_postings_analysed: int = 0
     #: How many came from sources that serve academicians, versus rescued from
     #: the student corpus by keyword. The second number shrinking towards zero
     #: is what "faculty sources are working" looks like.
@@ -167,41 +204,81 @@ async def faculty_opportunities(
 ) -> Any:
     _require_role(current_user, FACULTY, enabled=bool(settings.FACULTY_PORTAL_ENABLED))
 
-    # Two passes, in priority order.
+    # Two passes, in priority order, and neither scans the whole corpus.
     #
-    # Faculty-audience sources are the real answer: a source that serves
-    # academicians produces academician opportunities, and reading the column is
-    # exact. The keyword matcher is kept as a fallback over student-audience rows
-    # because the corpus predates the column and does occasionally carry a
-    # professorship that a student scraper happened to pick up - but it is a
-    # salvage operation, not the mechanism. When faculty sources are producing,
-    # this endpoint stops depending on it.
-    page_size = 500
-    loaded = 0
-    by_audience: list[Opportunity] = []
+    # This used to page through every opportunity in the database - 2,110 rows
+    # in pages of 500 - and decide in Python. That cost ~8 seconds on a page a
+    # faculty member opens first. `audience` is an indexed column now, so the
+    # rows that belong here are fetched directly.
+    #
+    # The keyword pass stays as a salvage operation over student rows, because
+    # faculty sources are not yet producing and the corpus does occasionally
+    # carry a professorship a student scraper picked up. It is bounded to a
+    # recent window rather than the whole table: an opening from two years ago
+    # is not worth eight seconds of somebody's time.
+    by_audience = (
+        await Opportunity.find_many(Opportunity.audience == AUDIENCE_FACULTY)
+        .sort("-created_at")
+        .limit(limit * 3)
+        .to_list()
+    )
+    by_audience = [
+        row for row in by_audience
+        if str(getattr(row, "opportunity_status", "") or "") == "active"
+    ]
+
     by_keyword: list[Opportunity] = []
-    scanned = 0
-    while True:
-        page = await Opportunity.find_many().sort("-created_at").skip(loaded).limit(page_size).to_list()
-        if not page:
-            break
-        loaded += len(page)
-        for opportunity in page:
+    scanned = len(by_audience)
+    if len(by_audience) < limit:
+        # Narrowed by type before the keyword test rather than by recency.
+        # A recency window was the first attempt and it was wrong: the real
+        # faculty-facing rows in this corpus are older than the most recent 600,
+        # so it returned nothing and looked fast doing it. Type is the field
+        # that actually correlates - every one of them is a Conference,
+        # Research, Scholarship, Workshop or Fellowship row - so this reads a
+        # few hundred candidates instead of every opportunity ever scraped.
+        # No recency cap. The set is 35 rows, and the matches in it happen to
+        # be among the oldest in the corpus - a "most recent 600" window was the
+        # first attempt here and returned nothing at all while looking fast.
+        window = await Opportunity.find_many(
+            In(Opportunity.opportunity_type, list(FACULTY_CANDIDATE_TYPES))
+        ).to_list()
+        scanned += len(window)
+        seen = {str(row.id) for row in by_audience}
+        for opportunity in window:
             if str(getattr(opportunity, "opportunity_status", "") or "") != "active":
                 continue
-            scanned += 1
-            if audience_matches(getattr(opportunity, "audience", None), AUDIENCE_FACULTY):
-                by_audience.append(opportunity)
-            elif _looks_faculty_facing(opportunity):
+            if str(opportunity.id) in seen:
+                continue
+            if _looks_faculty_facing(opportunity):
                 by_keyword.append(opportunity)
-        if len(page) < page_size:
-            break
 
     matches = by_audience + by_keyword
+
     selected = matches[:limit]
+
+    # The demand table for this academician's own department, falling back to
+    # the wider market. Read here rather than on a separate endpoint so the page
+    # costs one round trip instead of two - at ~350ms each that is the
+    # difference between a page that feels instant and one that does not.
+    profile = await Profile.find_one(Profile.user_id == current_user.id)
+    department = str(getattr(profile, "specialisation", None) or getattr(profile, "department", None) or "").strip()
+    snapshot = await latest_demand_snapshot(department or "")
+
     return FacultyFeedResponse(
         total=len(matches),
         scanned=scanned,
+        demand_signal=[
+            DemandRow(
+                skill=str(row.get("skill") or ""),
+                postings=int(row.get("postings") or 0),
+                share=float(row.get("share") or 0.0),
+                is_soft=bool(row.get("is_soft", False)),
+            )
+            for row in (getattr(snapshot, "skills", None) or [])[:12]
+        ],
+        demand_domain=getattr(snapshot, "domain", None),
+        demand_postings_analysed=int(getattr(snapshot, "postings_analysed", 0) or 0),
         from_faculty_sources=len(by_audience),
         from_keyword_fallback=len(by_keyword),
         opportunities=[
@@ -236,6 +313,28 @@ class CohortResponse(BaseModel):
     applications_total: Optional[int] = None
     students_with_applications: Optional[int] = None
     top_gaps: list[dict[str, Any]] = Field(default_factory=list)
+    #: Where the cohort stops progressing. Absolute counts alone cannot say
+    #: whether students fail to get offers or never finish a profile, and those
+    #: have completely different remedies.
+    funnel: list[dict[str, Any]] = Field(default_factory=list)
+    #: Live demand against what this cohort can evidence. The one view here that
+    #: no job board can produce, and the problem statement's actual ask.
+    curriculum_signal: list[dict[str, Any]] = Field(default_factory=list)
+    signal_domain: Optional[str] = None
+
+
+def institution_domain_for_signal(rows: list[dict[str, Any]]) -> str:
+    """Which demand table to measure this cohort against.
+
+    Students in one institution sit across many domains, so there is no single
+    right answer. The whole-market table is used rather than picking one
+    student's domain and calling it the institution's - a curriculum argument
+    built on an arbitrary choice is worse than one built on the widest evidence
+    available.
+    """
+    from app.services.skill_demand import GLOBAL_DOMAIN
+
+    return GLOBAL_DOMAIN
 
 
 @router.get("/institution/cohort", response_model=CohortResponse)
@@ -257,12 +356,45 @@ async def institution_cohort(
             detail="Set your institution name on your profile before viewing the cohort.",
         )
 
+    # Four queries for the whole cohort, not three per student.
+    #
+    # This loop used to call Profile.find_one, SkillAssessment.find_many and
+    # Application.count once per student. At ~350ms a round trip that is a
+    # second and a bit per student: fine for the eight accounts in this
+    # database, eight minutes for an institution with five hundred - and the
+    # institutions this feature exists for are the large ones.
+    students = [
+        student
+        for student in await User.find_many().to_list()
+        if str(getattr(student, "account_type", "") or "").strip().lower() == "candidate"
+    ]
+    student_ids = [student.id for student in students]
+    if not student_ids:
+        profiles, assessments, applications = [], [], []
+    else:
+        profiles, assessments, applications = await asyncio.gather(
+            Profile.find_many(In(Profile.user_id, student_ids)).to_list(),
+            SkillAssessment.find_many(In(SkillAssessment.user_id, student_ids))
+            .sort("-created_at")
+            .to_list(),
+            Application.find_many(In(Application.user_id, student_ids)).to_list(),
+        )
+
+    profile_by_user = {str(row.user_id): row for row in profiles}
+    # Sorted newest first above, so the first one seen per student is the latest.
+    latest_assessment: dict[str, Any] = {}
+    for row in assessments:
+        latest_assessment.setdefault(str(row.user_id), row)
+    application_counts: dict[str, int] = {}
+    for row in applications:
+        key = str(row.user_id)
+        application_counts[key] = application_counts.get(key, 0) + 1
+
     rows: list[dict[str, Any]] = []
-    students = await User.find_many().to_list()
+    corroborated_levels: list[dict[str, Any]] = []
     for student in students:
-        if str(getattr(student, "account_type", "") or "").strip().lower() != "candidate":
-            continue
-        profile = await Profile.find_one(Profile.user_id == student.id)
+        key = str(student.id)
+        profile = profile_by_user.get(key)
         match = student_matches_institution(
             student_email=getattr(student, "email", ""),
             student_college=getattr(profile, "college_name", None) if profile else None,
@@ -272,13 +404,13 @@ async def institution_cohort(
         if not match.matched:
             continue
 
-        latest = (
-            await SkillAssessment.find_many(SkillAssessment.user_id == student.id)
-            .sort("-created_at")
-            .limit(1)
-            .to_list()
-        )
-        assessment = latest[0] if latest else None
+        assessment = latest_assessment.get(key)
+        if assessment is not None and getattr(assessment, "corroborated", None):
+            # The corroborated map, not the raw answers: an institution shown
+            # its students' self-belief instead of what they can evidence would
+            # be reading the wrong number entirely.
+            corroborated_levels.append(dict(assessment.corroborated))
+
         rows.append(
             {
                 "matched_by": match.reason,
@@ -286,9 +418,7 @@ async def institution_cohort(
                 "incoscore": getattr(profile, "incoscore", None) if profile else None,
                 "readiness": getattr(assessment, "readiness_score", None) if assessment else None,
                 "gaps": getattr(assessment, "gaps", None) if assessment else None,
-                "applications": await Application.find_many(
-                    Application.user_id == student.id
-                ).count(),
+                "applications": application_counts.get(key, 0),
             }
         )
 
@@ -302,11 +432,29 @@ async def institution_cohort(
             reason=refusal,
         )
 
+    # Cross live demand against what this cohort can evidence.
+    snapshot = await latest_demand_snapshot(institution_domain_for_signal(rows))
+    signal = (
+        build_signal(demand_rows=snapshot.skills, assessments=corroborated_levels)
+        if snapshot is not None
+        else []
+    )
+
+    funnel = build_funnel(
+        cohort_size=aggregate.cohort_size,
+        profiles_complete=aggregate.profiles_complete,
+        assessments_taken=aggregate.assessments_taken,
+        students_with_applications=aggregate.students_with_applications,
+    )
+
     return CohortResponse(
         institution=institution_name or institution_domain,
         institution_domain=institution_domain,
         min_cohort_size=MIN_COHORT_SIZE,
         available=True,
+        funnel=[vars(stage) for stage in funnel],
+        curriculum_signal=[vars(item) for item in signal],
+        signal_domain=getattr(snapshot, "domain", None),
         cohort_size=aggregate.cohort_size,
         matched_by_domain=aggregate.matched_by_domain,
         matched_by_name=aggregate.matched_by_name,

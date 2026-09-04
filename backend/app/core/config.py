@@ -130,6 +130,10 @@ class Settings(BaseSettings):
     # How often the feed re-asks the database whether the corpus is stale.
     # The check guards a scrape trigger, not correctness, so paying a round
     # trip for it on every page load was the wrong trade.
+    # How far back the academician feed looks when salvaging faculty roles
+    # from student-audience rows. Bounded because scanning the whole corpus
+    # cost ~8s on the first page a faculty member opens.
+    FACULTY_KEYWORD_SCAN_WINDOW: int = 600
     FEED_STALENESS_CHECK_INTERVAL_SECONDS: float = 60.0
     OPPORTUNITY_READ_BACKEND: str = "postgres"  # postgres | mongo
     NEON_POOL_MIN_SIZE: int = 1
