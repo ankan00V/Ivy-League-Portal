@@ -396,6 +396,151 @@ def is_navigation_label(title: str) -> bool:
     return False
 
 
+#: Always removed, wherever they appear - none of them is content.
+_DEAD_TAGS = ("script", "style", "noscript")
+
+#: Page furniture, but only at page level.
+#:
+#: `<header>` and `<footer>` are legal inside `<article>` and `<section>`, and
+#: that is precisely how a job card is written:
+#:     <article><header><h2>Backend Intern</h2></header>…</article>
+#: Removing every `<header>` therefore removes the titles. Measured across ten
+#: promoted student sources, it took databricks.com and rti.org from four and
+#: three extractable rows to zero, and cost bnpparibas three more - a filter
+#: added for the empty faculty feed quietly emptying the working one.
+#: A chrome tag counts as chrome only when no sectioning element encloses it.
+_CHROME_TAGS = ("nav", "header", "footer", "aside")
+
+#: Enclosing any of these means the tag belongs to a piece of content rather
+#: than to the page.
+_SECTIONING_ANCESTORS = {"article", "section", "main", "li", "tr"}
+
+#: ARIA roles that say "this region is chrome" in so many words.
+_CHROME_ROLES = ("navigation", "banner", "contentinfo", "menu", "menubar")
+
+#: And the same regions when they are divs, which on most university sites they
+#: are. Matched as whole class/id tokens, never as substrings.
+#:
+#: The substring form is the obvious way to write this and it is dangerous:
+#: `[class*=header]` also matches `job-header`, and `[class*=nav]` matches
+#: `job-nav`, so a careers page that names its listing cards after their parts
+#: would have those cards deleted before extraction ran. That would silently
+#: empty the student corpus - 2,222 live rows and the only feed that has ever
+#: worked - to fix a faculty feed with none. Token matching keeps `navbar` and
+#: drops `job-header`, which is the distinction that matters.
+_CHROME_TOKENS = frozenset({
+    "nav", "navbar", "navigation", "mainnav", "main-nav", "topnav", "top-nav",
+    "menu", "mainmenu", "main-menu", "navmenu", "nav-menu", "megamenu",
+    "header", "site-header", "page-header", "masthead",
+    "footer", "site-footer", "page-footer",
+    "breadcrumb", "breadcrumbs", "sidebar", "topbar", "toolbar", "skip-link",
+})
+
+
+def strip_page_chrome(soup: "BeautifulSoup") -> "BeautifulSoup":
+    """Remove a page's own navigation. Measured, and NOT used in extraction.
+
+    Kept because it is the obvious idea and the next person will have it too.
+    It does not survive measurement. Extracting ten sources both ways, counting
+    rows that pass every other filter:
+
+        source              raw   +vocabulary   +chrome   +both
+        databricks.com       68             4         7       1
+        rti.org              76             3         4       0
+        icmr.gov.in          37             6         0       0
+        group.bnpparibas     47             6        20       4
+
+    The vocabulary gate alone does the work - 68 rows to 4, 76 to 3 - and the
+    chrome strip then takes real postings with it, emptying icmr.gov.in and
+    rti.org completely. Sites nest listings inside the regions this removes
+    often enough that no version of the rule is safe: scoping it to page level
+    and matching whole class tokens rather than substrings both helped and
+    neither was enough.
+
+    So `looks_like_opportunity` is the filter that ships. Original docstring
+    below, since the reasoning is still sound - it is the execution that a page
+    with no semantic markup defeats.
+
+    The listing selector these templates fall back to is
+    `[data-job-id], .job, .opening, article, li`, and on a site with no job
+    markup the only thing that matches is every `<li>` on the page - which is
+    the menu. IIT Bombay's careers page promoted 73 rows that way and they were
+    titled "Placements", "Donate", "CSR", "Institute magazines" and
+    "Director's Message". Not one was an opening.
+
+    A denylist of headings cannot fix that; there is no end to the words a
+    university puts in a menu. This is positional instead: whatever is inside
+    the navigation is navigation, whoever wrote it and whatever it says.
+
+    Mutates a copy, so the caller's soup is untouched for any other pass.
+    """
+    for tag_name in _DEAD_TAGS:
+        for node in soup.find_all(tag_name):
+            node.decompose()
+    for tag_name in _CHROME_TAGS:
+        for node in soup.find_all(tag_name):
+            if node.decomposed:
+                continue
+            if any(parent.name in _SECTIONING_ANCESTORS for parent in node.parents if parent.name):
+                # A header inside an article is that article's header.
+                continue
+            node.decompose()
+    for role in _CHROME_ROLES:
+        for node in soup.find_all(attrs={"role": role}):
+            node.decompose()
+    for node in list(soup.find_all(True)):
+        if node.decomposed:
+            continue
+        if any(parent.name in _SECTIONING_ANCESTORS for parent in node.parents if parent.name):
+            continue
+        tokens = set(node.get("class") or [])
+        node_id = node.get("id")
+        if node_id:
+            tokens.add(str(node_id))
+        if any(str(token).strip().lower() in _CHROME_TOKENS for token in tokens):
+            node.decompose()
+    return soup
+
+
+def looks_like_opportunity(text: str, *, audience: str) -> bool:
+    """Whether a candidate row says anything its audience would recognise.
+
+    The second half of the same defence. A menu item that survives the chrome
+    strip - because the site nests its menu in a plain div - still has to
+    contain one word from the audience's own vocabulary. "Donate" and
+    "Director's Message" contain none; "Advertisement for the post of Assistant
+    Professor" contains several.
+    """
+    haystack = (text or "").lower()
+    terms = SourceQualificationService.DENSITY_TERMS.get(
+        normalise_audience(audience), SourceQualificationService.DENSITY_TERMS["student"]
+    )
+    return any(term in haystack for term in terms)
+
+
+def is_self_link(apply_url: str, page_url: str) -> bool:
+    """Whether a row's link points back at the page it was found on.
+
+    A posting has somewhere of its own to send you. A menu entry sends you to
+    the section you are already in, or to the page's own anchor - which is what
+    "Faculty Recruitment" on a recruitment landing page does. Those rows pass
+    the vocabulary gate honestly (they do contain "faculty" and "recruit") and
+    are still not openings, and they are what remained of IIT Bombay's 73
+    promoted menu items after every other filter.
+
+    Compared on the canonical form so a trailing slash, a fragment or a query
+    string cannot disguise a self-link as a destination.
+    """
+    try:
+        left = normalize_url(apply_url or "")
+        right = normalize_url(page_url or "")
+    except Exception:
+        return False
+    if not left or not right:
+        return False
+    return left.rstrip("/") == right.rstrip("/")
+
+
 def is_process_notice(title: str) -> bool:
     """Whether this row is recruitment paperwork rather than an opening."""
     text = " ".join(str(title or "").split()).lower()
@@ -2904,18 +3049,33 @@ class TrustScoringEngine:
             # landed without canonical_key or duplicate_cluster_key and were
             # therefore invisible to the deduplication path.
             enriched = _enrich_metadata(dict(record))
-            opportunity = Opportunity(
+            # Built as one mapping rather than `**record` plus keywords.
+            #
+            # `record` already carries "tags", and so did the keyword list, so
+            # every promotion raised
+            #     Opportunity() got multiple values for keyword argument 'tags'
+            # on its first row. The exception surfaced only as a line in the
+            # source's probation_failures and a zero in its items count, which
+            # reads exactly like a failed fetch - so a source that had passed
+            # every gate looked like a site that had gone down. Three sources
+            # sat at trust 72-77 with three good runs each and never promoted.
+            #
+            # A mapping cannot collide with itself: the enriched value wins
+            # where both supply a key, which is the intent - enrichment exists
+            # to improve what extraction guessed.
+            fields = {
                 **record,
-                normalized_title=enriched.get("normalized_title"),
-                normalized_organization=enriched.get("normalized_organization"),
-                canonical_key=enriched.get("canonical_key"),
-                canonical_url_hash=enriched.get("canonical_url_hash"),
-                duplicate_cluster_key=enriched.get("duplicate_cluster_key"),
-                title_company_location_hash=enriched.get("title_company_location_hash"),
-                tags=enriched.get("tags") or [],
-                last_seen_at=flushed_at,
-                updated_at=flushed_at,
-            )
+                "normalized_title": enriched.get("normalized_title"),
+                "normalized_organization": enriched.get("normalized_organization"),
+                "canonical_key": enriched.get("canonical_key"),
+                "canonical_url_hash": enriched.get("canonical_url_hash"),
+                "duplicate_cluster_key": enriched.get("duplicate_cluster_key"),
+                "title_company_location_hash": enriched.get("title_company_location_hash"),
+                "tags": enriched.get("tags") or record.get("tags") or [],
+                "last_seen_at": flushed_at,
+                "updated_at": flushed_at,
+            }
+            opportunity = Opportunity(**fields)
             apply_trust_assessment(opportunity, assess_opportunity_trust(opportunity))
             try:
                 await opportunity.insert()
@@ -3110,12 +3270,24 @@ class TemplateDrivenScraper:
         listing_selector = str(template.get("listing_selector") or "[data-job-id], .job, .opening, article, li")
         title_selector = str(template.get("title_selector") or "h1,h2,h3,h4,[class*=title],[class*=role]")
         apply_selector = str(template.get("apply_link_selector") or "a[href]")
-        max_pages = max(1, min(10, int(template.get("max_pages") or 1)))
         pagination_pattern = template.get("pagination_pattern")
+        # Without a pagination pattern there is no page two to ask for.
+        #
+        # The page URL expression below falls back to base_url whenever the
+        # pattern is missing, so a template carrying max_pages=10 and no pattern
+        # fetched page one ten times and appended its rows ten times. Every
+        # template the extractor writes has max_pages=10 and pagination_pattern
+        # None, so this was every source: measured on iisc.ac.in, one scrape
+        # produced 300 rows for roughly 30 distinct listings, and an earlier run
+        # recorded 500 fetched against 5 distinct URLs after deduplication. Ten
+        # times the fetches, ten times the parsing, ten times the skill
+        # extraction, and ten times the database round trips downstream - for
+        # nothing, since the extra nine copies dedupe away on write.
+        max_pages = max(1, min(10, int(template.get("max_pages") or 1))) if pagination_pattern else 1
         rows: list[dict[str, Any]] = []
         errors: list[str] = []
         for page_number in range(1, max_pages + 1):
-            page_url = base_url if page_number == 1 or not pagination_pattern else urljoin(base_url, str(pagination_pattern).replace("{n}", str(page_number)))
+            page_url = base_url if page_number == 1 else urljoin(base_url, str(pagination_pattern).replace("{n}", str(page_number)))
             try:
                 page = await self.http_client.fetch(page_url, timeout_seconds=10, render=True)
                 soup = BeautifulSoup(page.text or "", "html.parser")
@@ -3127,13 +3299,20 @@ class TemplateDrivenScraper:
                     if not title or not href:
                         continue
                     text = element.get_text(" ", strip=True)
+                    if not looks_like_opportunity(f"{title} {text}", audience=audience):
+                        continue
+                    resolved = normalize_url(urljoin(page.final_url, str(href)))
+                    # A row that links back to this page is the page's own
+                    # navigation, whatever its words say.
+                    if is_self_link(resolved, page.final_url):
+                        continue
                     rows.append(
                         {
                             "title": title,
                             "company": registration.source_name,
                             "location": _extract_location_hint(text),
                             "work_mode": _extract_work_mode_hint(text),
-                            "apply_url": normalize_url(urljoin(page.final_url, str(href))),
+                            "apply_url": resolved,
                             "description_preview": text[:200],
                             "tags": _extract_skill_tags(text),
                             "opportunity_type": _infer_opportunity_type(text, audience=audience),
@@ -3182,29 +3361,58 @@ class ProbationManager:
         try:
             result = await self.scraper.scrape(registration)
             passed_quality = 0
+
+            # One read for the whole source, then one write per row that
+            # actually changed.
+            #
+            # This loop used to issue a find_one per item against a database in
+            # ap-southeast-2. At roughly 200ms a round trip, a source yielding
+            # 300 rows spent over a minute here alone - and every probation run
+            # exceeded the 120-second budget and was recorded as a timeout, on
+            # every source, so no source ever reached its third run and nothing
+            # was ever promoted. The scrape itself takes 42 seconds and the
+            # fetch inside it takes 0.9; the rest was this.
+            #
+            # Rows arrive deduplicated by URL because a page can list the same
+            # posting twice, and writing both halves of a duplicate pair leaves
+            # whichever landed second as the stored version.
+            deduped: dict[str, dict[str, Any]] = {}
             for row in result.items:
+                item_url = str(row.get("apply_url") or row.get("url") or "")
+                if item_url:
+                    deduped.setdefault(item_url, row)
+
+            try:
+                existing_rows = await ProbationOpportunity.find_many(
+                    ProbationOpportunity.discovered_source_id == source.id
+                ).to_list()
+            except Exception as exc:
+                existing_rows = []
+                source.probation_failures.append(f"probation_existing_read:{exc}")
+            existing_by_url = {str(row.url): row for row in existing_rows}
+
+            for item_url, row in deduped.items():
                 quality_score = self._quality_score(row)
                 if quality_score > 40:
                     passed_quality += 1
-                item_url = str(row.get("apply_url") or row.get("url") or "")
                 try:
-                    # Upsert on (source, url). This used to insert
-                    # unconditionally, so every probation run duplicated the
-                    # source's entire result set - the live collection held
-                    # 3,497 rows for 249 distinct URLs.
-                    existing_probation = (
-                        await ProbationOpportunity.find_one(
-                            ProbationOpportunity.discovered_source_id == source.id,
-                            ProbationOpportunity.url == item_url,
-                        )
-                        if item_url
-                        else None
-                    )
+                    existing_probation = existing_by_url.get(item_url)
                     if existing_probation is not None:
-                        existing_probation.title = str(row.get("title") or "")[:300]
-                        existing_probation.company = str(
-                            row.get("company") or registration.source_name
-                        )
+                        title = str(row.get("title") or "")[:300]
+                        company = str(row.get("company") or registration.source_name)
+                        # Skip the write when nothing moved. A probation run
+                        # over a stable page changes almost nothing, and saving
+                        # every row regardless is another few hundred round
+                        # trips for an identical document.
+                        if (
+                            existing_probation.title == title
+                            and existing_probation.company == company
+                            and existing_probation.raw_payload == row
+                            and existing_probation.quality_score == quality_score
+                        ):
+                            continue
+                        existing_probation.title = title
+                        existing_probation.company = company
                         existing_probation.raw_payload = row
                         existing_probation.quality_score = quality_score
                         existing_probation.run_number = run_number
@@ -3223,17 +3431,43 @@ class ProbationManager:
                 except Exception as exc:
                     source.probation_failures.append(f"probation_item_insert:{exc}")
             source.probation_runs = run_number
-            source.probation_items_fetched.append(len(result.items))
+            source.probation_items_fetched.append(len(deduped))
             source.probation_items_passed_quality.append(passed_quality)
             source.probation_parse_rates.append(result.parse_success_rate)
             source.last_scraped_at = utc_now()
-            source.consecutive_failures = 0 if result.items else int(source.consecutive_failures or 0) + 1
+            source.consecutive_failures = 0 if deduped else int(source.consecutive_failures or 0) + 1
             if result.errors:
                 source.probation_failures.extend(result.errors[:3])
             if source.trust_score is None:
                 await self.trust_engine.score_source(source.id)
                 source = await DiscoveredSource.get(source.id) or source
-            await self._evaluate_after_probation(source)
+            try:
+                await self._evaluate_after_probation(source)
+                # Re-read before the save below.
+                #
+                # promote_source fetches its own copy of the source, sets it to
+                # `promoted` and saves. This function then saved the copy it had
+                # been holding since the top, which still said `probation` - so
+                # every promotion was written and immediately overwritten by a
+                # stale in-memory object. The rows it had inserted stayed (the
+                # faculty feed genuinely gained 73), but the source went back to
+                # probation and its contributed count reset to 0, so the next
+                # run promoted it all over again. A classic lost update, and
+                # invisible because the visible half of the work succeeded.
+                refreshed = await DiscoveredSource.get(source.id)
+                if refreshed is not None:
+                    for field in ("status", "promoted_at", "promoted_by", "scraper_key",
+                                  "total_opportunities_contributed", "rejection_reason",
+                                  "rejected_at", "requires_admin_review"):
+                        setattr(source, field, getattr(refreshed, field))
+            except Exception as exc:
+                # Scoped so a promotion fault cannot be mistaken for a scrape
+                # fault. Sharing the outer handler meant a TypeError raised
+                # while writing the first promoted row was recorded as zero
+                # items fetched, and a source that had just scraped 38 listings
+                # perfectly was indistinguishable from one whose site was down.
+                logger.exception("Promotion evaluation failed for %s", source.domain)
+                source.probation_failures.append(f"promotion_evaluation:{type(exc).__name__}:{exc}")
         except Exception as exc:
             source.probation_runs = run_number
             source.probation_items_fetched.append(0)
@@ -3264,8 +3498,60 @@ class ProbationManager:
         trust_score = float(source.trust_score or 0)
         rates = list(source.probation_parse_rates or [])
         avg_parse_rate = sum(rates) / max(1, len(rates))
-        items_ok = all(items >= 2 for items in (source.probation_items_fetched or [])[-min_runs:])
-        quality_ok = all(items >= 2 for items in (source.probation_items_passed_quality or [])[-min_runs:])
+
+        # A majority of recent runs, not all of them.
+        #
+        # `all(...)` meant one transient fetch failure disqualified a source
+        # permanently: promotion needs `min_runs` consecutive good runs, so a
+        # single zero resets the window every time and a source on a flaky
+        # network can never be promoted however good it is. Measured across the
+        # academic sources, iitk.ac.in returned 43, 43 and then 0 rows - the
+        # third being a network blip on a page that had just served 43 twice.
+        #
+        # A majority still refuses a genuinely broken source: two failures in
+        # three runs is a pattern rather than a blip, and consecutive_failures
+        # continues to drive quarantine independently.
+        def _majority_ok(values: list[int]) -> bool:
+            recent = list(values or [])[-min_runs:]
+            if len(recent) < min_runs:
+                return False
+            return sum(1 for count in recent if count >= 2) > len(recent) // 2
+
+        items_ok = _majority_ok(source.probation_items_fetched or [])
+        quality_ok = _majority_ok(source.probation_items_passed_quality or [])
+
+        # Clear a review flag whose question has since been answered.
+        #
+        # `requires_admin_review` is raised during extraction when the parser
+        # looked uncertain or the page looked thin - both judgements about a
+        # single sample fetch. Nothing ever cleared it, so a source that then
+        # produced 38 quality-passing rows on three consecutive probation runs
+        # stayed blocked from promotion by an observation those runs had
+        # already contradicted. iitb.ac.in sat at trust 77.27 with 38, 38, 38
+        # and could not promote for exactly this reason.
+        #
+        # Only cleared when the newer evidence answers the older doubt on both
+        # counts: trust is at the auto-promote threshold, and the yield the flag
+        # doubted has held up. An admin_hold is a human's decision and is never
+        # touched here.
+        if (
+            source.requires_admin_review
+            and not source.admin_hold
+            and items_ok
+            and quality_ok
+            and trust_score >= float(getattr(settings, "TRUST_MIN_SCORE_AUTO_PROMOTE", 70))
+        ):
+            logger.info(
+                "Clearing admin review on %s: %d probation runs yielding %s at trust %.2f "
+                "answer the extraction-sample doubt that raised it.",
+                source.domain,
+                int(source.probation_runs or 0),
+                (source.probation_items_fetched or [])[-min_runs:],
+                trust_score,
+            )
+            source.requires_admin_review = False
+            source.probation_failures.append("admin_review_cleared:probation_evidence")
+
         if (
             trust_score >= float(getattr(settings, "TRUST_MIN_SCORE_AUTO_PROMOTE", 70))
             and items_ok
