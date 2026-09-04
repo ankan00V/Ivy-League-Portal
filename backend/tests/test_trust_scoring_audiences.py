@@ -181,3 +181,70 @@ class TestOpportunityTypeUsesTheAudiencesVocabulary(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestUnreadableWhoisIsNotYoungDomain(unittest.TestCase):
+    """India restricts WHOIS on .gov.in and .ac.in.
+
+    So every government and university source resolved to no creation date and
+    landed on the same middling 50 a domain registered last week receives, and
+    then on 5 of 10 for reputation. That is not what the check is measuring. A
+    registrar only issues one of these suffixes on proof of institutional
+    status, which makes the suffix better evidence of establishment than a
+    record we are not permitted to read.
+    """
+
+    def _service(self):
+        from app.services.source_discovery import SourceQualificationService
+
+        return SourceQualificationService()
+
+    def test_an_accredited_suffix_of_unknown_age_scores_as_established(self) -> None:
+        result = self._service()._age_unknown("iisc.ac.in")
+        self.assertEqual(result.score, 100)
+        self.assertIn("accredited_suffix", result.notes)
+
+    def test_an_ordinary_domain_of_unknown_age_stays_neutral(self) -> None:
+        # The point is not to be generous. A domain nobody vouches for and whose
+        # age we cannot read is genuinely unknown, and must stay that way.
+        result = self._service()._age_unknown("careers.example.com")
+        self.assertEqual(result.score, 50)
+        self.assertNotIn("accredited_suffix", result.notes)
+
+    def test_the_reason_survives_into_the_notes(self) -> None:
+        # The notes are what an operator reads when auditing a score. Losing the
+        # reason turns "we could not look" into "we looked and found nothing".
+        result = self._service()._age_unknown("iitb.ac.in", reason="whois_unavailable")
+        self.assertIn("whois_unavailable", result.notes)
+
+
+class TestReputationAgreesWithQualification(unittest.TestCase):
+    """The two checks must not disagree about the same domain.
+
+    Trust reads the qualification notes to score reputation. If qualification
+    treats an accredited suffix as established and trust does not, a source is
+    credited in one place and charged in the other for the same fact.
+
+    Scored against a stub rather than a DiscoveredSource: the scorer reads two
+    attributes, and constructing a Beanie document in a unit test requires an
+    initialised collection, which would make this a database test for no gain.
+    """
+
+    class _Source:
+        def __init__(self, domain: str, notes: str) -> None:
+            self.domain = domain
+            self.qualification_details = {"domain_age": {"notes": notes}}
+
+    def test_an_accredited_domain_scores_full_reputation_without_an_age(self) -> None:
+        source = self._Source("iisc.ac.in", "domain_age_unknown;accredited_suffix")
+        self.assertEqual(ENGINE._domain_reputation_score(source), 10)
+
+    def test_an_ordinary_domain_without_an_age_stays_at_five(self) -> None:
+        source = self._Source("careers.example.com", "domain_age_unknown")
+        self.assertEqual(ENGINE._domain_reputation_score(source), 5)
+
+    def test_a_real_age_still_wins(self) -> None:
+        # The suffix rule is a fallback for a record we cannot read, not an
+        # override of one we can. A genuinely new .ac.in scores as new.
+        source = self._Source("new.ac.in", "age_days=100")
+        self.assertEqual(ENGINE._domain_reputation_score(source), 2)

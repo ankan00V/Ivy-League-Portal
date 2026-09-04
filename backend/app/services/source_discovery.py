@@ -112,6 +112,21 @@ INDIAN_CITY_TERMS = {
     "remote india",
 }
 
+#: Suffixes only an accredited body can hold. India's registry will not sell an
+#: .ac.in or a .gov.in to anyone who asks - the registrar requires proof of
+#: institutional status - which makes the suffix a stronger legitimacy signal
+#: for an academic source than any word in a corporate brand list, and it is the
+#: signal the old rubric had no way to see. A government research council scored
+#: 0 of 15 on legitimacy purely for not being a company.
+ACCREDITED_DOMAIN_SUFFIXES: tuple[str, ...] = (
+    ".gov.in", ".nic.in", ".ac.in", ".res.in", ".edu.in", ".edu", ".gov", ".org.in",
+)
+
+
+def is_accredited_domain(domain: str | None) -> bool:
+    return any((domain or "").lower().endswith(suffix) for suffix in ACCREDITED_DOMAIN_SUFFIXES)
+
+
 LEGITIMATE_EMPLOYER_TERMS = {
     "google",
     "microsoft",
@@ -1860,16 +1875,34 @@ class SourceQualificationService:
         https = urlparse(url).scheme.lower() == "https"
         return QualificationCheckResult(score=100 if https else 30, passed=True, notes="https" if https else "http")
 
+    def _age_unknown(self, domain: str, *, reason: str = "domain_age_unknown") -> QualificationCheckResult:
+        """Age we could not read is not the same as age we know to be short.
+
+        India's registry restricts WHOIS on .gov.in and .ac.in, so every
+        government and university source here resolves to no creation date and
+        lands on the same middling 50 that a domain registered last week gets.
+        That is not what the check is measuring. A registry-controlled suffix
+        cannot be new and anonymous - the registrar requires proof of
+        institutional status before issuing one - so the suffix is better
+        evidence of establishment than a WHOIS record we are not allowed to
+        read. An ordinary domain of unknown age keeps the neutral 50.
+        """
+        if is_accredited_domain(domain):
+            return QualificationCheckResult(
+                score=100, passed=True, notes=f"{reason};accredited_suffix"
+            )
+        return QualificationCheckResult(score=50, passed=True, notes=reason)
+
     async def _domain_age_check(self, domain: str) -> QualificationCheckResult:
         if whois is None:
-            return QualificationCheckResult(score=50, passed=True, notes="whois_unavailable")
+            return self._age_unknown(domain, reason="whois_unavailable")
         try:
             data = await asyncio.to_thread(whois.whois, domain)
             created = getattr(data, "creation_date", None) or data.get("creation_date")
             if isinstance(created, list):
                 created = next((item for item in created if item), None)
             if not isinstance(created, datetime):
-                return QualificationCheckResult(score=50, passed=True, notes="domain_age_unknown")
+                return self._age_unknown(domain)
             age_days = (utc_now().replace(tzinfo=None) - created.replace(tzinfo=None)).days
             if age_days >= 365 * 3:
                 score = 100
@@ -1881,7 +1914,10 @@ class SourceQualificationService:
                 score = 0
             return QualificationCheckResult(score=score, passed=True, notes=f"age_days={age_days}")
         except Exception as exc:
-            return QualificationCheckResult(score=50, passed=True, notes=f"domain_age_error:{exc}")
+            result = self._age_unknown(domain)
+            return QualificationCheckResult(
+                score=result.score, passed=True, notes=f"{result.notes};domain_age_error:{exc}"
+            )
 
     def _content_language_check(self, html: str) -> QualificationCheckResult:
         text = BeautifulSoup(html or "", "html.parser").get_text(" ", strip=True)[:2000]
@@ -2723,15 +2759,7 @@ class TrustScoringEngine:
                 score += per_item * 0.30
         return round(min(20, score), 2)
 
-    #: Suffixes only an accredited body can hold. India's registry will not sell
-    #: an .ac.in or a .gov.in to anyone who asks, which makes the suffix a
-    #: stronger legitimacy signal for an academic source than any word in a
-    #: corporate brand list - and it is the signal the old rubric had no way to
-    #: see. A government research council scored 0 of 15 on legitimacy purely
-    #: for not being a company.
-    ACCREDITED_DOMAIN_SUFFIXES: tuple[str, ...] = (
-        ".gov.in", ".nic.in", ".ac.in", ".res.in", ".edu.in", ".edu", ".gov", ".org.in",
-    )
+    ACCREDITED_DOMAIN_SUFFIXES = ACCREDITED_DOMAIN_SUFFIXES
 
     async def _legitimacy_score(self, source: DiscoveredSource, samples: list[dict[str, Any]]) -> float:
         score = 0.0
@@ -2739,7 +2767,7 @@ class TrustScoringEngine:
         haystack = " ".join([source.name or "", source.domain, *[str(row.get("company") or "") for row in samples]]).lower()
         if any(term in haystack for term in LEGITIMATE_EMPLOYER_TERMS):
             score += 5
-        if any(domain.endswith(suffix) for suffix in self.ACCREDITED_DOMAIN_SUFFIXES):
+        if is_accredited_domain(domain):
             score += 5
         if await DiscoveredSource.find_one(
             {
@@ -2794,7 +2822,12 @@ class TrustScoringEngine:
         notes = str((details.get("domain_age") or {}).get("notes") or "")
         match = re.search(r"age_days=(\d+)", notes)
         if not match:
-            return 5
+            # Same reasoning as the qualification check: a domain whose age we
+            # are not permitted to read, on a suffix a registrar only issues to
+            # an accredited body, is established. Scoring it 5 of 10 alongside
+            # a domain of genuinely unknown provenance cost every government
+            # and university source five points it had earned.
+            return 10 if is_accredited_domain(getattr(source, "domain", None)) else 5
         age_days = int(match.group(1))
         if age_days >= 365 * 3:
             return 10

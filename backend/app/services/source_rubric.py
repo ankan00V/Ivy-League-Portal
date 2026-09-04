@@ -45,7 +45,11 @@ from __future__ import annotations
 #:   2 - audience-aware opportunity_density (institution sources capped at 59.0).
 #:   3 - audience-aware trust relevance, accredited-domain legitimacy, and
 #:       cold-start cross-validation; audience-aware extraction vocabulary.
-QUALIFICATION_RUBRIC_VERSION = 3
+#:   4 - an unreadable WHOIS record on a registry-controlled suffix counts as
+#:       established rather than unknown. India restricts WHOIS on .gov.in and
+#:       .ac.in, so every government and university source was scoring the same
+#:       middling 50 as a domain registered last week.
+QUALIFICATION_RUBRIC_VERSION = 4
 
 #: Rejection reasons whose verdict depends on the rubric, and which are
 #: therefore worth asking again under a newer one. Matched on the prefix before
