@@ -3,6 +3,7 @@ import Sidebar from "@/components/Sidebar";
 import React, { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { GraduationCap, AlertTriangle, Loader2, ExternalLink, BookOpenCheck } from "lucide-react";
+import BriefingPanel, { type Briefing } from "@/components/BriefingPanel";
 import { apiUrl } from "@/lib/api";
 import { createAuthenticatedFetchInit, getAccessToken } from "@/lib/auth-session";
 
@@ -24,6 +25,7 @@ interface DemandRow {
 }
 
 interface FacultyFeed {
+    briefing?: Briefing | null;
     total: number;
     scanned: number;
     from_faculty_sources: number;
@@ -156,6 +158,8 @@ export default function FacultyPage() {
                         <span style={{ fontWeight: 700 }}>Filtering the corpus…</span>
                     </div>
                 )}
+
+                <BriefingPanel briefing={feed?.briefing} />
 
                 {feed && feed.demand_signal.length > 0 && (
                     <section style={{ ...panelStyle(), padding: "1.5rem", marginBottom: "1.5rem" }}>

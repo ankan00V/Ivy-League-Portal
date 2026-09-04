@@ -71,6 +71,10 @@ class DiscoveredSource(Document):
     #: Who this source serves. Everything it yields inherits this, so a feed is
     #: a lookup rather than a guess about the words in a title.
     audience: str = Field(default="student", json_schema_extra={"index": True})
+    #: Which version of the scoring rules last judged this source. A rejection
+    #: recorded under an older rubric can be asked again; see
+    #: app/services/source_rubric.py for why that is not optional.
+    rubric_version: int = Field(default=0, json_schema_extra={"index": True})
     priority_score: float = Field(default=50.0, ge=0, le=100)
     priority_reasons: list[str] = Field(default_factory=list)
     priority_features: dict[str, Any] = Field(default_factory=dict)
@@ -277,6 +281,11 @@ class ScraperRegistration(Document):
     scraper_key: str
     source_name: str
     domain: str
+    #: Carried from the DiscoveredSource this registration was promoted from.
+    #: Without it the scheduled path - the one that keeps a promoted source
+    #: producing - wrote every row as a student row, so an audience could be
+    #: promoted correctly and still never appear in its own feed.
+    audience: str = Field(default="student", json_schema_extra={"index": True})
     careers_url: str
     source_type: Optional[str] = None
     extraction_method: str = "llm_css"

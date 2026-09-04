@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 
 import BrandLogo from "@/components/BrandLogo";
+import BriefingPanel, { type Briefing } from "@/components/BriefingPanel";
 import { EmployerDashboardSkeleton } from "@/components/LoadingSkeletons";
 import { apiUrl } from "@/lib/api";
 import { EMPLOYER_PORTAL_ENABLED } from "@/lib/employer-portal";
@@ -118,6 +119,7 @@ interface ScarcityRow {
 }
 
 interface TalentPool {
+  briefing?: Briefing | null;
     available: boolean;
     reason?: string | null;
     candidates_assessed: number;
@@ -504,6 +506,8 @@ export default function EmployerDashboardPage() {
             </article>
           ))}
         </section>
+
+        <BriefingPanel briefing={talentPool?.briefing} />
 
         {talentPool && (
           <section className="card-panel" style={{ display: "grid", gap: "0.6rem" }}>

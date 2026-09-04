@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.deps import get_current_active_user
+from app.models.learning_program import LearningProgram
 from app.models.profile import Profile
 from app.models.skill_assessment import (
     MAX_PROFICIENCY,
@@ -63,6 +64,21 @@ class GapRow(BaseModel):
     corroborated: bool
 
 
+class BriefingResponse(BaseModel):
+    """A grounded reading of this student's own result.
+
+    `source` is surfaced: "llm" when the model's answer passed number
+    verification, "deterministic" when it was unavailable or rejected,
+    "refused" when too little of the assessment is finished to plan from.
+    """
+
+    headline: str
+    paragraphs: list[str] = Field(default_factory=list)
+    actions: list[str] = Field(default_factory=list)
+    source: str = "deterministic"
+    refusal: Optional[str] = None
+
+
 class AssessmentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -72,6 +88,10 @@ class AssessmentResponse(BaseModel):
     strengths: list[GapRow]
     gaps: list[GapRow]
     adjustments: list[dict[str, Any]]
+    #: What to do about the gaps, ranked by what actually moves this student's
+    #: odds. The score and the gap list are the measurement; this is the part a
+    #: student would otherwise have to work out alone.
+    briefing: Optional[BriefingResponse] = None
 
 
 async def _resolve_domain(user: User, requested: Optional[str]) -> str:
@@ -79,6 +99,45 @@ async def _resolve_domain(user: User, requested: Optional[str]) -> str:
         return requested.strip()
     profile = await Profile.find_one(Profile.user_id == user.id)
     return str(getattr(profile, "domain", None) or "").strip() or demand_module.GLOBAL_DOMAIN
+
+
+async def _readiness_briefing(
+    *, readiness: float, strengths: list[Any], gaps: list[Any], domain: str
+) -> Optional["BriefingResponse"]:
+    """Build the plan, and never let it take the result down with it.
+
+    A student who has just finished an assessment must see their score. If the
+    narration fails for any reason - provider down, verification rejected the
+    answer, anything - the measurement is still theirs.
+    """
+    from app.services.role_briefings import student_readiness_plan
+
+    try:
+        programmes = (
+            await LearningProgram.find_many(LearningProgram.status == "published")
+            .limit(6)
+            .to_list()
+        )
+    except Exception:
+        programmes = []
+
+    try:
+        answer = await student_readiness_plan(
+            readiness=readiness,
+            gaps=[dict(row) if isinstance(row, dict) else dict(vars(row)) for row in gaps],
+            strengths=[dict(row) if isinstance(row, dict) else dict(vars(row)) for row in strengths],
+            programmes=[
+                {"title": row.title, "skills_taught": list(row.skills_taught or [])}
+                for row in programmes
+            ],
+            domain=domain,
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Readiness briefing failed, serving the assessment alone: %s", exc)
+        return None
+    return BriefingResponse(**{
+        key: value for key, value in answer.to_dict().items() if key != "rejected_because"
+    })
 
 
 @router.get("/questionnaire", response_model=QuestionnaireResponse)
@@ -163,6 +222,12 @@ async def submit_assessment(
         strengths=[GapRow(**vars(item)) for item in result.strengths],
         gaps=[GapRow(**vars(item)) for item in result.gaps],
         adjustments=result.adjustments,
+        briefing=await _readiness_briefing(
+            readiness=result.readiness_score,
+            strengths=[vars(item) for item in result.strengths],
+            gaps=[vars(item) for item in result.gaps],
+            domain=result.domain,
+        ),
     )
 
 
@@ -186,6 +251,12 @@ async def latest_assessment(
         strengths=[GapRow(**row) for row in record.strengths],
         gaps=[GapRow(**row) for row in record.gaps],
         adjustments=[],
+        briefing=await _readiness_briefing(
+            readiness=record.readiness_score,
+            strengths=list(record.strengths or []),
+            gaps=list(record.gaps or []),
+            domain=record.domain,
+        ),
     )
 
 

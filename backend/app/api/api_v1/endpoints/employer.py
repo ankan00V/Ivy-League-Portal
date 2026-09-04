@@ -7,6 +7,8 @@ from typing import Any, Literal, Optional
 
 from beanie import PydanticObjectId
 from beanie.odm.operators.find.comparison import In
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
@@ -24,6 +26,7 @@ from app.services.source_discovery import employer_claim_service
 from app.core.time import utc_now, as_utc_aware
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 LIFECYCLE_STATES: set[str] = {"draft", "published", "paused", "closed"}
 PIPELINE_STATES: set[str] = {"applied", "shortlisted", "rejected", "interview"}
@@ -146,6 +149,23 @@ class ListingRow(BaseModel):
     days_open: Optional[int] = None
 
 
+class BriefingResponse(BaseModel):
+    """A grounded reading of the numbers on the same page.
+
+    `source` says which of three paths produced it: "llm" when the model's
+    answer passed number verification, "deterministic" when the model was
+    unavailable or its answer was rejected, "refused" below the evidence floor.
+    Surfaced rather than hidden, because a reader deciding how much weight to
+    put on a paragraph deserves to know what wrote it.
+    """
+
+    headline: str
+    paragraphs: list[str] = Field(default_factory=list)
+    actions: list[str] = Field(default_factory=list)
+    source: str = "deterministic"
+    refusal: Optional[str] = None
+
+
 class TalentPoolResponse(BaseModel):
     #: Market-wide proportions only. No candidate is ever returned here, and the
     #: pool must be large enough that no single person moves a figure visibly.
@@ -155,6 +175,7 @@ class TalentPoolResponse(BaseModel):
     postings_analysed: int = 0
     scarcity: list[ScarcityRow] = Field(default_factory=list)
     listings: list[ListingRow] = Field(default_factory=list)
+    briefing: Optional[BriefingResponse] = None
 
 
 class EmployerApplicationsListResponse(BaseModel):
@@ -926,6 +947,7 @@ async def employer_talent_pool(
     which is the difference between "raise the salary", "drop the requirement"
     and "the description is wrong".
     """
+    from app.services.role_briefings import employer_market_read
     from app.services.skill_demand import GLOBAL_DOMAIN, latest_snapshot
     from app.services.talent_pool import build_scarcity, summarise_listings
 
@@ -984,13 +1006,31 @@ async def employer_talent_pool(
             }
         )
 
+    scarcity_rows = [ScarcityRow(**{**vars(item), "verdict": item.verdict}) for item in scarcity]
+    listing_summary = [ListingRow(**vars(item)) for item in summarise_listings(listing_rows)]
+
+    # Written over the same rows the table below it shows, never over anything
+    # else. Failure here must not take the page down - a recruiter who can see
+    # the numbers but not the paragraph has lost the smaller half.
+    briefing = None
+    try:
+        answer = await employer_market_read(
+            scarcity=[row.model_dump() for row in scarcity_rows],
+            candidates_assessed=len(candidate_levels),
+            listings=[row.model_dump() for row in listing_summary],
+        )
+        briefing = BriefingResponse(**{
+            key: value for key, value in answer.to_dict().items() if key != "rejected_because"
+        })
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Employer briefing failed, serving the table alone: %s", exc)
+
     return TalentPoolResponse(
         available=bool(scarcity),
         reason=refusal,
         candidates_assessed=len(candidate_levels),
         postings_analysed=int(getattr(snapshot, "postings_analysed", 0) or 0),
-        scarcity=[
-            ScarcityRow(**{**vars(item), "verdict": item.verdict}) for item in scarcity
-        ],
-        listings=[ListingRow(**vars(item)) for item in summarise_listings(listing_rows)],
+        scarcity=scarcity_rows,
+        listings=listing_summary,
+        briefing=briefing,
     )

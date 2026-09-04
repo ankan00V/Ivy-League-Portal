@@ -3,6 +3,7 @@ import Sidebar from "@/components/Sidebar";
 import React, { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { Building2, AlertTriangle, Loader2, ShieldCheck, Users, TrendingDown, BookOpenCheck } from "lucide-react";
+import BriefingPanel, { type Briefing } from "@/components/BriefingPanel";
 import { apiUrl } from "@/lib/api";
 import { createAuthenticatedFetchInit, getAccessToken } from "@/lib/auth-session";
 
@@ -29,6 +30,7 @@ interface SkillSignal {
 }
 
 interface Cohort {
+    briefing?: Briefing | null;
     institution: string;
     institution_domain: string;
     min_cohort_size: number;
@@ -309,6 +311,8 @@ export default function InstitutionPage() {
                         })}
                     </section>
                 )}
+
+                <BriefingPanel briefing={cohort?.briefing} />
 
                 {cohort && cohort.available && cohort.curriculum_signal.length === 0 && cohort.signal_reason && (
                     // Shown rather than hidden. An absent section reads as

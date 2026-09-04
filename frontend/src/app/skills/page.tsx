@@ -3,6 +3,7 @@ import Sidebar from "@/components/Sidebar";
 import React, { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Compass, Target, TrendingUp, AlertTriangle, Loader2, BookOpen } from "lucide-react";
+import BriefingPanel, { type Briefing } from "@/components/BriefingPanel";
 import { apiUrl } from "@/lib/api";
 import { createAuthenticatedFetchInit, getAccessToken } from "@/lib/auth-session";
 
@@ -57,6 +58,7 @@ interface RecommendationPayload {
 }
 
 interface AssessmentResult {
+    briefing?: Briefing | null;
     id?: string | null;
     domain: string;
     readiness_score: number;
@@ -333,6 +335,14 @@ export default function SkillsPage() {
                                 {[25, 50, 75].map((mark) => (
                                     <div key={mark} style={{ position: "absolute", left: `${mark}%`, top: 0, bottom: 0, width: "2px", background: "var(--border-subtle)", opacity: 0.6 }} />
                                 ))}
+                            </div>
+
+                            {/* The plan, directly under the score. A student
+                                who has just been told they are 24.7 out of 100
+                                needs the next sentence to be what to do about
+                                it, not eleven rows of percentages. */}
+                            <div style={{ marginTop: "1.5rem" }}>
+                                <BriefingPanel briefing={result.briefing} tone="quiet" />
                             </div>
 
                             {result.adjustments.length > 0 && (

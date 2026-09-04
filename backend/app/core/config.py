@@ -553,7 +553,13 @@ class Settings(BaseSettings):
     # RAG governance defaults
     RAG_TEMPLATE_KEY_DEFAULT: str = "ask_ai"
     RAG_DEFAULT_RETRIEVAL_TOP_K: int = 8
-    RAG_LLM_MODEL: Optional[str] = None
+    # Ask AI's model. Defaulted rather than left to LLM_MODEL, because the
+    # deployment's LLM_MODEL is meta/llama-3.1-8b-instruct, which the endpoint
+    # retired on 2026-08-26 and now answers with HTTP 410 Gone. Ask AI has
+    # therefore been serving its heuristic fallback - a real answer, wearing no
+    # sign that the grounded one was never generated - since that date.
+    # Overridable by .env when a deployment has its own model.
+    RAG_LLM_MODEL: Optional[str] = "nvidia/nemotron-3-super-120b-a12b"
     RAG_JUDGE_MODEL: Optional[str] = None
     RAG_WARMUP_ON_STARTUP: bool = True
     RAG_WARMUP_TIMEOUT_SECONDS: float = 120.0
@@ -568,6 +574,48 @@ class Settings(BaseSettings):
     # 1,100 tokens; 2,000 leaves headroom without inviting a rambling answer.
     RAG_LLM_MAX_TOKENS: int = 2000
     RAG_JUDGE_TIMEOUT_SECONDS: float = 8.0
+
+    # Role briefings: the grounded paragraph on each dashboard.
+    #
+    # A briefing is a panel loading beside other panels, not a chat turn with a
+    # cursor blinking in it, so it is allowed to be slower than Ask AI. Measured
+    # against the configured endpoint, a 30B-A3B model answers this prompt in
+    # 4-27 seconds, and the interactive 12-second budget was rejecting answers
+    # for being slow rather than for being wrong.
+    BRIEFING_LLM_TIMEOUT_SECONDS: float = 30.0
+    # Larger than it looks like it needs to be. Models on this endpoint prepend
+    # an unrequested reasoning preamble, and at 700 tokens one spent the entire
+    # budget on it and stopped before emitting a single brace - which surfaces
+    # as "unparseable" and reads like a bad model rather than a small budget.
+    BRIEFING_LLM_MAX_TOKENS: int = 1600
+
+    # Models the provider has withdrawn, which a deployment's .env may still
+    # name. Anything listed here is replaced at construction with
+    # BRIEFING_LLM_MODEL and the substitution is logged at WARNING.
+    #
+    # This exists because the failure is invisible without it. When
+    # meta/llama-3.1-8b-instruct was retired on 2026-08-26 the endpoint began
+    # answering HTTP 410 Gone; every caller here catches provider errors and
+    # serves a deterministic fallback, so the product kept returning
+    # well-formed answers and nothing on any screen or dashboard said the model
+    # had not been consulted. A config file that cannot be edited today should
+    # not be able to silently disable every AI feature.
+    RETIRED_LLM_MODELS: list[str] = [
+        "meta/llama-3.1-8b-instruct",
+        "meta-llama/llama-3-8b-instruct:free",
+    ]
+    # Chosen by measuring the candidates, not by picking the largest name.
+    #
+    # Measured end to end through role_briefings on the configured endpoint,
+    # reasoning preamble disabled, same employer prompt:
+    #     nemotron-3-super-120b-a12b     2.4s  best reading of the data
+    #     nemotron-3-nano-omni-30b-a3b   3.6s  correct but generic
+    #     nemotron-3.5-lightning-30b-a3b 4.9s  leaked "actions:" as prose
+    #     mistral-nemotron               timed out at 45s
+    #     deepseek-v4-flash-0731         timed out at 45s
+    # Most of the rest of the catalogue 404s. The largest model here is also the
+    # fastest, which is why this is measured rather than assumed.
+    BRIEFING_LLM_MODEL: Optional[str] = "nvidia/nemotron-3-super-120b-a12b"
 
     # Cross-encoder reranking of the bi-encoder shortlist. The bi-encoder scores
     # query and document independently, which is what lets it scan the corpus but

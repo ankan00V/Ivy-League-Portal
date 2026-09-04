@@ -40,6 +40,7 @@ from app.services.curriculum_signal import (
     build_signal,
 )
 from app.services.skill_demand import latest_snapshot as latest_demand_snapshot
+from app.services.role_briefings import faculty_field_brief, institution_curriculum_brief
 from app.services.academia_service import (
     MIN_COHORT_SIZE,
     email_domain,
@@ -183,6 +184,22 @@ class DemandRow(BaseModel):
     is_soft: bool
 
 
+class BriefingResponse(BaseModel):
+    """A grounded reading of the numbers on the same page.
+
+    `source` is surfaced rather than hidden: "llm" when the model's answer
+    passed number verification, "deterministic" when it was unavailable or
+    rejected, "refused" below the evidence floor. A reader deciding how much
+    weight to give a paragraph deserves to know what wrote it.
+    """
+
+    headline: str
+    paragraphs: list[str] = Field(default_factory=list)
+    actions: list[str] = Field(default_factory=list)
+    source: str = "deterministic"
+    refusal: Optional[str] = None
+
+
 class FacultyFeedResponse(BaseModel):
     total: int
     scanned: int
@@ -199,6 +216,7 @@ class FacultyFeedResponse(BaseModel):
     from_faculty_sources: int = 0
     from_keyword_fallback: int = 0
     opportunities: list[FacultyOpportunity]
+    briefing: Optional[BriefingResponse] = None
 
 
 @router.get("/faculty/opportunities", response_model=FacultyFeedResponse)
@@ -269,34 +287,52 @@ async def faculty_opportunities(
     department = str(getattr(profile, "specialisation", None) or getattr(profile, "department", None) or "").strip()
     snapshot = await latest_demand_snapshot(department or "")
 
+    demand_rows = [
+        DemandRow(
+            skill=str(row.get("skill") or ""),
+            postings=int(row.get("postings") or 0),
+            share=float(row.get("share") or 0.0),
+            is_soft=bool(row.get("is_soft", False)),
+        )
+        for row in (getattr(snapshot, "skills", None) or [])[:12]
+    ]
+    feed_rows = [
+        FacultyOpportunity(
+            id=str(row.id),
+            title=row.title,
+            opportunity_type=getattr(row, "opportunity_type", None),
+            organisation=getattr(row, "university", None),
+            url=getattr(row, "url", None),
+            location=getattr(row, "location", None),
+            deadline=getattr(row, "deadline", None),
+        )
+        for row in selected
+    ]
+
+    briefing = None
+    try:
+        answer = await faculty_field_brief(
+            demand=[row.model_dump() for row in demand_rows],
+            opportunities=[row.model_dump() for row in feed_rows],
+            department=department,
+            specialisation=getattr(profile, "specialisation", None) if profile else None,
+        )
+        briefing = BriefingResponse(**{
+            key: value for key, value in answer.to_dict().items() if key != "rejected_because"
+        })
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Faculty briefing failed, serving the feed alone: %s", exc)
+
     return FacultyFeedResponse(
         total=len(matches),
         scanned=scanned,
-        demand_signal=[
-            DemandRow(
-                skill=str(row.get("skill") or ""),
-                postings=int(row.get("postings") or 0),
-                share=float(row.get("share") or 0.0),
-                is_soft=bool(row.get("is_soft", False)),
-            )
-            for row in (getattr(snapshot, "skills", None) or [])[:12]
-        ],
+        briefing=briefing,
+        demand_signal=demand_rows,
         demand_domain=getattr(snapshot, "domain", None),
         demand_postings_analysed=int(getattr(snapshot, "postings_analysed", 0) or 0),
         from_faculty_sources=len(by_audience),
         from_keyword_fallback=len(by_keyword),
-        opportunities=[
-            FacultyOpportunity(
-                id=str(row.id),
-                title=row.title,
-                opportunity_type=getattr(row, "opportunity_type", None),
-                organisation=getattr(row, "university", None),
-                url=getattr(row, "url", None),
-                location=getattr(row, "location", None),
-                deadline=getattr(row, "deadline", None),
-            )
-            for row in selected
-        ],
+        opportunities=feed_rows,
     )
 
 
@@ -330,6 +366,10 @@ class CohortResponse(BaseModel):
     #: students have no gaps" - the first is fixed by asking them to take the
     #: assessment, the second not at all.
     signal_reason: Optional[str] = None
+    #: The argument, not the table. An institution taking a syllabus change to
+    #: an academic council needs a case they can defend in a room, and fifteen
+    #: rows of percentages is where that work starts rather than ends.
+    briefing: Optional[BriefingResponse] = None
 
 
 def institution_domain_for_signal(rows: list[dict[str, Any]]) -> str:
@@ -469,13 +509,32 @@ async def institution_cohort(
         students_with_applications=aggregate.students_with_applications,
     )
 
+    funnel_rows = [vars(stage) for stage in funnel]
+    signal_rows = [vars(item) for item in signal]
+
+    briefing = None
+    try:
+        answer = await institution_curriculum_brief(
+            signal=signal_rows,
+            funnel=funnel_rows,
+            cohort_size=aggregate.cohort_size,
+            students_assessed=aggregate.assessments_taken,
+            institution=institution_name or institution_domain,
+        )
+        briefing = BriefingResponse(**{
+            key: value for key, value in answer.to_dict().items() if key != "rejected_because"
+        })
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Institution briefing failed, serving the tables alone: %s", exc)
+
     return CohortResponse(
+        briefing=briefing,
         institution=institution_name or institution_domain,
         institution_domain=institution_domain,
         min_cohort_size=MIN_COHORT_SIZE,
         available=True,
-        funnel=[vars(stage) for stage in funnel],
-        curriculum_signal=[vars(item) for item in signal],
+        funnel=funnel_rows,
+        curriculum_signal=signal_rows,
         signal_reason=signal_reason,
         signal_domain=getattr(snapshot, "domain", None),
         cohort_size=aggregate.cohort_size,

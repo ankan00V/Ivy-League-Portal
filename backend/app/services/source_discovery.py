@@ -25,6 +25,10 @@ from app.core.async_limits import LoopLocalLockMap, LoopLocalSemaphore
 from app.core.url_guard import BlockedTargetURL, assert_public_http_url
 from app.services.scrapling_client import scrapling_client
 from app.core.audiences import normalise_audience
+from app.services.source_rubric import (
+    QUALIFICATION_RUBRIC_VERSION,
+    is_reexaminable,
+)
 from app.core.config import settings
 from app.core.redis import get_redis
 from app.core.time import utc_now
@@ -1823,6 +1827,9 @@ class SourceQualificationService:
 
         source.qualification_score = score
         source.qualification_details = details
+        # Stamped on every verdict, pass or fail. A rejection that does not say
+        # which rules produced it cannot be revisited when those rules change.
+        source.rubric_version = QUALIFICATION_RUBRIC_VERSION
         source.source_type = infer_source_type(source.url, self._title_from_html(html), BeautifulSoup(html, "html.parser").get_text(" ", strip=True)[:500] if html else "")
         if hard_rejects:
             source.status = SourceStatus.rejected
@@ -2019,6 +2026,12 @@ class SourceQualificationService:
                 DiscoveredSource.status == SourceStatus.discovered,
             ).sort("-priority_score", "discovered_at").limit(max(1, int(max_items))).to_list()
             ids = [str(row.id) for row in fallback_rows if row.id is not None]
+        # New work first, always. Only once there is none does the batch spend
+        # its budget on the rejection backlog, so re-examination can never
+        # starve discovery - it fills idle capacity rather than competing for it.
+        remaining = max(0, int(max_items) - len(ids))
+        if remaining:
+            ids.extend(await self._stale_rejection_ids(limit=remaining))
         processed = 0
         qualified = 0
         rejected = 0
@@ -2034,6 +2047,48 @@ class SourceQualificationService:
             except Exception as exc:
                 errors.append(f"{source_id}:{exc}")
         return {"processed": processed, "qualified": qualified, "rejected": rejected, "errors": errors}
+
+    async def _stale_rejection_ids(self, *, limit: int) -> list[str]:
+        """Rejected sources whose verdict predates the current rubric.
+
+        Filtered in Python rather than in the query because the decision is a
+        rule about reason prefixes and safety verdicts, and duplicating that as
+        query fragments is how the two definitions drift apart - the mistake the
+        traffic-provenance predicate was written to stop repeating.
+
+        Ordered by qualification score descending, so a source that missed the
+        threshold by a point is reconsidered before one that scored nothing.
+        """
+        candidates = (
+            await DiscoveredSource.find_many(
+                DiscoveredSource.status == SourceStatus.rejected,
+                DiscoveredSource.rubric_version < QUALIFICATION_RUBRIC_VERSION,
+            )
+            .sort("-qualification_score")
+            .limit(max(1, int(limit)) * 5)
+            .to_list()
+        )
+        picked: list[str] = []
+        for row in candidates:
+            if len(picked) >= limit:
+                break
+            if not is_reexaminable(row.rejection_reason, rubric_version=row.rubric_version):
+                # Stamp it anyway. Without this a permanently rejected source is
+                # re-read from the database on every batch forever, and the scan
+                # grows with the rejection pile rather than with the work.
+                row.rubric_version = QUALIFICATION_RUBRIC_VERSION
+                row.updated_at = utc_now()
+                await row.save()
+                continue
+            if row.id is not None:
+                picked.append(str(row.id))
+        if picked:
+            logger.info(
+                "Re-examining %d source(s) rejected under an older rubric (now v%d)",
+                len(picked),
+                QUALIFICATION_RUBRIC_VERSION,
+            )
+        return picked
 
 
 def _extract_jobposting_objects(payload: Any) -> list[dict[str, Any]]:
@@ -2270,11 +2325,22 @@ class AdaptiveExtractionService:
 
     def _extract_with_heuristics(self, soup: BeautifulSoup, base_url: str, source: DiscoveredSource) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
+        # The same audience vocabulary qualification uses, for the same reason:
+        # this gate was a hardcoded jobs word list, and an FDP advertisement or
+        # a call for proposals contains none of "intern", "engineer" or
+        # "analyst". Reusing SourceQualificationService.DENSITY_TERMS keeps the
+        # two definitions of "this looks like an opportunity" from drifting -
+        # a source that passes qualification and then extracts nothing is the
+        # confusing failure this avoids.
+        audience = normalise_audience(getattr(source, "audience", None))
+        terms = SourceQualificationService.DENSITY_TERMS.get(
+            audience, SourceQualificationService.DENSITY_TERMS["student"]
+        )
         selectors = ["[data-job-id]", "[class*=job]", "[class*=opening]", "article", "li"]
         for selector in selectors:
             for element in soup.select(selector)[:30]:
                 text = element.get_text(" ", strip=True)
-                if len(text) < 20 or not any(term in text.lower() for term in ["apply", "intern", "job", "engineer", "analyst"]):
+                if len(text) < 20 or not any(term in text.lower() for term in terms):
                     continue
                 link = element.select_one("a[href]")
                 title_node = element.select_one("h1,h2,h3,h4,[class*=title],[class*=role]")
@@ -2288,7 +2354,7 @@ class AdaptiveExtractionService:
                         "apply_url": urljoin(base_url, str(link.get("href") if link else base_url)),
                         "description_preview": text[:200],
                         "tags": _extract_skill_tags(text),
-                        "opportunity_type": "internship" if "intern" in text.lower() else "job",
+                        "opportunity_type": _infer_opportunity_type(text, audience=audience),
                     }
                 )
                 if len(rows) >= 5:
@@ -2543,9 +2609,10 @@ class TrustScoringEngine:
         samples = list(source.sample_opportunities or [])
         extraction_quality = round(float(source.extraction_confidence or 0) * 25, 2)
         field_completeness = self._field_completeness_score(samples)
-        relevance = self._relevance_score(samples)
+        audience = normalise_audience(getattr(source, "audience", None))
+        relevance = self._relevance_score(samples, audience=audience)
         legitimacy = await self._legitimacy_score(source, samples)
-        cross_validation = await self._cross_validation_score(samples)
+        cross_validation = await self._cross_validation_score(samples, audience=audience)
         reputation = self._domain_reputation_score(source)
         total = round(
             min(
@@ -2564,7 +2631,7 @@ class TrustScoringEngine:
         source.trust_breakdown = {
             "extraction_quality": {"score": extraction_quality, "max": 25, "details": "extraction confidence"},
             "field_completeness": {"score": field_completeness, "max": 20, "details": "required fields present"},
-            "opportunity_relevance": {"score": relevance, "max": 20, "details": "student and India relevance"},
+            "opportunity_relevance": {"score": relevance, "max": 20, "details": f"{audience} and India relevance"},
             "source_legitimacy": {"score": legitimacy, "max": 15, "details": "known employer/source signals"},
             "cross_source_validation": {"score": cross_validation, "max": 10, "details": "matches existing opportunities"},
             "domain_reputation": {"score": reputation, "max": 10, "details": "domain age from qualification"},
@@ -2587,25 +2654,92 @@ class TrustScoringEngine:
             return 10
         return 0
 
-    def _relevance_score(self, samples: list[dict[str, Any]]) -> float:
+    #: What "relevant" means to each audience, and which opportunity types are
+    #: the real thing rather than a near miss.
+    #:
+    #: Trust used to be scored against one rubric written for student jobs, and
+    #: the two checks that carried it - "does this mention a student, a fresher
+    #: or a rupee stipend" and "is the type an internship or a job" - are things
+    #: an FDP notice and a call for proposals will never say. Measured across
+    #: every non-student source in probation, relevance came out 6.0-9.0 out of
+    #: 20 while field completeness was a perfect 20/20 on the same rows. The
+    #: extraction was working; the rubric was asking the wrong question, and the
+    #: totals (49.77-57.05) sat below the promote gate of 70 and mostly below
+    #: the reject floor of 55. Three of four were one probation run from being
+    #: rejected as bad sources.
+    AUDIENCE_RELEVANCE_TERMS: dict[str, tuple[str, ...]] = {
+        "student": ("₹", "inr", "student", "fresher", "stipend"),
+        "faculty": (
+            "faculty", "professor", "phd", "post-doc", "postdoc", "fellowship",
+            "research", "assistant professor", "associate professor", "scientist",
+            "emeritus", "chair", "principal investigator", "₹", "pay level",
+        ),
+        "institution": (
+            "institution", "college", "university", "department", "scheme",
+            "accreditation", "ranking", "affiliat", "grant", "proposal",
+            "collaborat", "mou", "centre of excellence", "curriculum",
+        ),
+    }
+
+    AUDIENCE_RELEVANT_TYPES: dict[str, frozenset[str]] = {
+        "student": frozenset(
+            {"internship", "job", "hackathon", "competition", "workshop", "conference"}
+        ),
+        "faculty": frozenset(
+            {
+                "job", "fellowship", "faculty", "research", "postdoc", "grant",
+                "workshop", "conference", "training", "fdp",
+            }
+        ),
+        "institution": frozenset(
+            {
+                "scheme", "grant", "programme", "program", "collaboration",
+                "accreditation", "proposal", "workshop", "conference", "training",
+            }
+        ),
+    }
+
+    def _relevance_score(self, samples: list[dict[str, Any]], *, audience: str = "student") -> float:
         if not samples:
             return 0
+        audience = normalise_audience(audience)
+        vocabulary = self.AUDIENCE_RELEVANCE_TERMS.get(
+            audience, self.AUDIENCE_RELEVANCE_TERMS["student"]
+        )
+        relevant_types = self.AUDIENCE_RELEVANT_TYPES.get(
+            audience, self.AUDIENCE_RELEVANT_TYPES["student"]
+        )
         per_item = 20 / max(1, len(samples))
         score = 0.0
         for row in samples:
             haystack = " ".join(str(row.get(field) or "") for field in ["title", "location", "description_preview", "stipend_text", "opportunity_type"]).lower()
+            # Geography is audience-neutral: an Indian posting is what this
+            # platform is for whoever reads it.
             if any(term in haystack for term in INDIAN_CITY_TERMS) or "remote" in haystack:
                 score += per_item * 0.45
-            if "₹" in haystack or "inr" in haystack or "student" in haystack or "fresher" in haystack:
+            if any(term in haystack for term in vocabulary):
                 score += per_item * 0.25
-            if str(row.get("opportunity_type") or "").lower() in {"internship", "job", "hackathon", "competition", "workshop", "conference"}:
+            if str(row.get("opportunity_type") or "").lower() in relevant_types:
                 score += per_item * 0.30
         return round(min(20, score), 2)
 
+    #: Suffixes only an accredited body can hold. India's registry will not sell
+    #: an .ac.in or a .gov.in to anyone who asks, which makes the suffix a
+    #: stronger legitimacy signal for an academic source than any word in a
+    #: corporate brand list - and it is the signal the old rubric had no way to
+    #: see. A government research council scored 0 of 15 on legitimacy purely
+    #: for not being a company.
+    ACCREDITED_DOMAIN_SUFFIXES: tuple[str, ...] = (
+        ".gov.in", ".nic.in", ".ac.in", ".res.in", ".edu.in", ".edu", ".gov", ".org.in",
+    )
+
     async def _legitimacy_score(self, source: DiscoveredSource, samples: list[dict[str, Any]]) -> float:
         score = 0.0
+        domain = (source.domain or "").lower()
         haystack = " ".join([source.name or "", source.domain, *[str(row.get("company") or "") for row in samples]]).lower()
         if any(term in haystack for term in LEGITIMATE_EMPLOYER_TERMS):
+            score += 5
+        if any(domain.endswith(suffix) for suffix in self.ACCREDITED_DOMAIN_SUFFIXES):
             score += 5
         if await DiscoveredSource.find_one(
             {
@@ -2618,14 +2752,33 @@ class TrustScoringEngine:
             score += 5
         return min(15, score)
 
-    async def _cross_validation_score(self, samples: list[dict[str, Any]]) -> float:
+    #: Awarded when an audience has no corpus to validate against yet. Not a
+    #: free pass - it is the midpoint, and it exists because the alternative is
+    #: circular. Cross-validation asks "have we seen a posting like this
+    #: before", and the first source for an audience never has, so it scored a
+    #: flat 0 out of 10 for the offence of being first. Every faculty and
+    #: institution source in the database scored exactly 0 here. A check that
+    #: cannot be satisfied is not evidence of a bad source, and charging for it
+    #: means an audience can never bootstrap.
+    COLD_START_CROSS_VALIDATION = 5.0
+
+    async def _cross_validation_score(
+        self, samples: list[dict[str, Any]], *, audience: str = "student"
+    ) -> float:
+        audience = normalise_audience(audience)
+        # Scoped to the audience: a faculty posting matching a student job is
+        # not corroboration, it is the keyword collision this column replaced.
+        corpus_size = await Opportunity.find(Opportunity.audience == audience).count()
+        if corpus_size == 0:
+            return self.COLD_START_CROSS_VALIDATION
+
         matches = 0
         for row in samples:
             title = str(row.get("title") or "").strip()
             company = str(row.get("company") or "").strip()
             if not title:
                 continue
-            filters: list[Any] = [Opportunity.title == title]
+            filters: list[Any] = [Opportunity.title == title, Opportunity.audience == audience]
             if company:
                 filters.append(Opportunity.university == company)
             if await Opportunity.find_one(*filters):
@@ -2668,12 +2821,14 @@ class TrustScoringEngine:
                 parser_template=source.parser_template or {},
                 trust_score=float(source.trust_score or 0),
                 discovered_source_id=str(source.id),
+                audience=normalise_audience(getattr(source, "audience", None)),
             )
             await registration.insert()
         else:
             registration.status = ScraperRegistrationStatus.active
             registration.parser_template = source.parser_template or registration.parser_template
             registration.trust_score = float(source.trust_score or 0)
+            registration.audience = normalise_audience(getattr(source, "audience", None))
             registration.updated_at = utc_now()
             await registration.save()
 
@@ -2918,6 +3073,7 @@ class TemplateDrivenScraper:
     async def _scrape_with_css_template(self, registration: ScraperRegistration) -> ScraperRunResult:
         template = registration.parser_template or {}
         base_url = registration.careers_url
+        audience = normalise_audience(getattr(registration, "audience", None))
         listing_selector = str(template.get("listing_selector") or "[data-job-id], .job, .opening, article, li")
         title_selector = str(template.get("title_selector") or "h1,h2,h3,h4,[class*=title],[class*=role]")
         apply_selector = str(template.get("apply_link_selector") or "a[href]")
@@ -2947,7 +3103,7 @@ class TemplateDrivenScraper:
                             "apply_url": normalize_url(urljoin(page.final_url, str(href))),
                             "description_preview": text[:200],
                             "tags": _extract_skill_tags(text),
-                            "opportunity_type": "internship" if "intern" in text.lower() else "job",
+                            "opportunity_type": _infer_opportunity_type(text, audience=audience),
                         }
                     )
             except Exception as exc:
@@ -2987,6 +3143,7 @@ class ProbationManager:
             parser_template=source.parser_template or {},
             trust_score=float(source.trust_score or 0),
             discovered_source_id=str(source.id),
+            audience=normalise_audience(getattr(source, "audience", None)),
         )
         run_number = int(source.probation_runs or 0) + 1
         try:
@@ -3295,6 +3452,85 @@ def _extract_work_mode_hint(text: str) -> Optional[str]:
 
 def _extract_skill_tags(text: str) -> list[str]:
     return skill_extractor.extract(text, max_tags=8)
+
+
+#: Ordered longest-phrase-first inside each audience, because "faculty
+#: development programme" must not be read as a faculty vacancy and "call for
+#: proposals" must not be read as a proposal deadline.
+_TYPE_PATTERNS: dict[str, tuple[tuple[str, str], ...]] = {
+    "student": (
+        ("internship", "internship"),
+        ("intern", "internship"),
+        ("hackathon", "hackathon"),
+        ("competition", "competition"),
+        ("workshop", "workshop"),
+        ("conference", "conference"),
+    ),
+    "faculty": (
+        ("faculty development", "fdp"),
+        ("fdp", "fdp"),
+        ("refresher course", "training"),
+        ("short term course", "training"),
+        ("post doctoral", "postdoc"),
+        ("post-doctoral", "postdoc"),
+        ("postdoc", "postdoc"),
+        ("fellowship", "fellowship"),
+        ("emeritus", "fellowship"),
+        ("chair professor", "faculty"),
+        ("assistant professor", "faculty"),
+        ("associate professor", "faculty"),
+        ("professor", "faculty"),
+        ("faculty", "faculty"),
+        ("consultancy", "consultancy"),
+        ("research project", "research"),
+        ("research associate", "research"),
+        ("grant", "grant"),
+        ("conference", "conference"),
+        ("workshop", "workshop"),
+    ),
+    "institution": (
+        ("call for proposal", "proposal"),
+        ("call for", "proposal"),
+        ("expression of interest", "proposal"),
+        ("accreditation", "accreditation"),
+        ("accredit", "accreditation"),
+        ("ranking", "accreditation"),
+        ("empanel", "scheme"),
+        ("scheme", "scheme"),
+        ("grant", "grant"),
+        ("memorandum of understanding", "collaboration"),
+        ("mou", "collaboration"),
+        ("collaborat", "collaboration"),
+        ("programme", "programme"),
+        ("workshop", "workshop"),
+        ("conference", "conference"),
+    ),
+}
+
+#: What a row is when nothing matched. A student row falls back to "job"
+#: because that is what an unlabelled corporate listing overwhelmingly is; the
+#: other two fall back to the neutral word their audience actually uses, since
+#: calling an unrecognised AICTE circular a "Job" is what made every academic
+#: row read as a vacancy.
+_TYPE_FALLBACK = {"student": "job", "faculty": "opportunity", "institution": "programme"}
+
+
+def _infer_opportunity_type(text: str, *, audience: str = "student") -> str:
+    """Name the kind of thing a row is, in the vocabulary of its audience.
+
+    This was `"internship" if "intern" in text else "job"` at five call sites.
+    For a student corpus that is a fair approximation. For the other two it is
+    not an approximation at all - it types a call for proposals as a job, which
+    then fails the audience's own relevance check downstream and drags the
+    source's trust score below the promote gate. The type is the label a reader
+    sees and a filter matches on, so getting it wrong is not cosmetic.
+    """
+    audience = normalise_audience(audience)
+    haystack = (text or "").lower()
+    for needle, label in _TYPE_PATTERNS.get(audience, _TYPE_PATTERNS["student"]):
+        if needle in haystack:
+            return label
+    return _TYPE_FALLBACK.get(audience, "job")
 
 
 source_discovery_engine = SourceDiscoveryEngine()
