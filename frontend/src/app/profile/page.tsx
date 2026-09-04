@@ -38,6 +38,7 @@ import TaxonomyMultiSelect from "@/components/ui/TaxonomyMultiSelect";
 import ToggleRow from "@/components/ui/ToggleRow";
 import { useProfileData } from "@/hooks/useProfileData";
 import { landingPathForAccountType } from "@/lib/employer-portal";
+import { accountRole, type AccountType } from "@/lib/account-roles";
 import { INDIAN_INSTITUTION_OPTIONS, OTHER_INSTITUTION_LABEL } from "@/lib/indian-institutions";
 import {
   EDUCATION_PROGRAM_GROUPS,
@@ -52,7 +53,6 @@ import {
   splitLocations,
 } from "@/lib/location-taxonomy";
 
-type AccountType = "candidate" | "employer";
 type UserType = "school_student" | "college_student" | "fresher" | "professional";
 
 type SectionKey =
@@ -384,6 +384,11 @@ type SectionMeta = {
   icon: LucideIcon;
   requiredCandidate?: boolean;
   requiredEmployer?: boolean;
+  /** Which roles this section applies to. Every section used to render for
+   *  every role, so an industry recruiter was asked to upload a CV and an
+   *  institution was asked for its degree - the `required` flags marked
+   *  sections mandatory but never hid the ones that made no sense. */
+  roles: AccountType[];
 };
 
 const USER_TYPE_OPTIONS: Array<{ key: UserType; label: string }> = [
@@ -446,16 +451,22 @@ const SOCIAL_LINK_FIELDS: Array<{ key: string; label: string; placeholder: strin
   { key: "custom", label: "Custom Link", placeholder: "https://..." },
 ];
 
+const ALL_ROLES: AccountType[] = ["candidate", "employer", "faculty", "institution"];
+const A_PERSON: AccountType[] = ["candidate", "employer", "faculty"];
+
 const SECTION_ITEMS: SectionMeta[] = [
-  { key: "basic", label: "Basic Details", description: "Identity and account setup", icon: UserRound, requiredCandidate: true, requiredEmployer: true },
-  { key: "resume", label: "Resume", description: "Upload and manage CV", icon: FileText, requiredCandidate: true },
-  { key: "about", label: "About", description: "Short professional summary", icon: NotebookPen, requiredCandidate: true },
-  { key: "skills", label: "Skills", description: "Skills and interests", icon: Sparkles, requiredCandidate: true },
-  { key: "education", label: "Education", description: "Academic information", icon: GraduationCap, requiredCandidate: true },
-  { key: "work", label: "Work Experience", description: "Role and experience", icon: BriefcaseBusiness },
-  { key: "accomplishments", label: "Accomplishments & Initiatives", description: "Projects and achievements", icon: Award },
-  { key: "personal", label: "Personal Details", description: "Address and personal info", icon: MapPinned },
-  { key: "social", label: "Social Links", description: "External profile links", icon: Link2 },
+  { key: "basic", label: "Basic Details", description: "Identity and account setup", icon: UserRound, requiredCandidate: true, requiredEmployer: true, roles: ALL_ROLES },
+  // A recruiter does not have a CV to upload here, and an institution is not a
+  // person. Students and academicians both do.
+  { key: "resume", label: "Resume", description: "Upload and manage CV", icon: FileText, requiredCandidate: true, roles: ["candidate", "faculty"] },
+  { key: "about", label: "About", description: "Short professional summary", icon: NotebookPen, requiredCandidate: true, roles: ALL_ROLES },
+  { key: "skills", label: "Skills", description: "Skills and interests", icon: Sparkles, requiredCandidate: true, roles: ["candidate", "faculty"] },
+  { key: "education", label: "Education", description: "Academic information", icon: GraduationCap, requiredCandidate: true, roles: ["candidate", "faculty"] },
+  { key: "work", label: "Work Experience", description: "Role and experience", icon: BriefcaseBusiness, roles: A_PERSON },
+  { key: "accomplishments", label: "Accomplishments & Initiatives", description: "Projects and achievements", icon: Award, roles: ["candidate", "faculty"] },
+  // An organisation has no hobbies and no home address.
+  { key: "personal", label: "Personal Details", description: "Address and personal info", icon: MapPinned, roles: A_PERSON },
+  { key: "social", label: "Social Links", description: "External profile links", icon: Link2, roles: ALL_ROLES },
 ];
 
 function toText(value: unknown): string {
@@ -923,7 +934,9 @@ export default function ProfilePage() {
 
   const sectionList = useMemo(
     () =>
-      SECTION_ITEMS.map((section) => ({
+      SECTION_ITEMS.filter((section) =>
+        section.roles.includes((profile.account_type || "candidate") as AccountType),
+      ).map((section) => ({
         ...section,
         required: profile.account_type === "candidate" ? Boolean(section.requiredCandidate) : Boolean(section.requiredEmployer),
       })),
@@ -1206,7 +1219,7 @@ export default function ProfilePage() {
         <TextField
           wrapperClassName="profile-field"
           label="Account Type"
-          value={profile.account_type === "candidate" ? "Candidate" : "Employer"}
+          value={accountRole(profile.account_type)?.label ?? "Student"}
           disabled
         />
       </div>
