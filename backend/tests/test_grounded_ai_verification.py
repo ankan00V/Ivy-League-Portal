@@ -130,3 +130,74 @@ class TestAnswerShape(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCollectionLengthsAreFacts(unittest.TestCase):
+    """A model counting what it was handed is not inventing anything.
+
+    Rejecting "you have 6 gaps" when six gap rows were passed in is the false
+    rejection that makes a verifier look like a nuisance instead of a
+    safeguard - and every false rejection pushes a real reading off the page in
+    favour of a template.
+    """
+
+    def test_a_list_length_is_supported(self) -> None:
+        facts = {"gaps": [{"skill": "a"}] * 6}
+        self.assertEqual(unsupported_numbers("You have 6 gaps.", collect_supported_numbers(facts)), [])
+
+    def test_a_number_that_is_not_a_length_is_still_caught(self) -> None:
+        facts = {"gaps": [{"skill": "a"}] * 6}
+        self.assertEqual(unsupported_numbers("You have 41 gaps.", collect_supported_numbers(facts)), ["41"])
+
+
+class TestBriefingCache(unittest.TestCase):
+    """Keyed on content, so it can never serve a reading of numbers that moved.
+
+    These panels were adding 8 to 21 seconds to the endpoints rendering them,
+    and what they narrate barely changes. A time-based cache would have to
+    choose between stale readings and pointless regeneration; a content key has
+    neither problem - if any number changes, the key changes with it.
+    """
+
+    def _narrator(self):
+        from app.services.grounded_ai import GroundedNarrator
+
+        return GroundedNarrator()
+
+    def test_identical_facts_share_a_key(self) -> None:
+        n = self._narrator()
+        facts = {"skills": [{"skill": "python", "supply": 0.66}]}
+        self.assertEqual(n._cache_key("p", facts), n._cache_key("p", dict(facts)))
+
+    def test_key_order_does_not_matter(self) -> None:
+        n = self._narrator()
+        self.assertEqual(n._cache_key("p", {"a": 1, "b": 2}), n._cache_key("p", {"b": 2, "a": 1}))
+
+    def test_a_changed_number_changes_the_key(self) -> None:
+        # The property the whole design rests on. If this ever stopped holding,
+        # a dashboard would show a paragraph about figures no longer on it.
+        n = self._narrator()
+        before = n._cache_key("p", {"skills": [{"supply": 0.66}]})
+        after = n._cache_key("p", {"skills": [{"supply": 0.67}]})
+        self.assertNotEqual(before, after)
+
+    def test_two_audiences_reading_the_same_facts_do_not_collide(self) -> None:
+        # The same rows read for a recruiter and for a registrar are different
+        # readings. Keying on facts alone would serve one to the other.
+        n = self._narrator()
+        facts = {"skills": [{"supply": 0.66}]}
+        self.assertNotEqual(n._cache_key("recruiter prompt", facts), n._cache_key("registrar prompt", facts))
+
+    def test_the_cache_is_bounded(self) -> None:
+        n = self._narrator()
+        for index in range(n._cache_limit + 25):
+            n._remember(f"key-{index}", GroundedAnswer(headline="h", paragraphs=["p"]))
+        self.assertLessEqual(len(n._cache), n._cache_limit)
+
+    def test_the_oldest_entry_is_evicted_first(self) -> None:
+        n = self._narrator()
+        n._cache_limit = 3
+        for index in range(4):
+            n._remember(f"key-{index}", GroundedAnswer(headline=str(index), paragraphs=["p"]))
+        self.assertNotIn("key-0", n._cache)
+        self.assertIn("key-3", n._cache)

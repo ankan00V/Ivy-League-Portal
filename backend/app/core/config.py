@@ -589,6 +589,12 @@ class Settings(BaseSettings):
     # as "unparseable" and reads like a bad model rather than a small budget.
     BRIEFING_LLM_MAX_TOKENS: int = 1600
 
+    # Wall-clock budget for one source's probation run. The batch is sequential,
+    # and without a bound one unreachable site holds all of them: nbaind.org
+    # cycled every render provider in the fallback chain and six other sources
+    # behind it were never reached at all.
+    PROBATION_SOURCE_TIMEOUT_SECONDS: float = 120.0
+
     # Models the provider has withdrawn, which a deployment's .env may still
     # name. Anything listed here is replaced at construction with
     # BRIEFING_LLM_MODEL and the substitution is logged at WARNING.

@@ -34,9 +34,11 @@ something true.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -111,6 +113,12 @@ def collect_supported_numbers(facts: Any) -> set[float]:
                 walk(item)
             return
         if isinstance(node, (list, tuple, set)):
+            # How many things there are is a fact about the data, not an
+            # invention. A model given six gap rows and writing "six gaps" was
+            # being rejected for counting what it had been handed, which is the
+            # false rejection that makes a verifier look like a nuisance rather
+            # than a safeguard.
+            found.add(float(len(node)))
             for item in node:
                 walk(item)
 
@@ -160,6 +168,24 @@ class GroundedNarrator:
             context="role briefings",
         )
         self._client: Any | None = None
+        #: Bounded so a long-lived process cannot grow one entry per distinct
+        #: cohort forever. Small on purpose - there are four features and their
+        #: inputs change slowly, so the working set is tiny.
+        self._cache: "OrderedDict[str, GroundedAnswer]" = OrderedDict()
+        self._cache_limit = 128
+
+    @staticmethod
+    def _cache_key(system_prompt: str, facts: dict[str, Any]) -> str:
+        # The prompt is part of the key: the same facts read for a recruiter and
+        # for a registrar are two different readings, and they must not collide.
+        payload = json.dumps({"p": system_prompt, "f": facts}, sort_keys=True, default=str)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def _remember(self, key: str, answer: GroundedAnswer) -> None:
+        self._cache[key] = answer
+        self._cache.move_to_end(key)
+        while len(self._cache) > self._cache_limit:
+            self._cache.popitem(last=False)
 
     def _extra_body(self) -> dict[str, Any] | None:
         """Turn off the model's reasoning preamble where the host supports it.
@@ -206,6 +232,28 @@ class GroundedNarrator:
         if not self.configured:
             fallback.rejected_because = ["llm_not_configured"]
             return fallback
+
+        # Keyed on the facts, not on the user or a clock.
+        #
+        # These panels sit in the middle of a dashboard and were adding 8 to 21
+        # seconds to the endpoints that render them. What they narrate barely
+        # moves: demand snapshots refresh twice a day and a cohort's assessments
+        # change when a student takes one. So the correct key is the content -
+        # identical facts can only produce the same reading, and the moment any
+        # number changes the key changes with it and the answer is regenerated.
+        # A time-based cache would have to choose between stale readings and
+        # pointless regeneration; this one never serves a reading of numbers
+        # that are no longer on the page.
+        cache_key = self._cache_key(system_prompt, facts)
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return GroundedAnswer(
+                headline=cached.headline,
+                paragraphs=list(cached.paragraphs),
+                actions=list(cached.actions),
+                source=cached.source,
+                refusal=cached.refusal,
+            )
 
         supported = collect_supported_numbers(facts)
         messages = [
@@ -281,12 +329,17 @@ class GroundedNarrator:
             fallback.rejected_because = failures
             return fallback
 
-        return GroundedAnswer(
+        answer = GroundedAnswer(
             headline=headline,
             paragraphs=paragraphs[:max_paragraphs],
             actions=actions[:max_actions],
             source="llm",
         )
+        # Only verified answers are cached. Caching a rejection would keep a
+        # deterministic fallback on the page after the model had recovered, and
+        # caching an unverified one would store a hallucination.
+        self._remember(cache_key, answer)
+        return answer
 
 
 _OUTPUT_CONTRACT = """

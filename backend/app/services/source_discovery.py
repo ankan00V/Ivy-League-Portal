@@ -3287,13 +3287,51 @@ class ProbationManager:
             {"domain": source.domain, "trust_score": source.trust_score, "reason": "probation_borderline"},
         )
 
+    #: Wall-clock budget for one source's probation run.
+    #:
+    #: The batch is sequential and had no per-source bound, so one site could
+    #: hold the whole run. Measured: nbaind.org serves only on www and refuses
+    #: the apex, and every render provider in the fallback chain - scrapling,
+    #: firecrawl, browser_use, crawlee, obscura - was tried, failed, and tried
+    #: again, in a loop. Six other sources sat behind it and none was reached.
+    #: The fallback chain exists so nothing stalls on one provider; without a
+    #: bound it became the thing that stalled.
+    PROBATION_SOURCE_TIMEOUT_SECONDS = 120.0
+
     async def run_all_probation_sources(self, *, limit: int = 100) -> dict[str, Any]:
         sources = await DiscoveredSource.find_many(DiscoveredSource.status == SourceStatus.probation).limit(limit).to_list()
+        budget = float(
+            getattr(settings, "PROBATION_SOURCE_TIMEOUT_SECONDS", self.PROBATION_SOURCE_TIMEOUT_SECONDS)
+        )
         processed = 0
+        timed_out: list[str] = []
         for source in sources:
-            await self.run_probation_scrape(source.id)
-            processed += 1
-        return {"processed": processed}
+            try:
+                await asyncio.wait_for(self.run_probation_scrape(source.id), timeout=budget)
+                processed += 1
+            except asyncio.TimeoutError:
+                # Recorded against the source rather than swallowed. A source
+                # that cannot be fetched inside the budget is a health signal,
+                # and consecutive_failures is what eventually quarantines it -
+                # so a site nobody can reach stops costing the batch two minutes
+                # on every run instead of costing it forever.
+                timed_out.append(source.domain)
+                logger.warning(
+                    "Probation scrape for %s exceeded %.0fs; moving on.", source.domain, budget
+                )
+                try:
+                    fresh = await DiscoveredSource.get(source.id)
+                    if fresh is not None:
+                        fresh.consecutive_failures = int(fresh.consecutive_failures or 0) + 1
+                        fresh.probation_failures.append(f"probation_timeout:{budget:.0f}s")
+                        fresh.last_health_reason = "probation_timeout"
+                        fresh.updated_at = utc_now()
+                        await fresh.save()
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.warning("Could not record probation timeout for %s: %s", source.domain, exc)
+            except Exception as exc:
+                logger.warning("Probation scrape for %s failed: %s", source.domain, exc)
+        return {"processed": processed, "timed_out": timed_out}
 
 
 class ScraperRegistry:
