@@ -195,13 +195,30 @@ export default function FacultyPage() {
                 )}
 
                 {feed && (feed.from_faculty_sources > 0 || feed.from_keyword_fallback > 0) && (
-                    // Stated rather than hidden: the academician corpus is still
-                    // largely salvaged from student-facing sources, and a reader
-                    // should know which number they are looking at.
+                    // Stated rather than hidden, and stated accurately.
+                    //
+                    // This used to say academician sources were "still being
+                    // qualified", which implied waiting would fix it. Twenty-seven
+                    // are seeded and qualified; the reason they yield nothing is
+                    // that Indian universities and councils advertise posts as PDF
+                    // notices linked from a notice board, not as listings a parser
+                    // can read. Sixteen candidate sources were probed and the ones
+                    // that render postings as HTML returned single digits. Saying
+                    // "still being qualified" would be a promise this cannot keep.
                     <div style={{ ...panelStyle(), padding: "0.85rem 1.1rem", marginBottom: "1.5rem", color: "var(--text-secondary)", fontWeight: 600, fontSize: "0.88rem" }}>
-                        {feed.from_faculty_sources} from academician sources · {feed.from_keyword_fallback} recovered
-                        from the wider corpus. Academician sources are still being qualified, so the
-                        second number is currently the larger one.
+                        <strong style={{ color: "var(--text-primary)" }}>
+                            {feed.from_faculty_sources} from academician sources · {feed.from_keyword_fallback} recovered
+                            from the wider corpus.
+                        </strong>
+                        {feed.from_faculty_sources === 0 && (
+                            <>
+                                {" "}Academician sources are seeded and reachable, but most Indian
+                                universities and research councils publish posts as PDF notices rather
+                                than as listings a parser can read, so what you see here is recovered
+                                from the wider corpus by matching. We would rather show you that than
+                                claim a source produced it.
+                            </>
+                        )}
                     </div>
                 )}
 
