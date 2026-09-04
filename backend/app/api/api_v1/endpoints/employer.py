@@ -16,11 +16,12 @@ from app.models.application import Application
 from app.models.opportunity import Opportunity
 from app.models.profile import Profile
 from app.models.recruiter_audit_log import RecruiterAuditLog
+from app.models.skill_assessment import SkillAssessment
 from app.models.user import User
 from app.services.interaction_service import interaction_service
 from app.services.opportunity_visibility import canonical_opportunity_type, resolve_opportunity_portal
 from app.services.source_discovery import employer_claim_service
-from app.core.time import utc_now
+from app.core.time import utc_now, as_utc_aware
 
 router = APIRouter()
 
@@ -122,6 +123,38 @@ class EmployerDashboardSummary(BaseModel):
     rejected_applications: int
     interview_applications: int
     recent_applications: list[EmployerApplicationResponse]
+
+
+class ScarcityRow(BaseModel):
+    skill: str
+    demand_share: float
+    supply: float
+    candidates_assessed: int
+    candidates_with_skill: int
+    is_soft: bool
+    scarcity: float
+    verdict: str
+
+
+class ListingRow(BaseModel):
+    opportunity_id: str
+    title: str
+    status: str
+    applications: int
+    shortlisted: int
+    shortlist_rate: Optional[float] = None
+    days_open: Optional[int] = None
+
+
+class TalentPoolResponse(BaseModel):
+    #: Market-wide proportions only. No candidate is ever returned here, and the
+    #: pool must be large enough that no single person moves a figure visibly.
+    available: bool
+    reason: Optional[str] = None
+    candidates_assessed: int = 0
+    postings_analysed: int = 0
+    scarcity: list[ScarcityRow] = Field(default_factory=list)
+    listings: list[ListingRow] = Field(default_factory=list)
 
 
 class EmployerApplicationsListResponse(BaseModel):
@@ -260,6 +293,33 @@ def _csv_response(*, filename: str, rows: list[dict[str, Any]]) -> Response:
     )
 
 
+async def _require_verified_employer(user: User) -> None:
+    """Publishing to the candidate feed requires proving control of the domain.
+
+    The portal was retired precisely because re-enabling it restores a self-serve
+    signup whose only gate is a non-freemail email address - anyone with a company
+    -looking mailbox could push listings straight into the feed candidates trust.
+    A corporate-looking address proves nothing; placing a token on the company's
+    own careers page proves control of that domain.
+
+    Deliberately gates publication, not creation: an unverified employer can draft
+    and edit freely, so verification blocks reach rather than access. Admins are
+    exempt because they are the ones who verify.
+    """
+    if bool(getattr(user, "is_admin", False)):
+        return
+    claim = await employer_claim_service.latest_for_user(user)
+    if claim is not None and str(claim.verification_status or "").lower() == "verified":
+        return
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            "Publishing requires a verified careers page. Claim your careers page "
+            "and complete verification, then publish this listing."
+        ),
+    )
+
+
 @router.post("/opportunities", response_model=EmployerOpportunityResponse)
 async def create_employer_opportunity(
     payload: EmployerOpportunityCreate,
@@ -278,6 +338,8 @@ async def create_employer_opportunity(
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     lifecycle_status = _normalize_lifecycle_status(payload.lifecycle_status, default="draft")
+    if lifecycle_status == "published":
+        await _require_verified_employer(current_user)
 
     opportunity = Opportunity(
         title=payload.title.strip(),
@@ -500,6 +562,8 @@ async def update_opportunity_lifecycle(
     current = _normalize_lifecycle_status(opportunity.lifecycle_status, default="published")
     if not _lifecycle_transition_allowed(current=current, target=target):
         raise HTTPException(status_code=400, detail=f"Invalid lifecycle transition: {current} -> {target}")
+    if target == "published":
+        await _require_verified_employer(current_user)
 
     now = utc_now()
     opportunity.lifecycle_status = target
@@ -849,3 +913,84 @@ async def careers_page_status(
         "created_at": claim.created_at,
         "verified_at": claim.verified_at,
     }
+
+
+@router.get("/talent-pool", response_model=TalentPoolResponse)
+async def employer_talent_pool(
+    current_user: User = Depends(get_current_employer_user),
+) -> Any:
+    """How scarce the skills you are hiring for are, and which listings are cold.
+
+    A recruiter can already see how many people applied. What they cannot see
+    anywhere is whether the skill they are asking for exists in the market -
+    which is the difference between "raise the salary", "drop the requirement"
+    and "the description is wrong".
+    """
+    from app.services.skill_demand import GLOBAL_DOMAIN, latest_snapshot
+    from app.services.talent_pool import build_scarcity, summarise_listings
+
+    snapshot = await latest_snapshot(GLOBAL_DOMAIN)
+
+    # Every completed assessment, as corroborated levels. Read in one query
+    # rather than per candidate, and never joined back to a person.
+    assessments = await SkillAssessment.find_many().sort("-created_at").to_list()
+    latest_per_user: dict[str, Any] = {}
+    for row in assessments:
+        latest_per_user.setdefault(str(row.user_id), row)
+    candidate_levels = [
+        dict(row.corroborated) for row in latest_per_user.values() if row.corroborated
+    ]
+
+    scarcity, refusal = build_scarcity(
+        demand_rows=getattr(snapshot, "skills", None) or [],
+        candidate_levels=candidate_levels,
+    )
+    if snapshot is None:
+        refusal = "Skill demand has not been computed yet."
+
+    # Per-listing performance for this employer only.
+    opportunities = await _load_employer_opportunities(current_user.id)
+    applications = await _load_applications_for_opportunities(
+        [opportunity.id for opportunity in opportunities]
+    )
+    by_opportunity: dict[str, list[Application]] = {}
+    for application in applications:
+        by_opportunity.setdefault(str(application.opportunity_id), []).append(application)
+
+    now = utc_now()
+    listing_rows = []
+    for opportunity in opportunities:
+        rows = by_opportunity.get(str(opportunity.id), [])
+        published = getattr(opportunity, "published_at", None)
+        listing_rows.append(
+            {
+                "opportunity_id": str(opportunity.id),
+                "title": opportunity.title,
+                "status": _normalize_lifecycle_status(
+                    getattr(opportunity, "lifecycle_status", None), default="draft"
+                ),
+                "applications": len(rows),
+                "shortlisted": sum(
+                    1
+                    for row in rows
+                    if _coerce_pipeline_state(getattr(row, "pipeline_state", None))
+                    in {"shortlisted", "interview"}
+                ),
+                "days_open": (
+                    (now - as_utc_aware(published)).days
+                    if published and as_utc_aware(published)
+                    else None
+                ),
+            }
+        )
+
+    return TalentPoolResponse(
+        available=bool(scarcity),
+        reason=refusal,
+        candidates_assessed=len(candidate_levels),
+        postings_analysed=int(getattr(snapshot, "postings_analysed", 0) or 0),
+        scarcity=[
+            ScarcityRow(**{**vars(item), "verdict": item.verdict}) for item in scarcity
+        ],
+        listings=[ListingRow(**vars(item)) for item in summarise_listings(listing_rows)],
+    )
