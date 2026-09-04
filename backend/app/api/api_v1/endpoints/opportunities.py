@@ -558,7 +558,17 @@ async def _load_active_opportunities(
     return curated[safe_skip : safe_skip + safe_limit]
 
 
+#: When the staleness check last actually asked the database. The check runs on
+#: every feed request and its answer is measured in minutes, so asking every
+#: time spent a full round trip - ~350ms against the Supabase pooler - of a
+#: user's page load to re-learn something that had not changed. Cached in
+#: process, deliberately: it guards a scrape trigger, not correctness, and the
+#: enqueue below is deduplicated anyway.
+_LAST_STALENESS_CHECK_AT: float = 0.0
+
+
 async def _ensure_live_feed_if_stale() -> None:
+    global _LAST_STALENESS_CHECK_AT
     from app.services.scraper import get_scraper_runtime_status, run_scheduled_scrapers
     from app.services.job_runner import job_runner
 
@@ -568,6 +578,15 @@ async def _ensure_live_feed_if_stale() -> None:
     runtime = get_scraper_runtime_status()
     if runtime.get("is_running"):
         return
+
+    # Re-check at most once per interval. Worst case a scrape is triggered up to
+    # this much later than it could have been, against a staleness threshold
+    # measured in minutes - and every request in between saves a round trip.
+    interval = max(1.0, float(getattr(settings, "FEED_STALENESS_CHECK_INTERVAL_SECONDS", 60.0)))
+    now_monotonic = time.monotonic()
+    if now_monotonic - _LAST_STALENESS_CHECK_AT < interval:
+        return
+    _LAST_STALENESS_CHECK_AT = now_monotonic
 
     latest_items = await Opportunity.find_many().sort("-last_seen_at").limit(1).to_list()
     if not latest_items:

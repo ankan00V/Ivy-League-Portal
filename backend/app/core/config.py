@@ -118,7 +118,20 @@ class Settings(BaseSettings):
     NEON_DATABASE_NAME: str = "neondb"
     # Read path switch. Off means the feed still reads Mongo, so the two can be
     # compared on the same corpus before anything is cut over.
-    OPPORTUNITY_READ_BACKEND: str = "mongo"  # mongo | postgres
+    # Which path serves the feed. Left at "mongo" long after Mongo stopped being
+    # contacted at all, so the hottest endpoint in the product took the legacy
+    # fallback: it pulls a window of at least 400 rows through the ODM and
+    # discards most of them to return 20, instead of applying status and portal
+    # filters in SQL. Measured on the live corpus, same 20 rows returned:
+    # mongo 1378ms, postgres 788ms.
+    #
+    # The reader still falls back to the ODM path if the Postgres read raises,
+    # so this is a preference rather than a hard switch.
+    # How often the feed re-asks the database whether the corpus is stale.
+    # The check guards a scrape trigger, not correctness, so paying a round
+    # trip for it on every page load was the wrong trade.
+    FEED_STALENESS_CHECK_INTERVAL_SECONDS: float = 60.0
+    OPPORTUNITY_READ_BACKEND: str = "postgres"  # postgres | mongo
     NEON_POOL_MIN_SIZE: int = 1
     # How long an idle pooled connection may live. Must stay below the
     # pooler's own idle timeout: past it, the far end has closed the socket
