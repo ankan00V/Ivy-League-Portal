@@ -57,8 +57,41 @@ def enabled_account_types() -> frozenset[str]:
 
 
 def normalise_account_type(value: str | None, *, default: str = CANDIDATE) -> str:
-    """Lower-case and trim, without deciding whether it is allowed."""
+    """Lower-case and trim, without deciding whether it is allowed.
+
+    Deliberately does not validate. Callers that guard account creation check
+    membership themselves and raise, and making this fall back to a default
+    would turn "we do not recognise this role" into "you are a candidate now" -
+    a signup with account_type "admin" would silently create a candidate rather
+    than being refused. Two tests exist solely to stop that being convenient.
+
+    For the other question - "give me a role I can safely build a query from" -
+    use `resolve_account_type`.
+    """
     return str(value or default).strip().lower()
+
+
+def resolve_account_type(value: str | None, *, default: str = CANDIDATE) -> str:
+    """One of the four known roles, or `default`. Never anything else.
+
+    For callers that use a role to *scope* something rather than to authorise
+    it. The leaderboard builds a query filter from a role, and with the
+    non-validating form an unrecognised value produced
+    `{"account_type": "nonsense"}` - a filter that matches no row and renders
+    an empty board with no error recorded anywhere.
+
+    Failing to `candidate` is the safe direction: it is the least privileged of
+    the four, seeing only its own cohort, so a junk value degrades to the
+    smallest view rather than an arbitrary one.
+
+    Being a known role is not the same as being switched on. A role can be real
+    and disabled by a feature flag - `account_type_enabled` answers that - and
+    conflating the two would make a disabled portal look like a typo.
+    """
+    candidate = str(value or "").strip().lower()
+    if candidate in KNOWN_ACCOUNT_TYPES:
+        return candidate
+    return str(default).strip().lower()
 
 
 def describe_allowed() -> str:

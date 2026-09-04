@@ -5,6 +5,7 @@ import React, { useEffect, useState } from "react";
 import { Crown, Medal, Trophy } from "lucide-react";
 import { apiUrl } from "@/lib/api";
 import { getAccessToken } from "@/lib/auth-session";
+import { accountRole } from "@/lib/account-roles";
 
 interface LeaderboardEntry {
     rank: number;
@@ -22,6 +23,38 @@ export default function LeaderboardPage() {
     const [searchResults, setSearchResults] = useState<LeaderboardEntry[]>([]);
     const [searchLoading, setSearchLoading] = useState(false);
     const [searchError, setSearchError] = useState<string | null>(null);
+    // The board is scoped server-side to the viewer's own account type, so the
+    // heading has to say which population these ranks describe. It read
+    // "Top 10 Students" for everyone while listing recruiters, registrars and
+    // academicians - a label that was wrong about the rows underneath it.
+    const [accountType, setAccountType] = useState<string>("candidate");
+    const roleLabel = accountRole(accountType)?.label ?? "Student";
+
+    useEffect(() => {
+        let cancelled = false;
+        const fetchRole = async () => {
+            const token = getAccessToken();
+            if (!token) return;
+            try {
+                const res = await fetch(apiUrl("/api/v1/users/me/profile"), {
+                    credentials: "include",
+                    headers: { Authorization: `Bearer ${token}` },
+                });
+                if (!res.ok) return;
+                const payload = (await res.json()) as { account_type?: string | null };
+                if (!cancelled) {
+                    setAccountType(String(payload?.account_type ?? "candidate").trim().toLowerCase());
+                }
+            } catch {
+                // Falls back to "Student", which is what the board shows for an
+                // account whose role we could not read.
+            }
+        };
+        void fetchRole();
+        return () => {
+            cancelled = true;
+        };
+    }, []);
 
     useEffect(() => {
         const fetchLeaderboard = async () => {
@@ -157,7 +190,7 @@ export default function LeaderboardPage() {
                                         <thead>
                                             <tr style={{ borderBottom: "2px solid var(--border-subtle)" }}>
                                                 <th style={{ textAlign: "left", padding: "0.75rem 0.35rem" }}>Rank</th>
-                                                <th style={{ textAlign: "left", padding: "0.75rem 0.35rem" }}>Student</th>
+                                                <th style={{ textAlign: "left", padding: "0.75rem 0.35rem" }}>{roleLabel}</th>
                                                 <th style={{ textAlign: "left", padding: "0.75rem 0.35rem" }}>Handle</th>
                                                 <th style={{ textAlign: "left", padding: "0.75rem 0.35rem" }}>InCoScore</th>
                                             </tr>
@@ -191,14 +224,14 @@ export default function LeaderboardPage() {
 
                 <section className="card-panel" style={{ padding: 0, overflow: "hidden" }}>
                     <div style={{ padding: "1rem 1.25rem", borderBottom: "2px solid var(--border-subtle)", fontWeight: 700 }}>
-                        Top 10 Students
+                        Top 10 · {roleLabel}
                     </div>
                     <div style={{ overflowX: "auto" }}>
                         <table style={{ width: "100%", borderCollapse: "collapse" }}>
                             <thead>
                                 <tr style={{ borderBottom: "2px solid var(--border-subtle)" }}>
                                     <th style={{ textAlign: "left", padding: "0.9rem 1.25rem" }}>Rank</th>
-                                    <th style={{ textAlign: "left", padding: "0.9rem 1.25rem" }}>Student</th>
+                                    <th style={{ textAlign: "left", padding: "0.9rem 1.25rem" }}>{roleLabel}</th>
                                     <th style={{ textAlign: "left", padding: "0.9rem 1.25rem" }}>Handle</th>
                                     <th style={{ textAlign: "left", padding: "0.9rem 1.25rem" }}>InCoScore</th>
                                 </tr>

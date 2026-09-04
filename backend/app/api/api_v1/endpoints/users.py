@@ -42,7 +42,10 @@ router = APIRouter()
 # Imported rather than redeclared: this file and auth.py each kept their own
 # copy, and a type valid at signup but invalid at profile update (or the
 # reverse, which is a hole) was one careless edit away.
-from app.core.account_types import KNOWN_ACCOUNT_TYPES as VALID_ACCOUNT_TYPES  # noqa: E402
+from app.core.account_types import (  # noqa: E402
+    KNOWN_ACCOUNT_TYPES as VALID_ACCOUNT_TYPES,
+    resolve_account_type,
+)
 VALID_USER_TYPES = {"school_student", "college_student", "fresher", "professional"}
 VALID_HIRING_FOR = {"myself", "others"}
 VALID_AVAILABILITY = {"immediately", "within_1_month", "within_3_months", "exploring"}
@@ -1517,11 +1520,42 @@ async def get_leaderboard(
     safe_limit = max(1, min(limit, 100))
     search_term = (search or "").strip().lower().lstrip("@")
 
+    # Scoped to the viewer's own account type, exactly as _build_ranking_summary
+    # already scopes the sidebar figure ten lines from here.
+    #
+    # This query was Profile.find_all() with no filter at all, so a board titled
+    # "Top 10 Students" listed Demo Industry Recruiter, Demo Institution
+    # Registrar and two Demo Academicians - and the sidebar beside it said
+    # "Rank #2 of 8" because the summary was counting candidates only. Two
+    # numbers on one screen, computed from different populations, neither of
+    # them announcing which.
+    #
+    # Scoping also stops the board being a cross-role directory: a recruiter has
+    # no business being handed a ranked list of students' names and handles.
+    #
+    # Scoped on the real account type rather than `_normalize_account_scope`,
+    # which is deliberately two-valued - it collapses employer, faculty and
+    # institution into one "employer" shape for profile-form branching. That is
+    # right there and wrong here: it would rank a professor against recruiters
+    # and registrars on a board whose heading names one of the three.
+    scope = resolve_account_type(getattr(current_user, "account_type", None))
+    scope_filter = {"account_type": scope}
+
     # Bound the scan. This previously loaded every Profile in the collection on
     # an anonymous endpoint and then issued one User.get() per profile - a full
     # scan plus N+1 that grows linearly with signups.
-    scan_limit = safe_limit if not search_term else min(1000, max(safe_limit * 20, 200))
-    profiles = await Profile.find_all().sort("-incoscore").limit(scan_limit).to_list()
+    #
+    # Over-fetched deliberately: rows are dropped below for orphaned profiles
+    # and for users holding more than one, so scanning exactly `limit` would
+    # return a short board.
+    scan_limit = (
+        min(1000, max(safe_limit * 20, 200))
+        if search_term
+        else min(500, max(safe_limit * 3, 30))
+    )
+    profiles = (
+        await Profile.find(scope_filter).sort("-incoscore").limit(scan_limit).to_list()
+    )
 
     # One batched lookup instead of a round trip per profile.
     user_ids = [profile.user_id for profile in profiles if profile.user_id]
@@ -1533,18 +1567,33 @@ async def get_leaderboard(
     cohort = [float(p.incoscore or 0.0) for p in profiles]
 
     leaderboard: list[LeaderboardEntry] = []
-    for rank, profile in enumerate(profiles, start=1):
+    seen_users: set[str] = set()
+    for profile in profiles:
         user = users_by_id.get(profile.user_id)
         if not user:
+            # An orphaned profile - one whose user was deleted - must not
+            # occupy a rank. It used to, because the rank came from enumerating
+            # the raw scan, so a board could show #1, #2, #4.
+            continue
+        user_key = str(user.id)
+        if user_key in seen_users:
+            # One row per person. Rows are already sorted by score descending,
+            # so the first is their best. Without this the same account appeared
+            # twice on the live board - @ankanghowizard55 at 61.64 and again at
+            # 25.00 - which reads as two people with one name and makes every
+            # rank below it wrong.
             continue
         handle = await ensure_system_username(user, profile)
         if search_term:
             full_name = (user.full_name or "").strip().lower()
             if search_term not in full_name and search_term not in handle:
                 continue
+        seen_users.add(user_key)
         leaderboard.append(
             LeaderboardEntry(
-                rank=rank,
+                # Assigned after filtering, so the numbers a reader sees are
+                # consecutive and describe the list in front of them.
+                rank=len(leaderboard) + 1,
                 user_id=str(user.id),
                 full_name=user.full_name,
                 handle=handle,
