@@ -2,7 +2,7 @@
 import Sidebar from "@/components/Sidebar";
 import React, { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { GraduationCap, AlertTriangle, Loader2, ExternalLink } from "lucide-react";
+import { GraduationCap, AlertTriangle, Loader2, ExternalLink, BookOpenCheck } from "lucide-react";
 import { apiUrl } from "@/lib/api";
 import { createAuthenticatedFetchInit, getAccessToken } from "@/lib/auth-session";
 
@@ -16,9 +16,21 @@ interface FacultyOpportunity {
     deadline?: string | null;
 }
 
+interface DemandRow {
+    skill: string;
+    postings: number;
+    share: number;
+    is_soft: boolean;
+}
+
 interface FacultyFeed {
     total: number;
     scanned: number;
+    from_faculty_sources: number;
+    from_keyword_fallback: number;
+    demand_signal: DemandRow[];
+    demand_domain?: string | null;
+    demand_postings_analysed: number;
     opportunities: FacultyOpportunity[];
 }
 
@@ -142,6 +154,50 @@ export default function FacultyPage() {
                     <div style={{ ...panelStyle(), padding: "2rem", display: "flex", gap: "0.6rem", alignItems: "center" }}>
                         <Loader2 size={18} className="animate-spin" />
                         <span style={{ fontWeight: 700 }}>Filtering the corpus…</span>
+                    </div>
+                )}
+
+                {feed && feed.demand_signal.length > 0 && (
+                    <section style={{ ...panelStyle(), padding: "1.5rem", marginBottom: "1.5rem" }}>
+                        <div style={{ ...labelStyle(), display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.4rem" }}>
+                            <BookOpenCheck size={16} /> What industry is asking for
+                        </div>
+                        <p style={{ color: "var(--text-secondary)", fontWeight: 600, fontSize: "0.9rem", marginBottom: "1.25rem" }}>
+                            Read from {feed.demand_postings_analysed.toLocaleString()} live postings
+                            {feed.demand_domain && feed.demand_domain !== "__all__" ? ` in ${feed.demand_domain}` : " across the market"}.
+                            This is what your students are being hired against — the half of curriculum
+                            design that usually has no data behind it.
+                        </p>
+                        <div style={{ display: "grid", gap: "0.6rem" }}>
+                            {feed.demand_signal.map((row) => (
+                                <div key={row.skill}>
+                                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.25rem" }}>
+                                        <span style={{ fontWeight: 700, color: "var(--text-primary)" }}>
+                                            {row.skill}{row.is_soft ? " · soft" : ""}
+                                        </span>
+                                        <span style={{ fontWeight: 700, color: "var(--text-secondary)", fontSize: "0.85rem" }}>
+                                            {(row.share * 100).toFixed(1)}% · {row.postings} postings
+                                        </span>
+                                    </div>
+                                    <div style={{ height: "0.6rem", border: "2px solid var(--border-subtle)", background: "var(--bg-base)", borderRadius: "var(--radius-sm)", overflow: "hidden" }}>
+                                        {/* Scaled against the strongest signal rather than 100%, or
+                                            every bar would be a sliver: the top skill sits near 6%. */}
+                                        <div style={{ height: "100%", width: `${Math.max(3, (row.share / (feed.demand_signal[0]?.share || row.share)) * 100)}%`, background: "var(--brand-primary)" }} />
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </section>
+                )}
+
+                {feed && (feed.from_faculty_sources > 0 || feed.from_keyword_fallback > 0) && (
+                    // Stated rather than hidden: the academician corpus is still
+                    // largely salvaged from student-facing sources, and a reader
+                    // should know which number they are looking at.
+                    <div style={{ ...panelStyle(), padding: "0.85rem 1.1rem", marginBottom: "1.5rem", color: "var(--text-secondary)", fontWeight: 600, fontSize: "0.88rem" }}>
+                        {feed.from_faculty_sources} from academician sources · {feed.from_keyword_fallback} recovered
+                        from the wider corpus. Academician sources are still being qualified, so the
+                        second number is currently the larger one.
                     </div>
                 )}
 

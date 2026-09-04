@@ -2,7 +2,7 @@
 import Sidebar from "@/components/Sidebar";
 import React, { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { Building2, AlertTriangle, Loader2, ShieldCheck, Users } from "lucide-react";
+import { Building2, AlertTriangle, Loader2, ShieldCheck, Users, TrendingDown, BookOpenCheck } from "lucide-react";
 import { apiUrl } from "@/lib/api";
 import { createAuthenticatedFetchInit, getAccessToken } from "@/lib/auth-session";
 
@@ -10,6 +10,22 @@ interface CohortGap {
     skill: string;
     students_affected: number;
     weight: number;
+}
+
+interface FunnelStage {
+    label: string;
+    count: number;
+    conversion_from_previous: number | null;
+}
+
+interface SkillSignal {
+    skill: string;
+    demand_share: number;
+    coverage: number;
+    students_assessed: number;
+    students_covered: number;
+    is_soft: boolean;
+    gap: number;
 }
 
 interface Cohort {
@@ -28,6 +44,9 @@ interface Cohort {
     applications_total?: number | null;
     students_with_applications?: number | null;
     top_gaps: CohortGap[];
+    funnel: FunnelStage[];
+    curriculum_signal: SkillSignal[];
+    signal_domain?: string | null;
 }
 
 function panelStyle(): React.CSSProperties {
@@ -256,6 +275,75 @@ export default function InstitutionPage() {
                             ))}
                         </section>
                     </>
+                )}
+
+                {cohort && cohort.available && cohort.funnel.length > 0 && (
+                    <section style={{ ...panelStyle(), padding: "1.5rem", marginTop: "1.5rem" }}>
+                        <div style={{ ...labelStyle(), display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.4rem" }}>
+                            <TrendingDown size={16} /> Where your cohort stops
+                        </div>
+                        <p style={{ color: "var(--text-secondary)", fontWeight: 600, fontSize: "0.9rem", marginBottom: "1.25rem" }}>
+                            &ldquo;Placement is low&rdquo; and &ldquo;nobody finishes a profile&rdquo; need different
+                            remedies. This says which one you have.
+                        </p>
+                        {cohort.funnel.map((stage) => {
+                            const widest = cohort.funnel[0]?.count || 1;
+                            const width = Math.max(4, Math.round((stage.count / widest) * 100));
+                            return (
+                                <div key={stage.label} style={{ marginBottom: "0.85rem" }}>
+                                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.3rem" }}>
+                                        <span style={{ fontWeight: 700, color: "var(--text-primary)" }}>{stage.label}</span>
+                                        <span style={{ fontWeight: 700, color: "var(--text-secondary)" }}>
+                                            {stage.count}
+                                            {stage.conversion_from_previous != null && (
+                                                <> · {Math.round(stage.conversion_from_previous * 100)}% of previous</>
+                                            )}
+                                        </span>
+                                    </div>
+                                    <div style={{ height: "1.35rem", border: "2px solid var(--border-subtle)", background: "var(--bg-base)", borderRadius: "var(--radius-sm)", overflow: "hidden" }}>
+                                        <div style={{ width: `${width}%`, height: "100%", background: "var(--brand-primary)" }} />
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </section>
+                )}
+
+                {cohort && cohort.available && cohort.curriculum_signal.length > 0 && (
+                    <section style={{ ...panelStyle(), padding: "1.5rem", marginTop: "1.5rem" }}>
+                        <div style={{ ...labelStyle(), display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.4rem" }}>
+                            <BookOpenCheck size={16} /> Curriculum signal
+                        </div>
+                        <p style={{ color: "var(--text-secondary)", fontWeight: 600, fontSize: "0.9rem", marginBottom: "1.25rem" }}>
+                            What employers are advertising for right now, against what your assessed
+                            students can evidence. Ranked by the widest gap, not the lowest score —
+                            a skill nobody is hiring for is not a curriculum priority.
+                        </p>
+                        {cohort.curriculum_signal.map((row) => (
+                            <div key={row.skill} style={{ marginBottom: "1rem" }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.35rem", flexWrap: "wrap", gap: "0.5rem" }}>
+                                    <span style={{ fontWeight: 700, color: "var(--text-primary)" }}>
+                                        {row.skill}{row.is_soft ? " · soft" : ""}
+                                    </span>
+                                    <span style={{ fontWeight: 700, color: "var(--text-secondary)", fontSize: "0.88rem" }}>
+                                        industry {Math.round(row.demand_share * 1000) / 10}% · your students{" "}
+                                        {Math.round(row.coverage * 100)}% ({row.students_covered}/{row.students_assessed})
+                                    </span>
+                                </div>
+                                {/* Two bars on one track: demand above, coverage below, so the
+                                    gap between them is the thing the eye lands on. */}
+                                <div style={{ border: "2px solid var(--border-subtle)", borderRadius: "var(--radius-sm)", overflow: "hidden", background: "var(--bg-base)" }}>
+                                    <div style={{ height: "0.7rem", width: `${Math.min(100, row.demand_share * 100 * 6)}%`, background: "var(--text-primary)" }} />
+                                    <div style={{ height: "0.7rem", width: `${Math.min(100, row.coverage * 100)}%`, background: "var(--brand-primary)" }} />
+                                </div>
+                            </div>
+                        ))}
+                        <p style={{ color: "var(--text-secondary)", fontWeight: 600, fontSize: "0.82rem", marginTop: "0.75rem" }}>
+                            Dark bar: share of live postings naming the skill. Yellow bar: share of your
+                            assessed students who can evidence it. Coverage counts corroborated levels,
+                            not self-ratings.
+                        </p>
+                    </section>
                 )}
 
                 <div style={{ marginTop: "2rem", display: "flex", gap: "0.5rem", alignItems: "center", color: "var(--text-secondary)", fontWeight: 600 }}>
