@@ -71,8 +71,48 @@ async def get_pool() -> asyncpg.Pool:
             # asyncpg's cached prepared statements.
             statement_cache_size=0,
             init=_register_codecs,
+            # See _reset_is_the_poolers_job: asyncpg's release-time reset query
+            # is what wedges this pool against a transaction-mode pooler.
+            reset=_reset_is_the_poolers_job,
+            # Well under any pgbouncer idle timeout, so a connection is closed
+            # by us while it is still ours rather than discovered dead later.
+            # The default of 300s is longer than Supabase keeps an idle server
+            # connection, which is how the pool ends up holding handles to
+            # sockets the far end has already dropped.
+            max_inactive_connection_lifetime=float(
+                getattr(settings, "POSTGRES_IDLE_CONNECTION_LIFETIME_SECONDS", 120.0)
+            ),
         )
     return _pool
+
+
+
+async def _reset_is_the_poolers_job(connection: asyncpg.Connection) -> None:
+    """Return a connection to the pool without running asyncpg's reset query.
+
+    asyncpg resets a connection on release by executing a reset statement on it.
+    Against a direct Postgres that is correct and cheap. Against Supabase's
+    transaction-mode pooler it is neither: pgbouncer hands the server connection
+    to somebody else the moment our transaction ends, so the session state
+    asyncpg wants to clear is not ours to clear - and the reset query is issued
+    on a connection the pooler may already have closed underneath us.
+
+    That is how this worker hangs. The release path is not cancellable from
+    outside, so the timeout surfaces as:
+
+        job_runner._loop -> _claim_next -> find_one_and_update
+          -> pool.acquire().__aexit__ -> release -> reset -> TimeoutError
+
+    and the connection is never returned. Ten of those and the pool is empty,
+    every acquire blocks forever, and the process sits at 0% CPU with a full
+    queue behind it. Twice in this repo's history, for 44 hours and then for 10.
+
+    Skipping the reset is safe precisely because the pooler is doing it. What
+    asyncpg would clear - prepared statements, session GUCs, listeners - either
+    does not survive a transaction-mode handoff anyway or is disabled here
+    already (statement_cache_size=0).
+    """
+    return None
 
 
 async def _register_codecs(conn: asyncpg.Connection) -> None:

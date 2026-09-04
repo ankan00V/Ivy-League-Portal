@@ -120,6 +120,10 @@ class Settings(BaseSettings):
     # compared on the same corpus before anything is cut over.
     OPPORTUNITY_READ_BACKEND: str = "mongo"  # mongo | postgres
     NEON_POOL_MIN_SIZE: int = 1
+    # How long an idle pooled connection may live. Must stay below the
+    # pooler's own idle timeout: past it, the far end has closed the socket
+    # and we only find out when a release-time reset hangs on it.
+    POSTGRES_IDLE_CONNECTION_LIFETIME_SECONDS: float = 120.0
     NEON_POOL_MAX_SIZE: int = 10
     NEON_COMMAND_TIMEOUT_SECONDS: float = 30.0
 
