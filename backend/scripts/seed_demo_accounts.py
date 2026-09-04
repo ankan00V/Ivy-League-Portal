@@ -48,25 +48,32 @@ class DemoAccount:
 # through the real signup flow is a demo of something that does not exist.
 DEMO_ACCOUNTS: tuple[DemoAccount, ...] = (
     DemoAccount(
-        email="recruiter@vidyaverse-demo.in",
+        email="student@vidyaverse.dpdns.org",
+        full_name="Demo Student",
+        account_type="candidate",
+        company_or_college="Lovely Professional University",
+        note="Feed, skill assessment, applications.",
+    ),
+    DemoAccount(
+        email="employer@vidyaverse.dpdns.org",
         full_name="Demo Industry Recruiter",
         account_type="employer",
         company_or_college="VidyaVerse Demo Industries",
-        note="Posts internships and learning programmes.",
+        note="Posts openings and learning programmes.",
     ),
     DemoAccount(
-        email="professor@vidyaverse-demo.in",
+        email="faculty@vidyaverse.dpdns.org",
         full_name="Demo Academician",
         account_type="faculty",
         company_or_college="Lovely Professional University",
-        note="Sees FDPs, postdocs, consultancy and academic research.",
+        note="FDPs, postdocs, consultancy, and the industry demand signal.",
     ),
     DemoAccount(
-        email="registrar@vidyaverse-demo.in",
+        email="institution@vidyaverse.dpdns.org",
         full_name="Demo Institution Registrar",
         account_type="institution",
         company_or_college="Lovely Professional University",
-        note="Sees the cohort dashboard for its own students only.",
+        note="Cohort funnel and curriculum signal, aggregate only.",
     ),
 )
 
@@ -124,12 +131,34 @@ async def main() -> int:
         # The institution's cohort is matched from its own profile, so without a
         # college name its dashboard has nothing to match against and would look
         # broken rather than empty.
-        if account.account_type == "institution":
-            profile.college_name = account.company_or_college
-        elif account.account_type == "faculty":
-            profile.college_name = account.company_or_college
-        else:
+        if account.account_type == "employer":
             profile.company_name = account.company_or_college
+        else:
+            # Students, academicians and institutions are all identified by the
+            # institution they belong to - it is what the cohort match reads.
+            profile.college_name = account.company_or_college
+
+        if account.account_type == "candidate":
+            # A student account with an empty profile lands on a dashboard that
+            # can only tell them to fill it in, which demonstrates nothing.
+            profile.domain = "AI AND MACHINE LEARNING"
+            profile.course = "B.Tech Computer Science"
+            profile.user_type = "college_student"
+            profile.passout_year = 2027
+            profile.skills = "Python, SQL, FastAPI, React"
+            profile.interests = "Machine learning, backend engineering"
+            profile.consent_data_processing = True
+        elif account.account_type == "faculty":
+            profile.department = "Computer Science"
+            profile.designation = "Assistant Professor"
+            profile.specialisation = "Machine Learning"
+        elif account.account_type == "institution":
+            profile.institution_type = "Private University"
+            profile.aishe_code = "U-0577"
+            profile.institution_city = "Phagwara"
+            profile.institution_state = "Punjab"
+            profile.contact_designation = "Registrar"
+
         await profile.save()
 
     # A programme aimed at gaps students in this database actually have, so the
@@ -140,7 +169,15 @@ async def main() -> int:
     if program_exists is None:
         program_action = "would create" if not args.apply else "created"
         if args.apply:
-            recruiter = await User.find_one(User.email == DEMO_ACCOUNTS[0].email)
+            # Looked up by role rather than by position: DEMO_ACCOUNTS[0] was
+            # the recruiter until a student was added in front of it, which
+            # would have credited an industry programme to a student.
+            recruiter_email = next(
+                (a.email for a in DEMO_ACCOUNTS if a.account_type == "employer"), None
+            )
+            recruiter = (
+                await User.find_one(User.email == recruiter_email) if recruiter_email else None
+            )
             await LearningProgram(
                 title=program_title,
                 description=(
