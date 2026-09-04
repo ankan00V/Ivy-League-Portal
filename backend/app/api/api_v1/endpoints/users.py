@@ -1575,6 +1575,15 @@ async def get_leaderboard(
             # occupy a rank. It used to, because the rank came from enumerating
             # the raw scan, so a board could show #1, #2, #4.
             continue
+        if float(profile.incoscore or 0.0) <= 0.0:
+            # An unscored profile is not the worst performer, it is one nobody
+            # has measured, and putting it last on a ranked list says the first
+            # thing while meaning the second. It is also how "Platform
+            # Administrator" came to sit at #6 among students on the live board.
+            #
+            # Rows are sorted by score descending, so everything from here down
+            # is unscored too.
+            break
         user_key = str(user.id)
         if user_key in seen_users:
             # One row per person. Rows are already sorted by score descending,

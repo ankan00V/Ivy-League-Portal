@@ -141,6 +141,27 @@ class TestTheNamesActuallyResolve(unittest.TestCase):
                     )
 
 
+class TestUnscoredProfilesAreNotRanked(unittest.TestCase):
+    """Last place and unmeasured are different claims.
+
+    A profile with an InCoScore of 0 has not been measured; ranking it says it
+    came last. On the live board that put "Platform Administrator" at #6 among
+    students, which is both untrue and the kind of detail a judge notices.
+    """
+
+    def test_the_endpoint_stops_at_the_first_unscored_row(self) -> None:
+        body = _leaderboard_body()
+        self.assertIn("if float(profile.incoscore or 0.0) <= 0.0:", body)
+
+    def test_it_breaks_rather_than_continues(self) -> None:
+        # Rows arrive sorted by score descending, so the first zero means every
+        # row after it is a zero too. `continue` would scan the whole tail for
+        # nothing.
+        body = _leaderboard_body()
+        index = body.index("if float(profile.incoscore or 0.0) <= 0.0:")
+        self.assertIn("break", body[index : index + 700])
+
+
 class TestTheScanIsBounded(unittest.TestCase):
     def test_it_over_fetches_so_the_board_is_not_short(self) -> None:
         # Rows are dropped for orphans and duplicates, so scanning exactly the
