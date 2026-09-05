@@ -204,7 +204,7 @@ async def _deliver_via_resend(
 
 async def send_email_otp(to_email: str, otp: str):
     """
-    Sends a 6-digit OTP code to the requested end-user for two-step authentication.
+    Sends a one-time alphanumeric code to the end user for two-step authentication.
     """
     expiry_minutes = 5
     subject = f"VidyaVerse verification code - expires in {expiry_minutes} minutes"
