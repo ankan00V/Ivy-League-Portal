@@ -417,27 +417,33 @@ const UNIVERSITY_OPTION_BY_UPPERCASE = new Map<string, string>(
    and a <select> holding "B.TECH (BACHELOR OF TECHNOLOGY)" matched no <option
    value> and rendered blank. Those fields now store the canonical label, and
    the display-uppercasing is done in CSS where it belongs. */
-// Empty on purpose, and the repo's own working agreement says why:
-// "Display-casing belongs in CSS."
+// Short identity fields only — never prose, never taxonomy values.
 //
-// This set drove uppercaseProfileText over every keystroke. Two consequences,
-// both live:
+// This set drove uppercaseProfileText over every keystroke, and it used to
+// include the free-text fields too: the required "About Me" textarea shouted
+// back at the user as they typed, along with achievements, education, projects,
+// certificates, responsibilities and the employer's company description. That
+// is what the repo's working agreement means by "display-casing belongs in
+// CSS".
 //
-//   * free-text prose was shouted back at the user as they typed it - the
-//     required "About Me" textarea, plus achievements, education, projects,
-//     certificates, responsibilities and the employer's company description;
-//   * names were stored in whatever case this produced, which is why the
-//     leaderboard showed "ANKAN GHOSH" one row above "ankan ghosh".
+// The name fields stay, because that is deliberate house style with a test on
+// it (e2e/profile-edit-persistence.spec.ts asserts "edited" is stored as
+// "EDITED"), and dropping them silently would have been a product change
+// smuggled in behind a bug fix.
 //
-// The taxonomy fields were removed from the profile page's copy of this set
-// earlier, after stored "ENGINEERING" stopped matching the option
-// "Engineering" and every dropdown silently broke - but the onboarding copy
-// kept them, so the same value was still being written on the way in.
-//
-// Nothing needs the transform now: readers compare case-insensitively, and
-// text-transform does the display job without touching what is stored. Values
-// already uppercased in the database stay as they are; this stops new ones.
-const UPPERCASE_TEXT_FIELDS = new Set<keyof ProfilePayload>([]);
+// Taxonomy values must never be added back. Stored "ENGINEERING" stopped
+// matching the option "Engineering" and every dropdown broke silently, which
+// is why domain, course and the rest were removed from this list once already.
+const UPPERCASE_TEXT_FIELDS = new Set<keyof ProfilePayload>([
+  "first_name",
+  "last_name",
+  "total_work_experience",
+  "college_name",
+  "company_name",
+  "company_size",
+  "current_address_region",
+  "permanent_address_region",
+]);
 
 const SOCIAL_LINK_FIELDS: Array<{ key: string; label: string; placeholder: string }> = [
   { key: "linkedin", label: "LinkedIn", placeholder: "https://linkedin.com/in/username" },

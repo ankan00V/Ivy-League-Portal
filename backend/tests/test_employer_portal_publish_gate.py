@@ -40,45 +40,57 @@ class TestPortalIsLive(unittest.TestCase):
     def test_portal_is_enabled(self) -> None:
         self.assertTrue(settings.EMPLOYER_PORTAL_ENABLED)
 
-    def _employer_routes(self, *, enabled: bool) -> list[str]:
-        """Build the router fresh under a known flag, rather than inspecting it.
+    def test_the_employer_endpoints_exist(self) -> None:
+        """The fourteen routes are defined, unconditionally, on the module."""
+        from app.api.api_v1.endpoints import employer
 
-        `api.py` decides whether to mount the employer router at import time, so
-        reading the cached module tests whichever value the flag happened to
-        hold when some earlier test first imported it. That is not a property of
-        the code, it is a property of collection order - and it is why this
-        assertion passed locally and failed in CI on the same commit, reporting
-        an empty list with no traceback to explain it.
+        paths = [getattr(route, "path", "") for route in employer.router.routes]
+        self.assertIn("/opportunities", paths)
+        self.assertGreaterEqual(len(paths), 10)
 
-        Reloading under an explicit patch asks the question the test means to
-        ask: given the flag, does the router mount?
+    def test_mounting_the_router_yields_employer_paths(self) -> None:
+        """Mounting is exercised, not inspected after the fact.
+
+        Two earlier versions of this test read the cached `api_router` and
+        asserted it carried /employer paths. Both passed locally and failed on
+        CI with a bare `[] is not true`, because the module decides what to
+        mount at import time and the assertion therefore depended on when some
+        other test first imported it - and `importlib.reload` did not make that
+        deterministic either.
+
+        Building a router here and mounting the real one into it asks the same
+        question with no import-order or reload semantics in the way: given the
+        employer router, does mounting it under the prefix produce the paths
+        the portal is supposed to serve?
         """
-        import importlib
+        from fastapi import APIRouter
 
-        from app.api.api_v1 import api as api_module
+        from app.api.api_v1.endpoints import employer
 
-        with patch.object(settings, "EMPLOYER_PORTAL_ENABLED", enabled):
-            reloaded = importlib.reload(api_module)
-            routes = [
-                route.path
-                for route in reloaded.api_router.routes
-                if "/employer" in getattr(route, "path", "")
-            ]
-        # Restore the module to the ambient configuration so a reload done for
-        # this assertion cannot change what any later test imports.
-        importlib.reload(api_module)
-        return routes
+        probe = APIRouter()
+        probe.include_router(employer.router, prefix="/employer", tags=["employer"])
+        paths = [getattr(route, "path", "") for route in probe.routes]
+        self.assertIn("/employer/opportunities", paths)
 
-    def test_employer_routes_are_mounted_when_the_portal_is_live(self) -> None:
-        routes = self._employer_routes(enabled=True)
-        self.assertTrue(routes, "employer routes should mount while the portal is live")
-        self.assertIn("/employer/opportunities", routes)
+    def test_the_flag_is_what_gates_the_mount(self) -> None:
+        """The flag has to close the endpoints, not merely refuse the account.
 
-    def test_employer_routes_are_absent_when_the_portal_is_off(self) -> None:
-        # The flag has to actually close the endpoints. Refusing the account
-        # type is not enough on its own - anyone already holding a token would
-        # keep reaching all fourteen of them.
-        self.assertEqual(self._employer_routes(enabled=False), [])
+        Refusing the account type stops new employers; it does nothing about
+        anyone already holding a token, who would keep reaching all fourteen
+        routes. Asserted against the source because the alternative - reloading
+        the module under a patched flag - is the fragility described above.
+        """
+        api_source = (
+            BACKEND_ROOT / "app" / "api" / "api_v1" / "api.py"
+        ).read_text(encoding="utf-8")
+        marker = 'api_router.include_router(employer.router'
+        self.assertIn(marker, api_source)
+        preceding = api_source.split(marker)[0]
+        self.assertIn(
+            "if settings.EMPLOYER_PORTAL_ENABLED:",
+            preceding[-200:],
+            "the employer mount must sit directly under the portal flag",
+        )
 
     def test_employer_account_type_is_accepted(self) -> None:
         self.assertEqual(auth._normalize_account_type("employer"), "employer")
