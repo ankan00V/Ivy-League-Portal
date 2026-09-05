@@ -26,6 +26,7 @@ import asyncio
 import inspect
 import sys
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -70,11 +71,18 @@ class TestPoolIsBuiltWithTheGuards(unittest.IsolatedAsyncioTestCase):
         original_pool = pg_documents._pool
         pg_documents.asyncpg.create_pool = fake_create_pool
         pg_documents._pool = None
-        try:
-            await pg_documents.get_pool()
-        finally:
-            pg_documents.asyncpg.create_pool = original
-            pg_documents._pool = original_pool
+        # A DSN has to be *configured* even though nothing connects: get_pool
+        # resolves it before it calls create_pool, and resolution refuses
+        # loudly when none is set rather than guessing a database. That refusal
+        # is deliberate and correct, so the test supplies a value instead of
+        # weakening it - and this is what made the test pass on any machine
+        # with a backend/.env and fail in CI, which has none.
+        with patch.object(settings, "SUPABASE_DATABASE_URL", "postgresql://user:pw@127.0.0.1:5432/unit-test"):
+            try:
+                await pg_documents.get_pool()
+            finally:
+                pg_documents.asyncpg.create_pool = original
+                pg_documents._pool = original_pool
 
         self.assertIs(
             captured.get("reset"),

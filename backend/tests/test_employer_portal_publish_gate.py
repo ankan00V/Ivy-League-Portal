@@ -20,6 +20,7 @@ until the company it names complains.
 
 import sys
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -39,14 +40,45 @@ class TestPortalIsLive(unittest.TestCase):
     def test_portal_is_enabled(self) -> None:
         self.assertTrue(settings.EMPLOYER_PORTAL_ENABLED)
 
-    def test_employer_routes_are_mounted(self) -> None:
-        from app.api.api_v1.api import api_router
+    def _employer_routes(self, *, enabled: bool) -> list[str]:
+        """Build the router fresh under a known flag, rather than inspecting it.
 
-        employer_routes = [
-            route.path for route in api_router.routes if "/employer" in getattr(route, "path", "")
-        ]
-        self.assertTrue(employer_routes, "employer routes should be mounted while the portal is live")
-        self.assertIn("/employer/opportunities", employer_routes)
+        `api.py` decides whether to mount the employer router at import time, so
+        reading the cached module tests whichever value the flag happened to
+        hold when some earlier test first imported it. That is not a property of
+        the code, it is a property of collection order - and it is why this
+        assertion passed locally and failed in CI on the same commit, reporting
+        an empty list with no traceback to explain it.
+
+        Reloading under an explicit patch asks the question the test means to
+        ask: given the flag, does the router mount?
+        """
+        import importlib
+
+        from app.api.api_v1 import api as api_module
+
+        with patch.object(settings, "EMPLOYER_PORTAL_ENABLED", enabled):
+            reloaded = importlib.reload(api_module)
+            routes = [
+                route.path
+                for route in reloaded.api_router.routes
+                if "/employer" in getattr(route, "path", "")
+            ]
+        # Restore the module to the ambient configuration so a reload done for
+        # this assertion cannot change what any later test imports.
+        importlib.reload(api_module)
+        return routes
+
+    def test_employer_routes_are_mounted_when_the_portal_is_live(self) -> None:
+        routes = self._employer_routes(enabled=True)
+        self.assertTrue(routes, "employer routes should mount while the portal is live")
+        self.assertIn("/employer/opportunities", routes)
+
+    def test_employer_routes_are_absent_when_the_portal_is_off(self) -> None:
+        # The flag has to actually close the endpoints. Refusing the account
+        # type is not enough on its own - anyone already holding a token would
+        # keep reaching all fourteen of them.
+        self.assertEqual(self._employer_routes(enabled=False), [])
 
     def test_employer_account_type_is_accepted(self) -> None:
         self.assertEqual(auth._normalize_account_type("employer"), "employer")

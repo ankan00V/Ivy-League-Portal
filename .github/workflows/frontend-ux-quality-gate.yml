@@ -32,6 +32,26 @@ jobs:
       - name: Verify system Chrome
         run: google-chrome --version
 
+      # TEMPORARY - regenerating the auth-shell baselines in the environment
+      # that actually judges them. The committed PNGs were captured before the
+      # four-role signup rewrite (5bcaa5f, 68246a8) changed both auth forms, so
+      # they are stale by 16% of pixels. They cannot be regenerated on a
+      # developer's macOS machine: CI renders with system Chrome on Ubuntu and
+      # the font rasterisation differs. Reverted in the next commit, once the
+      # artifact is downloaded and committed.
+      - name: Refresh visual baselines
+        env:
+          CI: "true"
+          PLAYWRIGHT_USE_SYSTEM_CHROME: "1"
+        run: npm run e2e:ux -- --reporter=list --update-snapshots || true
+
+      - name: Upload refreshed baselines
+        uses: actions/upload-artifact@v4
+        with:
+          name: refreshed-ux-baselines
+          path: frontend/e2e/ux-quality.spec.ts-snapshots/
+          if-no-files-found: error
+
       - name: Run UX quality suite
         env:
           CI: "true"
