@@ -2,7 +2,7 @@ from typing import Optional
 from datetime import datetime
 from app.core.time import utc_now
 from beanie import Document, PydanticObjectId
-from pydantic import Field
+from pydantic import Field, model_validator
 from pymongo import IndexModel
 
 class Opportunity(Document):
@@ -17,9 +17,25 @@ class Opportunity(Document):
     normalized_organization: Optional[str] = None
     opportunity_type: Optional[str] = None
     portal_category: Optional[str] = Field(default=None, json_schema_extra={"index": True})
+
+    # Feed facets, stored so the API can filter and count in SQL instead of
+    # shipping the whole corpus to the browser to classify it there.
+    #
+    # They live on the model rather than only in the repository's write path
+    # because that path is dead in this configuration: scraper.py skips the
+    # Postgres mirror when POSTGRES_ODM_ENABLED is set, and rows are written
+    # through the ODM instead - which persists declared model fields and nothing
+    # else. Every new listing arrived with both columns NULL, so the feed's tab
+    # counts stopped adding up: 1,654 total against 302 technical and 249
+    # non-technical, with 1,103 rows in neither.
+    role_track: Optional[str] = Field(default=None, json_schema_extra={"index": True})
+    feed_categories: list[str] = Field(default_factory=list)
     domain: Optional[str] = None
     university: Optional[str] = None
     source: Optional[str] = None
+    #: Inherited from the source that produced this row. Rows predating this
+    #: column carry no value and are read as "student", which is what they are.
+    audience: str = Field(default="student", json_schema_extra={"index": True})
     source_id: Optional[str] = Field(default=None, json_schema_extra={"index": True})
     seen_on: list[str] = Field(default_factory=list)
     source_count: int = Field(default=1, ge=1)
@@ -125,3 +141,46 @@ class Opportunity(Document):
             IndexModel([("embedding_model_version", 1), ("embedding_updated_at", 1)]),
             IndexModel([("trust_status", 1), ("risk_score", 1), ("updated_at", -1)]),
         ]
+
+
+    @model_validator(mode="after")
+    def _derive_feed_facets(self) -> "Opportunity":
+        """Fill role_track and feed_categories when they are not already set.
+
+        Runs on every construction, which includes rows rebuilt from the
+        database, so an existing value is never recomputed - a stored
+        classification stays stable even if the keyword lists later change, and
+        the backfill script remains the one place that re-decides them.
+
+        Failures are swallowed on purpose. These power two filter chips; a
+        classifier raising on an odd listing must not stop that listing being
+        saved at all.
+        """
+        if self.role_track is None:
+            try:
+                from app.services.role_classification import classify_role_track
+
+                object.__setattr__(self, "role_track", classify_role_track(
+                    title=self.title,
+                    description=self.description,
+                    tags=self.tags,
+                    opportunity_type=self.opportunity_type,
+                ))
+            except Exception:
+                pass
+
+        if not self.feed_categories:
+            try:
+                from app.services.opportunity_placement import classify_placement
+
+                object.__setattr__(self, "feed_categories", list(classify_placement(
+                    location=self.location,
+                    work_mode=self.work_mode,
+                    title=self.title,
+                    description=self.description,
+                    source=self.source,
+                ) or []))
+            except Exception:
+                pass
+
+        return self

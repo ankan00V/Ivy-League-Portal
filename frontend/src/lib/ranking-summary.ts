@@ -3,8 +3,12 @@ export type RankingSummary = {
   incoscore: number;
   rank: number;
   total_users: number;
-  top_percent: number;
-  percentile: number;
+  // Null until the cohort is large enough for a percentile to be meaningful;
+  // `band` carries the interpretation until then.
+  top_percent: number | null;
+  percentile: number | null;
+  band?: string | null;
+  cohort_ready?: boolean;
   updated_at: string;
 };
 

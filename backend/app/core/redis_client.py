@@ -12,6 +12,46 @@ from app.models.otp_code import OTPCode
 from app.core.time import utc_now
 
 
+# Alphanumeric codes, with the characters people misread removed: no 0/O, no
+# 1/I/L. A six-character code from this alphabet is ~31^6, roughly 900 million
+# combinations against 1 million for six digits, so it is also materially harder
+# to guess inside the five-minute window.
+OTP_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
+_OTP_DIGITS = "23456789"
+_OTP_LETTERS = "ABCDEFGHJKMNPQRSTUVWXYZ"
+OTP_LENGTH = 6
+
+
+def generate_otp(length: int = OTP_LENGTH) -> str:
+    """A code guaranteed to contain at least one digit and one letter.
+
+    Drawing purely at random would occasionally produce all-letter or all-digit
+    codes, which look like a bug to anyone told to expect a mix.
+    """
+    import secrets as _secrets
+
+    size = max(4, int(length))
+    chars = [_secrets.choice(_OTP_DIGITS), _secrets.choice(_OTP_LETTERS)]
+    chars += [_secrets.choice(OTP_ALPHABET) for _ in range(size - 2)]
+    # SystemRandom().shuffle rather than a hand-rolled swap over randbelow: the
+    # latter shares a function the auth tests patch to force a fixed code, and a
+    # patched return value became an out-of-range index here.
+    _secrets.SystemRandom().shuffle(chars)
+    return "".join(chars)
+
+
+def normalize_otp_input(value: str) -> str:
+    """Reduce whatever the user submitted to a comparable code.
+
+    Keeps only characters from the alphabet and upper-cases them, so a code
+    pasted from an HTML email - which can carry a zero-width space - and one
+    typed in lower case both match what was issued.
+    """
+    import re as _re
+
+    return _re.sub(r"[^A-Za-z0-9]", "", str(value or "")).upper()
+
+
 def _normalize_email(email: str) -> str:
     return email.strip().lower()
 
@@ -21,7 +61,9 @@ def _normalize_purpose(purpose: str) -> str:
 
 
 def _hash_otp(email: str, otp: str, purpose: str) -> str:
-    payload = f"{_normalize_email(email)}:{_normalize_purpose(purpose)}:{otp}:{settings.SECRET_KEY}"
+    # Upper-cased so case never decides whether a correct code is accepted.
+    # Digit-only codes issued before this change hash identically.
+    payload = f"{_normalize_email(email)}:{_normalize_purpose(purpose)}:{str(otp or '').upper()}:{settings.SECRET_KEY}"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 

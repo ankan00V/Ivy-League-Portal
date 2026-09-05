@@ -359,6 +359,50 @@ def record_to_document(record: asyncpg.Record) -> dict[str, Any]:
 _VALIDATION_NEEDED: dict[type, bool] = {}
 
 
+_OBJECTID_FIELDS: dict[type, tuple[str, ...]] = {}
+
+
+def _objectid_fields(model_cls) -> tuple[str, ...]:
+    """Fields typed as a Mongo id, which arrive from Postgres as plain text.
+
+    The fast path below skips Pydantic validation, and validation is what used
+    to turn those strings back into PydanticObjectId. Without this the values
+    stay `str`, and every join keyed on them silently misses: the leaderboard
+    matched 0 of 6 profiles to their users and rendered empty, while the
+    dashboard - which never does that join - looked fine.
+    """
+    cached = _OBJECTID_FIELDS.get(model_cls)
+    if cached is not None:
+        return cached
+    from beanie import PydanticObjectId
+
+    names = []
+    for name, field in model_cls.model_fields.items():
+        annotation = field.annotation
+        candidates = [annotation, *getattr(annotation, "__args__", ())]
+        for candidate in candidates:
+            if isinstance(candidate, type) and issubclass(candidate, PydanticObjectId):
+                names.append(name)
+                break
+    result = tuple(names)
+    _OBJECTID_FIELDS[model_cls] = result
+    return result
+
+
+def _coerce_objectids(model_cls, payload: dict) -> dict:
+    from beanie import PydanticObjectId
+
+    for name in _objectid_fields(model_cls):
+        value = payload.get(name)
+        if isinstance(value, str) and value:
+            try:
+                payload[name] = PydanticObjectId(value)
+            except Exception:
+                # Not a valid id: leave it alone rather than lose the value.
+                pass
+    return payload
+
+
 def _needs_validation(model_cls) -> bool:
     """Whether this model has fields only validation can rebuild correctly.
 
@@ -426,8 +470,9 @@ def record_to_model(model_cls, record: asyncpg.Record):
         # No nested models to rebuild, so validation buys nothing and costs a
         # lot: the vector index rebuild reads ~1,880 rows at a time on the event
         # loop, and paying full validation for each one starved every concurrent
-        # request.
-        instance = model_cls.model_construct(**payload)
+        # request. Id fields still need converting, since that is the one thing
+        # validation did here that callers depend on.
+        instance = model_cls.model_construct(**_coerce_objectids(model_cls, payload))
     legacy = record.get("legacy_mongo_id") if "legacy_mongo_id" in record.keys() else None
     if legacy:
         try:

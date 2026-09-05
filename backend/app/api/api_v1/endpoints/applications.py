@@ -1,10 +1,12 @@
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict
 from beanie import PydanticObjectId
+from beanie.operators import In
 
 from app.api.deps import get_current_active_user
 from app.models.application import Application
@@ -12,6 +14,8 @@ from app.models.opportunity import Opportunity
 from app.models.user import User
 from app.services.interaction_service import interaction_service
 from app.services.opportunity_visibility import is_student_visible_opportunity
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -53,13 +57,32 @@ async def list_my_applications(
 ) -> Any:
     """Retrieve my applications joined with opportunity details."""
     applications = await Application.find(Application.user_id == current_user.id).sort(-Application.created_at).to_list()
-    
+    if not applications:
+        return []
+
+    # One query for every opportunity, not one per application.
+    #
+    # This loop used to call Opportunity.get inside it. A round trip to the
+    # pooled database costs ~350ms, so a student with fifty applications waited
+    # roughly seventeen seconds for a page that shows fifty rows - and the cost
+    # grew with how much they had used the product, which is the worst possible
+    # direction for it to grow in.
+    opportunity_ids = list({app.opportunity_id for app in applications if app.opportunity_id})
+    opportunities = (
+        await Opportunity.find_many(In(Opportunity.id, opportunity_ids)).to_list()
+        if opportunity_ids
+        else []
+    )
+    by_id = {str(opportunity.id): opportunity for opportunity in opportunities}
+
     response_list = []
     for app in applications:
-        opp = await Opportunity.get(app.opportunity_id)
+        opp = by_id.get(str(app.opportunity_id))
+        # An application whose opportunity has since been removed is skipped, as
+        # before: the row is history, but there is nothing to show for it.
         if opp:
             response_list.append(_serialize_application_response(application=app, opportunity=opp))
-            
+
     return response_list
 
 @router.post("/{opportunity_id}", response_model=ApplicationResponse)
@@ -138,6 +161,20 @@ async def apply_to_opportunity(
             traffic_type="real",
         )
     except Exception:
-        pass
-    
+        # An apply is the strongest positive label this product produces, and the
+        # learned ranker has almost none of them. Losing one silently is how a
+        # training set quietly stops growing while every dashboard stays green.
+        #
+        # Still not fatal: the application itself is already written, and failing
+        # the request here would turn a telemetry problem into the user losing an
+        # application they just made. So it is logged loudly and the response
+        # proceeds.
+        logger.exception(
+            "Failed to record apply interaction; training label lost "
+            "(user_id=%s opportunity_id=%s application_id=%s)",
+            current_user.id,
+            opp.id,
+            application.id,
+        )
+
     return _serialize_application_response(application=application, opportunity=opp)

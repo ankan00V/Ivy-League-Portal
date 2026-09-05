@@ -41,7 +41,14 @@ test("@smoke login OTP request enforces 60s cooldown in UI", async ({ page }) =>
   });
 
   await page.goto("/login");
-  await page.getByPlaceholder("Enter Email").fill("student@example.com");
+  // Targeted by input type, not by placeholder text.
+  //
+  // The placeholder is role-dependent by design since the four-role sign-up
+  // rewrite - it is "student@college.edu" for a candidate, "name@company.com"
+  // for industry - so "Enter Email" is only the fallback for a role that could
+  // not be resolved. Matching on it made this test fail with a 60-second
+  // locator.fill timeout that named no cause.
+  await page.locator('form input[type="email"]').first().fill("student@example.com");
   await page.getByRole("button", { name: /Continue with OTP/i }).click();
 
   await expect(page.getByPlaceholder("XXXXXX")).toBeVisible();

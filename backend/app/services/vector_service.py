@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import time
 from hashlib import md5
 from datetime import datetime, timedelta
 from typing import Any, Iterable, Optional
@@ -22,6 +24,8 @@ try:
     import faiss  # type: ignore
 except Exception:
     faiss = None
+
+logger = logging.getLogger(__name__)
 
 
 def _opportunity_to_text(opportunity: Opportunity) -> str:
@@ -50,6 +54,66 @@ async def _flush(model_cls, instances: list) -> int:
         else:
             await instance.save()
     return len(instances)
+
+
+async def _load_opportunities_paged() -> list[Opportunity]:
+    """Read the corpus a page at a time instead of in one statement.
+
+    The rebuild shares the worker with the scrape batches, which run their
+    blocking HTTP in threads. Those threads hold the GIL in bursts, and asyncpg
+    decodes results on the event loop, so one statement returning every
+    opportunity with its 384-float vector gets starved: the same query measures
+    1.7s per 500 rows idle and over 578s for the full table while a scrape batch
+    is running - long enough that the job's own deadline fires before the load
+    returns, which is why the failure left no trace beyond "job_timeout".
+
+    Pages are small enough to finish between those bursts, and short statements
+    are also what the pgbouncer in front of Supabase tolerates - a full-table
+    read is what "connection was closed in the middle of operation" was.
+    Ordering by _id keeps paging stable while the scraper writes.
+    """
+    page_size = max(1, int(getattr(settings, "VECTOR_LOAD_PAGE_SIZE", 500)))
+    loaded: list[Opportunity] = []
+    while True:
+        query = Opportunity.find_many()
+        if hasattr(query, "with_vectors"):
+            query = query.with_vectors()
+        page = await query.sort("_id").skip(len(loaded)).limit(page_size).to_list()
+        if not page:
+            break
+        loaded.extend(page)
+        if len(page) < page_size:
+            break
+        logger.info("vector rebuild: loaded %s opportunities so far", len(loaded))
+    return loaded
+
+
+async def _flush_in_batches(model_cls, instances: list, *, label: str) -> int:
+    """Flush in committed chunks so a cancelled rebuild keeps what it finished.
+
+    The rebuild used to accumulate every changed row and write it in a single
+    _flush at the very end. That made the job all-or-nothing: it is run under a
+    JOBS_HANDLER_TIMEOUT_SECONDS deadline, and when the deadline fired mid-write
+    the whole batch was lost, so the next run recomputed exactly the same rows
+    and lost them again. embeddings.rebuild died that way 93 times in a row -
+    each attempt doing real work, none of it ever landing.
+
+    Chunking does not make the work faster; it makes it cumulative. Every chunk
+    that lands stays landed, so a run that only gets halfway leaves half the
+    backlog permanently drained and the next run starts smaller.
+    """
+    if not instances:
+        return 0
+    size = max(1, int(getattr(settings, "VECTOR_FLUSH_BATCH_SIZE", 200)))
+    written = 0
+    for start in range(0, len(instances), size):
+        chunk = instances[start : start + size]
+        written += await _flush(model_cls, chunk)
+        if len(instances) > size:
+            logger.info(
+                "vector rebuild: flushed %s/%s %s rows", written, len(instances), label
+            )
+    return written
 
 
 class OpportunityVectorService:
@@ -197,8 +261,8 @@ class OpportunityVectorService:
                     )
                 )
 
-        await _flush(Opportunity, pending_opportunities)
-        await _flush(VectorIndexEntry, pending_entries)
+        await _flush_in_batches(Opportunity, pending_opportunities, label="opportunity")
+        await _flush_in_batches(VectorIndexEntry, pending_entries, label="vector entry")
 
         # Remove entries for opportunities that no longer exist.
         try:
@@ -352,7 +416,23 @@ class OpportunityVectorService:
             pass
 
     async def rebuild(self, force: bool = False) -> None:
+        # Phase timings, because the failure mode here is a silent one. This job
+        # died 93 times in a row and every autopsy had the same single line of
+        # evidence - "job_timeout:900.0s" - which says the deadline passed but
+        # not what was slow, or even whether the job had started doing anything.
+        # A rebuild that measures 58s standalone and >900s in the worker cannot
+        # be told apart from one blocked on the lock below without these.
+        started = time.monotonic()
+        waited_for_lock = False
+        if self._lock.locked():
+            waited_for_lock = True
+            logger.info("vector rebuild: another rebuild holds the lock; waiting")
         async with self._lock:
+            if waited_for_lock:
+                logger.info(
+                    "vector rebuild: acquired lock after %.1fs", time.monotonic() - started
+                )
+            lock_acquired = time.monotonic()
             now = utc_now()
             if (
                 not force
@@ -367,10 +447,12 @@ class OpportunityVectorService:
             # them every row would look unembedded and be recomputed on each
             # rebuild. with_vectors only exists on the Postgres query, so the
             # Beanie path is left alone.
-            query = Opportunity.find_many()
-            if hasattr(query, "with_vectors"):
-                query = query.with_vectors()
-            opportunities = await query.to_list()
+            opportunities = await _load_opportunities_paged()
+            logger.info(
+                "vector rebuild: loaded %s opportunities in %.1fs",
+                len(opportunities),
+                time.monotonic() - lock_acquired,
+            )
             if not opportunities:
                 self._vectors = np.empty((0, embedding_service.dimension), dtype=np.float32)
                 self._metas = []
@@ -380,7 +462,12 @@ class OpportunityVectorService:
                 return
 
             texts = [_opportunity_to_text(opportunity) for opportunity in opportunities]
+            sync_started = time.monotonic()
             vectors = await self._sync_persistent_vectors(opportunities=opportunities, texts=texts)
+            logger.info(
+                "vector rebuild: synced persistent vectors in %.1fs",
+                time.monotonic() - sync_started,
+            )
             if vectors is None:
                 vectors = await embedding_service.embed_texts(texts)
             vectors = np.asarray(vectors, dtype=np.float32)
@@ -423,6 +510,11 @@ class OpportunityVectorService:
             self._index = index
             self._last_build_count = len(opportunities)
             self._last_build_at = now
+            logger.info(
+                "vector rebuild: complete, %s vectors in %.1fs total",
+                len(vectors),
+                time.monotonic() - started,
+            )
 
     async def _atlas_search(
         self,

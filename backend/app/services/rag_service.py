@@ -19,6 +19,7 @@ from app.schemas.rag import (
 from app.services.bedrock_llm_client import BedrockLLMClient, BedrockLLMConfig
 from app.services.evaluation_service import evaluation_service
 from app.services.nlp_service import nlp_service
+from app.services.grounded_ai import live_model
 from app.services.openai_client import create_async_openai_client
 from app.services.rag_template_registry_service import (
     _default_system_prompt,
@@ -49,8 +50,22 @@ class RAGService:
         if configured_rag_model:
             self._rag_model = configured_rag_model
         elif "integrate.api.nvidia.com" in self._api_base_url.lower() and "deepseek-ai/deepseek-v3" in self._model:
-            # NVIDIA-hosted deepseek-v3 variants can be high-latency for interactive Ask AI flows.
-            self._rag_model = "meta/llama-3.1-8b-instruct"
+            # NVIDIA-hosted deepseek-v3 variants are high-latency for an
+            # interactive Ask AI flow, so this swaps to a faster one.
+            #
+            # The model it swapped to used to be named here as a literal, and
+            # the endpoint retired that model on 2026-08-26. From that date the
+            # call returned HTTP 410 Gone, the exception handler below caught it
+            # and served the heuristic answer, and Ask AI looked like it was
+            # working: a well-formed response with no sign anywhere that the
+            # grounded one had never been generated. Naming a settings value
+            # means the substitute is reviewed and replaced with everything else
+            # that points at a model, rather than aging quietly inside a branch
+            # nobody reads.
+            self._rag_model = (
+                (settings.BRIEFING_LLM_MODEL or "").strip()
+                or "nvidia/nemotron-3-super-120b-a12b"
+            )
             logger.warning(
                 "RAG model auto-switched from %s to %s for lower interactive latency.",
                 self._model,
@@ -58,6 +73,14 @@ class RAGService:
             )
         else:
             self._rag_model = self._model
+        # Last word on the model, after the configured value and the latency
+        # auto-switch have both had theirs. A retired model reaches here from a
+        # deployment's .env just as easily as from a hardcoded literal.
+        self._rag_model = live_model(
+            self._rag_model,
+            fallback=(settings.BRIEFING_LLM_MODEL or "").strip() or "nvidia/nemotron-3-super-120b-a12b",
+            context="Ask AI",
+        )
         self._bedrock_model = (
             configured_rag_model
             or (settings.LLM_MODEL or "").strip()
@@ -84,6 +107,20 @@ class RAGService:
                 api_key=self._api_key or "dummy_key_to_prevent_boot_crash",
             )
         return self._client
+
+    def _extra_body(self) -> dict[str, Any] | None:
+        """Suppress the model's reasoning preamble where the host accepts it.
+
+        Reasoning-tuned models on NVIDIA's endpoint narrate their working before
+        answering. Ask AI never shows that, and generating it costs most of the
+        latency budget - measured on the briefing prompt, the same flag took one
+        model from 37.4 seconds to 7.0 and another from 8.9 to 2.1. Sent only to
+        hosts known to accept it, since an unknown body field is a 400 on some
+        gateways and that would take Ask AI down rather than speed it up.
+        """
+        if "integrate.api.nvidia.com" not in self._api_base_url.lower():
+            return None
+        return {"chat_template_kwargs": {"thinking": False}}
 
     def _llm_configured(self) -> bool:
         if self._provider == "bedrock":
@@ -524,6 +561,7 @@ class RAGService:
                         messages=messages,
                         extra_headers=self._extra_headers(title="VidyaVerse RAG"),
                         response_format={"type": "json_object"},
+                        extra_body=self._extra_body(),
                         temperature=0,
                         max_tokens=max(700, int(getattr(settings, "RAG_LLM_MAX_TOKENS", 2000))),
                     ),

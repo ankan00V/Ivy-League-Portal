@@ -19,12 +19,18 @@ from app.api.deps import get_current_active_user
 from app.core.cache import cache_manager
 from app.core.config import settings
 from app.core.email_policy import is_corporate_email
-from app.models.profile import Profile
+from app.models.profile import EducationEntry, ExperienceEntry, Profile, ProjectEntry, CertificationEntry, HonorEntry, VolunteerEntry
 from app.models.user import User
 from app.schemas.user import UserResponse
 from app.services.account_deletion_service import erase_account
 from app.services.document_redaction import strip_document_metadata
 from app.services.intelligence import calculate_incoscore
+from app.services.incoscore import (
+    MIN_COHORT_FOR_PERCENTILE,
+    band_for,
+    percentile_of,
+    score_profile_with_outcomes,
+)
 from app.services.privacy_consent_service import apply_consent_change
 from app.services.resume_review_service import review_resume
 from app.services.username_service import ensure_system_username
@@ -33,7 +39,15 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-VALID_ACCOUNT_TYPES = {"candidate", "employer"}
+# Imported rather than redeclared: this file and auth.py each kept their own
+# copy, and a type valid at signup but invalid at profile update (or the
+# reverse, which is a hole) was one careless edit away.
+from app.core.account_types import (  # noqa: E402
+    KNOWN_ACCOUNT_TYPES as VALID_ACCOUNT_TYPES,
+    PRIVILEGED_ACCOUNT_TYPES,
+    account_type_enabled,
+    resolve_account_type,
+)
 VALID_USER_TYPES = {"school_student", "college_student", "fresher", "professional"}
 VALID_HIRING_FOR = {"myself", "others"}
 VALID_AVAILABILITY = {"immediately", "within_1_month", "within_3_months", "exploring"}
@@ -140,6 +154,21 @@ class ProfileUpdate(BaseModel):
     college_name: Optional[str] = None
     company_name: Optional[str] = None
     company_website: Optional[str] = None
+    # Academician fields. Nullable like everything else here: a student profile
+    # leaves these empty and an academician leaves the student ones empty.
+    department: Optional[str] = None
+    designation: Optional[str] = None
+    specialisation: Optional[str] = None
+    teaching_experience_years: Optional[int] = None
+    vidwan_id: Optional[str] = None
+    # Institution fields.
+    institution_type: Optional[str] = None
+    aishe_code: Optional[str] = None
+    institution_city: Optional[str] = None
+    institution_state: Optional[str] = None
+    institution_website: Optional[str] = None
+    contact_designation: Optional[str] = None
+    student_strength: Optional[int] = None
     company_size: Optional[str] = None
     company_description: Optional[str] = None
     hiring_for: Optional[str] = None
@@ -167,6 +196,12 @@ class ProfileUpdate(BaseModel):
     interest_graph: Optional[list[str] | str] = None
     achievements: Optional[str] = None
     education: Optional[str] = None
+    education_entries: Optional[list[EducationEntry]] = None
+    experience_entries: Optional[list[ExperienceEntry]] = None
+    project_entries: Optional[list[ProjectEntry]] = None
+    certification_entries: Optional[list[CertificationEntry]] = None
+    honor_entries: Optional[list[HonorEntry]] = None
+    volunteer_entries: Optional[list[VolunteerEntry]] = None
     certificates: Optional[str] = None
     projects: Optional[str] = None
     responsibilities: Optional[str] = None
@@ -367,6 +402,12 @@ class ProfileResponse(BaseModel):
     interest_graph: list[str] = Field(default_factory=list)
     achievements: Optional[str] = None
     education: Optional[str] = None
+    education_entries: Optional[list[EducationEntry]] = None
+    experience_entries: Optional[list[ExperienceEntry]] = None
+    project_entries: Optional[list[ProjectEntry]] = None
+    certification_entries: Optional[list[CertificationEntry]] = None
+    honor_entries: Optional[list[HonorEntry]] = None
+    volunteer_entries: Optional[list[VolunteerEntry]] = None
     certificates: Optional[str] = None
     projects: Optional[str] = None
     responsibilities: Optional[str] = None
@@ -402,8 +443,13 @@ class RankingSummaryResponse(BaseModel):
     incoscore: float
     rank: int
     total_users: int
-    top_percent: float
-    percentile: float
+    # Null until the cohort is big enough for a percentile to mean anything.
+    # The dashboard shows the band in the meantime, matching the leaderboard
+    # rather than quoting "Top 17%" off a population of six.
+    top_percent: Optional[float] = None
+    percentile: Optional[float] = None
+    band: Optional[str] = None
+    cohort_ready: bool = False
     updated_at: datetime
 
 
@@ -451,6 +497,10 @@ class LeaderboardEntry(BaseModel):
     full_name: Optional[str] = None
     handle: str
     incoscore: float
+    # Percentile once the cohort is large enough to mean anything; until then
+    # the band carries the interpretation instead of a misleading "top 20%".
+    percentile: Optional[float] = None
+    band: Optional[str] = None
 
 
 class AccountDeletionRequest(BaseModel):
@@ -524,6 +574,24 @@ def _required_onboarding_checks(profile: Profile) -> list[tuple[str, bool]]:
         checks.append(("company_name", bool((profile.company_name or "").strip())))
         checks.append(("current_job_role", bool((profile.current_job_role or "").strip())))
         checks.append(("hiring_for", str(profile.hiring_for or "").strip().lower() in VALID_HIRING_FOR))
+    elif profile.account_type == "faculty":
+        # Where they teach and what they teach. Not skills, not a preferred work
+        # mode - an academician answering the student questions is filling in
+        # somebody else's form.
+        checks.append(("college_name", bool((profile.college_name or "").strip())))
+        checks.append(("department", bool((profile.department or "").strip())))
+        checks.append(("designation", bool((profile.designation or "").strip())))
+    elif profile.account_type == "institution":
+        # The account holder is an organisation, so its identity is the
+        # institution's and the human filling the form is recorded separately.
+        checks.append(("college_name", bool((profile.college_name or "").strip())))
+        checks.append(("institution_type", bool((profile.institution_type or "").strip())))
+        # The Ministry of Education's own identifier. Required because it is the
+        # one field on this form that can later be checked against an
+        # authoritative list rather than taken on trust - which matters for the
+        # only role that reads data about other people's students.
+        checks.append(("aishe_code", bool((profile.aishe_code or "").strip())))
+        checks.append(("contact_designation", bool((profile.contact_designation or "").strip())))
 
     return checks
 
@@ -540,7 +608,10 @@ def _compute_onboarding_status(profile: Profile) -> tuple[bool, int, list[str], 
 
 
 def _normalize_account_scope(account_type: Optional[str]) -> str:
-    return "employer" if str(account_type or "").strip().lower() == "employer" else "candidate"
+    # Kept two-valued on purpose: this drives candidate-vs-employer branching in
+    # the profile API, and the two later roles want the non-candidate shape.
+    value = str(account_type or "").strip().lower()
+    return "employer" if value in {"employer", "faculty", "institution"} else "candidate"
 
 
 def _resume_storage_dir() -> Path:
@@ -715,23 +786,43 @@ def _compute_rank_stats(*, rank: int, total_users: int) -> tuple[float, float]:
 
 
 async def _build_ranking_summary(profile: Profile) -> RankingSummaryResponse:
-    scope = _normalize_account_scope(profile.account_type)
+    # The same four-valued scope the leaderboard uses.
+    #
+    # This used _normalize_account_scope, which is deliberately two-valued - it
+    # collapses employer, faculty and institution into one "employer" shape so
+    # the profile forms can branch on candidate-vs-not. Using it here meant an
+    # academician's sidebar counted the employer population while the board
+    # 200 pixels away listed academicians: two numbers on one screen, from
+    # different populations, neither saying which. That is the defect the
+    # leaderboard fix was for, and fixing only one side left it half-open.
+    scope = resolve_account_type(profile.account_type)
     scope_filter = {"account_type": scope}
 
-    total_users = int(await Profile.find(scope_filter).count())
-    if total_users <= 0:
-        total_users = 1
-
-    higher_count = int(
-        await Profile.find(
+    # Two counts that do not depend on each other, so they wait together rather
+    # than one after the other. Each is a round trip to the pooled database at
+    # ~350ms, and this runs on every dashboard load.
+    total_raw, higher_raw = await asyncio.gather(
+        Profile.find(scope_filter).count(),
+        Profile.find(
             {
                 "account_type": scope,
                 "incoscore": {"$gt": float(profile.incoscore)},
             }
-        ).count()
+        ).count(),
     )
+
+    total_users = int(total_raw)
+    if total_users <= 0:
+        total_users = 1
+
+    higher_count = int(higher_raw)
     rank = max(1, higher_count + 1)
-    top_percent, percentile = _compute_rank_stats(rank=rank, total_users=total_users)
+    cohort_ready = total_users >= MIN_COHORT_FOR_PERCENTILE
+    top_percent, percentile = (
+        _compute_rank_stats(rank=rank, total_users=total_users)
+        if cohort_ready
+        else (None, None)
+    )
 
     return RankingSummaryResponse(
         account_scope=scope,
@@ -740,6 +831,8 @@ async def _build_ranking_summary(profile: Profile) -> RankingSummaryResponse:
         total_users=total_users,
         top_percent=top_percent,
         percentile=percentile,
+        band=band_for(float(profile.incoscore or 0.0)),
+        cohort_ready=cohort_ready,
         updated_at=datetime.now(timezone.utc),
     )
 
@@ -865,6 +958,83 @@ def _sync_profile_identity(profile: Profile, user: User) -> None:
             profile.company_name = candidate or None
 
 
+def _sync_flat_fields_from_entries(profile: Profile) -> None:
+    """Mirror the primary education/experience entry onto the flat columns.
+
+    college_name, course, course_specialization, passout_year, current_job_role
+    and experience_summary are read by personalization and the ranker
+    (services/personalization/feature_builder.py). Introducing the structured
+    lists without this would have left those inputs frozen at whatever the user
+    last typed into the old single-value form, so recommendations would quietly
+    drift from the profile the user can see.
+
+    Only fills from the entry the user is most likely to mean: the newest
+    education, and the current role (or newest, if none is marked current).
+    Existing values are overwritten because the entry list is now the source of
+    truth for these.
+
+    Skills named on an entry also join the profile-level skills string, which is
+    what LinkedIn does and what users expect from "they'll also appear in your
+    Skills section".
+    """
+
+    def _as_model(entry, model):
+        """Entries can arrive as dicts from a raw DB row or an unvalidated patch."""
+        return model(**entry) if isinstance(entry, dict) else entry
+
+    profile.education_entries = [_as_model(e, EducationEntry) for e in (profile.education_entries or [])]
+    profile.experience_entries = [_as_model(e, ExperienceEntry) for e in (profile.experience_entries or [])]
+    profile.project_entries = [_as_model(e, ProjectEntry) for e in (profile.project_entries or [])]
+    profile.certification_entries = [_as_model(e, CertificationEntry) for e in (profile.certification_entries or [])]
+    profile.honor_entries = [_as_model(e, HonorEntry) for e in (profile.honor_entries or [])]
+    profile.volunteer_entries = [_as_model(e, VolunteerEntry) for e in (profile.volunteer_entries or [])]
+
+    def _sort_key(entry) -> tuple:
+        return (entry.end_year or entry.start_year or 0, entry.end_month or entry.start_month or 0)
+
+    education = sorted(profile.education_entries or [], key=_sort_key, reverse=True)
+    if education:
+        primary = education[0]
+        profile.college_name = primary.school or profile.college_name
+        profile.course = primary.degree or profile.course
+        profile.course_specialization = primary.field_of_study or profile.course_specialization
+        if primary.end_year:
+            profile.passout_year = primary.end_year
+            if profile.graduation_year is None:
+                profile.graduation_year = primary.end_year
+
+    experience = list(profile.experience_entries or [])
+    if experience:
+        current = [e for e in experience if e.is_current]
+        primary = (current or sorted(experience, key=_sort_key, reverse=True))[0]
+        profile.current_job_role = primary.title or profile.current_job_role
+        if primary.highlights:
+            profile.experience_summary = primary.highlights
+
+    # Skills attached to any entry also surface in the profile-level Skills
+    # section, matching what the form promises the user ("These also feed your
+    # Skills section"). Merge-only: a skill is never removed here, because the
+    # Skills box is user-owned text and silently deleting from it would be worse
+    # than leaving a stale entry behind.
+    entry_skills: list[str] = []
+    for entry in (
+        list(profile.education_entries or [])
+        + list(profile.experience_entries or [])
+        + list(profile.project_entries or [])
+        + list(profile.certification_entries or [])
+    ):
+        entry_skills.extend(getattr(entry, "skills", None) or [])
+    if entry_skills:
+        existing = [s.strip() for s in str(profile.skills or "").split(",") if s.strip()]
+        merged = list(existing)
+        seen = {s.lower() for s in existing}
+        for skill in entry_skills:
+            if skill.lower() not in seen:
+                merged.append(skill)
+                seen.add(skill.lower())
+        profile.skills = ", ".join(merged)
+
+
 def _apply_profile_patch(*, profile: Profile, user: User, payload: ProfileUpdate) -> None:
     updates = payload.model_dump(exclude_unset=True)
     for immutable_resume_field in ("resume_url", "resume_filename", "resume_content_type", "resume_uploaded_at"):
@@ -882,11 +1052,23 @@ def _apply_profile_patch(*, profile: Profile, user: User, payload: ProfileUpdate
     # later and so a withdrawal is distinguishable from never having agreed.
     consent_decision = updates.pop("consent_data_processing", None)
 
+    # model_dump() flattens nested models to dicts and setattr on a Document does
+    # not re-validate, so these two would land as lists of dicts and every later
+    # entry.attribute access would raise. Take them from the validated payload.
     for field, value in updates.items():
+        if field == "education_entries" and payload.education_entries is not None:
+            profile.education_entries = list(payload.education_entries)
+            continue
+        if field == "experience_entries" and payload.experience_entries is not None:
+            profile.experience_entries = list(payload.experience_entries)
+            continue
         setattr(profile, field, value)
 
     if consent_decision is not None:
         apply_consent_change(profile, granted=bool(consent_decision))
+
+    if "education_entries" in updates or "experience_entries" in updates:
+        _sync_flat_fields_from_entries(profile)
 
     if "graduation_year" in updates and updates.get("graduation_year") is not None and profile.passout_year is None:
         profile.passout_year = int(updates["graduation_year"])
@@ -904,16 +1086,48 @@ def _apply_profile_patch(*, profile: Profile, user: User, payload: ProfileUpdate
     # real name and email through the employer application routes and CSV export.
     # Employer status is now granted by an admin only.
     if payload.account_type and payload.account_type in VALID_ACCOUNT_TYPES and user.account_type != payload.account_type:
-        if str(payload.account_type).strip().lower() == "employer" and not settings.EMPLOYER_PORTAL_ENABLED:
-            raise HTTPException(status_code=400, detail="Employer accounts are not available.")
-        if str(payload.account_type).strip().lower() == "employer" and not user.is_admin:
-            raise HTTPException(
-                status_code=403,
-                detail=(
-                    "Employer accounts are approved manually. Contact support to have "
-                    "your organisation verified."
-                ),
-            )
+        requested = str(payload.account_type).strip().lower()
+        # Gated on the role set, not on one role's name.
+        #
+        # This check read `== "employer"` twice. It was written when the
+        # platform had two roles, and faculty and institution were added later
+        # and fell straight through to the write below. The escalation was one
+        # request:
+        #
+        #   PUT /users/me/profile {"account_type": "institution",
+        #                          "college_name": "<any university>"}
+        #
+        # then GET /academia/institution/cohort, whose only check is
+        # _require_role reading this same field. That returns another
+        # university's aggregate - average readiness, profile completion,
+        # application counts and ranked skill gaps for their students.
+        #
+        # Every one of these roles reads other people's data, which is the
+        # property that mattered for employer and matters identically here.
+        if requested in PRIVILEGED_ACCOUNT_TYPES:
+            if not account_type_enabled(requested):
+                raise HTTPException(
+                    status_code=400, detail=f"{requested.capitalize()} accounts are not available."
+                )
+            if not user.is_admin:
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        f"{requested.capitalize()} accounts are approved manually. Contact "
+                        "support to have your organisation verified."
+                    ),
+                )
+            # The signup path applies an email rule per role and this path never
+            # did, so an approved account could still be moved to a role its
+            # address would have been refused for at registration.
+            #
+            # Imported here rather than at module scope: the rule lives with the
+            # registration flow that owns it, and an endpoint module importing
+            # another endpoint module at import time is a circular-import
+            # waiting to be introduced by whichever one grows next.
+            from app.api.api_v1.endpoints.auth import _ensure_email_policy_for_account_type
+
+            _ensure_email_policy_for_account_type(requested, user.email)
         user.account_type = payload.account_type
 
     if str(profile.account_type or "").strip().lower() == "employer":
@@ -956,7 +1170,6 @@ def _apply_profile_patch(*, profile: Profile, user: User, payload: ProfileUpdate
     profile.onboarding_completed = is_complete
     profile.onboarding_step = "complete" if is_complete else next_step
     profile.onboarding_completed_at = datetime.now(timezone.utc) if is_complete else None
-    profile.incoscore = calculate_incoscore(profile)
 
 
 async def _get_or_create_profile_for_user(user: User) -> Profile:
@@ -977,7 +1190,7 @@ async def _get_or_create_profile_for_user(user: User) -> Profile:
         first_name=first_name,
         last_name=last_name,
     )
-    profile.incoscore = calculate_incoscore(profile)
+    profile.incoscore = (await score_profile_with_outcomes(profile)).total
     is_complete, _progress, _missing, next_step = _compute_onboarding_status(profile)
     profile.onboarding_completed = is_complete
     profile.onboarding_step = "complete" if is_complete else next_step
@@ -1072,6 +1285,9 @@ async def update_profile_me(
     """
     profile = await _get_or_create_profile_for_user(current_user)
     _apply_profile_patch(profile=profile, user=current_user, payload=profile_in)
+    # Scored here rather than inside the sync patch helper so every save
+    # gets the same number, including the activity uplift.
+    profile.incoscore = (await score_profile_with_outcomes(profile)).total
     await current_user.save()
     await profile.save()
     await cache_manager.invalidate_after_profile_update(user_id=str(current_user.id))
@@ -1088,6 +1304,9 @@ async def update_onboarding_me(
     """
     profile = await _get_or_create_profile_for_user(current_user)
     _apply_profile_patch(profile=profile, user=current_user, payload=profile_in)
+    # Scored here rather than inside the sync patch helper so every save
+    # gets the same number, including the activity uplift.
+    profile.incoscore = (await score_profile_with_outcomes(profile)).total
     await current_user.save()
     await profile.save()
     await cache_manager.invalidate_after_profile_update(user_id=str(current_user.id))
@@ -1196,7 +1415,7 @@ async def upload_resume(
     profile.onboarding_completed = is_complete
     profile.onboarding_step = "complete" if is_complete else next_step
     profile.onboarding_completed_at = datetime.now(timezone.utc) if is_complete else None
-    profile.incoscore = calculate_incoscore(profile)
+    profile.incoscore = (await score_profile_with_outcomes(profile)).total
 
     await profile.save()
     await cache_manager.invalidate_after_profile_update(user_id=str(current_user.id))
@@ -1279,7 +1498,7 @@ async def delete_resume(
     profile.onboarding_completed = is_complete
     profile.onboarding_step = "complete" if is_complete else next_step
     profile.onboarding_completed_at = datetime.now(timezone.utc) if is_complete else None
-    profile.incoscore = calculate_incoscore(profile)
+    profile.incoscore = (await score_profile_with_outcomes(profile)).total
     await profile.save()
     await cache_manager.invalidate_after_profile_update(user_id=str(current_user.id))
     return profile
@@ -1344,11 +1563,42 @@ async def get_leaderboard(
     safe_limit = max(1, min(limit, 100))
     search_term = (search or "").strip().lower().lstrip("@")
 
+    # Scoped to the viewer's own account type, exactly as _build_ranking_summary
+    # already scopes the sidebar figure ten lines from here.
+    #
+    # This query was Profile.find_all() with no filter at all, so a board titled
+    # "Top 10 Students" listed Demo Industry Recruiter, Demo Institution
+    # Registrar and two Demo Academicians - and the sidebar beside it said
+    # "Rank #2 of 8" because the summary was counting candidates only. Two
+    # numbers on one screen, computed from different populations, neither of
+    # them announcing which.
+    #
+    # Scoping also stops the board being a cross-role directory: a recruiter has
+    # no business being handed a ranked list of students' names and handles.
+    #
+    # Scoped on the real account type rather than `_normalize_account_scope`,
+    # which is deliberately two-valued - it collapses employer, faculty and
+    # institution into one "employer" shape for profile-form branching. That is
+    # right there and wrong here: it would rank a professor against recruiters
+    # and registrars on a board whose heading names one of the three.
+    scope = resolve_account_type(getattr(current_user, "account_type", None))
+    scope_filter = {"account_type": scope}
+
     # Bound the scan. This previously loaded every Profile in the collection on
     # an anonymous endpoint and then issued one User.get() per profile - a full
     # scan plus N+1 that grows linearly with signups.
-    scan_limit = safe_limit if not search_term else min(1000, max(safe_limit * 20, 200))
-    profiles = await Profile.find_all().sort("-incoscore").limit(scan_limit).to_list()
+    #
+    # Over-fetched deliberately: rows are dropped below for orphaned profiles
+    # and for users holding more than one, so scanning exactly `limit` would
+    # return a short board.
+    scan_limit = (
+        min(1000, max(safe_limit * 20, 200))
+        if search_term
+        else min(500, max(safe_limit * 3, 30))
+    )
+    profiles = (
+        await Profile.find(scope_filter).sort("-incoscore").limit(scan_limit).to_list()
+    )
 
     # One batched lookup instead of a round trip per profile.
     user_ids = [profile.user_id for profile in profiles if profile.user_id]
@@ -1357,23 +1607,51 @@ async def get_leaderboard(
         for user in await User.find(In(User.id, user_ids)).to_list():
             users_by_id[user.id] = user
 
+    cohort = [float(p.incoscore or 0.0) for p in profiles]
+
     leaderboard: list[LeaderboardEntry] = []
-    for rank, profile in enumerate(profiles, start=1):
+    seen_users: set[str] = set()
+    for profile in profiles:
         user = users_by_id.get(profile.user_id)
         if not user:
+            # An orphaned profile - one whose user was deleted - must not
+            # occupy a rank. It used to, because the rank came from enumerating
+            # the raw scan, so a board could show #1, #2, #4.
+            continue
+        if float(profile.incoscore or 0.0) <= 0.0:
+            # An unscored profile is not the worst performer, it is one nobody
+            # has measured, and putting it last on a ranked list says the first
+            # thing while meaning the second. It is also how "Platform
+            # Administrator" came to sit at #6 among students on the live board.
+            #
+            # Rows are sorted by score descending, so everything from here down
+            # is unscored too.
+            break
+        user_key = str(user.id)
+        if user_key in seen_users:
+            # One row per person. Rows are already sorted by score descending,
+            # so the first is their best. Without this the same account appeared
+            # twice on the live board - @ankanghowizard55 at 61.64 and again at
+            # 25.00 - which reads as two people with one name and makes every
+            # rank below it wrong.
             continue
         handle = await ensure_system_username(user, profile)
         if search_term:
             full_name = (user.full_name or "").strip().lower()
             if search_term not in full_name and search_term not in handle:
                 continue
+        seen_users.add(user_key)
         leaderboard.append(
             LeaderboardEntry(
-                rank=rank,
+                # Assigned after filtering, so the numbers a reader sees are
+                # consecutive and describe the list in front of them.
+                rank=len(leaderboard) + 1,
                 user_id=str(user.id),
                 full_name=user.full_name,
                 handle=handle,
                 incoscore=profile.incoscore,
+                percentile=percentile_of(float(profile.incoscore or 0.0), cohort),
+                band=band_for(float(profile.incoscore or 0.0)),
             )
         )
         if len(leaderboard) >= safe_limit:

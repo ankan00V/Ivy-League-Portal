@@ -1,4 +1,5 @@
 import asyncio
+from unittest.mock import patch
 import sys
 import unittest
 from pathlib import Path
@@ -26,7 +27,22 @@ class TestUserRankingSummary(unittest.TestCase):
             is_admin=False,
         )
 
-        response = asyncio.run(users_endpoint.read_users_me(current_user=current_user))
+        # The profile lookup is stubbed because this test is about how an
+        # ObjectId is serialised, not about reaching a database.
+        #
+        # It used to call straight through. The endpoint catches
+        # CollectionWasNotInitialized - the Beanie/Mongo shape - and the
+        # Postgres ODM raises RuntimeError("No Postgres DSN is configured")
+        # instead, which nothing catches. So this passed on any machine with a
+        # backend/.env and failed in CI, where there is none, on an assertion
+        # about string formatting.
+        async def _no_profile(*_args, **_kwargs):
+            return None
+
+        with patch.object(users_endpoint.Profile, "find_one", _no_profile), patch.object(
+            users_endpoint, "ensure_system_username", _no_profile
+        ):
+            response = asyncio.run(users_endpoint.read_users_me(current_user=current_user))
 
         self.assertEqual(response.id, "69e111317cdc2b7901074b81")
         self.assertEqual(response.email, "candidate@example.com")
