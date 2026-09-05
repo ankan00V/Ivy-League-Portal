@@ -1,19 +1,28 @@
-"""The employer portal is retired but deliberately kept on disk.
+"""The employer portal is live, and publishing is gated on domain control.
 
-These tests exist because "retired" is a state that rots quietly. The code is all
-still there, so nothing fails loudly if the flag stops being honoured -- the
-workflow would simply come back, and the way it comes back is as a self-serve
-signup whose only gate is a non-freemail email domain. That is the exact hole
-retirement was meant to close, so it gets a test rather than a comment.
+This portal was retired once, and the reason matters: the only gate on employer
+powers was a non-freemail email address, so self-serve signup let anyone with a
+bought domain post straight into the feed candidates trust. Retirement closed
+that by switching the whole workflow off.
 
-Flipping EMPLOYER_PORTAL_ENABLED to True is the supported way to bring it back;
-these tests assert the retired state, not that the feature is gone forever.
+It is back on, because industries posting their own openings is the point of the
+academia-industry workflow. The hole is closed differently now - an employer may
+draft and edit freely, but moving a listing to "published" requires a verified
+careers-page claim, which is a token placed on the company's own domain. A
+corporate-looking mailbox proves nothing; controlling the domain proves
+something.
+
+So the property worth pinning is not "employers exist" but "an unverified
+employer cannot reach candidates". That has no visible symptom when it breaks:
+the listing publishes, looks entirely normal in the feed, and nobody finds out
+until the company it names complains.
 """
 
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from fastapi import HTTPException
 
@@ -22,64 +31,192 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.api.api_v1.endpoints import auth
+from app.api.api_v1.endpoints import employer
 from app.core.config import settings
 
 
-class TestEmployerPortalRetired(unittest.TestCase):
-    def test_portal_is_disabled_by_default(self) -> None:
-        self.assertFalse(
-            settings.EMPLOYER_PORTAL_ENABLED,
-            "Employer portal should stay retired until deliberately re-enabled.",
-        )
+class TestPortalIsLive(unittest.TestCase):
+    def test_portal_is_enabled(self) -> None:
+        self.assertTrue(settings.EMPLOYER_PORTAL_ENABLED)
 
-    def test_employer_routes_are_not_mounted(self) -> None:
+    def test_employer_routes_are_mounted(self) -> None:
         from app.api.api_v1.api import api_router
 
         employer_routes = [
             route.path for route in api_router.routes if "/employer" in getattr(route, "path", "")
         ]
-        self.assertEqual(
-            employer_routes,
-            [],
-            "Retiring the portal means not mounting its routes; found: "
-            f"{employer_routes}",
-        )
+        self.assertTrue(employer_routes, "employer routes should be mounted while the portal is live")
+        self.assertIn("/employer/opportunities", employer_routes)
 
-    def test_employer_module_is_kept_on_disk(self) -> None:
-        # Retired, not deleted. If this import breaks, the workflow can no longer
-        # be restored by flipping the flag, which was the whole point.
-        from app.api.api_v1.endpoints import employer
-
-        self.assertTrue(hasattr(employer, "router"))
-
-    def test_requested_employer_account_type_is_refused(self) -> None:
-        with self.assertRaises(HTTPException) as caught:
-            auth._normalize_account_type("employer")
-        self.assertEqual(caught.exception.status_code, 400)
-        self.assertIn("not available", str(caught.exception.detail))
-
-    def test_stored_employer_account_type_still_normalizes(self) -> None:
-        # An existing employer row must stay readable so it can be exported and
-        # deleted. Refusing stored values would strand the account instead.
-        self.assertEqual(
-            auth._normalize_account_type("employer", stored=True),
-            "employer",
-        )
+    def test_employer_account_type_is_accepted(self) -> None:
+        self.assertEqual(auth._normalize_account_type("employer"), "employer")
 
     def test_candidate_is_unaffected(self) -> None:
         self.assertEqual(auth._normalize_account_type("candidate"), "candidate")
         self.assertEqual(auth._normalize_account_type(None), "candidate")
 
-    def test_flag_restores_employer_signup(self) -> None:
-        # Guards against the rejection being hardcoded rather than flag-driven:
-        # if this fails, the portal can no longer be switched back on.
-        with patch.object(settings, "EMPLOYER_PORTAL_ENABLED", True):
-            self.assertEqual(auth._normalize_account_type("employer"), "employer")
-
     def test_invalid_account_type_still_rejected(self) -> None:
         with self.assertRaises(HTTPException) as caught:
             auth._normalize_account_type("recruiter")
         self.assertEqual(caught.exception.status_code, 400)
+
+    def test_flag_still_drives_the_refusal(self) -> None:
+        # The gate must stay flag-driven in both directions, so the workflow can
+        # be switched off again without editing call sites.
+        with patch.object(settings, "EMPLOYER_PORTAL_ENABLED", False):
+            with self.assertRaises(HTTPException) as caught:
+                auth._normalize_account_type("employer")
+            self.assertEqual(caught.exception.status_code, 400)
+
+
+class TestPublishRequiresVerifiedDomain(unittest.IsolatedAsyncioTestCase):
+    def _user(self, *, is_admin: bool = False):
+        return SimpleNamespace(id="u1", is_admin=is_admin, account_type="employer")
+
+    async def _gate(self, user, claim):
+        with patch.object(
+            employer.employer_claim_service, "latest_for_user", AsyncMock(return_value=claim)
+        ):
+            await employer._require_verified_employer(user)
+
+    async def test_verified_claim_may_publish(self) -> None:
+        claim = SimpleNamespace(verification_status="verified")
+        await self._gate(self._user(), claim)  # must not raise
+
+    async def test_unclaimed_employer_cannot_publish(self) -> None:
+        with self.assertRaises(HTTPException) as caught:
+            await self._gate(self._user(), None)
+        self.assertEqual(caught.exception.status_code, 403)
+        self.assertIn("verified careers page", str(caught.exception.detail))
+
+    async def test_pending_claim_cannot_publish(self) -> None:
+        # The dangerous near-miss: a claim exists, so the employer looks
+        # legitimate in the UI, but the token was never found on the domain.
+        claim = SimpleNamespace(verification_status="pending")
+        with self.assertRaises(HTTPException) as caught:
+            await self._gate(self._user(), claim)
+        self.assertEqual(caught.exception.status_code, 403)
+
+    async def test_status_match_is_case_insensitive(self) -> None:
+        await self._gate(self._user(), SimpleNamespace(verification_status="VERIFIED"))
+
+    async def test_admin_bypasses_verification(self) -> None:
+        # Admins are the ones who verify; requiring them to claim a careers page
+        # would make the first verification impossible.
+        with patch.object(
+            employer.employer_claim_service, "latest_for_user", AsyncMock(return_value=None)
+        ) as loader:
+            await employer._require_verified_employer(self._user(is_admin=True))
+        loader.assert_not_awaited()
+
+
+class _StubField:
+    """Stands in for a Beanie field so `Model.field == value` is expressible.
+
+    The ODM patches these onto the document classes at startup, which unit tests
+    do not run, so touching Profile.user_id raises AttributeError long before the
+    code under test is reached.
+    """
+
+    def __eq__(self, other):  # noqa: D105
+        return ("eq", other)
+
+    def __hash__(self):  # noqa: D105
+        return id(self)
+
+
+class _StubDoc:
+    user_id = _StubField()
+    url = _StubField()
+
+    def __init__(self, **kwargs):
+        self.__dict__.update(kwargs)
+
+    @staticmethod
+    async def find_one(*_args, **_kwargs):
+        return None
+
+    async def insert(self):
+        raise RuntimeError("no database in unit tests")
+
+
+class TestTheEndpointActuallyCallsTheGate(unittest.IsolatedAsyncioTestCase):
+    """A helper that refuses correctly is worthless if no route calls it.
+
+    These drive the endpoint functions themselves, because the failure this
+    guards against is not "the check is wrong" but "the check was never wired
+    in" - which looks identical in a unit test of the helper alone.
+    """
+
+    def _payload(self, status: str):
+        return employer.EmployerOpportunityCreate(
+            title="Ayurveda Research Intern",
+            description="A twelve week research internship working on formulations.",
+            application_url="https://example.com/careers/intern-001",
+            opportunity_type="Internship",
+            lifecycle_status=status,
+        )
+
+    async def test_create_published_is_refused_without_verification(self) -> None:
+        user = SimpleNamespace(
+            id="u1", is_admin=False, account_type="employer", full_name="Acme Labs"
+        )
+        with (
+            patch.object(employer, "Profile", _StubDoc),
+            patch.object(employer, "Opportunity", _StubDoc),
+            patch.object(
+                employer.employer_claim_service, "latest_for_user", AsyncMock(return_value=None)
+            ),
+        ):
+            with self.assertRaises(HTTPException) as caught:
+                await employer.create_employer_opportunity(
+                    payload=self._payload("published"), current_user=user
+                )
+        self.assertEqual(caught.exception.status_code, 403)
+
+    async def test_create_draft_does_not_require_verification(self) -> None:
+        # Verification gates reach, not access. A draft must never consult it.
+        user = SimpleNamespace(
+            id="u1", is_admin=False, account_type="employer", full_name="Acme Labs"
+        )
+        loader = AsyncMock(return_value=None)
+        with (
+            patch.object(employer, "Profile", _StubDoc),
+            patch.object(employer, "Opportunity", _StubDoc),
+            patch.object(employer.employer_claim_service, "latest_for_user", loader),
+        ):
+            try:
+                await employer.create_employer_opportunity(
+                    payload=self._payload("draft"), current_user=user
+                )
+            except HTTPException:
+                raise
+            except Exception:
+                # Persisting needs a database; reaching it is the assertion.
+                pass
+        loader.assert_not_awaited()
+
+    async def test_lifecycle_publish_is_refused_without_verification(self) -> None:
+        user = SimpleNamespace(
+            id="u1", is_admin=False, account_type="employer", full_name="Acme Labs"
+        )
+        opp = SimpleNamespace(
+            id="o1", posted_by_user_id="u1", lifecycle_status="draft"
+        )
+        with (
+            patch.object(employer, "PydanticObjectId", lambda v: v),
+            patch.object(employer.Opportunity, "get", AsyncMock(return_value=opp)),
+            patch.object(
+                employer.employer_claim_service, "latest_for_user", AsyncMock(return_value=None)
+            ),
+        ):
+            with self.assertRaises(HTTPException) as caught:
+                await employer.update_opportunity_lifecycle(
+                    opportunity_id="o1",
+                    payload=employer.LifecycleUpdateRequest(status="published"),
+                    current_user=user,
+                )
+        self.assertEqual(caught.exception.status_code, 403)
 
 
 if __name__ == "__main__":
