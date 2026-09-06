@@ -70,6 +70,28 @@ class AssessmentResult:
     adjustments: list[dict[str, Any]] = field(default_factory=list)
 
 
+def _rationale_for(row: dict[str, Any], *, postings: int) -> str:
+    """Say why a skill is being asked about, in terms of its own evidence.
+
+    Every row used to be described as "named in N live postings in this domain".
+    For a scraped domain that is exactly right. For Ayush it is a falsehood with
+    a number in it: that sector has no machine-readable posting feed - thirty
+    candidate sources were measured - so its demand comes from the competencies
+    published standards require, and every row would have read "named in 0 live
+    postings" beside a question the platform was insisting the student answer.
+
+    A reader who is told a skill matters in zero postings and asked about it
+    anyway learns not to trust the next number on the page.
+    """
+    if str(row.get("basis") or "") == "occupational_standard":
+        roles = int(row.get("roles_requiring") or 0)
+        if roles:
+            return f"required by {roles} of the graduate roles mapped for this field"
+        band = str(row.get("band_label") or "").strip()
+        return band.lower() or "required by this field's occupational standards"
+    return f"named in {postings} live posting{'s' if postings != 1 else ''} in this domain"
+
+
 def build_questionnaire(
     demand_rows: Iterable[dict[str, Any]],
     *,
@@ -96,7 +118,7 @@ def build_questionnaire(
             skill=skill,
             is_soft=bool(row.get("is_soft", is_soft_skill(skill))),
             demand_share=share,
-            rationale=f"named in {postings} live posting{'s' if postings != 1 else ''} in this domain",
+            rationale=_rationale_for(row, postings=postings),
         )
         bucket = soft if item.is_soft else technical
         if len(bucket) < (max_soft if item.is_soft else max_technical):

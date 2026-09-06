@@ -37,7 +37,19 @@ MAX_PROFICIENCY = 4
 
 
 class SkillDemandSnapshot(Document):
-    """Ranked skill demand for one domain, derived from live postings."""
+    """Ranked skill demand for one domain.
+
+    Usually derived from live postings. Not always - the Ayush sector publishes
+    vacancies as PDF notices and has no machine-readable posting feed, measured
+    across thirty candidate sources, so its demand comes from the competencies
+    the sector's published standards require. `basis` says which, and it is
+    carried to the UI rather than inferred there.
+
+    The field exists because the alternative is the defect this repo has already
+    had twice: a number of one provenance rendered in the typography of another.
+    A share computed from postings and a weight derived from an occupational
+    standard are both legitimate and they are not the same claim.
+    """
 
     domain: str = Field(json_schema_extra={"index": True}, min_length=1, max_length=120)
     # Case-folded form of `domain`, used for every lookup. Profiles and the
@@ -46,6 +58,13 @@ class SkillDemandSnapshot(Document):
     domain_key: str = Field(default="", json_schema_extra={"index": True}, max_length=120)
     # Rows of {skill, postings, share, is_soft}, ranked by share descending.
     skills: list[dict[str, Any]] = Field(default_factory=list)
+    #: "postings" when scraped from the live corpus, "occupational_standard"
+    #: when derived from published sector requirements. Defaults to the former
+    #: because every row predating this column came from a scrape.
+    basis: str = Field(default="postings", json_schema_extra={"index": True}, max_length=40)
+    #: One sentence naming the evidence, rendered above the table. Empty for a
+    #: scraped snapshot, where the heading already says what it is.
+    basis_note: str = Field(default="", max_length=600)
     postings_analysed: int = Field(default=0, ge=0)
     # Postings that produced at least one usable skill. Held separately because
     # extraction covers well under half the corpus, and a share computed over
