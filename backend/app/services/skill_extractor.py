@@ -7,6 +7,7 @@ from threading import Lock
 from typing import Any, Iterable
 
 from app.core.config import settings
+from app.services.domain_vocabulary import vocabulary_skill_tags
 
 logger = logging.getLogger(__name__)
 
@@ -221,6 +222,11 @@ class SkillExtractor:
 
     def extract(self, text: str, *, max_tags: int = 12) -> list[str]:
         values = fallback_skill_tags(text)
+        # Supplementary vocabularies for domains the trained artifact never saw.
+        # Applied before the artifact check because it is the only signal for an
+        # AYUSH posting, which otherwise extracts to [] - a silent result that
+        # leaves the whole domain with no demand table and no questionnaire.
+        values.extend(vocabulary_skill_tags(text))
         artifact = self._load_artifact()
         if artifact is None:
             return values[:max_tags]

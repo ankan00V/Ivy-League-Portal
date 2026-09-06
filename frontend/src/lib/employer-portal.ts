@@ -1,21 +1,38 @@
 /**
- * The employer portal is retired, not deleted.
+ * The employer portal is live.
  *
- * At retirement there were zero employer accounts and zero employer-posted
- * opportunities -- all 2,189 listings came from scrapers -- while the only gate
- * on employer powers was a non-freemail email domain. That made self-serve
- * employer signup a way for anyone with a bought domain to post straight into
- * the candidate feed, with no verification and no one watching.
+ * It was retired for a while: the only gate on employer powers was a non-freemail
+ * email domain, which made self-serve signup a way for anyone with a bought
+ * domain to post straight into the candidate feed, unverified and unwatched.
  *
- * Everything still exists: /employer/dashboard, /employer/applications, and the
- * backend routes. Flip this flag and its backend twin (EMPLOYER_PORTAL_ENABLED)
- * to bring the whole workflow back.
+ * It is back because industries posting their own openings is the point of the
+ * academia-industry workflow, and the hole is now closed rather than switched
+ * off: an employer may draft and edit freely, but moving a listing to
+ * "published" requires a verified careers-page claim - a token placed on the
+ * company's own domain. Verification gates reach, not access.
+ *
+ * Keep this flag and its backend twin (EMPLOYER_PORTAL_ENABLED) in step.
  */
-export const EMPLOYER_PORTAL_ENABLED = false;
+export const EMPLOYER_PORTAL_ENABLED = true;
 
-/** Where an account lands after auth. Employers only route to their own portal
- *  while it is live; otherwise everyone gets the candidate dashboard. */
+/** Academician and institution portals, the other two roles problem statement
+ *  26044 names. Keep these in step with FACULTY_PORTAL_ENABLED and
+ *  INSTITUTION_PORTAL_ENABLED on the backend: a portal reachable in the UI but
+ *  gated in the API sends the user to a page that can only fail. */
+export const FACULTY_PORTAL_ENABLED = true;
+export const INSTITUTION_PORTAL_ENABLED = true;
+
+/** Where an account lands after auth.
+ *
+ *  Each role routes to its own portal only while that portal is live; anything
+ *  disabled, unknown, or absent falls through to the candidate dashboard, which
+ *  every account can render. Falling through is deliberate - sending someone to
+ *  a portal their account cannot use is a worse failure than showing them the
+ *  wrong-but-working page. */
 export function landingPathForAccountType(accountType?: string | null): string {
   const normalized = String(accountType ?? "").trim().toLowerCase();
-  return EMPLOYER_PORTAL_ENABLED && normalized === "employer" ? "/employer/dashboard" : "/dashboard";
+  if (EMPLOYER_PORTAL_ENABLED && normalized === "employer") return "/employer/dashboard";
+  if (FACULTY_PORTAL_ENABLED && normalized === "faculty") return "/faculty";
+  if (INSTITUTION_PORTAL_ENABLED && normalized === "institution") return "/institution";
+  return "/dashboard";
 }

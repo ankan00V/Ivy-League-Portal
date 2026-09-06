@@ -46,7 +46,6 @@ KNOWN_UNCONVERTED = {
     "publish_model_metadata.py",
     "run_deduplication_scan.py",
     "run_model_lifecycle_pipeline.py",
-    "seed_release_ml_gate_fixture.py",
     "seed_test_data.py",
     "simulate_persona_traffic.py",
     "test_backup_restore_drill.py",

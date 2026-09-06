@@ -9,11 +9,14 @@ import Image from "next/image";
 import { apiUrl } from "@/lib/api";
 import { createAuthenticatedFetchInit, getAccessToken } from "@/lib/auth-session";
 import { logTrackedOpportunityEvent, useOpportunityFeedImpressions } from "@/lib/opportunity-feed-tracker";
+/* classifyRoleTrack and matchesTrackFilter are deliberately not imported.
+   Both ran here and both read `description`, which is the only reason this page
+   ever downloaded the whole corpus. The API classifies and filters now; the
+   filter labels below are still shared from this module so the chips and the
+   server vocabulary cannot drift. */
 import {
     NON_TECHNICAL_FILTERS,
     TECHNICAL_FILTERS,
-    classifyRoleTrack,
-    matchesTrackFilter,
     type RoleTrack,
     type TrackFilter,
 } from "@/lib/role-classification";
@@ -94,17 +97,42 @@ const COMPETITIVE_KEYWORDS = [
     "buildathon",
     "ctf",
 ];
-/* Cards rendered per page.
+/* Rows requested per page.
 
    The grid used to map over every filtered listing, so switching a chip asked
-   React to reconcile up to 1500 card components in one commit - which is what
-   made filtering feel heavy no matter how cheap the filter itself became. The
-   surrounding memoisation was already doing its job; the cost had moved into
-   render. A page plus an IntersectionObserver sentinel keeps each commit to a
-   couple of dozen nodes and restores the instant feel. */
-const CARD_PAGE_SIZE = 24;
+   React to reconcile up to 1500 card components in one commit. Worse, getting
+   those rows cost 3.36 MB of Postgres egress per request. Discrete pages fix
+   both: one page is one small query and one small commit. */
+/** Floor between two identical feed requests. Below the 60s poll, above a render. */
+const MIN_REFETCH_MS = 10_000;
+const DEFAULT_PER_PAGE = 12;
+/** Offered in the "Records per page" control. Capped at 100 by the API. */
+const PER_PAGE_OPTIONS = [12, 24, 48, 96];
 
 const CAREER_KEYWORDS = ["internship", "intern", "job", "hiring", "developer", "engineer", "lead"];
+
+/* Deadlines render identically on the server and in the browser.
+
+   These called toLocaleDateString(undefined, ...), and `undefined` means "use
+   whatever locale the runtime defaults to". Node resolves that differently from
+   a student's browser, and the timezone differs too, so the server sent one
+   string and React rendered another - which is React error #418, the hydration
+   mismatch that was in the console on this page.
+
+   Pinned to en-IN because the corpus is India-focused, and to UTC because a
+   deadline is a date rather than a moment: formatting a midnight-UTC deadline in
+   a local timezone can move it a day in either direction. */
+const DEADLINE_LOCALE = "en-IN";
+
+function formatDeadline(
+    value: string | null | undefined,
+    options: Intl.DateTimeFormatOptions,
+): string | null {
+    if (!value) return null;
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return parsed.toLocaleDateString(DEADLINE_LOCALE, { timeZone: "UTC", ...options });
+}
 
 const buildOpportunitiesSignature = (items: Opportunity[]): string =>
     items
@@ -196,6 +224,42 @@ export default function InternshipsJobsPage() {
     const [trackKeywords, setTrackKeywords] = useState<string[]>([]);
     const [filterMenuOpen, setFilterMenuOpen] = useState(false);
     const [placementMenuOpen, setPlacementMenuOpen] = useState(false);
+    /* The key of the request currently in flight.
+
+       Several things ask the feed to refresh - the filter/page effect, the
+       polling interval, the visibility handler - and on mount more than one of
+       them fires within the same few hundred milliseconds. That was harmless
+       when the whole corpus was fetched once and cached; now every duplicate is
+       a real query against Postgres, and worse, the concurrent ones queue behind
+       each other in a small connection pool until the 8s client timeout aborts
+       them. An aborted fetch leaves the feed empty, which switches the poller
+       from 60s to its 15s retry, which fires more of them.
+
+       Collapsing identical in-flight requests breaks that loop at the source. */
+    const inFlightKeyRef = useRef<string | null>(null);
+    /* When the same request last completed, so an identical one cannot be issued
+       again immediately.
+
+       The in-flight guard alone only collapses requests that overlap. Measured in
+       the browser, something re-triggers the fetch on nearly every render, so the
+       requests simply queued nose to tail instead: eleven of them in 66 seconds,
+       each starting as the previous finished. A floor caps that regardless of how
+       many triggers there are, without me having to find every one.
+
+       Keyed by the query string, so changing page or filter is never delayed -
+       that is a different key and goes out immediately. Only a repeat of the
+       identical request waits. */
+    const lastFetchRef = useRef<{ key: string; at: number }>({ key: "", at: 0 });
+    const [page, setPage] = useState(1);
+    const [perPage, setPerPage] = useState(DEFAULT_PER_PAGE);
+    const [totalCount, setTotalCount] = useState(0);
+    const [pageCount, setPageCount] = useState(1);
+    /* Filter counts, computed by the API with two GROUP BY queries. Deriving
+       them in the browser meant downloading the corpus to count it. */
+    const [facets, setFacets] = useState<{
+        tracks?: { all?: number; technical?: number; non_technical?: number };
+        placements?: { all?: number; india?: number; remote?: number; hybrid?: number; international?: number };
+    } | null>(null);
     const [savedOpportunityIds, setSavedOpportunityIds] = useState<Record<string, boolean>>({});
     const [hiddenOpportunityIds, setHiddenOpportunityIds] = useState<Record<string, boolean>>({});
     const [imageFallbackMap, setImageFallbackMap] = useState<Record<string, boolean>>({});
@@ -223,52 +287,80 @@ export default function InternshipsJobsPage() {
         }
     });
 
-    const fetchOpportunities = useEffectEvent(async () => {
-        try {
-            const token = getAccessToken();
-            if (token) {
-                const rawData = await fetchJsonWithTimeout<Opportunity[]>(
-                    "/api/v1/opportunities/recommended/me?limit=1500&ranking_mode=ab&portal=career",
-                    createAuthenticatedFetchInit({}, token),
-                    PERSONALIZED_FETCH_TIMEOUT_MS,
-                );
-                if (Array.isArray(rawData) && rawData.length > 0) {
-                    const data: Opportunity[] = rawData.map((item, idx) => ({
-                        ...item,
-                        ranking_mode: item.ranking_mode || "baseline",
-                        experiment_key: item.experiment_key || "ranking_mode",
-                        experiment_variant: item.experiment_variant || item.ranking_mode || "baseline",
-                        rank_position: item.rank_position ?? idx + 1,
-                    }));
-                    const nextSignature = buildOpportunitiesSignature(data);
-                    if (nextSignature !== opportunitiesSignatureRef.current) {
-                        opportunitiesSignatureRef.current = nextSignature;
-                        startTransition(() => {
-                            setOpportunities(data);
-                        });
-                    }
-                    scraperTriggerAttemptedRef.current = false;
-                    setNotice(null);
-                    return;
-                }
-            }
+    /* Back to page 1 whenever the filter changes.
 
-            // Without an explicit limit this took the endpoint default of 100,
-            // which is why the feed read "100 live" no matter how much had been
-            // scraped. It also had no timeout, so a stalled connection left the
-            // page on its skeleton forever.
-            const rawData = await fetchJsonWithTimeout<Opportunity[]>(
-                "/api/v1/opportunities/?portal=career&limit=1500",
-                { credentials: "include" },
-                FALLBACK_FETCH_TIMEOUT_MS,
+       Page 7 of an unfiltered feed is not page 7 of a filtered one - narrowing
+       to a speciality with two pages while sitting on page 7 asks the API for
+       an offset past the end and renders an empty grid that looks like a bug.
+
+       Adjusted during render rather than in an effect: an effect would fire a
+       request for the stale page first, then a second one for page 1, which is
+       two round trips and a flash of the wrong result. */
+    const activeFilterSignature = `${roleTrack}|${placement}|${[...trackKeywords].sort().join(",")}`;
+    const [appliedFilterSignature, setAppliedFilterSignature] = useState(activeFilterSignature);
+    if (appliedFilterSignature !== activeFilterSignature) {
+        setAppliedFilterSignature(activeFilterSignature);
+        setPage(1);
+    }
+
+    /** True when any filter narrows the feed, so an empty result is explainable. */
+    const hasActiveFilter =
+        roleTrack !== "all" || placement !== "all" || trackKeywords.length > 0;
+
+    const fetchOpportunities = useEffectEvent(async () => {
+        // Whether THIS call is the one that claimed the in-flight slot. A
+        // duplicate returns early, but `finally` still runs, so without this it
+        // would clear a key it never set and release the guard while the real
+        // request was still open - which made the guard do nothing at all.
+        let ownsInFlight = false;
+        // requestKey is built inside the try; the finally needs it too.
+        let requestKeyForRelease = "";
+        try {
+            /* One page, filtered and counted by the API.
+
+               This previously asked for limit=1500 and filtered in the browser,
+               which moved 3.36 MB out of Postgres per request. The filters are
+               query parameters now, so narrowing the list makes the response
+               smaller instead of leaving it unchanged. */
+            const params = new URLSearchParams({
+                portal: "career",
+                page: String(page),
+                per_page: String(perPage),
+            });
+            if (roleTrack !== "all") params.set("role_track", roleTrack);
+            if (placement !== "all") params.set("placement", placement);
+            if (trackKeywords.length > 0) params.set("specialities", trackKeywords.join(","));
+
+            const requestKey = params.toString();
+            if (inFlightKeyRef.current === requestKey) {
+                return;
+            }
+            const previous = lastFetchRef.current;
+            if (previous.key === requestKey && Date.now() - previous.at < MIN_REFETCH_MS) {
+                return;
+            }
+            inFlightKeyRef.current = requestKey;
+            requestKeyForRelease = requestKey;
+            ownsInFlight = true;
+
+            const token = getAccessToken();
+            const paged = await fetchJsonWithTimeout<{
+                items: Opportunity[];
+                total: number;
+                pages: number;
+                facets: Record<string, Record<string, number>>;
+            }>(
+                `/api/v1/opportunities/page?${params.toString()}`,
+                token ? createAuthenticatedFetchInit({}, token) : { credentials: "include" },
+                token ? PERSONALIZED_FETCH_TIMEOUT_MS : FALLBACK_FETCH_TIMEOUT_MS,
             );
-            if (rawData) {
-                const data: Opportunity[] = rawData.map((item, idx) => ({
+            if (paged && Array.isArray(paged.items)) {
+                const data: Opportunity[] = paged.items.map((item, idx) => ({
                     ...item,
                     ranking_mode: item.ranking_mode || "baseline",
                     experiment_key: item.experiment_key || "ranking_mode",
                     experiment_variant: item.experiment_variant || item.ranking_mode || "baseline",
-                    rank_position: item.rank_position ?? idx + 1,
+                    rank_position: item.rank_position ?? (page - 1) * perPage + idx + 1,
                 }));
                 const nextSignature = buildOpportunitiesSignature(data);
                 if (nextSignature !== opportunitiesSignatureRef.current) {
@@ -277,7 +369,14 @@ export default function InternshipsJobsPage() {
                         setOpportunities(data);
                     });
                 }
-                if (data.length === 0) {
+                setTotalCount(paged.total ?? 0);
+                setPageCount(Math.max(1, paged.pages ?? 1));
+                setFacets(paged.facets ?? null);
+                if (data.length === 0 && (paged.total ?? 0) === 0 && !hasActiveFilter) {
+                    // Empty with no filter applied means the corpus is empty, not
+                    // that the filter is narrow. Only then is a scrape worth
+                    // triggering - doing it on a narrow filter kicked the scraper
+                    // every time someone picked an unpopular speciality.
                     setNotice("Refreshing live opportunities...");
                     if (!scraperTriggerAttemptedRef.current) {
                         scraperTriggerAttemptedRef.current = true;
@@ -285,15 +384,16 @@ export default function InternshipsJobsPage() {
                     }
                 } else {
                     scraperTriggerAttemptedRef.current = false;
-                    setNotice((current) =>
-                        current === "Refreshing live opportunities..." ||
-                        current === "Live opportunities are temporarily unavailable. Retrying..." ||
-                        current === "Backend API is unavailable. Retrying..." ? null : current
-                    );
+                    setNotice(null);
                 }
                 return;
             }
 
+            /* No 1500-row fallback any more.
+
+               The anonymous path used to fetch the whole corpus, so an
+               unauthenticated visit still cost 3.36 MB of Postgres egress and
+               quietly undid the paging above. /page serves both paths. */
             // fetchJsonWithTimeout swallows the body on failure, so the specific
             // upstream detail is no longer available here. One honest message
             // beats guessing which of several causes applied.
@@ -311,6 +411,15 @@ export default function InternshipsJobsPage() {
                 void triggerLiveRefresh();
             }
         } finally {
+            // Released here, not at the return sites. The function exits from
+            // several places - the success path returns early, the empty path
+            // falls through, the catch handles a thrown error - and a key left
+            // set on any one of them would block every later refresh of the same
+            // page for the life of the component.
+            if (ownsInFlight) {
+                inFlightKeyRef.current = null;
+                lastFetchRef.current = { key: requestKeyForRelease, at: Date.now() };
+            }
             setLoading(false);
         }
     });
@@ -327,11 +436,32 @@ export default function InternshipsJobsPage() {
 
     useEffect(() => {
         const timeoutId = window.setTimeout(() => {
-            void fetchOpportunities();
+            // Deliberately no fetchOpportunities() here. The effect below already
+            // runs on mount - page, perPage and the filters all have initial
+            // values - so calling it here too fired two identical requests for
+            // every page view. Verified in the browser's network panel: each
+            // navigation produced a matched pair. Harmless before paging, when
+            // the corpus was fetched once; now that a request is the unit of
+            // egress, it was doubling the thing this work exists to reduce.
             void triggerLiveRefresh();
         }, 0);
         return () => window.clearTimeout(timeoutId);
     }, []);
+
+    /* Refetch whenever the page, the page size or any filter changes.
+
+       The filters are server-side now, so this is the whole mechanism: there is
+       no local corpus left to re-filter. Each of these produces one ~46 KB
+       request rather than re-slicing 3.36 MB already in memory. */
+    useEffect(() => {
+        // react-hooks/set-state-in-effect fires because fetchOpportunities sets
+        // state. The rule targets state derived from other state, which should be
+        // computed during render. This is the other case: synchronising with an
+        // external system, where the server is the source of truth and the
+        // request is the point. There is no local corpus left to derive from.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        void fetchOpportunities();
+    }, [page, perPage, roleTrack, placement, trackKeywords]);
 
     useEffect(() => {
         const refreshMs = opportunities.length > 0 ? FEED_REFRESH_MS : FEED_RETRY_MS;
@@ -436,147 +566,44 @@ export default function InternshipsJobsPage() {
         [roleTrack],
     );
 
-    const activeTrackFilters = useMemo(
-        () => trackFilters.filter((filter) => trackKeywords.includes(filter.label)),
-        [trackFilters, trackKeywords],
-    );
 
-    /* Classify once per listing, not once per use.
-       classifyRoleTrack scans ~200 keywords across descriptions averaging 850
-       characters. Running it for the tab counts and again for the filter cost
-       ~84ms per render over 400 rows on a developer laptop, which is several
-       hundred milliseconds of blocked main thread on the mid-range Android this
-       is actually built for - every time a chip is tapped. This map is computed
-       only when the underlying listings change; switching tracks or specialities
-       then costs a lookup. */
-    const trackByOpportunityId = useMemo(() => {
-        const map = new Map<string, RoleTrack>();
-        for (const item of grouped.career) {
-            map.set(item.id, classifyRoleTrack(item));
-        }
-        return map;
-    }, [grouped]);
+    /* Server-driven paging. The filter, the counts and the slice all happen in
+       SQL now.
 
-    const visibleOpportunities = useMemo(() => {
-        let rows = grouped.career;
-        if (roleTrack !== "all") {
-            rows = rows.filter((item) => trackByOpportunityId.get(item.id) === roleTrack);
-        }
-        if (placement !== "all") {
-            rows = rows.filter((item) => (item.feed_categories ?? []).includes(placement));
-        }
-        if (activeTrackFilters.length > 0) {
-            // OR across selections: picking Software and Data & AI should widen
-            // the list, not narrow it to roles that are somehow both.
-            rows = rows.filter((item) =>
-                activeTrackFilters.some((filter) => matchesTrackFilter(item, filter)),
-            );
-        }
-        return rows;
-    }, [grouped, roleTrack, placement, activeTrackFilters, trackByOpportunityId]);
+       This block used to classify every listing in the browser and filter the
+       whole corpus locally, which is why the page fetched all ~1600 active rows
+       at 3.36 MB per request. A 5.5 GB monthly Postgres egress allowance covers
+       about 1,600 of those, and that is how the Supabase project got restricted
+       at 16.86 GB with one developer using it. One page is ~46 KB. */
+    const visibleOpportunities = grouped.career;
+
+    const trackCounts = {
+        all: facets?.tracks?.all ?? 0,
+        technical: facets?.tracks?.technical ?? 0,
+        non_technical: facets?.tracks?.non_technical ?? 0,
+    };
 
     /* Counts respect the role track but not the placement pill itself, so each
-       pill shows how many listings it would yield rather than how many are showing
-       now. A count that changed when you selected a different pill would make the
-       row unreadable.
-
-       These deliberately sum to more than "All": the categories overlap, so a
-       remote internship in Bengaluru is counted under both India and Remote.
-       Listings the backend could not place (roughly 22% of the corpus, mostly
-       scraped news items and hackathons with no location) appear only under All,
-       which is why the four pills also sum to less than All would suggest. */
-    const placementCounts = useMemo(() => {
-        const base =
-            roleTrack === "all"
-                ? grouped.career
-                : grouped.career.filter((item) => trackByOpportunityId.get(item.id) === roleTrack);
-        const counts: Record<PlacementKey, number> = {
-            all: base.length,
-            india: 0,
-            remote: 0,
-            hybrid: 0,
-            international: 0,
-        };
-        for (const item of base) {
-            for (const category of item.feed_categories ?? []) {
-                if (category in counts) {
-                    counts[category as PlacementKey] += 1;
-                }
-            }
-        }
-        return counts;
-    }, [grouped, roleTrack, trackByOpportunityId]);
-
-    const trackCounts = useMemo(() => {
-        let technical = 0;
-        for (const track of trackByOpportunityId.values()) {
-            if (track === "technical") {
-                technical += 1;
-            }
-        }
-        return {
-            technical,
-            non_technical: trackByOpportunityId.size - technical,
-            all: trackByOpportunityId.size,
-        };
-    }, [trackByOpportunityId]);
-
-    /* How many of the filtered rows are actually on screen. Reset whenever the
-       filters change, so narrowing the list never leaves the user scrolled into
-       a page that no longer exists.
-
-       Adjusted during render rather than in an effect. An effect would paint the
-       old page count once against the new filter and then immediately re-render,
-       which is the flicker this pagination exists to avoid - and React lints it
-       for that reason. Comparing against the previous signature applies the reset
-       in the same pass. */
-    const filterSignature = `${roleTrack}|${placement}|${activeTrackFilters
-        .map((filter) => filter.label)
-        .join(",")}`;
-    const [visibleCount, setVisibleCount] = useState(CARD_PAGE_SIZE);
-    const [renderedSignature, setRenderedSignature] = useState(filterSignature);
-    if (renderedSignature !== filterSignature) {
-        setRenderedSignature(filterSignature);
-        setVisibleCount(CARD_PAGE_SIZE);
-    }
-
-    const renderedOpportunities = useMemo(
-        () => visibleOpportunities.slice(0, visibleCount),
-        [visibleOpportunities, visibleCount],
-    );
-
-    const loadMoreRef = useRef<HTMLDivElement | null>(null);
-    useEffect(() => {
-        const node = loadMoreRef.current;
-        if (!node || renderedOpportunities.length >= visibleOpportunities.length) {
-            return;
-        }
-        const observer = new IntersectionObserver(
-            (entries) => {
-                if (entries.some((entry) => entry.isIntersecting)) {
-                    setVisibleCount((current) => current + CARD_PAGE_SIZE);
-                }
-            },
-            // Start the next page before the sentinel is actually reached, so the
-            // grid is already filled by the time the user scrolls to it.
-            { rootMargin: "600px 0px" },
-        );
-        observer.observe(node);
-        return () => observer.disconnect();
-    }, [renderedOpportunities.length, visibleOpportunities.length]);
+       pill shows how many listings it would yield rather than how many are
+       showing now. They deliberately sum to more than "All": a remote internship
+       in Bengaluru is counted under both India and Remote. */
+    const placementCounts = {
+        all: facets?.placements?.all ?? 0,
+        india: facets?.placements?.india ?? 0,
+        remote: facets?.placements?.remote ?? 0,
+        hybrid: facets?.placements?.hybrid ?? 0,
+        international: facets?.placements?.international ?? 0,
+    };
 
     const trackerContext = useMemo(
         () => ({ surface: "internships_jobs_page", activeTab: roleTrack }),
         [roleTrack]
     );
-    /* Rendered rows, not filtered rows.
-       This was passed visibleOpportunities, so selecting a chip logged an
-       impression for every listing the filter matched - up to 1500 of them -
-       when the student had seen a couple of dozen. That inflates the denominator
-       of every CTR the ranking work is measured on, in a repo that has already
-       shipped one fabricated engagement number. An impression should mean the
-       card was put on screen, and after pagination that is exactly this slice. */
-    useOpportunityFeedImpressions(renderedOpportunities, trackerContext);
+    /* One page is exactly what was put on screen, so this is now the honest
+       impression set. It used to be passed every listing the filter matched -
+       up to 1500 - when the student had seen a couple of dozen, which inflated
+       the denominator of every CTR the ranking work is measured on. */
+    useOpportunityFeedImpressions(visibleOpportunities, trackerContext);
 
     const handleSave = async (opportunity: Opportunity) => {
         setSavedOpportunityIds((current) => ({ ...current, [opportunity.id]: true }));
@@ -724,7 +751,7 @@ export default function InternshipsJobsPage() {
                     border: `2px solid ${isVerified ? "#86efac" : "#facc15"}`,
                 }}
             >
-                {isVerified ? "Verified Source" : "Source Check Pending"}
+                {isVerified ? "Signals found" : "No signals found"}
             </span>
         );
     };
@@ -733,8 +760,8 @@ export default function InternshipsJobsPage() {
         const trustScore = Math.max(0, Math.min(100, Number(opp.trust_score || 0)));
         const evidence = Array.isArray(opp.verification_evidence) ? opp.verification_evidence[0] : null;
         return {
-            scoreLabel: `${trustScore}/100 source confidence`,
-            evidenceLabel: evidence || "Organizer, host, and listing source are being continuously checked.",
+            scoreLabel: `Risk heuristic: ${trustScore}/100`,
+            evidenceLabel: evidence || "No corroborating signal was found for this listing\u2019s host or organiser.",
         };
     };
 
@@ -852,10 +879,7 @@ export default function InternshipsJobsPage() {
                         </span>
                         <span style={{ color: "#ffffff", fontWeight: 700, fontSize: "0.85rem" }}>
                             {opp.deadline
-                                ? `Closes ${new Date(opp.deadline).toLocaleDateString(undefined, {
-                                      month: "short",
-                                      day: "numeric",
-                                  })}`
+                                ? `Closes ${formatDeadline(opp.deadline, { month: "short", day: "numeric" })}`
                                 : "Rolling basis"}
                         </span>
                     </div>
@@ -967,11 +991,7 @@ export default function InternshipsJobsPage() {
                             <span style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.9rem", color: "var(--text-secondary)", fontWeight: 700 }}>
                                 <Calendar size={14} />
                                 {opp.deadline
-                                    ? new Date(opp.deadline).toLocaleDateString(undefined, {
-                                          month: "short",
-                                          day: "numeric",
-                                          year: "numeric",
-                                      })
+                                    ? formatDeadline(opp.deadline, { month: "short", day: "numeric", year: "numeric" })
                                     : "Rolling Basis"}
                             </span>
                         </div>
@@ -1135,11 +1155,7 @@ export default function InternshipsJobsPage() {
                             </div>
                             <div style={{ fontWeight: 800, color: "var(--text-primary)" }}>
                                 {opp.deadline
-                                    ? new Date(opp.deadline).toLocaleDateString(undefined, {
-                                          month: "short",
-                                          day: "numeric",
-                                          year: "numeric",
-                                      })
+                                    ? formatDeadline(opp.deadline, { month: "short", day: "numeric", year: "numeric" })
                                     : "Rolling Basis"}
                             </div>
                         </div>
@@ -1306,7 +1322,7 @@ export default function InternshipsJobsPage() {
                             ["Domain", opp.domain || "General"],
                             ["Type", opp.opportunity_type || "Opportunity"],
                             ["Deadline", opp.deadline
-                                ? new Date(opp.deadline).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+                                ? formatDeadline(opp.deadline, { month: "short", day: "numeric", year: "numeric" })
                                 : "Rolling Basis"],
                         ].map(([label, value]) => (
                             <div key={label}>
@@ -1366,6 +1382,76 @@ export default function InternshipsJobsPage() {
                     </div>
                 </div>
             </div>
+        );
+    };
+
+    /* Numbered pager.
+
+       A window of five around the current page rather than all of them: at 12
+       per page this corpus is 134 pages, and rendering 134 buttons is its own
+       kind of unusable. First/last jumps cover the ends the window cannot
+       reach. */
+    const renderPager = () => {
+        if (pageCount <= 1) {
+            return null;
+        }
+        const windowSize = 5;
+        let firstShown = Math.max(1, page - Math.floor(windowSize / 2));
+        const lastShown = Math.min(pageCount, firstShown + windowSize - 1);
+        // Re-anchor when the window runs past the end, so the last pages still
+        // show five buttons instead of trailing off to one.
+        firstShown = Math.max(1, lastShown - windowSize + 1);
+        const numbers = Array.from({ length: lastShown - firstShown + 1 }, (_, i) => firstShown + i);
+
+        const goTo = (target: number) => {
+            const next = Math.max(1, Math.min(pageCount, target));
+            if (next !== page) {
+                setPage(next);
+                // The grid is above the pager; without this the new page lands
+                // with the viewport still at the bottom of the previous one.
+                window.scrollTo({ top: 0, behavior: "smooth" });
+            }
+        };
+
+        return (
+            <nav className="feed-pager" aria-label="Feed pages">
+                <div className="feed-pager-size">
+                    <label htmlFor="records-per-page">Records per page:</label>
+                    <select
+                        id="records-per-page"
+                        value={perPage}
+                        onChange={(event) => {
+                            setPerPage(Number(event.target.value));
+                            // Page 7 of 134 is not page 7 of 17. Reset rather
+                            // than land the reader somewhere unrelated.
+                            setPage(1);
+                        }}
+                    >
+                        {PER_PAGE_OPTIONS.map((option) => (
+                            <option key={option} value={option}>{option}</option>
+                        ))}
+                    </select>
+                </div>
+
+                <div className="feed-pager-controls">
+                    <button type="button" aria-label="First page" disabled={page === 1} onClick={() => goTo(1)}>|&lt;</button>
+                    <button type="button" aria-label="Previous page" disabled={page === 1} onClick={() => goTo(page - 1)}>&lt;</button>
+                    {numbers.map((number) => (
+                        <button
+                            key={number}
+                            type="button"
+                            aria-label={`Page ${number}`}
+                            aria-current={number === page ? "page" : undefined}
+                            className={number === page ? "active" : ""}
+                            onClick={() => goTo(number)}
+                        >
+                            {number}
+                        </button>
+                    ))}
+                    <button type="button" aria-label="Next page" disabled={page === pageCount} onClick={() => goTo(page + 1)}>&gt;</button>
+                    <button type="button" aria-label="Last page" disabled={page === pageCount} onClick={() => goTo(pageCount)}>&gt;|</button>
+                </div>
+            </nav>
         );
     };
 
@@ -1429,11 +1515,7 @@ export default function InternshipsJobsPage() {
                         variant === "competitive" ? renderCompetitiveCard(opp, idx) : renderCareerCard(opp, idx)
                     )}
                 </div>
-                {items.length < totalCount && (
-                    <div ref={loadMoreRef} className="feed-load-more" aria-hidden="true">
-                        Loading more roles…
-                    </div>
-                )}
+                {renderPager()}
             </section>
         );
     };
@@ -1647,9 +1729,10 @@ export default function InternshipsJobsPage() {
                         {renderSection(
                             "Jobs & Internships",
                             "Hiring-focused roles, internships, and career-track openings.",
-                            renderedOpportunities,
+                            visibleOpportunities,
                             "career",
-                            visibleOpportunities.length,
+                            // Rows matching the filter, not rows on this page.
+                            totalCount,
                         )}
                         {!visibleOpportunities.length && (
                             <div className="card-panel" style={{ padding: "1.5rem" }}>

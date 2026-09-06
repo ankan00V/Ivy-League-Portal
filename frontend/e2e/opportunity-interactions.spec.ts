@@ -61,6 +61,30 @@ async function stubOpportunityRoutes(
       return;
     }
 
+    /* The internships feed pages server-side, so it asks for /page and expects
+       an envelope rather than a bare array. Stubbing only the list endpoint left
+       paged.items undefined, the grid rendered nothing, and the failure read as
+       "the seeded opportunity is missing from the feed" rather than "the stub
+       is answering the wrong shape". */
+    if (request.method() === "GET" && path.endsWith("/api/v1/opportunities/page")) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: opportunities,
+          total: opportunities.length,
+          page: 1,
+          per_page: 12,
+          pages: 1,
+          facets: {
+            tracks: { all: opportunities.length, technical: opportunities.length, non_technical: 0 },
+            placements: { all: opportunities.length, india: 0, remote: 0, hybrid: 0, international: 0 },
+          },
+        }),
+      });
+      return;
+    }
+
     if (request.method() === "GET" && (path.endsWith("/api/v1/opportunities/") || path.endsWith("/api/v1/opportunities"))) {
       await route.fulfill({
         status: 200,

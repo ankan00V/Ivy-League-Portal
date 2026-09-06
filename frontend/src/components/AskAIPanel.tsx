@@ -134,6 +134,28 @@ function toHistoryEntryFromApi(entry: AskAIHistoryApiEntry): AskAIHistoryEntry {
   };
 }
 
+/* Same hydration trap as the feed's deadlines: toLocaleString() with no
+   arguments uses whatever locale and timezone the runtime defaults to, and Node
+   does not resolve those the way a student's browser does. The server and the
+   client then render different text for the same timestamp, which is React
+   error #418.
+
+   These are snapshot timestamps rather than dates, so the time is kept - only
+   the locale and zone are pinned. */
+function formatSnapshotTimestamp(value: string | null | undefined): string {
+  if (!value) return "";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return parsed.toLocaleString("en-IN", {
+    timeZone: "UTC",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 export default function AskAIPanel({ surface, suggestedQueries }: AskAIPanelProps) {
   const askAiTimeoutMs = 30000;
   const storagePrefix = `vidyaverse.ask_ai.${surface}`;
@@ -664,7 +686,7 @@ export default function AskAIPanel({ surface, suggestedQueries }: AskAIPanelProp
             <div className="card-panel" style={{ display: "grid", gap: "0.7rem", background: "var(--bg-base)" }}>
               <div style={{ fontWeight: 900 }}>Compare Two Shortlists</div>
               <div style={{ color: "var(--text-muted)", fontWeight: 700, fontSize: "0.86rem" }}>
-                Baseline: {new Date(compareBaseline.created_at).toLocaleString()} · Query: {compareBaseline.query}
+                Baseline: {formatSnapshotTimestamp(compareBaseline.created_at)} · Query: {compareBaseline.query}
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: "0.7rem" }}>
                 <div style={{ border: "2px solid var(--border-subtle)", borderRadius: "var(--radius-sm)", padding: "0.7rem" }}>
@@ -693,7 +715,7 @@ export default function AskAIPanel({ surface, suggestedQueries }: AskAIPanelProp
             <div className="card-panel" style={{ display: "grid", gap: "0.65rem", background: "var(--bg-base)" }}>
               <div style={{ fontWeight: 900 }}>Why this changed since yesterday</div>
               <div style={{ color: "var(--text-muted)", fontWeight: 700, fontSize: "0.86rem" }}>
-                Compared against snapshot from {new Date(dayAgoDiff.baselineDate).toLocaleString()}.
+                Compared against snapshot from {formatSnapshotTimestamp(dayAgoDiff.baselineDate)}.
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "0.7rem" }}>
                 <div style={{ border: "2px solid var(--border-subtle)", borderRadius: "var(--radius-sm)", padding: "0.7rem" }}>

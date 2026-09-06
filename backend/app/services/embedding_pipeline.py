@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import hashlib
+import logging
 import math
 from typing import Any, Iterable, Optional
 
@@ -15,6 +16,22 @@ from app.models.opportunity import Opportunity
 from app.models.opportunity_interaction import OpportunityInteraction
 from app.models.profile import Profile
 from app.models.user import User
+
+logger = logging.getLogger(__name__)
+
+
+async def _save_rows(rows: list[Opportunity]) -> int:
+    """Persist a batch in as few round trips as the backend allows."""
+    if not rows:
+        return 0
+    if settings.POSTGRES_ODM_ENABLED:
+        from app.db.pg_documents import bulk_save
+
+        return await bulk_save(Opportunity, rows)
+    for row in rows:
+        await row.save()
+    return len(rows)
+
 from app.services.embedding_service import embedding_service
 
 
@@ -151,8 +168,21 @@ class EmbeddingPipeline:
                 row.embedding_model_version = self.model_version
                 row.embedding_updated_at = now
                 row.updated_at = now
-                await row.save()
-                updated += 1
+            # One write per batch, not one per row. This loop used to await
+            # row.save() per opportunity: a forced pass over ~2,400 rows was
+            # ~2,400 sequential round trips to Supabase, which on its own
+            # exceeded the 900s handler deadline that killed embeddings.rebuild
+            # 93 times running. bulk_save already existed for exactly this
+            # reason - the vector index rebuild had the same bug - but this
+            # caller was never moved onto it.
+            #
+            # Writing per batch rather than once at the end also makes the pass
+            # resumable: the job runs under a deadline, and whatever batches
+            # land stay landed instead of being recomputed by the next run.
+            updated += await _save_rows(batch)
+            logger.info(
+                "embedding pass: %s/%s opportunities embedded", updated, len(candidates)
+            )
 
         return EmbeddingBatchReport(
             status="updated",

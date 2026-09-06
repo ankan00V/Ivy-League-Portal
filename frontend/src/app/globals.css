@@ -1397,6 +1397,135 @@ select.input-base {
    congested once a section stacks four textareas. Row gap is larger than column
    gap so vertically adjacent fields separate more than side-by-side ones, which
    is what actually makes a two-column form scan as rows. */
+/* Repeatable profile entries (education, and the accomplishment lists).
+   Each entry is a bordered card so a list of three degrees reads as three
+   things rather than one long run of inputs. */
+/* Collapsible group inside Accomplishments. Four lists expanded at once grew
+   the page without bound as entries were added, so one opens at a time. */
+.profile-entry-group {
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  margin-bottom: 1rem;
+  overflow: hidden;
+}
+
+.profile-entry-group-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.2rem;
+  background: var(--bg-surface-hover);
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+}
+
+.profile-entry-group.is-open .profile-entry-group-toggle {
+  border-bottom: 2px solid var(--border-subtle);
+}
+
+.profile-entry-group-label {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.profile-entry-group-count {
+  min-width: 1.6rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.profile-entry-group-chevron {
+  font-size: 1.3rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.profile-entry-group-body {
+  padding: 1.2rem;
+  display: grid;
+  gap: 0.4rem;
+}
+
+/* Group heading inside a section that holds several lists (Projects,
+   Certifications, Honors, Volunteering all live under Accomplishments). */
+.profile-entry-group-title {
+  font-size: 1.15rem;
+  font-weight: 700;
+  margin: 2rem 0 0.9rem;
+}
+
+.profile-entry-group-title:first-of-type {
+  margin-top: 0.5rem;
+}
+
+.profile-entry-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-weight: 600;
+}
+
+.profile-entry-checkbox input {
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
+.profile-entry-card {
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 1.4rem;
+  margin-bottom: 1.4rem;
+  display: grid;
+  gap: 1.4rem;
+  background: var(--bg-surface);
+}
+
+.profile-entry-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.profile-entry-card-title {
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+.profile-entry-remove {
+  padding: 0.35rem 0.9rem;
+  font-size: 0.85rem;
+}
+
+.profile-entry-add {
+  width: fit-content;
+}
+
+.profile-entry-empty {
+  color: var(--text-secondary);
+  margin-bottom: 1.2rem;
+}
+
+/* Groups a Month+Year pair under one caption, so "Start date" reads as one
+   control rather than two unrelated dropdowns. */
+.profile-entry-legend {
+  display: block;
+  font-weight: 700;
+  margin-bottom: 0.6rem;
+}
+
 .profile-field-grid {
   display: grid;
   gap: 1.6rem 1.4rem;
@@ -2538,12 +2667,81 @@ select.input-base {
   font-variant-numeric: tabular-nums;
 }
 
-/* Sentinel below the card grid. An IntersectionObserver watches it and appends
-   the next page before it scrolls into view, so the feed extends without a
-   button and without ever mounting the whole corpus at once. */
-.feed-load-more {
-  padding: 1.5rem 0;
-  text-align: center;
+/* Numbered pager under the card grid.
+
+   Replaced an infinite-scroll sentinel. Scrolling could not express "page 40 of
+   134", and more importantly the feed it scrolled through was the whole corpus
+   held in memory - the thing that cost 3.36 MB of Postgres egress per request.
+   Discrete pages make each view one small query. */
+.feed-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 2rem;
+  padding-top: 1.25rem;
+  border-top: 2px solid var(--border-subtle);
+}
+
+.feed-pager-size {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   font-weight: 700;
   color: var(--text-secondary);
+}
+
+.feed-pager-size select {
+  padding: 0.4rem 0.6rem;
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-weight: 800;
+}
+
+.feed-pager-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.feed-pager-controls button {
+  /* 44px, the minimum comfortable touch target. Page numbers are the smallest
+     controls on this screen and the easiest to mis-tap on a phone. */
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  padding: 0.4rem 0.6rem;
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.feed-pager-controls button:hover:not(:disabled) {
+  background: var(--bg-surface-hover);
+}
+
+.feed-pager-controls button.active {
+  background: var(--brand-accent);
+  color: #000;
+  box-shadow: var(--shadow-sm);
+}
+
+/* Kept visible rather than hidden: a first/prev control that vanishes on page 1
+   makes the row reflow and shifts every number under the reader's finger. */
+.feed-pager-controls button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+@media (max-width: 640px) {
+  .feed-pager {
+    justify-content: center;
+  }
 }

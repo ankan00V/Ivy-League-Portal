@@ -24,6 +24,11 @@ from pymongo.errors import DuplicateKeyError
 from app.core.async_limits import LoopLocalLockMap, LoopLocalSemaphore
 from app.core.url_guard import BlockedTargetURL, assert_public_http_url
 from app.services.scrapling_client import scrapling_client
+from app.core.audiences import normalise_audience
+from app.services.source_rubric import (
+    QUALIFICATION_RUBRIC_VERSION,
+    is_reexaminable,
+)
 from app.core.config import settings
 from app.core.redis import get_redis
 from app.core.time import utc_now
@@ -106,6 +111,21 @@ INDIAN_CITY_TERMS = {
     "ahmedabad",
     "remote india",
 }
+
+#: Suffixes only an accredited body can hold. India's registry will not sell an
+#: .ac.in or a .gov.in to anyone who asks - the registrar requires proof of
+#: institutional status - which makes the suffix a stronger legitimacy signal
+#: for an academic source than any word in a corporate brand list, and it is the
+#: signal the old rubric had no way to see. A government research council scored
+#: 0 of 15 on legitimacy purely for not being a company.
+ACCREDITED_DOMAIN_SUFFIXES: tuple[str, ...] = (
+    ".gov.in", ".nic.in", ".ac.in", ".res.in", ".edu.in", ".edu", ".gov", ".org.in",
+)
+
+
+def is_accredited_domain(domain: str | None) -> bool:
+    return any((domain or "").lower().endswith(suffix) for suffix in ACCREDITED_DOMAIN_SUFFIXES)
+
 
 LEGITIMATE_EMPLOYER_TERMS = {
     "google",
@@ -272,6 +292,263 @@ class DiscoveryRunSummary(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
 
+# Recruitment *process* notices, which are not opportunities.
+#
+# Academic and government recruitment pages interleave vacancies with the
+# paperwork of past ones: admit cards, merit lists, results, provisional
+# eligibility lists, answer keys. Extraction cannot tell them apart by shape -
+# they sit in the same list, with the same markup, and often the same wording
+# minus one noun. IISc's page produced twelve candidate rows of which the real
+# openings were a postdoctoral programme, an instructor post and a faculty
+# recruitment drive; the rest were admit cards and merit lists.
+#
+# A student or academician shown "Third Revised Merit List" in a feed of
+# opportunities has been shown something they cannot apply to, which is worse
+# than showing them nothing: it teaches them the feed is not worth reading.
+_PROCESS_NOTICE_TERMS: tuple[str, ...] = (
+    "admit card",
+    "merit list",
+    "answer key",
+    "result of the recruitment",
+    "provisional list",
+    "list of eligible",
+    "not eligible",
+    "shortlisted candidates",
+    "cut-off",
+    "cut off marks",
+    "interview schedule",
+    "exam schedule",
+    "written exam",
+    "corrigendum",
+    "addendum",
+    "postponed",
+    "cancelled",
+    "declared",
+    "score card",
+    "final selection list",
+    "waiting list",
+)
+
+
+# Section headings and index links, which are not opportunities either.
+#
+# A recruitment page's own navigation extracts identically to its listings:
+# "Announcements", "Contract/Project Staff", "Staff Recruitment Regular/On
+# Deputation Contractual Positions" all came out of IISc's page alongside the
+# real postdoctoral and instructor openings. They are the categories the
+# vacancies are filed under, not vacancies.
+#
+# Matched on the whole normalised title rather than as substrings, because
+# "Faculty positions" is a heading and "Special Recruitment Drive for Faculty
+# positions" is a real opening - the difference is whether the title says
+# anything beyond the category name.
+_NAVIGATION_LABELS: frozenset[str] = frozenset(
+    {
+        "announcements",
+        "announcement",
+        "notices",
+        "notice board",
+        "news",
+        "news and events",
+        "archive",
+        "archives",
+        "careers",
+        "career",
+        "jobs",
+        "vacancies",
+        "recruitment",
+        "recruitments",
+        "opportunities",
+        "openings",
+        "current openings",
+        "job openings",
+        "apply now",
+        "read more",
+        "click here",
+        "view all",
+        "more",
+        "home",
+        "faculty positions",
+        "staff positions",
+        "contract/project staff",
+        "project staff",
+        "regular positions",
+        "advertisements",
+        "tenders",
+    }
+)
+
+
+def is_navigation_label(title: str) -> bool:
+    """Whether this row is a section heading rather than a posting."""
+    text = " ".join(str(title or "").split()).lower().strip(" .:-–—|")
+    if not text:
+        return False
+    if text in _NAVIGATION_LABELS:
+        return True
+    # A title that is only a category name plus filler words is still a
+    # category. Six words is generous for a heading and short for a real
+    # posting, which normally names a role, a department or a number.
+    if len(text.split()) <= 6 and text.rstrip("s") in {
+        label.rstrip("s") for label in _NAVIGATION_LABELS
+    }:
+        return True
+    return False
+
+
+#: Always removed, wherever they appear - none of them is content.
+_DEAD_TAGS = ("script", "style", "noscript")
+
+#: Page furniture, but only at page level.
+#:
+#: `<header>` and `<footer>` are legal inside `<article>` and `<section>`, and
+#: that is precisely how a job card is written:
+#:     <article><header><h2>Backend Intern</h2></header>…</article>
+#: Removing every `<header>` therefore removes the titles. Measured across ten
+#: promoted student sources, it took databricks.com and rti.org from four and
+#: three extractable rows to zero, and cost bnpparibas three more - a filter
+#: added for the empty faculty feed quietly emptying the working one.
+#: A chrome tag counts as chrome only when no sectioning element encloses it.
+_CHROME_TAGS = ("nav", "header", "footer", "aside")
+
+#: Enclosing any of these means the tag belongs to a piece of content rather
+#: than to the page.
+_SECTIONING_ANCESTORS = {"article", "section", "main", "li", "tr"}
+
+#: ARIA roles that say "this region is chrome" in so many words.
+_CHROME_ROLES = ("navigation", "banner", "contentinfo", "menu", "menubar")
+
+#: And the same regions when they are divs, which on most university sites they
+#: are. Matched as whole class/id tokens, never as substrings.
+#:
+#: The substring form is the obvious way to write this and it is dangerous:
+#: `[class*=header]` also matches `job-header`, and `[class*=nav]` matches
+#: `job-nav`, so a careers page that names its listing cards after their parts
+#: would have those cards deleted before extraction ran. That would silently
+#: empty the student corpus - 2,222 live rows and the only feed that has ever
+#: worked - to fix a faculty feed with none. Token matching keeps `navbar` and
+#: drops `job-header`, which is the distinction that matters.
+_CHROME_TOKENS = frozenset({
+    "nav", "navbar", "navigation", "mainnav", "main-nav", "topnav", "top-nav",
+    "menu", "mainmenu", "main-menu", "navmenu", "nav-menu", "megamenu",
+    "header", "site-header", "page-header", "masthead",
+    "footer", "site-footer", "page-footer",
+    "breadcrumb", "breadcrumbs", "sidebar", "topbar", "toolbar", "skip-link",
+})
+
+
+def strip_page_chrome(soup: "BeautifulSoup") -> "BeautifulSoup":
+    """Remove a page's own navigation. Measured, and NOT used in extraction.
+
+    Kept because it is the obvious idea and the next person will have it too.
+    It does not survive measurement. Extracting ten sources both ways, counting
+    rows that pass every other filter:
+
+        source              raw   +vocabulary   +chrome   +both
+        databricks.com       68             4         7       1
+        rti.org              76             3         4       0
+        icmr.gov.in          37             6         0       0
+        group.bnpparibas     47             6        20       4
+
+    The vocabulary gate alone does the work - 68 rows to 4, 76 to 3 - and the
+    chrome strip then takes real postings with it, emptying icmr.gov.in and
+    rti.org completely. Sites nest listings inside the regions this removes
+    often enough that no version of the rule is safe: scoping it to page level
+    and matching whole class tokens rather than substrings both helped and
+    neither was enough.
+
+    So `looks_like_opportunity` is the filter that ships. Original docstring
+    below, since the reasoning is still sound - it is the execution that a page
+    with no semantic markup defeats.
+
+    The listing selector these templates fall back to is
+    `[data-job-id], .job, .opening, article, li`, and on a site with no job
+    markup the only thing that matches is every `<li>` on the page - which is
+    the menu. IIT Bombay's careers page promoted 73 rows that way and they were
+    titled "Placements", "Donate", "CSR", "Institute magazines" and
+    "Director's Message". Not one was an opening.
+
+    A denylist of headings cannot fix that; there is no end to the words a
+    university puts in a menu. This is positional instead: whatever is inside
+    the navigation is navigation, whoever wrote it and whatever it says.
+
+    Mutates a copy, so the caller's soup is untouched for any other pass.
+    """
+    for tag_name in _DEAD_TAGS:
+        for node in soup.find_all(tag_name):
+            node.decompose()
+    for tag_name in _CHROME_TAGS:
+        for node in soup.find_all(tag_name):
+            if node.decomposed:
+                continue
+            if any(parent.name in _SECTIONING_ANCESTORS for parent in node.parents if parent.name):
+                # A header inside an article is that article's header.
+                continue
+            node.decompose()
+    for role in _CHROME_ROLES:
+        for node in soup.find_all(attrs={"role": role}):
+            node.decompose()
+    for node in list(soup.find_all(True)):
+        if node.decomposed:
+            continue
+        if any(parent.name in _SECTIONING_ANCESTORS for parent in node.parents if parent.name):
+            continue
+        tokens = set(node.get("class") or [])
+        node_id = node.get("id")
+        if node_id:
+            tokens.add(str(node_id))
+        if any(str(token).strip().lower() in _CHROME_TOKENS for token in tokens):
+            node.decompose()
+    return soup
+
+
+def looks_like_opportunity(text: str, *, audience: str) -> bool:
+    """Whether a candidate row says anything its audience would recognise.
+
+    The second half of the same defence. A menu item that survives the chrome
+    strip - because the site nests its menu in a plain div - still has to
+    contain one word from the audience's own vocabulary. "Donate" and
+    "Director's Message" contain none; "Advertisement for the post of Assistant
+    Professor" contains several.
+    """
+    haystack = (text or "").lower()
+    terms = SourceQualificationService.DENSITY_TERMS.get(
+        normalise_audience(audience), SourceQualificationService.DENSITY_TERMS["student"]
+    )
+    return any(term in haystack for term in terms)
+
+
+def is_self_link(apply_url: str, page_url: str) -> bool:
+    """Whether a row's link points back at the page it was found on.
+
+    A posting has somewhere of its own to send you. A menu entry sends you to
+    the section you are already in, or to the page's own anchor - which is what
+    "Faculty Recruitment" on a recruitment landing page does. Those rows pass
+    the vocabulary gate honestly (they do contain "faculty" and "recruit") and
+    are still not openings, and they are what remained of IIT Bombay's 73
+    promoted menu items after every other filter.
+
+    Compared on the canonical form so a trailing slash, a fragment or a query
+    string cannot disguise a self-link as a destination.
+    """
+    try:
+        left = normalize_url(apply_url or "")
+        right = normalize_url(page_url or "")
+    except Exception:
+        return False
+    if not left or not right:
+        return False
+    return left.rstrip("/") == right.rstrip("/")
+
+
+def is_process_notice(title: str) -> bool:
+    """Whether this row is recruitment paperwork rather than an opening."""
+    text = " ".join(str(title or "").split()).lower()
+    if not text:
+        return False
+    return any(term in text for term in _PROCESS_NOTICE_TERMS)
+
+
 class DiscoveryCandidate(BaseModel):
     url: str
     method: DiscoveryMethod
@@ -279,6 +556,9 @@ class DiscoveryCandidate(BaseModel):
     name: Optional[str] = None
     source_type: Optional[str] = None
     discovered_by: Optional[str] = None
+    # Carried from the seed so the DiscoveredSource this becomes knows who it
+    # serves. Defaults to student, which is what every pre-existing source is.
+    audience: str = "student"
 
 
 class QualificationCheckResult(BaseModel):
@@ -594,7 +874,26 @@ class SourceHttpClient:
         # Applied here rather than only in _fetch_direct so the render providers
         # are covered by the same check; theirs inspects literal IPs only, which
         # a hostname resolving to a private address walks straight past.
-        normalized = assert_public_http_url(normalized)
+        try:
+            normalized = assert_public_http_url(normalized)
+        except Exception:
+            # The apex host did not survive validation - typically because it
+            # does not resolve at all. normalize_url strips "www." for identity,
+            # and several academic and government sites publish only on www, so
+            # the canonical form points at a host that was never intended to
+            # serve. iitm.ac.in and nitttrkol.ac.in both fail here while their
+            # www hosts answer 200.
+            #
+            # The www variant is validated by the same guard rather than
+            # skipping it. This is a second candidate URL getting a full check,
+            # not an exemption: a host that resolves to a private or reserved
+            # address is still refused, whatever its name.
+            parsed_apex = urlparse(normalized)
+            if parsed_apex.netloc.startswith("www."):
+                raise
+            normalized = assert_public_http_url(
+                urlunparse(parsed_apex._replace(netloc=f"www.{parsed_apex.netloc}"))
+            )
         domain = normalize_domain(urlparse(normalized).netloc)
         lock = self._domain_locks.get(domain)
         async with self._global_semaphore:
@@ -679,6 +978,38 @@ class SourceHttpClient:
                 self._last_domain_request[domain] = time.monotonic()
                 if direct_page is not None:
                     return direct_page
+
+                # Last resort: try the www host.
+                #
+                # normalize_url canonicalises the host through normalize_domain,
+                # which strips "www." so that www.x.ac.in and x.ac.in are one
+                # source rather than two. That is right for identity and wrong
+                # for fetching: a great many Indian government and university
+                # sites serve only on www and refuse the apex outright. Measured
+                # on the seeded academic sources, four of seven - nitttrkol,
+                # ugc, tifr and iitm - answered 200 on www and ConnectError or
+                # ConnectTimeout on the apex, so they scored 36 on reachability
+                # and were rejected permanently however good the site was.
+                #
+                # Retried here rather than by changing normalize_url, because
+                # that function also feeds opportunity dedupe keys and splitting
+                # www from apex there would let the same posting in twice.
+                if direct_error is not None and not domain.startswith("www."):
+                    parsed = urlparse(normalized)
+                    if not parsed.netloc.startswith("www."):
+                        www_url = urlunparse(parsed._replace(netloc=f"www.{parsed.netloc}"))
+                        try:
+                            www_page = await self._fetch_direct(www_url, timeout)
+                        except Exception:
+                            www_page = None
+                        if www_page is not None:
+                            logger.info(
+                                "reached %s only on the www host; apex failed with %s",
+                                domain,
+                                type(direct_error).__name__,
+                            )
+                            return www_page
+
                 assert direct_error is not None
                 raise direct_error
 
@@ -1368,6 +1699,7 @@ class SourceDiscoveryEngine:
                         discovery_query=seed.company_name,
                         name=seed.company_name,
                         source_type="company_careers",
+                        audience=getattr(seed, "audience", "student") or "student",
                     )
                 )
         return candidates
@@ -1556,6 +1888,7 @@ class SourceDiscoveryEngine:
             discovery_method=candidate.method,
             discovery_query=candidate.discovery_query,
             discovered_by=candidate.discovered_by or "system",
+            audience=normalise_audience(getattr(candidate, "audience", None)),
             requires_admin_review=candidate.method == DiscoveryMethod.user_submission,
         )
         try:
@@ -1637,7 +1970,9 @@ class SourceQualificationService:
         details["https"] = self._https_check(source.url).model_dump()
         details["domain_age"] = (await self._domain_age_check(source.domain)).model_dump()
         details["content_language"] = self._content_language_check(html).model_dump()
-        details["opportunity_density"] = self._opportunity_density_check(html).model_dump()
+        details["opportunity_density"] = self._opportunity_density_check(
+            html, audience=getattr(source, "audience", "student")
+        ).model_dump()
         details["spam_signals"] = self._spam_signals_check(source.domain, html).model_dump()
         details["structured_data_quality"] = self._structured_data_quality_check(html).model_dump()
 
@@ -1652,6 +1987,9 @@ class SourceQualificationService:
 
         source.qualification_score = score
         source.qualification_details = details
+        # Stamped on every verdict, pass or fail. A rejection that does not say
+        # which rules produced it cannot be revisited when those rules change.
+        source.rubric_version = QUALIFICATION_RUBRIC_VERSION
         source.source_type = infer_source_type(source.url, self._title_from_html(html), BeautifulSoup(html, "html.parser").get_text(" ", strip=True)[:500] if html else "")
         if hard_rejects:
             source.status = SourceStatus.rejected
@@ -1682,16 +2020,34 @@ class SourceQualificationService:
         https = urlparse(url).scheme.lower() == "https"
         return QualificationCheckResult(score=100 if https else 30, passed=True, notes="https" if https else "http")
 
+    def _age_unknown(self, domain: str, *, reason: str = "domain_age_unknown") -> QualificationCheckResult:
+        """Age we could not read is not the same as age we know to be short.
+
+        India's registry restricts WHOIS on .gov.in and .ac.in, so every
+        government and university source here resolves to no creation date and
+        lands on the same middling 50 that a domain registered last week gets.
+        That is not what the check is measuring. A registry-controlled suffix
+        cannot be new and anonymous - the registrar requires proof of
+        institutional status before issuing one - so the suffix is better
+        evidence of establishment than a WHOIS record we are not allowed to
+        read. An ordinary domain of unknown age keeps the neutral 50.
+        """
+        if is_accredited_domain(domain):
+            return QualificationCheckResult(
+                score=100, passed=True, notes=f"{reason};accredited_suffix"
+            )
+        return QualificationCheckResult(score=50, passed=True, notes=reason)
+
     async def _domain_age_check(self, domain: str) -> QualificationCheckResult:
         if whois is None:
-            return QualificationCheckResult(score=50, passed=True, notes="whois_unavailable")
+            return self._age_unknown(domain, reason="whois_unavailable")
         try:
             data = await asyncio.to_thread(whois.whois, domain)
             created = getattr(data, "creation_date", None) or data.get("creation_date")
             if isinstance(created, list):
                 created = next((item for item in created if item), None)
             if not isinstance(created, datetime):
-                return QualificationCheckResult(score=50, passed=True, notes="domain_age_unknown")
+                return self._age_unknown(domain)
             age_days = (utc_now().replace(tzinfo=None) - created.replace(tzinfo=None)).days
             if age_days >= 365 * 3:
                 score = 100
@@ -1703,7 +2059,10 @@ class SourceQualificationService:
                 score = 0
             return QualificationCheckResult(score=score, passed=True, notes=f"age_days={age_days}")
         except Exception as exc:
-            return QualificationCheckResult(score=50, passed=True, notes=f"domain_age_error:{exc}")
+            result = self._age_unknown(domain)
+            return QualificationCheckResult(
+                score=result.score, passed=True, notes=f"{result.notes};domain_age_error:{exc}"
+            )
 
     def _content_language_check(self, html: str) -> QualificationCheckResult:
         text = BeautifulSoup(html or "", "html.parser").get_text(" ", strip=True)[:2000]
@@ -1722,7 +2081,37 @@ class SourceQualificationService:
         except Exception:
             return QualificationCheckResult(score=50, passed=True, notes="language_unknown")
 
-    def _opportunity_density_check(self, html: str) -> QualificationCheckResult:
+    # What counts as "an opportunity" depends on who the source serves.
+    #
+    # The jobs vocabulary is correct for students and wrong for institutions. An
+    # accreditation body or ranking portal advertises schemes, calls for
+    # proposals and collaborations, never vacancies, so it scores 0 on density -
+    # and density carries the largest weight, 25 of 100. Every other check can be
+    # perfect and the total still lands on exactly 59.0 against a threshold of
+    # 60. NIRF and AIM both did. No institution source could ever have passed,
+    # and the rejection reason said "low_qualification_score", which reads like
+    # a bad site rather than a vocabulary that does not describe it.
+    #
+    # Faculty sit between the two: FDPs and fellowships are advertised in the
+    # language of both.
+    DENSITY_TERMS: dict[str, tuple[str, ...]] = {
+        "student": ("apply", "intern", "job", "role", "opening", "hiring"),
+        "faculty": (
+            "apply", "vacanc", "recruit", "faculty", "fellowship", "professor",
+            "post of", "advertisement", "walk-in", "grant",
+        ),
+        "institution": (
+            "scheme", "call for", "proposal", "grant", "collaborat", "accredit",
+            "programme", "initiative", "apply", "circular", "notification", "empanel",
+        ),
+    }
+
+    def _opportunity_density_check(
+        self, html: str, *, audience: str = "student"
+    ) -> QualificationCheckResult:
+        terms = self.DENSITY_TERMS.get(
+            normalise_audience(audience), self.DENSITY_TERMS["student"]
+        )
         soup = BeautifulSoup(html or "", "html.parser")
         schema_jobs = self._schema_jobpostings(soup)
         if schema_jobs:
@@ -1742,7 +2131,7 @@ class SourceQualificationService:
                 text = element.get_text(" ", strip=True).lower()
                 if len(text) < 20:
                     continue
-                if any(term in text for term in ["apply", "intern", "job", "role", "opening", "hiring"]):
+                if any(term in text for term in terms):
                     candidate_count += 1
             if candidate_count >= 10:
                 break
@@ -1818,6 +2207,12 @@ class SourceQualificationService:
                 DiscoveredSource.status == SourceStatus.discovered,
             ).sort("-priority_score", "discovered_at").limit(max(1, int(max_items))).to_list()
             ids = [str(row.id) for row in fallback_rows if row.id is not None]
+        # New work first, always. Only once there is none does the batch spend
+        # its budget on the rejection backlog, so re-examination can never
+        # starve discovery - it fills idle capacity rather than competing for it.
+        remaining = max(0, int(max_items) - len(ids))
+        if remaining:
+            ids.extend(await self._stale_rejection_ids(limit=remaining))
         processed = 0
         qualified = 0
         rejected = 0
@@ -1833,6 +2228,48 @@ class SourceQualificationService:
             except Exception as exc:
                 errors.append(f"{source_id}:{exc}")
         return {"processed": processed, "qualified": qualified, "rejected": rejected, "errors": errors}
+
+    async def _stale_rejection_ids(self, *, limit: int) -> list[str]:
+        """Rejected sources whose verdict predates the current rubric.
+
+        Filtered in Python rather than in the query because the decision is a
+        rule about reason prefixes and safety verdicts, and duplicating that as
+        query fragments is how the two definitions drift apart - the mistake the
+        traffic-provenance predicate was written to stop repeating.
+
+        Ordered by qualification score descending, so a source that missed the
+        threshold by a point is reconsidered before one that scored nothing.
+        """
+        candidates = (
+            await DiscoveredSource.find_many(
+                DiscoveredSource.status == SourceStatus.rejected,
+                DiscoveredSource.rubric_version < QUALIFICATION_RUBRIC_VERSION,
+            )
+            .sort("-qualification_score")
+            .limit(max(1, int(limit)) * 5)
+            .to_list()
+        )
+        picked: list[str] = []
+        for row in candidates:
+            if len(picked) >= limit:
+                break
+            if not is_reexaminable(row.rejection_reason, rubric_version=row.rubric_version):
+                # Stamp it anyway. Without this a permanently rejected source is
+                # re-read from the database on every batch forever, and the scan
+                # grows with the rejection pile rather than with the work.
+                row.rubric_version = QUALIFICATION_RUBRIC_VERSION
+                row.updated_at = utc_now()
+                await row.save()
+                continue
+            if row.id is not None:
+                picked.append(str(row.id))
+        if picked:
+            logger.info(
+                "Re-examining %d source(s) rejected under an older rubric (now v%d)",
+                len(picked),
+                QUALIFICATION_RUBRIC_VERSION,
+            )
+        return picked
 
 
 def _extract_jobposting_objects(payload: Any) -> list[dict[str, Any]]:
@@ -2069,11 +2506,22 @@ class AdaptiveExtractionService:
 
     def _extract_with_heuristics(self, soup: BeautifulSoup, base_url: str, source: DiscoveredSource) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
+        # The same audience vocabulary qualification uses, for the same reason:
+        # this gate was a hardcoded jobs word list, and an FDP advertisement or
+        # a call for proposals contains none of "intern", "engineer" or
+        # "analyst". Reusing SourceQualificationService.DENSITY_TERMS keeps the
+        # two definitions of "this looks like an opportunity" from drifting -
+        # a source that passes qualification and then extracts nothing is the
+        # confusing failure this avoids.
+        audience = normalise_audience(getattr(source, "audience", None))
+        terms = SourceQualificationService.DENSITY_TERMS.get(
+            audience, SourceQualificationService.DENSITY_TERMS["student"]
+        )
         selectors = ["[data-job-id]", "[class*=job]", "[class*=opening]", "article", "li"]
         for selector in selectors:
             for element in soup.select(selector)[:30]:
                 text = element.get_text(" ", strip=True)
-                if len(text) < 20 or not any(term in text.lower() for term in ["apply", "intern", "job", "engineer", "analyst"]):
+                if len(text) < 20 or not any(term in text.lower() for term in terms):
                     continue
                 link = element.select_one("a[href]")
                 title_node = element.select_one("h1,h2,h3,h4,[class*=title],[class*=role]")
@@ -2087,7 +2535,7 @@ class AdaptiveExtractionService:
                         "apply_url": urljoin(base_url, str(link.get("href") if link else base_url)),
                         "description_preview": text[:200],
                         "tags": _extract_skill_tags(text),
-                        "opportunity_type": "internship" if "intern" in text.lower() else "job",
+                        "opportunity_type": _infer_opportunity_type(text, audience=audience),
                     }
                 )
                 if len(rows) >= 5:
@@ -2342,9 +2790,10 @@ class TrustScoringEngine:
         samples = list(source.sample_opportunities or [])
         extraction_quality = round(float(source.extraction_confidence or 0) * 25, 2)
         field_completeness = self._field_completeness_score(samples)
-        relevance = self._relevance_score(samples)
+        audience = normalise_audience(getattr(source, "audience", None))
+        relevance = self._relevance_score(samples, audience=audience)
         legitimacy = await self._legitimacy_score(source, samples)
-        cross_validation = await self._cross_validation_score(samples)
+        cross_validation = await self._cross_validation_score(samples, audience=audience)
         reputation = self._domain_reputation_score(source)
         total = round(
             min(
@@ -2363,7 +2812,7 @@ class TrustScoringEngine:
         source.trust_breakdown = {
             "extraction_quality": {"score": extraction_quality, "max": 25, "details": "extraction confidence"},
             "field_completeness": {"score": field_completeness, "max": 20, "details": "required fields present"},
-            "opportunity_relevance": {"score": relevance, "max": 20, "details": "student and India relevance"},
+            "opportunity_relevance": {"score": relevance, "max": 20, "details": f"{audience} and India relevance"},
             "source_legitimacy": {"score": legitimacy, "max": 15, "details": "known employer/source signals"},
             "cross_source_validation": {"score": cross_validation, "max": 10, "details": "matches existing opportunities"},
             "domain_reputation": {"score": reputation, "max": 10, "details": "domain age from qualification"},
@@ -2386,25 +2835,84 @@ class TrustScoringEngine:
             return 10
         return 0
 
-    def _relevance_score(self, samples: list[dict[str, Any]]) -> float:
+    #: What "relevant" means to each audience, and which opportunity types are
+    #: the real thing rather than a near miss.
+    #:
+    #: Trust used to be scored against one rubric written for student jobs, and
+    #: the two checks that carried it - "does this mention a student, a fresher
+    #: or a rupee stipend" and "is the type an internship or a job" - are things
+    #: an FDP notice and a call for proposals will never say. Measured across
+    #: every non-student source in probation, relevance came out 6.0-9.0 out of
+    #: 20 while field completeness was a perfect 20/20 on the same rows. The
+    #: extraction was working; the rubric was asking the wrong question, and the
+    #: totals (49.77-57.05) sat below the promote gate of 70 and mostly below
+    #: the reject floor of 55. Three of four were one probation run from being
+    #: rejected as bad sources.
+    AUDIENCE_RELEVANCE_TERMS: dict[str, tuple[str, ...]] = {
+        "student": ("₹", "inr", "student", "fresher", "stipend"),
+        "faculty": (
+            "faculty", "professor", "phd", "post-doc", "postdoc", "fellowship",
+            "research", "assistant professor", "associate professor", "scientist",
+            "emeritus", "chair", "principal investigator", "₹", "pay level",
+        ),
+        "institution": (
+            "institution", "college", "university", "department", "scheme",
+            "accreditation", "ranking", "affiliat", "grant", "proposal",
+            "collaborat", "mou", "centre of excellence", "curriculum",
+        ),
+    }
+
+    AUDIENCE_RELEVANT_TYPES: dict[str, frozenset[str]] = {
+        "student": frozenset(
+            {"internship", "job", "hackathon", "competition", "workshop", "conference"}
+        ),
+        "faculty": frozenset(
+            {
+                "job", "fellowship", "faculty", "research", "postdoc", "grant",
+                "workshop", "conference", "training", "fdp",
+            }
+        ),
+        "institution": frozenset(
+            {
+                "scheme", "grant", "programme", "program", "collaboration",
+                "accreditation", "proposal", "workshop", "conference", "training",
+            }
+        ),
+    }
+
+    def _relevance_score(self, samples: list[dict[str, Any]], *, audience: str = "student") -> float:
         if not samples:
             return 0
+        audience = normalise_audience(audience)
+        vocabulary = self.AUDIENCE_RELEVANCE_TERMS.get(
+            audience, self.AUDIENCE_RELEVANCE_TERMS["student"]
+        )
+        relevant_types = self.AUDIENCE_RELEVANT_TYPES.get(
+            audience, self.AUDIENCE_RELEVANT_TYPES["student"]
+        )
         per_item = 20 / max(1, len(samples))
         score = 0.0
         for row in samples:
             haystack = " ".join(str(row.get(field) or "") for field in ["title", "location", "description_preview", "stipend_text", "opportunity_type"]).lower()
+            # Geography is audience-neutral: an Indian posting is what this
+            # platform is for whoever reads it.
             if any(term in haystack for term in INDIAN_CITY_TERMS) or "remote" in haystack:
                 score += per_item * 0.45
-            if "₹" in haystack or "inr" in haystack or "student" in haystack or "fresher" in haystack:
+            if any(term in haystack for term in vocabulary):
                 score += per_item * 0.25
-            if str(row.get("opportunity_type") or "").lower() in {"internship", "job", "hackathon", "competition", "workshop", "conference"}:
+            if str(row.get("opportunity_type") or "").lower() in relevant_types:
                 score += per_item * 0.30
         return round(min(20, score), 2)
 
+    ACCREDITED_DOMAIN_SUFFIXES = ACCREDITED_DOMAIN_SUFFIXES
+
     async def _legitimacy_score(self, source: DiscoveredSource, samples: list[dict[str, Any]]) -> float:
         score = 0.0
+        domain = (source.domain or "").lower()
         haystack = " ".join([source.name or "", source.domain, *[str(row.get("company") or "") for row in samples]]).lower()
         if any(term in haystack for term in LEGITIMATE_EMPLOYER_TERMS):
+            score += 5
+        if is_accredited_domain(domain):
             score += 5
         if await DiscoveredSource.find_one(
             {
@@ -2417,14 +2925,33 @@ class TrustScoringEngine:
             score += 5
         return min(15, score)
 
-    async def _cross_validation_score(self, samples: list[dict[str, Any]]) -> float:
+    #: Awarded when an audience has no corpus to validate against yet. Not a
+    #: free pass - it is the midpoint, and it exists because the alternative is
+    #: circular. Cross-validation asks "have we seen a posting like this
+    #: before", and the first source for an audience never has, so it scored a
+    #: flat 0 out of 10 for the offence of being first. Every faculty and
+    #: institution source in the database scored exactly 0 here. A check that
+    #: cannot be satisfied is not evidence of a bad source, and charging for it
+    #: means an audience can never bootstrap.
+    COLD_START_CROSS_VALIDATION = 5.0
+
+    async def _cross_validation_score(
+        self, samples: list[dict[str, Any]], *, audience: str = "student"
+    ) -> float:
+        audience = normalise_audience(audience)
+        # Scoped to the audience: a faculty posting matching a student job is
+        # not corroboration, it is the keyword collision this column replaced.
+        corpus_size = await Opportunity.find(Opportunity.audience == audience).count()
+        if corpus_size == 0:
+            return self.COLD_START_CROSS_VALIDATION
+
         matches = 0
         for row in samples:
             title = str(row.get("title") or "").strip()
             company = str(row.get("company") or "").strip()
             if not title:
                 continue
-            filters: list[Any] = [Opportunity.title == title]
+            filters: list[Any] = [Opportunity.title == title, Opportunity.audience == audience]
             if company:
                 filters.append(Opportunity.university == company)
             if await Opportunity.find_one(*filters):
@@ -2440,7 +2967,12 @@ class TrustScoringEngine:
         notes = str((details.get("domain_age") or {}).get("notes") or "")
         match = re.search(r"age_days=(\d+)", notes)
         if not match:
-            return 5
+            # Same reasoning as the qualification check: a domain whose age we
+            # are not permitted to read, on a suffix a registrar only issues to
+            # an accredited body, is established. Scoring it 5 of 10 alongside
+            # a domain of genuinely unknown provenance cost every government
+            # and university source five points it had earned.
+            return 10 if is_accredited_domain(getattr(source, "domain", None)) else 5
         age_days = int(match.group(1))
         if age_days >= 365 * 3:
             return 10
@@ -2467,12 +2999,14 @@ class TrustScoringEngine:
                 parser_template=source.parser_template or {},
                 trust_score=float(source.trust_score or 0),
                 discovered_source_id=str(source.id),
+                audience=normalise_audience(getattr(source, "audience", None)),
             )
             await registration.insert()
         else:
             registration.status = ScraperRegistrationStatus.active
             registration.parser_template = source.parser_template or registration.parser_template
             registration.trust_score = float(source.trust_score or 0)
+            registration.audience = normalise_audience(getattr(source, "audience", None))
             registration.updated_at = utc_now()
             await registration.save()
 
@@ -2506,23 +3040,42 @@ class TrustScoringEngine:
                 "stipend": payload.get("stipend_text") or payload.get("stipend"),
                 "tags": payload.get("tags") or [],
                 "opportunity_type": str(payload.get("opportunity_type") or "Job").title(),
+                # Inherited from the source rather than inferred from the text.
+                # A title cannot reliably say whether a posting is for a student
+                # or a professor; the site it came from can.
+                "audience": normalise_audience(getattr(source, "audience", None)),
             }
             # Promoted rows previously bypassed enrichment entirely, so they
             # landed without canonical_key or duplicate_cluster_key and were
             # therefore invisible to the deduplication path.
             enriched = _enrich_metadata(dict(record))
-            opportunity = Opportunity(
+            # Built as one mapping rather than `**record` plus keywords.
+            #
+            # `record` already carries "tags", and so did the keyword list, so
+            # every promotion raised
+            #     Opportunity() got multiple values for keyword argument 'tags'
+            # on its first row. The exception surfaced only as a line in the
+            # source's probation_failures and a zero in its items count, which
+            # reads exactly like a failed fetch - so a source that had passed
+            # every gate looked like a site that had gone down. Three sources
+            # sat at trust 72-77 with three good runs each and never promoted.
+            #
+            # A mapping cannot collide with itself: the enriched value wins
+            # where both supply a key, which is the intent - enrichment exists
+            # to improve what extraction guessed.
+            fields = {
                 **record,
-                normalized_title=enriched.get("normalized_title"),
-                normalized_organization=enriched.get("normalized_organization"),
-                canonical_key=enriched.get("canonical_key"),
-                canonical_url_hash=enriched.get("canonical_url_hash"),
-                duplicate_cluster_key=enriched.get("duplicate_cluster_key"),
-                title_company_location_hash=enriched.get("title_company_location_hash"),
-                tags=enriched.get("tags") or [],
-                last_seen_at=flushed_at,
-                updated_at=flushed_at,
-            )
+                "normalized_title": enriched.get("normalized_title"),
+                "normalized_organization": enriched.get("normalized_organization"),
+                "canonical_key": enriched.get("canonical_key"),
+                "canonical_url_hash": enriched.get("canonical_url_hash"),
+                "duplicate_cluster_key": enriched.get("duplicate_cluster_key"),
+                "title_company_location_hash": enriched.get("title_company_location_hash"),
+                "tags": enriched.get("tags") or record.get("tags") or [],
+                "last_seen_at": flushed_at,
+                "updated_at": flushed_at,
+            }
+            opportunity = Opportunity(**fields)
             apply_trust_assessment(opportunity, assess_opportunity_trust(opportunity))
             try:
                 await opportunity.insert()
@@ -2598,7 +3151,14 @@ class TemplateDrivenScraper:
                 [_safe_json_loads(script.string or script.get_text() or "") for script in soup.find_all("script", attrs={"type": "application/ld+json"})]
             )
         ]
-        valid = [row for row in rows if row.get("title") and row.get("apply_url")]
+        valid = [
+            row
+            for row in rows
+            if row.get("title")
+            and row.get("apply_url")
+            and not is_process_notice(row.get("title"))
+            and not is_navigation_label(row.get("title"))
+        ]
         return ScraperRunResult(items=valid, items_parsed=len(valid), parse_success_rate=1.0 if rows else 0.0)
 
     async def _scrape_ats(self, registration: ScraperRegistration, method: str) -> ScraperRunResult:
@@ -2679,28 +3239,55 @@ class TemplateDrivenScraper:
                 ]
             else:
                 rows = []
-            valid = [row for row in rows if row.get("title") and row.get("apply_url")]
+            valid = [
+            row
+            for row in rows
+            if row.get("title")
+            and row.get("apply_url")
+            and not is_process_notice(row.get("title"))
+            and not is_navigation_label(row.get("title"))
+        ]
             return ScraperRunResult(items=valid, items_parsed=len(valid), parse_success_rate=(len(valid) / max(1, len(rows))))
         rows = await extractor._extract_ats(
             {"method": method, "slug": str((registration.parser_template or {}).get("ats_slug") or registration.domain.split(".")[0])},
             source,
             registration.careers_url,
         )
-        valid = [row for row in rows if row.get("title") and row.get("apply_url")]
+        valid = [
+            row
+            for row in rows
+            if row.get("title")
+            and row.get("apply_url")
+            and not is_process_notice(row.get("title"))
+            and not is_navigation_label(row.get("title"))
+        ]
         return ScraperRunResult(items=valid, items_parsed=len(valid), parse_success_rate=(len(valid) / max(1, len(rows))))
 
     async def _scrape_with_css_template(self, registration: ScraperRegistration) -> ScraperRunResult:
         template = registration.parser_template or {}
         base_url = registration.careers_url
+        audience = normalise_audience(getattr(registration, "audience", None))
         listing_selector = str(template.get("listing_selector") or "[data-job-id], .job, .opening, article, li")
         title_selector = str(template.get("title_selector") or "h1,h2,h3,h4,[class*=title],[class*=role]")
         apply_selector = str(template.get("apply_link_selector") or "a[href]")
-        max_pages = max(1, min(10, int(template.get("max_pages") or 1)))
         pagination_pattern = template.get("pagination_pattern")
+        # Without a pagination pattern there is no page two to ask for.
+        #
+        # The page URL expression below falls back to base_url whenever the
+        # pattern is missing, so a template carrying max_pages=10 and no pattern
+        # fetched page one ten times and appended its rows ten times. Every
+        # template the extractor writes has max_pages=10 and pagination_pattern
+        # None, so this was every source: measured on iisc.ac.in, one scrape
+        # produced 300 rows for roughly 30 distinct listings, and an earlier run
+        # recorded 500 fetched against 5 distinct URLs after deduplication. Ten
+        # times the fetches, ten times the parsing, ten times the skill
+        # extraction, and ten times the database round trips downstream - for
+        # nothing, since the extra nine copies dedupe away on write.
+        max_pages = max(1, min(10, int(template.get("max_pages") or 1))) if pagination_pattern else 1
         rows: list[dict[str, Any]] = []
         errors: list[str] = []
         for page_number in range(1, max_pages + 1):
-            page_url = base_url if page_number == 1 or not pagination_pattern else urljoin(base_url, str(pagination_pattern).replace("{n}", str(page_number)))
+            page_url = base_url if page_number == 1 else urljoin(base_url, str(pagination_pattern).replace("{n}", str(page_number)))
             try:
                 page = await self.http_client.fetch(page_url, timeout_seconds=10, render=True)
                 soup = BeautifulSoup(page.text or "", "html.parser")
@@ -2712,21 +3299,35 @@ class TemplateDrivenScraper:
                     if not title or not href:
                         continue
                     text = element.get_text(" ", strip=True)
+                    if not looks_like_opportunity(f"{title} {text}", audience=audience):
+                        continue
+                    resolved = normalize_url(urljoin(page.final_url, str(href)))
+                    # A row that links back to this page is the page's own
+                    # navigation, whatever its words say.
+                    if is_self_link(resolved, page.final_url):
+                        continue
                     rows.append(
                         {
                             "title": title,
                             "company": registration.source_name,
                             "location": _extract_location_hint(text),
                             "work_mode": _extract_work_mode_hint(text),
-                            "apply_url": normalize_url(urljoin(page.final_url, str(href))),
+                            "apply_url": resolved,
                             "description_preview": text[:200],
                             "tags": _extract_skill_tags(text),
-                            "opportunity_type": "internship" if "intern" in text.lower() else "job",
+                            "opportunity_type": _infer_opportunity_type(text, audience=audience),
                         }
                     )
             except Exception as exc:
                 errors.append(f"{page_url}:{exc}")
-        valid = [row for row in rows if row.get("title") and row.get("apply_url")]
+        valid = [
+            row
+            for row in rows
+            if row.get("title")
+            and row.get("apply_url")
+            and not is_process_notice(row.get("title"))
+            and not is_navigation_label(row.get("title"))
+        ]
         return ScraperRunResult(
             items=valid,
             items_parsed=len(valid),
@@ -2754,34 +3355,64 @@ class ProbationManager:
             parser_template=source.parser_template or {},
             trust_score=float(source.trust_score or 0),
             discovered_source_id=str(source.id),
+            audience=normalise_audience(getattr(source, "audience", None)),
         )
         run_number = int(source.probation_runs or 0) + 1
         try:
             result = await self.scraper.scrape(registration)
             passed_quality = 0
+
+            # One read for the whole source, then one write per row that
+            # actually changed.
+            #
+            # This loop used to issue a find_one per item against a database in
+            # ap-southeast-2. At roughly 200ms a round trip, a source yielding
+            # 300 rows spent over a minute here alone - and every probation run
+            # exceeded the 120-second budget and was recorded as a timeout, on
+            # every source, so no source ever reached its third run and nothing
+            # was ever promoted. The scrape itself takes 42 seconds and the
+            # fetch inside it takes 0.9; the rest was this.
+            #
+            # Rows arrive deduplicated by URL because a page can list the same
+            # posting twice, and writing both halves of a duplicate pair leaves
+            # whichever landed second as the stored version.
+            deduped: dict[str, dict[str, Any]] = {}
             for row in result.items:
+                item_url = str(row.get("apply_url") or row.get("url") or "")
+                if item_url:
+                    deduped.setdefault(item_url, row)
+
+            try:
+                existing_rows = await ProbationOpportunity.find_many(
+                    ProbationOpportunity.discovered_source_id == source.id
+                ).to_list()
+            except Exception as exc:
+                existing_rows = []
+                source.probation_failures.append(f"probation_existing_read:{exc}")
+            existing_by_url = {str(row.url): row for row in existing_rows}
+
+            for item_url, row in deduped.items():
                 quality_score = self._quality_score(row)
                 if quality_score > 40:
                     passed_quality += 1
-                item_url = str(row.get("apply_url") or row.get("url") or "")
                 try:
-                    # Upsert on (source, url). This used to insert
-                    # unconditionally, so every probation run duplicated the
-                    # source's entire result set - the live collection held
-                    # 3,497 rows for 249 distinct URLs.
-                    existing_probation = (
-                        await ProbationOpportunity.find_one(
-                            ProbationOpportunity.discovered_source_id == source.id,
-                            ProbationOpportunity.url == item_url,
-                        )
-                        if item_url
-                        else None
-                    )
+                    existing_probation = existing_by_url.get(item_url)
                     if existing_probation is not None:
-                        existing_probation.title = str(row.get("title") or "")[:300]
-                        existing_probation.company = str(
-                            row.get("company") or registration.source_name
-                        )
+                        title = str(row.get("title") or "")[:300]
+                        company = str(row.get("company") or registration.source_name)
+                        # Skip the write when nothing moved. A probation run
+                        # over a stable page changes almost nothing, and saving
+                        # every row regardless is another few hundred round
+                        # trips for an identical document.
+                        if (
+                            existing_probation.title == title
+                            and existing_probation.company == company
+                            and existing_probation.raw_payload == row
+                            and existing_probation.quality_score == quality_score
+                        ):
+                            continue
+                        existing_probation.title = title
+                        existing_probation.company = company
                         existing_probation.raw_payload = row
                         existing_probation.quality_score = quality_score
                         existing_probation.run_number = run_number
@@ -2800,17 +3431,43 @@ class ProbationManager:
                 except Exception as exc:
                     source.probation_failures.append(f"probation_item_insert:{exc}")
             source.probation_runs = run_number
-            source.probation_items_fetched.append(len(result.items))
+            source.probation_items_fetched.append(len(deduped))
             source.probation_items_passed_quality.append(passed_quality)
             source.probation_parse_rates.append(result.parse_success_rate)
             source.last_scraped_at = utc_now()
-            source.consecutive_failures = 0 if result.items else int(source.consecutive_failures or 0) + 1
+            source.consecutive_failures = 0 if deduped else int(source.consecutive_failures or 0) + 1
             if result.errors:
                 source.probation_failures.extend(result.errors[:3])
             if source.trust_score is None:
                 await self.trust_engine.score_source(source.id)
                 source = await DiscoveredSource.get(source.id) or source
-            await self._evaluate_after_probation(source)
+            try:
+                await self._evaluate_after_probation(source)
+                # Re-read before the save below.
+                #
+                # promote_source fetches its own copy of the source, sets it to
+                # `promoted` and saves. This function then saved the copy it had
+                # been holding since the top, which still said `probation` - so
+                # every promotion was written and immediately overwritten by a
+                # stale in-memory object. The rows it had inserted stayed (the
+                # faculty feed genuinely gained 73), but the source went back to
+                # probation and its contributed count reset to 0, so the next
+                # run promoted it all over again. A classic lost update, and
+                # invisible because the visible half of the work succeeded.
+                refreshed = await DiscoveredSource.get(source.id)
+                if refreshed is not None:
+                    for field in ("status", "promoted_at", "promoted_by", "scraper_key",
+                                  "total_opportunities_contributed", "rejection_reason",
+                                  "rejected_at", "requires_admin_review"):
+                        setattr(source, field, getattr(refreshed, field))
+            except Exception as exc:
+                # Scoped so a promotion fault cannot be mistaken for a scrape
+                # fault. Sharing the outer handler meant a TypeError raised
+                # while writing the first promoted row was recorded as zero
+                # items fetched, and a source that had just scraped 38 listings
+                # perfectly was indistinguishable from one whose site was down.
+                logger.exception("Promotion evaluation failed for %s", source.domain)
+                source.probation_failures.append(f"promotion_evaluation:{type(exc).__name__}:{exc}")
         except Exception as exc:
             source.probation_runs = run_number
             source.probation_items_fetched.append(0)
@@ -2841,8 +3498,60 @@ class ProbationManager:
         trust_score = float(source.trust_score or 0)
         rates = list(source.probation_parse_rates or [])
         avg_parse_rate = sum(rates) / max(1, len(rates))
-        items_ok = all(items >= 2 for items in (source.probation_items_fetched or [])[-min_runs:])
-        quality_ok = all(items >= 2 for items in (source.probation_items_passed_quality or [])[-min_runs:])
+
+        # A majority of recent runs, not all of them.
+        #
+        # `all(...)` meant one transient fetch failure disqualified a source
+        # permanently: promotion needs `min_runs` consecutive good runs, so a
+        # single zero resets the window every time and a source on a flaky
+        # network can never be promoted however good it is. Measured across the
+        # academic sources, iitk.ac.in returned 43, 43 and then 0 rows - the
+        # third being a network blip on a page that had just served 43 twice.
+        #
+        # A majority still refuses a genuinely broken source: two failures in
+        # three runs is a pattern rather than a blip, and consecutive_failures
+        # continues to drive quarantine independently.
+        def _majority_ok(values: list[int]) -> bool:
+            recent = list(values or [])[-min_runs:]
+            if len(recent) < min_runs:
+                return False
+            return sum(1 for count in recent if count >= 2) > len(recent) // 2
+
+        items_ok = _majority_ok(source.probation_items_fetched or [])
+        quality_ok = _majority_ok(source.probation_items_passed_quality or [])
+
+        # Clear a review flag whose question has since been answered.
+        #
+        # `requires_admin_review` is raised during extraction when the parser
+        # looked uncertain or the page looked thin - both judgements about a
+        # single sample fetch. Nothing ever cleared it, so a source that then
+        # produced 38 quality-passing rows on three consecutive probation runs
+        # stayed blocked from promotion by an observation those runs had
+        # already contradicted. iitb.ac.in sat at trust 77.27 with 38, 38, 38
+        # and could not promote for exactly this reason.
+        #
+        # Only cleared when the newer evidence answers the older doubt on both
+        # counts: trust is at the auto-promote threshold, and the yield the flag
+        # doubted has held up. An admin_hold is a human's decision and is never
+        # touched here.
+        if (
+            source.requires_admin_review
+            and not source.admin_hold
+            and items_ok
+            and quality_ok
+            and trust_score >= float(getattr(settings, "TRUST_MIN_SCORE_AUTO_PROMOTE", 70))
+        ):
+            logger.info(
+                "Clearing admin review on %s: %d probation runs yielding %s at trust %.2f "
+                "answer the extraction-sample doubt that raised it.",
+                source.domain,
+                int(source.probation_runs or 0),
+                (source.probation_items_fetched or [])[-min_runs:],
+                trust_score,
+            )
+            source.requires_admin_review = False
+            source.probation_failures.append("admin_review_cleared:probation_evidence")
+
         if (
             trust_score >= float(getattr(settings, "TRUST_MIN_SCORE_AUTO_PROMOTE", 70))
             and items_ok
@@ -2864,13 +3573,51 @@ class ProbationManager:
             {"domain": source.domain, "trust_score": source.trust_score, "reason": "probation_borderline"},
         )
 
+    #: Wall-clock budget for one source's probation run.
+    #:
+    #: The batch is sequential and had no per-source bound, so one site could
+    #: hold the whole run. Measured: nbaind.org serves only on www and refuses
+    #: the apex, and every render provider in the fallback chain - scrapling,
+    #: firecrawl, browser_use, crawlee, obscura - was tried, failed, and tried
+    #: again, in a loop. Six other sources sat behind it and none was reached.
+    #: The fallback chain exists so nothing stalls on one provider; without a
+    #: bound it became the thing that stalled.
+    PROBATION_SOURCE_TIMEOUT_SECONDS = 120.0
+
     async def run_all_probation_sources(self, *, limit: int = 100) -> dict[str, Any]:
         sources = await DiscoveredSource.find_many(DiscoveredSource.status == SourceStatus.probation).limit(limit).to_list()
+        budget = float(
+            getattr(settings, "PROBATION_SOURCE_TIMEOUT_SECONDS", self.PROBATION_SOURCE_TIMEOUT_SECONDS)
+        )
         processed = 0
+        timed_out: list[str] = []
         for source in sources:
-            await self.run_probation_scrape(source.id)
-            processed += 1
-        return {"processed": processed}
+            try:
+                await asyncio.wait_for(self.run_probation_scrape(source.id), timeout=budget)
+                processed += 1
+            except asyncio.TimeoutError:
+                # Recorded against the source rather than swallowed. A source
+                # that cannot be fetched inside the budget is a health signal,
+                # and consecutive_failures is what eventually quarantines it -
+                # so a site nobody can reach stops costing the batch two minutes
+                # on every run instead of costing it forever.
+                timed_out.append(source.domain)
+                logger.warning(
+                    "Probation scrape for %s exceeded %.0fs; moving on.", source.domain, budget
+                )
+                try:
+                    fresh = await DiscoveredSource.get(source.id)
+                    if fresh is not None:
+                        fresh.consecutive_failures = int(fresh.consecutive_failures or 0) + 1
+                        fresh.probation_failures.append(f"probation_timeout:{budget:.0f}s")
+                        fresh.last_health_reason = "probation_timeout"
+                        fresh.updated_at = utc_now()
+                        await fresh.save()
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.warning("Could not record probation timeout for %s: %s", source.domain, exc)
+            except Exception as exc:
+                logger.warning("Probation scrape for %s failed: %s", source.domain, exc)
+        return {"processed": processed, "timed_out": timed_out}
 
 
 class ScraperRegistry:
@@ -3062,6 +3809,85 @@ def _extract_work_mode_hint(text: str) -> Optional[str]:
 
 def _extract_skill_tags(text: str) -> list[str]:
     return skill_extractor.extract(text, max_tags=8)
+
+
+#: Ordered longest-phrase-first inside each audience, because "faculty
+#: development programme" must not be read as a faculty vacancy and "call for
+#: proposals" must not be read as a proposal deadline.
+_TYPE_PATTERNS: dict[str, tuple[tuple[str, str], ...]] = {
+    "student": (
+        ("internship", "internship"),
+        ("intern", "internship"),
+        ("hackathon", "hackathon"),
+        ("competition", "competition"),
+        ("workshop", "workshop"),
+        ("conference", "conference"),
+    ),
+    "faculty": (
+        ("faculty development", "fdp"),
+        ("fdp", "fdp"),
+        ("refresher course", "training"),
+        ("short term course", "training"),
+        ("post doctoral", "postdoc"),
+        ("post-doctoral", "postdoc"),
+        ("postdoc", "postdoc"),
+        ("fellowship", "fellowship"),
+        ("emeritus", "fellowship"),
+        ("chair professor", "faculty"),
+        ("assistant professor", "faculty"),
+        ("associate professor", "faculty"),
+        ("professor", "faculty"),
+        ("faculty", "faculty"),
+        ("consultancy", "consultancy"),
+        ("research project", "research"),
+        ("research associate", "research"),
+        ("grant", "grant"),
+        ("conference", "conference"),
+        ("workshop", "workshop"),
+    ),
+    "institution": (
+        ("call for proposal", "proposal"),
+        ("call for", "proposal"),
+        ("expression of interest", "proposal"),
+        ("accreditation", "accreditation"),
+        ("accredit", "accreditation"),
+        ("ranking", "accreditation"),
+        ("empanel", "scheme"),
+        ("scheme", "scheme"),
+        ("grant", "grant"),
+        ("memorandum of understanding", "collaboration"),
+        ("mou", "collaboration"),
+        ("collaborat", "collaboration"),
+        ("programme", "programme"),
+        ("workshop", "workshop"),
+        ("conference", "conference"),
+    ),
+}
+
+#: What a row is when nothing matched. A student row falls back to "job"
+#: because that is what an unlabelled corporate listing overwhelmingly is; the
+#: other two fall back to the neutral word their audience actually uses, since
+#: calling an unrecognised AICTE circular a "Job" is what made every academic
+#: row read as a vacancy.
+_TYPE_FALLBACK = {"student": "job", "faculty": "opportunity", "institution": "programme"}
+
+
+def _infer_opportunity_type(text: str, *, audience: str = "student") -> str:
+    """Name the kind of thing a row is, in the vocabulary of its audience.
+
+    This was `"internship" if "intern" in text else "job"` at five call sites.
+    For a student corpus that is a fair approximation. For the other two it is
+    not an approximation at all - it types a call for proposals as a job, which
+    then fails the audience's own relevance check downstream and drags the
+    source's trust score below the promote gate. The type is the label a reader
+    sees and a filter matches on, so getting it wrong is not cosmetic.
+    """
+    audience = normalise_audience(audience)
+    haystack = (text or "").lower()
+    for needle, label in _TYPE_PATTERNS.get(audience, _TYPE_PATTERNS["student"]):
+        if needle in haystack:
+            return label
+    return _TYPE_FALLBACK.get(audience, "job")
 
 
 source_discovery_engine = SourceDiscoveryEngine()

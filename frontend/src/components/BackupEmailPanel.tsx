@@ -166,9 +166,9 @@ export default function BackupEmailPanel() {
                         wrapperClassName="profile-field"
                         label="6-digit code"
                         value={otp}
-                        onChange={(event) => setOtp(event.target.value.replace(/\D/g, "").slice(0, 6))}
+                        onChange={(event) => setOtp(event.target.value.replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 6))}
                         placeholder="XXXXXX"
-                        inputMode="numeric"
+                        inputMode="text"
                     />
                 ) : null}
             </div>

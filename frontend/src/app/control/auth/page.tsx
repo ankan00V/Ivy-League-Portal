@@ -313,11 +313,11 @@ export default function AdminAuthPage() {
             <span>Email OTP</span>
             <input
               type="text"
-              inputMode="numeric"
-              pattern="[0-9]{6}"
+              inputMode="text"
+              pattern="[A-Za-z0-9]{6}"
               maxLength={6}
               value={otp}
-              onChange={(event) => setOtp(event.target.value.replace(/\D/g, ""))}
+              onChange={(event) => setOtp(event.target.value.replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 6))}
               required
               disabled={otpVerified}
               style={{
@@ -356,11 +356,11 @@ export default function AdminAuthPage() {
             <span>TOTP</span>
             <input
               type="text"
-              inputMode="numeric"
-              pattern="[0-9]{6}"
+              inputMode="text"
+              pattern="[A-Za-z0-9]{6}"
               maxLength={6}
               value={totpCode}
-              onChange={(event) => setTotpCode(event.target.value.replace(/\D/g, ""))}
+              onChange={(event) => setTotpCode(event.target.value.replace(/[^A-Za-z0-9]/g, "").toUpperCase())}
               required
               disabled={!otpVerified}
               style={{

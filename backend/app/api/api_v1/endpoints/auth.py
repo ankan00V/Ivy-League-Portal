@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import re
 import secrets
 from datetime import datetime, timedelta
 from typing import Any, Literal, Optional
@@ -17,8 +18,27 @@ from pydantic import BaseModel, EmailStr, field_validator
 
 from app.api.deps import get_current_admin_user, get_current_user
 from app.core.config import auth_cookie_only_mode_enabled, settings
+from app.core.account_types import (
+    ACCOUNT_TYPE_LABELS,
+    CANDIDATE,
+    EMPLOYER,
+    FACULTY,
+    INSTITUTION,
+    KNOWN_ACCOUNT_TYPES,
+    account_type_enabled,
+    describe_allowed,
+    normalise_account_type,
+)
 from app.core.email_policy import is_corporate_email, is_institutional_email
-from app.core.redis_client import delete_otp, get_otp_cooldown_remaining, set_otp, validate_otp
+from app.core.redis_client import (
+    OTP_LENGTH,
+    delete_otp,
+    generate_otp,
+    get_otp_cooldown_remaining,
+    normalize_otp_input,
+    set_otp,
+    validate_otp,
+)
 from app.core.security import create_access_token, get_password_hash, verify_password
 from app.models.auth_abuse_state import AuthAbuseState
 from app.models.auth_audit_event import AuthAuditEvent
@@ -39,7 +59,8 @@ OTP_EXPIRY_SECONDS = 300
 ADMIN_CHALLENGE_EXPIRY_SECONDS = 600
 ADMIN_TOTP_STEP_EXPIRY_SECONDS = 600
 LOCAL_ENV_NAMES = {"local", "dev", "development", "test"}
-VALID_ACCOUNT_TYPES = {"candidate", "employer"}
+# Account types live in app.core.account_types; this module used to keep its
+# own copy of the set, which had to agree with the one in users.py by hand.
 LOCAL_OAUTH_HOSTS = {"localhost", "127.0.0.1"}
 COOKIE_SESSION_SENTINEL = "__cookie_session__"
 ADMIN_CHALLENGE_SCOPE = "admin:challenge"
@@ -58,16 +79,23 @@ def _scopes_for_user(user: User) -> list[str]:
 def _normalize_account_type(
     value: Optional[str], *, default: str = "candidate", stored: bool = False
 ) -> str:
-    candidate = str(value or default).strip().lower()
-    if candidate not in VALID_ACCOUNT_TYPES:
-        raise HTTPException(status_code=400, detail="account_type must be candidate or employer")
-    # Every request path funnels through here, so retiring the employer portal is
-    # enforced at this one point and fails closed: a route added later that forgets
-    # about the flag still cannot mint an employer. stored=True is the deliberate
-    # opt-out for a value read back off an existing row, which must keep
-    # normalizing so such an account stays readable, exportable, and deletable.
-    if candidate == "employer" and not stored and not settings.EMPLOYER_PORTAL_ENABLED:
-        raise HTTPException(status_code=400, detail="Employer accounts are not available.")
+    candidate = normalise_account_type(value, default=default)
+    if candidate not in KNOWN_ACCOUNT_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"account_type must be one of: {describe_allowed()}",
+        )
+    # Every request path funnels through here, so gating a role is enforced at
+    # this one point and fails closed: a route added later that forgets about
+    # the flag still cannot mint an account of that type. stored=True is the
+    # deliberate opt-out for a value read back off an existing row, which must
+    # keep normalizing so such an account stays readable, exportable and
+    # deletable after its role has been withdrawn.
+    if not stored and not account_type_enabled(candidate):
+        raise HTTPException(
+            status_code=400,
+            detail=f"{ACCOUNT_TYPE_LABELS.get(candidate, candidate).capitalize()} accounts are not available.",
+        )
     return candidate
 
 
@@ -77,6 +105,26 @@ def _ensure_employer_corporate_email(email: str) -> None:
             status_code=400,
             detail="Employer signup/login requires a corporate email (personal providers are not allowed).",
         )
+
+
+def _ensure_email_policy_for_account_type(account_type: str, email: str) -> None:
+    """Apply the address rule that goes with this role.
+
+    Previously this was an if/elif over candidate and employer, so the two roles
+    added later were the only ones with no rule at all - and one of them reads
+    cohort data about other people's students. A dispatch keyed on the role means
+    adding a role without deciding its rule is a visible omission rather than an
+    open door.
+    """
+    role = str(account_type or "").strip().lower()
+    if role == EMPLOYER:
+        _ensure_employer_corporate_email(email)
+    elif role in {CANDIDATE, FACULTY, INSTITUTION}:
+        # Academicians and institutions are held to the same bar as students:
+        # an address at the organisation they claim to belong to, not a consumer
+        # mailbox. It is the weakest check that is still worth something, and
+        # the institution portal additionally scopes every read to this domain.
+        _ensure_candidate_institutional_email(email)
 
 
 def _ensure_candidate_institutional_email(email: str) -> None:
@@ -554,9 +602,13 @@ class ForgotPasswordResetRequest(BaseModel):
     @field_validator("otp", mode="before")
     @classmethod
     def normalize_otp(cls, value: str) -> str:
-        otp = str(value).strip()
-        if len(otp) != 6 or not otp.isdigit():
-            raise ValueError("OTP must be a 6-digit numeric code")
+        # Codes are alphanumeric and case-insensitive. Everything outside the
+        # alphabet is discarded first: a code pasted from the HTML mail can
+        # carry a non-breaking or zero-width space, which `.strip()` leaves in
+        # place, and that rejected a correct code as malformed.
+        otp = normalize_otp_input(value)
+        if len(otp) != OTP_LENGTH:
+            raise ValueError(f"OTP must be a {OTP_LENGTH}-character code")
         return otp
 
     @field_validator("password", "confirm_password", mode="before")
@@ -601,16 +653,20 @@ class AdminVerifyRequest(BaseModel):
     @field_validator("otp", mode="before")
     @classmethod
     def normalize_otp(cls, value: str) -> str:
-        otp = str(value or "").strip()
-        if len(otp) != 6 or not otp.isdigit():
-            raise ValueError("OTP must be a 6-digit numeric code")
+        # Alphanumeric and case-insensitive; see the other OTP validator.
+        otp = normalize_otp_input(value)
+        if len(otp) != OTP_LENGTH:
+            raise ValueError(f"OTP must be a {OTP_LENGTH}-character code")
         return otp
 
     @field_validator("totp_code", mode="before")
     @classmethod
     def normalize_totp_code(cls, value: str) -> str:
         code = str(value or "").strip()
-        if not code.isdigit() or len(code) != max(6, int(settings.ADMIN_TOTP_DIGITS)):
+        # Digits only: authenticator codes are often pasted from a password
+        # manager, which can bring a space along with them.
+        code = re.sub(r"\D", "", str(code or ""))
+        if len(code) != max(6, int(settings.ADMIN_TOTP_DIGITS)):
             raise ValueError(f"TOTP code must be a {max(6, int(settings.ADMIN_TOTP_DIGITS))}-digit number")
         return code
 
@@ -652,9 +708,10 @@ class AdminOtpVerifyRequest(BaseModel):
     @field_validator("otp", mode="before")
     @classmethod
     def normalize_otp(cls, value: str) -> str:
-        otp = str(value or "").strip()
-        if len(otp) != 6 or not otp.isdigit():
-            raise ValueError("OTP must be a 6-digit numeric code")
+        # Alphanumeric and case-insensitive; see the other OTP validator.
+        otp = normalize_otp_input(value)
+        if len(otp) != OTP_LENGTH:
+            raise ValueError(f"OTP must be a {OTP_LENGTH}-character code")
         return otp
 
     @field_validator("admin_challenge_token", mode="before")
@@ -680,7 +737,10 @@ class AdminTotpVerifyRequest(BaseModel):
     @classmethod
     def normalize_totp_code(cls, value: str) -> str:
         code = str(value or "").strip()
-        if not code.isdigit() or len(code) != max(6, int(settings.ADMIN_TOTP_DIGITS)):
+        # Digits only: authenticator codes are often pasted from a password
+        # manager, which can bring a space along with them.
+        code = re.sub(r"\D", "", str(code or ""))
+        if len(code) != max(6, int(settings.ADMIN_TOTP_DIGITS)):
             raise ValueError(f"TOTP code must be a {max(6, int(settings.ADMIN_TOTP_DIGITS))}-digit number")
         return code
 
@@ -747,7 +807,7 @@ async def _issue_admin_email_otp(email: str) -> tuple[Literal["email", "debug"],
     if remaining_cooldown > 0:
         return "email", remaining_cooldown, None
 
-    otp = f"{secrets.randbelow(1_000_000):06d}"
+    otp = generate_otp()
     await set_otp(
         email,
         otp,
@@ -782,13 +842,21 @@ async def register_user(
         )
 
     _validate_password_policy(user_in.password)
-    if _normalize_account_type(getattr(user_in, "account_type", "candidate"), default="candidate") == "candidate":
-        _ensure_candidate_institutional_email(normalized_email)
+    # This used to compute the account type, use it to pick an email rule, and
+    # then hardcode "candidate" on the row. Registering as an employer returned
+    # 200 and produced a candidate account, which is the worst kind of wrong
+    # answer: the caller is told it worked and finds out later, from a portal
+    # that refuses them. _normalize_account_type still refuses roles whose flag
+    # is off, so honouring the request does not widen what can be created.
+    account_type = _normalize_account_type(
+        getattr(user_in, "account_type", "candidate"), default="candidate"
+    )
+    _ensure_email_policy_for_account_type(account_type, normalized_email)
     user = User(
         email=normalized_email,
         full_name=user_in.full_name,
         hashed_password=get_password_hash(user_in.password),
-        account_type="candidate",
+        account_type=account_type,
         auth_provider="password",
     )
     await user.insert()
@@ -997,7 +1065,10 @@ class AdminLoginRequest(BaseModel):
     @classmethod
     def normalize_totp_code(cls, value: str) -> str:
         code = str(value or "").strip()
-        if not code.isdigit() or len(code) != max(6, int(settings.ADMIN_TOTP_DIGITS)):
+        # Digits only: authenticator codes are often pasted from a password
+        # manager, which can bring a space along with them.
+        code = re.sub(r"\D", "", str(code or ""))
+        if len(code) != max(6, int(settings.ADMIN_TOTP_DIGITS)):
             raise ValueError(f"TOTP code must be a {max(6, int(settings.ADMIN_TOTP_DIGITS))}-digit number")
         return code
 
@@ -1437,9 +1508,13 @@ class OTPVerifyRequest(BaseModel):
     @field_validator("otp", mode="before")
     @classmethod
     def normalize_otp(cls, value: str) -> str:
-        otp = str(value).strip()
-        if len(otp) != 6 or not otp.isdigit():
-            raise ValueError("OTP must be a 6-digit numeric code")
+        # Codes are alphanumeric and case-insensitive. Everything outside the
+        # alphabet is discarded first: a code pasted from the HTML mail can
+        # carry a non-breaking or zero-width space, which `.strip()` leaves in
+        # place, and that rejected a correct code as malformed.
+        otp = normalize_otp_input(value)
+        if len(otp) != OTP_LENGTH:
+            raise ValueError(f"OTP must be a {OTP_LENGTH}-character code")
         return otp
 
     @field_validator("full_name", mode="before")
@@ -1517,7 +1592,7 @@ async def send_password_reset_otp(
             headers={"Retry-After": str(remaining_cooldown)},
         )
 
-    otp = f"{secrets.randbelow(1_000_000):06d}"
+    otp = generate_otp()
     if user:
         await set_otp(normalized_email, otp, expire_seconds=OTP_EXPIRY_SECONDS, purpose="password_reset")
 
@@ -1924,7 +1999,7 @@ async def oauth_google_callback(
 
         full_name = str(id_info.get("name") or "").strip() or email.split("@")[0]
 
-        if account_type == "employer":
+        if account_type == EMPLOYER:
             _ensure_employer_corporate_email(email)
 
         user = await User.find_one(User.email == email)
@@ -1932,8 +2007,7 @@ async def oauth_google_callback(
             # Google sign-in creates the account on first use, so the rule has
             # to apply here too - otherwise "sign in with Google" is an open
             # door around it for any gmail address.
-            if account_type == "candidate":
-                _ensure_candidate_institutional_email(email)
+            _ensure_email_policy_for_account_type(account_type, email)
             user = User(
                 email=email,
                 full_name=full_name,
@@ -2019,7 +2093,7 @@ async def oauth_google_callback(
 @router.post("/send-otp", response_model=OTPSendResponse)
 async def send_otp(request: OTPSendRequest, http_request: Request = None):  # type: ignore[assignment]
     """
-    Generate a 6-digit OTP, store in MongoDB, and dispatch email.
+    Generate a one-time alphanumeric code, store it, and dispatch the email.
     """
     normalized_email = str(request.email).strip().lower()
     ip_address, user_agent = _request_context(http_request)
@@ -2081,7 +2155,7 @@ async def send_otp(request: OTPSendRequest, http_request: Request = None):  # ty
             headers={"Retry-After": str(remaining_cooldown)},
         )
 
-    otp = f"{secrets.randbelow(1_000_000):06d}"
+    otp = generate_otp()
     await set_otp(
         normalized_email,
         otp,
@@ -2160,7 +2234,7 @@ async def verify_otp(
     response: Response = None,  # type: ignore[assignment]
 ) -> Any:
     """
-    Verify the 6-digit OTP from MongoDB.
+    Verify a one-time code. Matching is case-insensitive.
     For signup, creates an account after OTP success.
     For signin, requires an existing account.
     """
@@ -2401,9 +2475,10 @@ class SecondaryEmailVerifyRequest(BaseModel):
     @field_validator("otp")
     @classmethod
     def _otp_is_six_digits(cls, value: str) -> str:
-        candidate = str(value or "").strip()
-        if not candidate.isdigit() or len(candidate) != 6:
-            raise ValueError("OTP must be a 6-digit numeric code")
+        # Alphanumeric and case-insensitive; see the other OTP validator.
+        candidate = normalize_otp_input(value)
+        if len(candidate) != OTP_LENGTH:
+            raise ValueError(f"OTP must be a {OTP_LENGTH}-character code")
         return candidate
 
 
@@ -2455,7 +2530,7 @@ async def send_secondary_email_otp(
             headers={"Retry-After": str(remaining)},
         )
 
-    otp = f"{secrets.randbelow(1_000_000):06d}"
+    otp = generate_otp()
     await set_otp(normalized, otp, expire_seconds=OTP_EXPIRY_SECONDS, purpose=SECONDARY_EMAIL_PURPOSE)
 
     debug_otp: str | None = None

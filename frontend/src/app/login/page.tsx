@@ -16,12 +16,11 @@ import {
   setPendingAdminChallenge,
 } from "@/lib/auth-session";
 import { getApiErrorMessage, getUnknownErrorMessage } from "@/lib/error-utils";
-import { EMPLOYER_PORTAL_ENABLED } from "@/lib/employer-portal";
+import { accountRole, enabledAccountRoles, type AccountType } from "@/lib/account-roles";
 import { evaluatePasswordStrength } from "@/lib/password-strength";
 import { getTurnstileToken, mountTurnstile } from "@/lib/turnstile";
 
 type AuthStep = "email" | "otp" | "password" | "forgot-email" | "forgot-reset";
-type AccountType = "candidate" | "employer";
 
 type OAuthProviderStatus = {
   google: boolean;
@@ -56,6 +55,19 @@ const LOGIN_VISUALS = {
   employer: {
     title: "Hire top campus talent faster.",
     subtitle: "Access recruiter workflows with secure authentication.",
+    image: "/auth/login-employer.jpg",
+  },
+  // The two roles added later reuse the employer artwork rather than shipping
+  // a broken image path. Placeholder art is obvious and fixable; a 404 behind a
+  // background-image is neither.
+  faculty: {
+    title: "Teach, research, and collaborate.",
+    subtitle: "Faculty development programmes, fellowships and consultancy.",
+    image: "/auth/login-employer.jpg",
+  },
+  institution: {
+    title: "See how your students are doing.",
+    subtitle: "Skill development, internships and placement progress, in aggregate.",
     image: "/auth/login-employer.jpg",
   },
 };
@@ -593,47 +605,40 @@ export default function LoginPage() {
             <p style={{ color: "var(--text-secondary)" }}>Choose OTP or password sign-in</p>
           </div>
 
-          {/* Account-type toggle is hidden while the employer portal is retired.
-              accountType stays pinned to "candidate", so every request below
-              keeps sending the field the API still expects. */}
-          {EMPLOYER_PORTAL_ENABLED && (
+          {/* One button per enabled role, from the shared list. Sending
+              account_type matters here as well as at signup: the API uses it to
+              route the session to the right portal. */}
+          {enabledAccountRoles().length > 1 && (
             <>
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "1fr 1fr",
+                gridTemplateColumns: `repeat(${Math.min(enabledAccountRoles().length, 2)}, 1fr)`,
                 gap: "0.5rem",
                 background: "var(--bg-surface-hover)",
                 padding: "0.3rem",
-                borderRadius: "999px",
+                borderRadius: "var(--radius-sm)",
                 border: "2px solid var(--border-subtle)",
-                maxWidth: "360px",
+                maxWidth: "420px",
               }}
             >
-              <button
-                type="button"
-                className={accountType === "candidate" ? "btn-primary" : "btn-secondary"}
-                style={{ borderRadius: "999px", width: "100%" }}
-                disabled={loading || step === "otp" || step === "forgot-reset"}
-                onClick={() => setAccountType("candidate")}
-              >
-                Candidate
-              </button>
-              <button
-                type="button"
-                className={accountType === "employer" ? "btn-primary" : "btn-secondary"}
-                style={{ borderRadius: "999px", width: "100%" }}
-                disabled={loading || step === "otp" || step === "forgot-reset"}
-                onClick={() => setAccountType("employer")}
-              >
-                Employer
-              </button>
+              {enabledAccountRoles().map((role) => (
+                <button
+                  key={role.value}
+                  type="button"
+                  className={accountType === role.value ? "btn-primary" : "btn-secondary"}
+                  style={{ borderRadius: "var(--radius-sm)", width: "100%" }}
+                  onClick={() => setAccountType(role.value)}
+                  disabled={loading}
+                  aria-pressed={accountType === role.value}
+                >
+                  {role.label}
+                </button>
+              ))}
             </div>
-            {accountType === "employer" && (
-              <p style={{ color: "var(--text-secondary)", fontWeight: 700 }}>
-                Employer sign-in requires a corporate email domain.
-              </p>
-            )}
+            <p style={{ color: "var(--text-secondary)", fontWeight: 700, fontSize: "0.9rem" }}>
+              {accountRole(accountType)?.description}
+            </p>
             </>
           )}
 
@@ -676,7 +681,7 @@ export default function LoginPage() {
                 className="input-base"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
-                placeholder={accountType === "employer" ? "name@company.com" : "Enter Email"}
+                placeholder={accountRole(accountType)?.emailPlaceholder ?? "Enter Email"}
                 required
                 disabled={loading || step === "otp"}
               />
@@ -688,7 +693,7 @@ export default function LoginPage() {
                     type="text"
                     className="input-base"
                     value={otp}
-                    onChange={(event) => setOtp(event.target.value)}
+                    onChange={(event) => setOtp(event.target.value.replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 6))}
                     placeholder="XXXXXX"
                     maxLength={6}
                     minLength={6}
@@ -745,7 +750,7 @@ export default function LoginPage() {
                 className="input-base"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
-                placeholder={accountType === "employer" ? "name@company.com" : "Enter Email"}
+                placeholder={accountRole(accountType)?.emailPlaceholder ?? "Enter Email"}
                 required
                 disabled={loading}
               />
@@ -804,7 +809,7 @@ export default function LoginPage() {
                 className="input-base"
                 value={resetEmail}
                 onChange={(event) => setResetEmail(event.target.value)}
-                placeholder={accountType === "employer" ? "name@company.com" : "Enter Email"}
+                placeholder={accountRole(accountType)?.emailPlaceholder ?? "Enter Email"}
                 required
                 disabled={loading}
               />
@@ -853,7 +858,7 @@ export default function LoginPage() {
                 type="text"
                 className="input-base"
                 value={resetOtp}
-                onChange={(event) => setResetOtp(event.target.value)}
+                onChange={(event) => setResetOtp(event.target.value.replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 6))}
                 placeholder="XXXXXX"
                 maxLength={6}
                 minLength={6}

@@ -98,3 +98,7 @@ backend/backups/
 # feeds this file to GenericOpportunityPortalScraper. Ignoring it would break
 # the suite on a fresh clone.
 !backend/tests/fixtures/**/*.md
+
+# gstack security reports and local state. Findings name unfixed vulnerabilities
+# and their file locations, which is exactly the map an attacker would want.
+.gstack/

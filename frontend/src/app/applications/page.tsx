@@ -82,7 +82,7 @@ export default function ApplicationsPage() {
                             <span style={{ background: 'var(--brand-primary)', padding: '0.2rem 0.5rem', border: '2px solid var(--border-subtle)', boxShadow: 'var(--shadow-sm)', display: 'inline-block', transform: 'rotate(-2deg)' }}>Applications</span> Hub
                         </h1>
                         <p style={{ color: 'var(--text-secondary)', fontSize: '1.25rem', maxWidth: '600px', fontWeight: 600 }}>
-                            Track your real-time application status across hackathons, quizzes, and job portals.
+                            Track the applications you started here. Status is what you or the employer recorded on VidyaVerse.
                         </p>
                     </div>
                 </header>

@@ -10,12 +10,11 @@ import PasswordStrengthMeter from "@/components/PasswordStrengthMeter";
 import { apiUrl } from "@/lib/api";
 import { setAccessToken } from "@/lib/auth-session";
 import { getApiErrorMessage, getUnknownErrorMessage } from "@/lib/error-utils";
-import { EMPLOYER_PORTAL_ENABLED } from "@/lib/employer-portal";
+import { accountRole, enabledAccountRoles, type AccountType } from "@/lib/account-roles";
 import { evaluatePasswordStrength } from "@/lib/password-strength";
 import { getTurnstileToken, mountTurnstile } from "@/lib/turnstile";
 
 type RegisterStep = "details" | "otp";
-type AccountType = "candidate" | "employer";
 
 type OAuthProviderStatus = {
   google: boolean;
@@ -29,7 +28,15 @@ const REGISTER_VISUALS = {
     image: "/auth/signup-candidate.jpg",
   },
   employer: {
-    heading: "Sign up as employer",
+    heading: "Sign up as industry",
+    image: "/auth/signup-employer.jpg",
+  },
+  faculty: {
+    heading: "Sign up as academician",
+    image: "/auth/signup-employer.jpg",
+  },
+  institution: {
+    heading: "Sign up as institution",
     image: "/auth/signup-employer.jpg",
   },
 };
@@ -326,7 +333,7 @@ export default function RegisterPage() {
           <div>
             <h2 style={{ fontSize: "2rem", marginBottom: "0.4rem", color: "#111" }}>{visual.heading}</h2>
             <p style={{ color: "rgba(0,0,0,0.78)", fontWeight: 600 }}>
-              Verify with OTP and complete a guided profile setup to unlock personalized recommendations.
+              {accountRole(accountType)?.signupPromise}
             </p>
           </div>
         </aside>
@@ -334,38 +341,42 @@ export default function RegisterPage() {
         <div className="auth-right-pane" style={{ padding: "2rem", display: "flex", flexDirection: "column", gap: "1rem" }}>
           <h1 style={{ fontSize: "2.2rem", marginBottom: "0.35rem" }}>Create your account</h1>
 
-          {/* Account-type toggle is hidden while the employer portal is retired.
-              accountType stays pinned to "candidate", so every request below
-              keeps sending the field the API still expects. */}
-          {EMPLOYER_PORTAL_ENABLED && (
+          {/* One button per enabled role, driven by the shared list so this
+              page and the sign-in page cannot drift apart. */}
+          {enabledAccountRoles().length > 1 && (
             <>
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "1fr 1fr",
+                gridTemplateColumns: `repeat(${Math.min(enabledAccountRoles().length, 2)}, 1fr)`,
                 gap: "0.5rem",
                 background: "var(--bg-surface-hover)",
                 padding: "0.3rem",
-                borderRadius: "999px",
+                borderRadius: "var(--radius-sm)",
                 border: "2px solid var(--border-subtle)",
-                maxWidth: "360px",
+                maxWidth: "420px",
               }}
             >
-              <button type="button" className={accountType === "candidate" ? "btn-primary" : "btn-secondary"} style={{ borderRadius: "999px", width: "100%" }} onClick={() => setAccountType("candidate")} disabled={loading || step === "otp"}>
-                Candidate
-              </button>
-              <button type="button" className={accountType === "employer" ? "btn-primary" : "btn-secondary"} style={{ borderRadius: "999px", width: "100%" }} onClick={() => setAccountType("employer")} disabled={loading || step === "otp"}>
-                Employer
-              </button>
+              {enabledAccountRoles().map((role) => (
+                <button
+                  key={role.value}
+                  type="button"
+                  className={accountType === role.value ? "btn-primary" : "btn-secondary"}
+                  style={{ borderRadius: "var(--radius-sm)", width: "100%" }}
+                  onClick={() => setAccountType(role.value)}
+                  disabled={loading || step === "otp"}
+                  aria-pressed={accountType === role.value}
+                >
+                  {role.label}
+                </button>
+              ))}
             </div>
-            {accountType === "employer" && (
-              <p style={{ color: "var(--text-secondary)", fontWeight: 700 }}>
-                Employer sign-up requires a corporate email domain.
-              </p>
-            )}
+            <p style={{ color: "var(--text-secondary)", fontWeight: 700 }}>
+              {accountRole(accountType)?.description}{" "}
+              {accountRole(accountType)?.emailHint}
+            </p>
             </>
           )}
-
 
           {error && (
             <div style={{ background: "rgba(239,68,68,0.08)", border: "2px solid #ef4444", color: "#b91c1c", borderRadius: "var(--radius-sm)", padding: "0.75rem" }}>
@@ -396,11 +407,11 @@ export default function RegisterPage() {
 
           {step === "details" ? (
             <form onSubmit={handleSendOtp} style={{ display: "grid", gap: "0.85rem" }}>
-              <label style={{ fontWeight: 700 }}>First Name</label>
-              <input type="text" className="input-base" value={firstName} onChange={(event) => setFirstName(event.target.value)} placeholder="Bob" required disabled={loading} />
+              <label style={{ fontWeight: 700 }}>{accountRole(accountType)?.nameLabel.first}</label>
+              <input type="text" className="input-base" value={firstName} onChange={(event) => setFirstName(event.target.value)} placeholder={accountRole(accountType)?.nameLabel.firstPlaceholder} required disabled={loading} />
 
-              <label style={{ fontWeight: 700 }}>Last Name</label>
-              <input type="text" className="input-base" value={lastName} onChange={(event) => setLastName(event.target.value)} placeholder="Builder" disabled={loading} />
+              <label style={{ fontWeight: 700 }}>{accountRole(accountType)?.nameLabel.last}</label>
+              <input type="text" className="input-base" value={lastName} onChange={(event) => setLastName(event.target.value)} placeholder={accountRole(accountType)?.nameLabel.lastPlaceholder} disabled={loading} />
 
               <label style={{ fontWeight: 700 }}>Email</label>
               <input
@@ -408,7 +419,7 @@ export default function RegisterPage() {
                 className="input-base"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
-                placeholder={accountType === "employer" ? "name@company.com" : "student@college.edu"}
+                placeholder={accountRole(accountType)?.emailPlaceholder}
                 required
                 disabled={loading}
               />
@@ -460,12 +471,12 @@ export default function RegisterPage() {
                 type="text"
                 className="input-base"
                 value={otp}
-                onChange={(event) => setOtp(event.target.value.replace(/\D/g, ""))}
+                onChange={(event) => setOtp(event.target.value.replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 6))}
                 placeholder="XXXXXX"
                 maxLength={6}
                 minLength={6}
-                inputMode="numeric"
-                pattern="[0-9]{6}"
+                inputMode="text"
+                pattern="[A-Za-z0-9]{6}"
                 required
                 disabled={loading}
                 style={{ letterSpacing: "0.25em", textAlign: "center", fontWeight: 800 }}

@@ -1,0 +1,353 @@
+{
+  "_generated_by": "scripts/generate_role_vocabulary.mjs",
+  "_do_not_edit": "Regenerate instead. tests/test_role_classification_parity.py enforces this.",
+  "technical_role_names": [
+    "software engineer",
+    "backend developer",
+    "frontend developer",
+    "full stack developer",
+    "mobile app developer",
+    "android developer",
+    "ios developer",
+    "game developer",
+    "embedded systems engineer",
+    "firmware engineer",
+    "systems engineer",
+    "web developer",
+    "api engineer",
+    "software development engineer in test",
+    "engineering intern",
+    "data scientist",
+    "data analyst",
+    "data engineer",
+    "machine learning engineer",
+    "ai engineer",
+    "research engineer",
+    "research scientist",
+    "nlp engineer",
+    "computer vision engineer",
+    "mlops engineer",
+    "business intelligence analyst",
+    "quantitative analyst",
+    "statistician",
+    "data annotator",
+    "devops engineer",
+    "site reliability engineer",
+    "cloud engineer",
+    "platform engineer",
+    "infrastructure engineer",
+    "database administrator",
+    "network engineer",
+    "security engineer",
+    "security analyst",
+    "penetration tester",
+    "it support engineer",
+    "mechanical engineer",
+    "civil engineer",
+    "electrical engineer",
+    "electronics engineer",
+    "chemical engineer",
+    "aerospace engineer",
+    "automotive engineer",
+    "biomedical engineer",
+    "industrial engineer",
+    "manufacturing engineer",
+    "quality engineer",
+    "design engineer",
+    "structural engineer",
+    "site engineer"
+  ],
+  "non_technical_role_names": [
+    "business analyst",
+    "business development executive",
+    "management consultant",
+    "strategy analyst",
+    "operations analyst",
+    "operations manager",
+    "project manager",
+    "program manager",
+    "supply chain analyst",
+    "procurement analyst",
+    "financial analyst",
+    "investment banking analyst",
+    "equity research analyst",
+    "risk analyst",
+    "accountant",
+    "auditor",
+    "actuarial analyst",
+    "credit analyst",
+    "treasury analyst",
+    "finance intern",
+    "marketing executive",
+    "digital marketing executive",
+    "content writer",
+    "content strategist",
+    "seo specialist",
+    "social media manager",
+    "brand manager",
+    "growth marketer",
+    "performance marketing analyst",
+    "public relations executive",
+    "marketing intern",
+    "sales executive",
+    "inside sales associate",
+    "account manager",
+    "customer success manager",
+    "customer support executive",
+    "solutions engineer",
+    "pre-sales consultant",
+    "legal associate",
+    "legal intern",
+    "corporate counsel",
+    "compliance analyst",
+    "policy analyst",
+    "paralegal",
+    "company secretary",
+    "teacher",
+    "teaching assistant",
+    "academic tutor",
+    "instructional designer",
+    "curriculum developer",
+    "research assistant",
+    "social impact associate",
+    "ngo program associate",
+    "human resources executive",
+    "talent acquisition specialist",
+    "recruiter",
+    "hr intern",
+    "office administrator",
+    "executive assistant",
+    "journalist",
+    "video editor",
+    "photographer",
+    "animator",
+    "copywriter",
+    "podcast producer",
+    "community manager"
+  ],
+  "technical_filters": [
+    {
+      "label": "Software",
+      "keywords": [
+        "software",
+        "sde",
+        "developer",
+        "engineer",
+        "full stack",
+        "fullstack",
+        "backend",
+        "frontend",
+        "front end",
+        "back end",
+        "web",
+        "python",
+        "java",
+        "javascript",
+        "typescript",
+        "react",
+        "angular",
+        "vue",
+        "node",
+        "django",
+        "flask",
+        "spring",
+        "golang",
+        "rust",
+        "c++",
+        "c#",
+        "php",
+        "ruby",
+        "rails",
+        ".net",
+        "api",
+        "programming",
+        "coding"
+      ]
+    },
+    {
+      "label": "Data & AI",
+      "keywords": [
+        "data",
+        "machine learning",
+        "ml",
+        "ai",
+        "analytics",
+        "scientist",
+        "nlp",
+        "deep learning",
+        "llm",
+        "sql",
+        "pandas",
+        "tensorflow",
+        "pytorch",
+        "power bi",
+        "tableau",
+        "statistics",
+        "computer vision",
+        "generative"
+      ]
+    },
+    {
+      "label": "Cloud & DevOps",
+      "keywords": [
+        "cloud",
+        "devops",
+        "sre",
+        "infrastructure",
+        "platform",
+        "kubernetes",
+        "aws",
+        "azure",
+        "gcp"
+      ]
+    },
+    {
+      "label": "Cybersecurity",
+      "keywords": [
+        "security",
+        "cyber",
+        "infosec",
+        "penetration",
+        "soc",
+        "appsec"
+      ]
+    },
+    {
+      "label": "Mobile",
+      "keywords": [
+        "mobile",
+        "android",
+        "ios",
+        "flutter",
+        "react native",
+        "swift",
+        "kotlin"
+      ]
+    },
+    {
+      "label": "QA & Testing",
+      "keywords": [
+        "qa",
+        "test",
+        "quality assurance",
+        "automation",
+        "sdet"
+      ]
+    },
+    {
+      "label": "Core Engineering",
+      "keywords": [
+        "mechanical",
+        "civil",
+        "electrical",
+        "electronics",
+        "chemical",
+        "aerospace",
+        "vlsi",
+        "embedded",
+        "hardware"
+      ]
+    }
+  ],
+  "non_technical_filters": [
+    {
+      "label": "Business & Ops",
+      "keywords": [
+        "business",
+        "operations",
+        "strategy",
+        "consultant",
+        "consulting",
+        "program",
+        "project manager"
+      ]
+    },
+    {
+      "label": "Finance",
+      "keywords": [
+        "finance",
+        "financial",
+        "accounting",
+        "audit",
+        "investment",
+        "banking",
+        "risk",
+        "actuarial",
+        "treasury"
+      ]
+    },
+    {
+      "label": "Marketing",
+      "keywords": [
+        "marketing",
+        "seo",
+        "brand",
+        "growth",
+        "digital marketing",
+        "social media",
+        "campaign"
+      ]
+    },
+    {
+      "label": "Sales & Support",
+      "keywords": [
+        "sales",
+        "business development",
+        "account executive",
+        "customer success",
+        "customer support",
+        "pre-sales",
+        "bd"
+      ]
+    },
+    {
+      "label": "Product & Design",
+      "keywords": [
+        "product manager",
+        "product analyst",
+        "design",
+        "ux",
+        "ui",
+        "graphic",
+        "visual",
+        "figma"
+      ]
+    },
+    {
+      "label": "HR & Admin",
+      "keywords": [
+        "human resources",
+        "hr",
+        "recruit",
+        "talent",
+        "people ops",
+        "admin"
+      ]
+    },
+    {
+      "label": "Content & Media",
+      "keywords": [
+        "content",
+        "writer",
+        "copywriter",
+        "editor",
+        "journalist",
+        "video",
+        "podcast",
+        "community"
+      ]
+    },
+    {
+      "label": "Legal & Policy",
+      "keywords": [
+        "legal",
+        "law",
+        "compliance",
+        "policy",
+        "paralegal",
+        "counsel",
+        "company secretary"
+      ]
+    }
+  ]
+}

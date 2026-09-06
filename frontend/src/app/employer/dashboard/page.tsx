@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 
 import BrandLogo from "@/components/BrandLogo";
+import BriefingPanel, { type Briefing } from "@/components/BriefingPanel";
 import { EmployerDashboardSkeleton } from "@/components/LoadingSkeletons";
 import { apiUrl } from "@/lib/api";
 import { EMPLOYER_PORTAL_ENABLED } from "@/lib/employer-portal";
@@ -106,6 +107,26 @@ function stableDate(value?: string | null): string {
   return `${year}-${month}-${day}`;
 }
 
+interface ScarcityRow {
+    skill: string;
+    demand_share: number;
+    supply: number;
+    candidates_assessed: number;
+    candidates_with_skill: number;
+    is_soft: boolean;
+    scarcity: number;
+    verdict: string;
+}
+
+interface TalentPool {
+  briefing?: Briefing | null;
+    available: boolean;
+    reason?: string | null;
+    candidates_assessed: number;
+    postings_analysed: number;
+    scarcity: ScarcityRow[];
+}
+
 export default function EmployerDashboardPage() {
   const router = useRouter();
   // The portal is retired: its API routes are not mounted, so rendering this page
@@ -123,6 +144,7 @@ export default function EmployerDashboardPage() {
   const [success, setSuccess] = useState<string | null>(null);
   const [profile, setProfile] = useState<ProfileMe | null>(null);
   const [summary, setSummary] = useState<EmployerSummary | null>(null);
+  const [talentPool, setTalentPool] = useState<TalentPool | null>(null);
   const [opportunities, setOpportunities] = useState<EmployerOpportunity[]>([]);
   const [auditLogs, setAuditLogs] = useState<RecruiterAuditLog[]>([]);
   const [lifecycleUpdatingId, setLifecycleUpdatingId] = useState<string | null>(null);
@@ -155,12 +177,18 @@ export default function EmployerDashboardPage() {
       return;
     }
 
-    const [profileRes, summaryRes, opportunitiesRes, auditLogsRes] = await Promise.all([
+    // Fetched together rather than in sequence: each is a round trip and the
+    // page shows nothing until the slowest returns either way.
+    const [profileRes, summaryRes, opportunitiesRes, auditLogsRes, talentRes] = await Promise.all([
       fetch(apiUrl("/api/v1/users/me/profile"), { headers: authHeader }),
       fetch(apiUrl("/api/v1/employer/dashboard/summary"), { headers: authHeader }),
       fetch(apiUrl("/api/v1/employer/opportunities"), { headers: authHeader }),
       fetch(apiUrl("/api/v1/employer/audit-logs?limit=25"), { headers: authHeader }),
+      fetch(apiUrl("/api/v1/employer/talent-pool"), { headers: authHeader }),
     ]);
+    if (talentRes.ok) {
+      setTalentPool((await talentRes.json()) as TalentPool);
+    }
 
     if (!profileRes.ok) {
       throw new Error("Unable to load your profile");
@@ -478,6 +506,57 @@ export default function EmployerDashboardPage() {
             </article>
           ))}
         </section>
+
+        <BriefingPanel briefing={talentPool?.briefing} />
+
+        {talentPool && (
+          <section className="card-panel" style={{ display: "grid", gap: "0.6rem" }}>
+            <div style={{ fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.05em", fontSize: "0.8rem" }}>
+              Talent pool
+            </div>
+            <p style={{ color: "var(--text-secondary)", fontWeight: 600, fontSize: "0.9rem", margin: 0 }}>
+              How often a skill appears across {talentPool.postings_analysed.toLocaleString()} live
+              postings, against how many assessed candidates can evidence it. High demand with low
+              supply is the hire that will sit open — the signal that tells you whether to pay more,
+              train for it, or stop requiring it.
+            </p>
+
+            {!talentPool.available && talentPool.reason && (
+              // Stated, not hidden. "Not enough data yet" and "no scarce skills"
+              // are opposite findings and a recruiter acting on the wrong one
+              // wastes a hiring quarter.
+              <p style={{ fontWeight: 700, color: "var(--text-primary)", margin: 0 }}>{talentPool.reason}</p>
+            )}
+
+            {talentPool.available && talentPool.scarcity.map((row) => (
+              <div key={row.skill} style={{ display: "grid", gap: "0.3rem" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap" }}>
+                  <span style={{ fontWeight: 700 }}>
+                    {row.skill}{row.is_soft ? " · soft" : ""}
+                  </span>
+                  <span style={{ fontWeight: 700, fontSize: "0.85rem", color: "var(--text-secondary)" }}>
+                    {(row.demand_share * 100).toFixed(1)}% of postings · {Math.round(row.supply * 100)}% of
+                    candidates · <strong style={{ color: "var(--text-primary)" }}>{row.verdict}</strong>
+                  </span>
+                </div>
+                {/* Supply drawn on a full 0-100 track; demand scaled up so the two
+                    are comparable at a glance. A skill's demand share is a few
+                    percent by nature and would otherwise be invisible next to it. */}
+                <div style={{ border: "2px solid var(--border-subtle)", borderRadius: "var(--radius-sm)", overflow: "hidden", background: "var(--bg-base)" }}>
+                  <div style={{ height: "0.55rem", width: `${Math.min(100, row.demand_share * 100 * 8)}%`, background: "var(--text-primary)" }} />
+                  <div style={{ height: "0.55rem", width: `${Math.max(1, Math.min(100, row.supply * 100))}%`, background: "var(--brand-primary)" }} />
+                </div>
+              </div>
+            ))}
+
+            {talentPool.available && (
+              <p style={{ color: "var(--text-secondary)", fontWeight: 600, fontSize: "0.82rem", margin: 0 }}>
+                Dark bar: demand across live postings. Yellow bar: share of {talentPool.candidates_assessed}{" "}
+                assessed candidates who can evidence it. Aggregate only — no candidate is identified here.
+              </p>
+            )}
+          </section>
+        )}
 
         <section className="card-panel" style={{ display: "grid", gap: "0.8rem" }}>
           <h2 style={{ fontSize: "1.4rem" }}>Post Opportunity</h2>

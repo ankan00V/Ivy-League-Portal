@@ -221,7 +221,7 @@ export default function Home() {
               textShadow: "0 3px 14px color-mix(in srgb, #000000 48%, transparent)",
             }}
           >
-            Real-time tracking of hackathons, research internships, and scholarships.
+            Continuously refreshed internships, hackathons, competitions and workshops.
             Rank yourself with the global{" "}
             <strong
               style={{
@@ -231,7 +231,7 @@ export default function Home() {
             >
               InCoScore
             </strong>{" "}
-            and auto-apply with AI.
+            and take each application to its source in one click.
           </p>
 
           <div style={{ display: "flex", gap: "1rem", justifyContent: "center", pointerEvents: "auto" }}>

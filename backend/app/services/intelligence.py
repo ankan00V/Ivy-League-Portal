@@ -144,6 +144,18 @@ def _generic_discovery_score(opportunity: Opportunity) -> tuple[float, list[str]
 
 
 def calculate_incoscore(profile: Profile) -> float:
+    """Evidence-weighted score. See app/services/incoscore.py for the model.
+
+    Kept as the entry point the five existing call sites already use. It scores
+    the profile alone - outcomes need a database read, so callers that have one
+    available use score_profile_with_outcomes instead and get the uplift too.
+    """
+    from app.services.incoscore import score_profile
+
+    return score_profile(profile).total
+
+
+def _legacy_calculate_incoscore(profile: Profile) -> float:
     skills = list({item.lower() for item in _split_csv(profile.skills)})
     interests = list(
         {

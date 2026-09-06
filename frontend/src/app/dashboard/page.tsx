@@ -3,7 +3,7 @@ import React, { useState, useCallback, useEffect, useMemo, useRef } from "react"
 import Sidebar from "@/components/Sidebar";
 import { motion, useMotionValue, useTransform } from "framer-motion";
 import type { HTMLMotionProps } from "framer-motion";
-import { TrendingUp, Briefcase, ShieldCheck, Activity, Sparkles, Star, CircleAlert, CircleCheck, X, Loader2 } from "lucide-react";
+import { TrendingUp, Briefcase, ShieldCheck, Activity, Sparkles, CircleAlert, CircleCheck, X, Loader2 } from "lucide-react";
 import { EMPLOYER_PORTAL_ENABLED } from "@/lib/employer-portal";
 import { apiUrl } from "@/lib/api";
 import { COOKIE_SESSION_SENTINEL, clearAccessToken, getAccessToken } from "@/lib/auth-session";
@@ -145,11 +145,16 @@ const TiltCard = ({ children, style, className, ...rest }: TiltCardProps) => {
     );
 };
 
-// --- MULTIPLE MOCK COMPANIES FOR MARQUEE ---
-const MARQUEE_COMPANIES = [
-    "Google", "Meta", "Apple", "Netflix", "Amazon", "Microsoft", "Stripe", "SpaceX", 
-    "OpenAI", "Anthropic", "Tesla", "NVIDIA", "Palantir", "Databricks"
-];
+// A scrolling wall of Google, Meta, Apple, Amazon, OpenAI and Anthropic used to
+// sit here, star-iconed, directly above the live stats on the first page after
+// login. It was a hardcoded array - the constant's own comment said "MOCK" -
+// and on a placement platform a company wall reads as "these companies hire
+// through here". None of them do. Removed rather than relabelled: there is no
+// caption that makes an invented partner list acceptable, and this repo has
+// twice published figures that turned out to be constants read back.
+//
+// If a band of logos is wanted, derive it from the distinct `university` values
+// in the recommendation payload and caption it "recently seen in your feed".
 
 const DEV_SIMULATED_OPPORTUNITIES = [
     { id: 'm1', title: 'Google Summer of Code 2026', domain: 'Engineering', ranking_mode: 'baseline', experiment_key: 'ranking_mode', experiment_variant: 'baseline', rank_position: 1 },
@@ -465,16 +470,24 @@ export default function DashboardPage() {
             ? `${profileStrengthPercent}%`
             : "--"
         : "--";
+    // A percentile off a handful of users is noise, so the band is shown until
+    // the cohort is big enough - and it matches what the leaderboard says.
     const rankingTitle = rankingSummary
-        ? `Top ${formatTopPercent(rankingSummary.top_percent)}% Globally`
+        ? rankingSummary.top_percent != null
+            ? `Top ${formatTopPercent(rankingSummary.top_percent)}% of your cohort`
+            : rankingSummary.band || "Score calculated"
         : isAuthenticated
             ? "Live rank calculating"
             : "Sign in for live rank";
+    // Gated on cohort_ready for the same reason the percentile above it is: a
+    // rank out of three is a fact about the demo data, not about the user.
     const rankingDetail = rankingSummary
-        ? `Rank #${rankingSummary.rank} of ${rankingSummary.total_users}`
+        ? rankingSummary.cohort_ready
+            ? `Rank #${rankingSummary.rank} of ${rankingSummary.total_users}`
+            : "Cohort too small to rank yet"
         : isAuthenticated
             ? "Complete profile signals to improve rank"
-            : "Live global percentile";
+            : "Cohort percentile";
     const profileStrengthHint = profileStrength
         ? `${profileStrength.completed_signals}/${profileStrength.total_signals} profile signals complete`
         : isAuthenticated
@@ -594,33 +607,6 @@ export default function DashboardPage() {
                         </div>
                     </motion.div>
                 )}
-
-                {/* Infinite Marquee */}
-                <div style={{ 
-                    overflow: 'hidden', 
-                    whiteSpace: 'nowrap', 
-                    marginBottom: '3rem', 
-                    background: 'var(--bg-surface-hover)', 
-                    border: '2px solid var(--border-subtle)', 
-                    padding: '0.75rem 0',
-                    borderRadius: 'var(--radius-sm)',
-                    boxShadow: 'var(--shadow-sm)',
-                    display: 'flex',
-                    alignItems: 'center'
-                }}>
-                    <motion.div
-                        animate={{ x: [0, -1035] }} // Adjust width translation based on content
-                        transition={{ repeat: Infinity, duration: 25, ease: "linear" }}
-                        style={{ display: 'flex', gap: '3rem', paddingLeft: '3rem' }}
-                    >
-                        {/* Duplicate the array to create a seamless loop */}
-                        {[...MARQUEE_COMPANIES, ...MARQUEE_COMPANIES].map((company, idx) => (
-                            <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 800, fontSize: '1.1rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                                <Star size={16} style={{ color: 'var(--brand-primary)' }} /> {company}
-                            </div>
-                        ))}
-                    </motion.div>
-                </div>
 
                 {/* Stats Grid with 3D Placards */}
                 <motion.div

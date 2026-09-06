@@ -89,6 +89,13 @@ test.describe("@ux Frontend UX quality gates", () => {
       caret: "hide",
       scale: "css",
       maxDiffPixelRatio: 0.02,
+      /* Turnstile is masked because it is not deterministic. Cloudflare renders
+         a spinner, then "Verifying...", then a success badge, on its own
+         schedule and over the network - so the same page screenshots
+         differently run to run, and the diff that exposed this had one capture
+         mid-verify and the baseline settled. Masking the widget keeps the
+         snapshot about our own layout, which is what it is for. */
+      mask: [page.locator("#turnstile-mount")],
     });
   });
 
@@ -101,6 +108,8 @@ test.describe("@ux Frontend UX quality gates", () => {
       caret: "hide",
       scale: "css",
       maxDiffPixelRatio: 0.02,
+      // Same non-deterministic widget as the login shell above.
+      mask: [page.locator("#turnstile-mount")],
     });
   });
 });

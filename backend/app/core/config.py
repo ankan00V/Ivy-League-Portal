@@ -66,7 +66,18 @@ class Settings(BaseSettings):
     # employer powers was a non-freemail email domain -- so self-serve signup
     # let anyone with a bought domain post straight into the candidate feed.
     # Flip this to True to bring the whole workflow back; nothing was removed.
-    EMPLOYER_PORTAL_ENABLED: bool = False
+    # Re-enabled for the Academia-Industry collaboration workflow, which
+    # requires industries to post their own openings. Publishing to the
+    # candidate feed is gated on a verified careers-page claim, so turning
+    # this on does not restore the self-serve hole it was retired for.
+    # Academicians (FDPs, faculty internships, consultancy) and institutions
+    # (cohort dashboards) are the two roles problem statement 26044 asks for
+    # beyond students and industry. Gated individually for the same reason
+    # the employer portal is: each hands out powers a self-serve signup
+    # should not grant silently.
+    FACULTY_PORTAL_ENABLED: bool = True
+    INSTITUTION_PORTAL_ENABLED: bool = True
+    EMPLOYER_PORTAL_ENABLED: bool = True
     # Deliberately empty. This identity is reserved for the hidden admin control
     # plane, so baking a real address into source shipped one maintainer's
     # personal email to every clone of the repository and made it the admin
@@ -107,8 +118,29 @@ class Settings(BaseSettings):
     NEON_DATABASE_NAME: str = "neondb"
     # Read path switch. Off means the feed still reads Mongo, so the two can be
     # compared on the same corpus before anything is cut over.
-    OPPORTUNITY_READ_BACKEND: str = "mongo"  # mongo | postgres
+    # Which path serves the feed. Left at "mongo" long after Mongo stopped being
+    # contacted at all, so the hottest endpoint in the product took the legacy
+    # fallback: it pulls a window of at least 400 rows through the ODM and
+    # discards most of them to return 20, instead of applying status and portal
+    # filters in SQL. Measured on the live corpus, same 20 rows returned:
+    # mongo 1378ms, postgres 788ms.
+    #
+    # The reader still falls back to the ODM path if the Postgres read raises,
+    # so this is a preference rather than a hard switch.
+    # How often the feed re-asks the database whether the corpus is stale.
+    # The check guards a scrape trigger, not correctness, so paying a round
+    # trip for it on every page load was the wrong trade.
+    # How far back the academician feed looks when salvaging faculty roles
+    # from student-audience rows. Bounded because scanning the whole corpus
+    # cost ~8s on the first page a faculty member opens.
+    FACULTY_KEYWORD_SCAN_WINDOW: int = 600
+    FEED_STALENESS_CHECK_INTERVAL_SECONDS: float = 60.0
+    OPPORTUNITY_READ_BACKEND: str = "postgres"  # postgres | mongo
     NEON_POOL_MIN_SIZE: int = 1
+    # How long an idle pooled connection may live. Must stay below the
+    # pooler's own idle timeout: past it, the far end has closed the socket
+    # and we only find out when a release-time reset hangs on it.
+    POSTGRES_IDLE_CONNECTION_LIFETIME_SECONDS: float = 120.0
     NEON_POOL_MAX_SIZE: int = 10
     NEON_COMMAND_TIMEOUT_SECONDS: float = 30.0
 
@@ -521,7 +553,13 @@ class Settings(BaseSettings):
     # RAG governance defaults
     RAG_TEMPLATE_KEY_DEFAULT: str = "ask_ai"
     RAG_DEFAULT_RETRIEVAL_TOP_K: int = 8
-    RAG_LLM_MODEL: Optional[str] = None
+    # Ask AI's model. Defaulted rather than left to LLM_MODEL, because the
+    # deployment's LLM_MODEL is meta/llama-3.1-8b-instruct, which the endpoint
+    # retired on 2026-08-26 and now answers with HTTP 410 Gone. Ask AI has
+    # therefore been serving its heuristic fallback - a real answer, wearing no
+    # sign that the grounded one was never generated - since that date.
+    # Overridable by .env when a deployment has its own model.
+    RAG_LLM_MODEL: Optional[str] = "nvidia/nemotron-3-super-120b-a12b"
     RAG_JUDGE_MODEL: Optional[str] = None
     RAG_WARMUP_ON_STARTUP: bool = True
     RAG_WARMUP_TIMEOUT_SECONDS: float = 120.0
@@ -536,6 +574,54 @@ class Settings(BaseSettings):
     # 1,100 tokens; 2,000 leaves headroom without inviting a rambling answer.
     RAG_LLM_MAX_TOKENS: int = 2000
     RAG_JUDGE_TIMEOUT_SECONDS: float = 8.0
+
+    # Role briefings: the grounded paragraph on each dashboard.
+    #
+    # A briefing is a panel loading beside other panels, not a chat turn with a
+    # cursor blinking in it, so it is allowed to be slower than Ask AI. Measured
+    # against the configured endpoint, a 30B-A3B model answers this prompt in
+    # 4-27 seconds, and the interactive 12-second budget was rejecting answers
+    # for being slow rather than for being wrong.
+    BRIEFING_LLM_TIMEOUT_SECONDS: float = 30.0
+    # Larger than it looks like it needs to be. Models on this endpoint prepend
+    # an unrequested reasoning preamble, and at 700 tokens one spent the entire
+    # budget on it and stopped before emitting a single brace - which surfaces
+    # as "unparseable" and reads like a bad model rather than a small budget.
+    BRIEFING_LLM_MAX_TOKENS: int = 1600
+
+    # Wall-clock budget for one source's probation run. The batch is sequential,
+    # and without a bound one unreachable site holds all of them: nbaind.org
+    # cycled every render provider in the fallback chain and six other sources
+    # behind it were never reached at all.
+    PROBATION_SOURCE_TIMEOUT_SECONDS: float = 120.0
+
+    # Models the provider has withdrawn, which a deployment's .env may still
+    # name. Anything listed here is replaced at construction with
+    # BRIEFING_LLM_MODEL and the substitution is logged at WARNING.
+    #
+    # This exists because the failure is invisible without it. When
+    # meta/llama-3.1-8b-instruct was retired on 2026-08-26 the endpoint began
+    # answering HTTP 410 Gone; every caller here catches provider errors and
+    # serves a deterministic fallback, so the product kept returning
+    # well-formed answers and nothing on any screen or dashboard said the model
+    # had not been consulted. A config file that cannot be edited today should
+    # not be able to silently disable every AI feature.
+    RETIRED_LLM_MODELS: list[str] = [
+        "meta/llama-3.1-8b-instruct",
+        "meta-llama/llama-3-8b-instruct:free",
+    ]
+    # Chosen by measuring the candidates, not by picking the largest name.
+    #
+    # Measured end to end through role_briefings on the configured endpoint,
+    # reasoning preamble disabled, same employer prompt:
+    #     nemotron-3-super-120b-a12b     2.4s  best reading of the data
+    #     nemotron-3-nano-omni-30b-a3b   3.6s  correct but generic
+    #     nemotron-3.5-lightning-30b-a3b 4.9s  leaked "actions:" as prose
+    #     mistral-nemotron               timed out at 45s
+    #     deepseek-v4-flash-0731         timed out at 45s
+    # Most of the rest of the catalogue 404s. The largest model here is also the
+    # fastest, which is why this is measured rather than assumed.
+    BRIEFING_LLM_MODEL: Optional[str] = "nvidia/nemotron-3-super-120b-a12b"
 
     # Cross-encoder reranking of the bi-encoder shortlist. The bi-encoder scores
     # query and document independently, which is what lets it scan the corpus but
@@ -689,12 +775,41 @@ class Settings(BaseSettings):
     SEMANTIC_DEDUP_THRESHOLD: float = 0.9
     VECTOR_STORE_PROVIDER: str = "mongo"  # mongo | memory
     VECTOR_STORE_PERSISTENCE_ENABLED: bool = True
+    # Rows per committed write during a vector rebuild. Chunking is what
+    # makes the rebuild resumable: the job runs under a timeout, and a
+    # single end-of-run flush loses every row when that timeout fires.
+    VECTOR_FLUSH_BATCH_SIZE: int = 200
+    # Rows per page when the rebuild reads the corpus. Small statements
+    # survive GIL starvation from the scrape threads and the pgbouncer in
+    # front of Supabase; one full-table read does not.
+    VECTOR_LOAD_PAGE_SIZE: int = 500
+    # Skill demand is derived from the live corpus by the skills.demand_refresh
+    # job. Slow cadence: a full pass costs ~45s and what it measures moves
+    # over weeks.
+    SKILL_DEMAND_REFRESH_ENABLED: bool = True
+    SKILL_DEMAND_REFRESH_INTERVAL_HOURS: int = 12
     MONGODB_ATLAS_VECTOR_SEARCH: bool = False
     MONGODB_ATLAS_VECTOR_INDEX_NAME: str = "opportunity_embedding_index"
     VECTOR_INDEX_STALE_HOURS: int = 6
     EMBEDDING_BATCH_SIZE: int = 64
     EMBEDDING_AUTORUN_ENABLED: bool = True
-    EMBEDDING_REBUILD_INTERVAL_MINUTES: int = 60
+    # Matched to VECTOR_INDEX_STALE_HOURS rather than set independently.
+    #
+    # This was 60 while the index only considered itself stale after 6 hours, so
+    # the job fired five times more often than the staleness policy asked for -
+    # and every one of those was a full reload. rebuild() skips work only when the
+    # row count is unchanged, and the scraper inserts on a 30 minute cycle, so the
+    # count always differed and the guard never fired.
+    #
+    # Each reload reads the whole corpus with its vectors: 9.3 MB of opportunities
+    # plus 6.7 MB of embeddings, about 16 MB a time. Hourly that is ~384 MB/day
+    # against a 5 GB monthly egress allowance, which is most of it - far more than
+    # the feed the paging work was aimed at.
+    #
+    # The cost of the slower cadence is that a newly scraped listing can take up to
+    # six hours to become semantically searchable. The feed itself is unaffected:
+    # it reads Postgres directly and shows new rows immediately.
+    EMBEDDING_REBUILD_INTERVAL_MINUTES: int = 360
     USER_EMBEDDING_INTERACTION_THRESHOLD: int = 5
     USER_EMBEDDING_HALF_LIFE_DAYS: int = 7
 
@@ -901,6 +1016,26 @@ def _dsn_host(dsn: str) -> str:
     """Host:port of a DSN, with credentials stripped - safe to log."""
     match = re.search(r"@([^/?]+)", str(dsn or ""))
     return match.group(1) if match else "unknown"
+
+
+def postgres_connect_args(dsn: str) -> tuple[str, object]:
+    """Split a DSN into (dsn_without_sslmode, asyncpg ssl argument).
+
+    ssl="require" was hardcoded at both pool sites, which meant the app could
+    not connect to any Postgres that speaks plain TCP - a local container, or a
+    CI service - no matter what the DSN asked for. asyncpg would demand TLS the
+    server does not offer and the connection just failed. That is why the
+    release-blocking gates could not be given a real database to run against.
+
+    Supabase and Neon both require TLS, so "require" stays the default; only an
+    explicit sslmode=disable opts out. The parameter is stripped from the DSN
+    because asyncpg takes it as a keyword argument instead.
+    """
+    text = str(dsn or "")
+    match = re.search(r"[?&]sslmode=([A-Za-z-]+)", text)
+    mode = match.group(1).lower() if match else "require"
+    cleaned = re.sub(r"([?&])sslmode=[A-Za-z-]+&?", r"\1", text).rstrip("?&")
+    return cleaned, (False if mode == "disable" else "require")
 
 
 def resolve_postgres_dsn() -> str:

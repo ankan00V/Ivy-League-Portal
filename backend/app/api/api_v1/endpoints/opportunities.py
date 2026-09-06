@@ -31,6 +31,7 @@ from app.models.traffic import TrafficType
 from app.models.user import User
 from app.schemas.rag import RAGAskResponse
 from app.services.opportunity_placement import classify_placement
+from app.services.role_classification import classify_role_track
 from app.services.ai_engine import ai_system
 from app.services.cold_start import ColdStartDecision, cold_start_profile_builder
 from app.services.evaluation_service import evaluation_service
@@ -98,6 +99,32 @@ class OpportunityResponse(OpportunityCreate):
     created_at: datetime
     updated_at: Optional[datetime] = None
     last_seen_at: Optional[datetime] = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def role_track(self) -> str:
+        """Technical vs non-technical, computed here rather than in the browser.
+
+        The feed classified this client-side, and the classifier reads
+        `description`. That single dependency is why the page fetched all ~1500
+        active listings: it needed the whole corpus, with bodies, just to label
+        the two track tabs and their counts.
+
+        description averages 703 B and extras 613 B, so a feed request moved
+        3.36 MB out of Postgres. A 5.5 GB monthly egress budget covers about
+        1,600 of those, which is how one developer exhausted the Supabase free
+        tier at 16.86 GB. Returning the answer as a short string lets the client
+        stop asking for bodies.
+
+        Parity with the TypeScript original is enforced by
+        tests/test_role_classification_parity.py, which runs both and diffs.
+        """
+        return classify_role_track(
+            title=self.title,
+            description=self.description,
+            tags=self.tags,
+            opportunity_type=self.opportunity_type,
+        )
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -531,7 +558,17 @@ async def _load_active_opportunities(
     return curated[safe_skip : safe_skip + safe_limit]
 
 
+#: When the staleness check last actually asked the database. The check runs on
+#: every feed request and its answer is measured in minutes, so asking every
+#: time spent a full round trip - ~350ms against the Supabase pooler - of a
+#: user's page load to re-learn something that had not changed. Cached in
+#: process, deliberately: it guards a scrape trigger, not correctness, and the
+#: enqueue below is deduplicated anyway.
+_LAST_STALENESS_CHECK_AT: float = 0.0
+
+
 async def _ensure_live_feed_if_stale() -> None:
+    global _LAST_STALENESS_CHECK_AT
     from app.services.scraper import get_scraper_runtime_status, run_scheduled_scrapers
     from app.services.job_runner import job_runner
 
@@ -541,6 +578,15 @@ async def _ensure_live_feed_if_stale() -> None:
     runtime = get_scraper_runtime_status()
     if runtime.get("is_running"):
         return
+
+    # Re-check at most once per interval. Worst case a scrape is triggered up to
+    # this much later than it could have been, against a staleness threshold
+    # measured in minutes - and every request in between saves a round trip.
+    interval = max(1.0, float(getattr(settings, "FEED_STALENESS_CHECK_INTERVAL_SECONDS", 60.0)))
+    now_monotonic = time.monotonic()
+    if now_monotonic - _LAST_STALENESS_CHECK_AT < interval:
+        return
+    _LAST_STALENESS_CHECK_AT = now_monotonic
 
     latest_items = await Opportunity.find_many().sort("-last_seen_at").limit(1).to_list()
     if not latest_items:
@@ -1149,6 +1195,78 @@ async def calibrate_feed_taste(
     )
 
 
+class OpportunityPageResponse(BaseModel):
+    """One page of the feed plus the totals the pager and filter chips need."""
+
+    items: list[OpportunityResponse]
+    total: int
+    page: int
+    per_page: int
+    pages: int
+    facets: dict[str, Any]
+
+
+@router.get("/page", response_model=OpportunityPageResponse)
+async def read_opportunity_page(
+    page: int = 1,
+    per_page: int = 12,
+    portal: Optional[Literal["career", "competitive", "other"]] = None,
+    domain: Optional[str] = None,
+    role_track: Optional[Literal["technical", "non_technical"]] = None,
+    placement: Optional[Literal["india", "remote", "hybrid", "international"]] = None,
+    specialities: Optional[str] = None,
+) -> Any:
+    """Paged feed. Filters and counts run in SQL, so one page is one small read.
+
+    The list endpoint returns every matching row, and the client filtered and
+    counted over the whole corpus. That moved 3.36 MB out of Postgres per
+    request - a 5.5 GB monthly egress allowance covers roughly 1,600 of them,
+    which is how the Supabase project was restricted at 16.86 GB with a single
+    developer using it. Twelve rows is about 27 KB.
+
+    `specialities` is a comma-separated list, matched against the title. The
+    chips matched descriptions client-side; doing that in SQL would mean a
+    sequential scan of every body per request, which is the cost this removes.
+    Narrower, and honest about being narrower.
+    """
+    await _ensure_live_feed_if_stale()
+    from app.repositories import opportunity_repository
+
+    keywords = [part for part in (specialities or "").split(",") if part.strip()]
+    rows, total = await opportunity_repository.load_opportunity_page(
+        portal=portal, domain=domain, role_track=role_track,
+        placement=placement, specialities=keywords,
+        page=page, per_page=per_page,
+    )
+    # Cached briefly. These are two GROUP BY scans over the whole active corpus
+    # and they run on every feed request - every page click, every filter, every
+    # 60s poll - while the numbers only move when the scraper writes, every 30
+    # minutes. Uncached they were a measurable share of the read volume that
+    # exhausted the egress allowance.
+    #
+    # Keyed by the two inputs that change the answer. 120s is short enough that a
+    # scrape shows up within the same visit and long enough to collapse a burst
+    # of clicks into one scan.
+    facet_cache_key = cache_key("feed_facets", str(portal or "all"), str(role_track or "all"))
+    facets = await cache_get_json(facet_cache_key)
+    if not facets:
+        facets = await opportunity_repository.feed_facet_counts(portal=portal, role_track=role_track)
+        # Best effort: a cache write failure must not fail the feed.
+        try:
+            await cache_set_json(facet_cache_key, facets, ttl_seconds=120)
+        except Exception:
+            logger.warning("feed facet cache write failed", exc_info=True)
+    safe_per_page = max(1, min(int(per_page), 100))
+    return {
+        "items": rows,
+        "total": total,
+        "page": max(1, int(page)),
+        "per_page": safe_per_page,
+        "pages": max(1, -(-total // safe_per_page)),  # ceil, so a partial last page still counts
+        "facets": facets,
+    }
+
+
 @router.get("", response_model=list[OpportunityResponse], include_in_schema=False)
 @router.get("/", response_model=list[OpportunityResponse])
 async def read_opportunities(
@@ -1662,8 +1780,12 @@ TRACKING_REQUIRED_TYPES = ALLOWED_INTERACTION_TYPES - {"view"}
 async def _prepare_interaction_event(
     payload: InteractionEventCreate,
     current_user: User,
+    opportunity: Optional[Opportunity] = None,
 ) -> dict[str, Any]:
-    opportunity = await Opportunity.get(payload.opportunity_id)
+    # `opportunity` lets a batch caller pass a row it has already fetched. The
+    # single-event path leaves it None and behaves exactly as before.
+    if opportunity is None:
+        opportunity = await Opportunity.get(payload.opportunity_id)
     if not opportunity:
         raise HTTPException(status_code=404, detail="Opportunity not found")
 
@@ -1757,8 +1879,46 @@ async def log_opportunity_interactions_batch(
     payload: InteractionBatchCreate,
     current_user: User = Depends(get_current_active_user),
 ) -> Any:
-    prepared = [await _prepare_interaction_event(event, current_user) for event in payload.events]
-    inserted = [await _log_prepared_interaction(event) for event in prepared]
+    # Both of these were sequential comprehensions: one SELECT per event to load
+    # the opportunity, then one INSERT per event. A feed page sends up to 48
+    # impressions, so that was ~96 round trips in series to Postgres in
+    # ap-southeast-2. Measured on the running stack: ~200s per batch, which the
+    # Next proxy aborted at its 30s timeout and reported to the browser as
+    # "Upstream backend unavailable". The endpoint was answering 200 the whole
+    # time - nobody was waiting long enough to see it.
+    #
+    # One query for every opportunity, then the inserts concurrently.
+    # Fetched concurrently rather than as a single IN query on purpose.
+    # `In(Opportunity.id, ...)` needs Beanie's class-level expression fields,
+    # which are only attached once init_beanie has run - the endpoint unit tests
+    # construct the model directly and it raises AttributeError there. Latency is
+    # what matters here and gather already collapses N round trips into roughly
+    # one, so the extra queries cost little and the endpoint stays testable.
+    unique_ids = list({str(e.opportunity_id): e.opportunity_id
+                       for e in payload.events if e.opportunity_id}.values())
+    fetched = await asyncio.gather(
+        *(Opportunity.get(oid) for oid in unique_ids), return_exceptions=True
+    )
+    # Keyed by the id that was asked for, not by row.id. Reading an attribute off
+    # the fetched object assumes it is a real Opportunity, and the endpoint test
+    # patches Opportunity.get to return a bare sentinel - so that raised
+    # AttributeError instead of the 400 the test was asserting, turning a
+    # validation contract into a crash.
+    by_id = {
+        str(oid): row
+        for oid, row in zip(unique_ids, fetched)
+        if row is not None and not isinstance(row, BaseException)
+    }
+
+    prepared = [
+        await _prepare_interaction_event(
+            event, current_user, opportunity=by_id.get(str(event.opportunity_id))
+        )
+        for event in payload.events
+    ]
+    # gather, not a loop: these are independent inserts and the round trip
+    # dominates each one.
+    inserted = list(await asyncio.gather(*(_log_prepared_interaction(e) for e in prepared)))
     return {
         "status": "ok",
         "inserted": len(inserted),
