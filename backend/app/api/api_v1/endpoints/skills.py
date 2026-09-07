@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.api.deps import get_current_active_user
 from app.models.learning_program import LearningProgram
 from app.models.profile import Profile
+from app.services.sih_ayush_standards import AYUSH_DOMAIN, is_ayush_field
 from app.models.skill_assessment import (
     MAX_PROFICIENCY,
     PROFICIENCY_LEVELS,
@@ -98,6 +99,23 @@ async def _resolve_domain(user: User, requested: Optional[str]) -> str:
     if requested and requested.strip():
         return requested.strip()
     profile = await Profile.find_one(Profile.user_id == user.id)
+    if profile is None:
+        return demand_module.GLOBAL_DOMAIN
+
+    # An Ayush discipline is resolved from the specific field, not the bucket.
+    #
+    # `domain` is one of five coarse values and a BAMS student carries
+    # "Medicine", the same as an MBBS student. Reading only that would give an
+    # Ayurveda cohort a demand table about allopathic practice and would give
+    # the sponsor of this problem statement a product that cannot see its own
+    # field.
+    if is_ayush_field(
+        getattr(profile, "course", None),
+        getattr(profile, "course_specialization", None),
+        getattr(profile, "domain", None),
+    ):
+        return AYUSH_DOMAIN
+
     return str(getattr(profile, "domain", None) or "").strip() or demand_module.GLOBAL_DOMAIN
 
 

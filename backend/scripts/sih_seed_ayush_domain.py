@@ -46,7 +46,7 @@ async def main() -> int:
 
     from app.bootstrap import init_database
     from app.models.skill_assessment import SkillDemandSnapshot
-    from app.services.ayush_standards import DEMAND_BASIS, ROLES, demand_rows
+    from app.services.sih_ayush_standards import DEMAND_BASIS, ROLES, demand_rows
     from app.services.skill_demand import domain_key
 
     await init_database()

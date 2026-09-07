@@ -27,7 +27,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from app.services.ayush_standards import (
+from app.services.sih_ayush_standards import (
     BAND_LABELS,
     COMPETENCIES,
     DEMAND_BASIS,

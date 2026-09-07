@@ -177,6 +177,36 @@ ROLES: tuple[AyushRole, ...] = (
 )
 
 
+#: The domain string an Ayush demand snapshot is stored under.
+AYUSH_DOMAIN = "Ayurveda and Ayush"
+
+#: Field-of-study and specialisation values that mean "this student is in an
+#: Ayush discipline".
+#:
+#: `domain` on a profile is one of five coarse buckets - Management,
+#: Engineering, Arts & Science, Medicine, Law - so a BAMS student and an MBBS
+#: student both carry "Medicine". Keying the demand table on that alone would
+#: hand an Ayurveda cohort a table about allopathic practice, or hand an MBBS
+#: cohort Panchakarma. The discipline lives in the more specific field, and that
+#: is what has to be read.
+AYUSH_FIELD_MARKERS: tuple[str, ...] = (
+    "ayurved", "ayush", "bams", "unani", "bums", "siddha", "bsms",
+    "homoeopath", "homeopath", "bhms", "naturopath", "bnys", "yoga",
+    "panchakarma", "rasashastra", "dravyaguna",
+)
+
+
+def is_ayush_field(*values: str | None) -> bool:
+    """Whether any of these profile values names an Ayush discipline.
+
+    Takes several values because the discipline may be recorded as the course
+    ("BAMS"), the specialisation ("Ayurveda"), or the field of study, depending
+    on which form the student filled in.
+    """
+    haystack = " ".join(str(value or "").lower() for value in values)
+    return any(marker in haystack for marker in AYUSH_FIELD_MARKERS)
+
+
 def competency_by_skill() -> dict[str, Competency]:
     return {item.skill: item for item in COMPETENCIES}
 
