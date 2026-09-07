@@ -32,6 +32,7 @@ each carries other work from the same period.
 | `backend/migrations/neon/014_demand_snapshot_basis.sql` | adds those two columns; harmless to leave in place |
 | `backend/app/services/skill_assessment_service.py` | `_rationale_for`, which stops a standards row being captioned "named in 0 live postings" |
 | `backend/app/api/api_v1/endpoints/skills.py` | the `is_ayush_field` branch in `_resolve_domain` |
+| `frontend/src/lib/education-taxonomy.ts` | the `AYUSH_FIELDS` block and its use in `FIELD_OPTIONS_BY_PROGRAM` for bams/bhms/bums/bnys |
 
 Two of those are worth keeping even if SIH is abandoned. `basis` on the snapshot
 and `_rationale_for` both exist to stop a number of one provenance being

@@ -34,6 +34,7 @@ from app.services.sih_ayush_standards import (
     ROLES,
     WEIGHTS,
     demand_rows,
+    is_ayush_field,
     roles_requiring,
 )
 from app.services.skill_assessment_service import build_questionnaire
@@ -136,6 +137,60 @@ class TestTheQuestionnaireDoesNotLie(unittest.TestCase):
         scraped = [{"skill": "python", "share": 0.31, "postings": 27, "is_soft": False}]
         questions = build_questionnaire(scraped)
         self.assertIn("named in 27 live postings", questions[0].rationale)
+
+
+class TestDisciplineDetection(unittest.TestCase):
+    """A BAMS student must not be handed an allopathic demand table.
+
+    `domain` on a profile is one of five coarse buckets, so a BAMS student and
+    an MBBS student both carry "Medicine". The discipline lives in the course or
+    the specialisation, and that is what has to be read.
+    """
+
+    def test_the_ayush_degrees_are_recognised(self) -> None:
+        for course in ("BAMS", "BHMS", "BUMS", "BNYS"):
+            with self.subTest(course=course):
+                self.assertTrue(is_ayush_field(course, None, "Medicine"))
+
+    def test_every_ncism_subject_is_recognised_on_its_own(self) -> None:
+        # Nine of the fourteen subjects offered at sign-up matched nothing
+        # standing alone, so a student who recorded their subject and not their
+        # degree got the wrong demand table.
+        for subject in (
+            "Kayachikitsa (General Medicine)",
+            "Panchakarma",
+            "Dravyaguna Vigyana (Materia Medica)",
+            "Rasashastra evam Bhaishajya Kalpana",
+            "Swasthavritta evam Yoga",
+            "Shalya Tantra (Surgery)",
+            "Shalakya Tantra (ENT and Ophthalmology)",
+            "Prasuti Tantra evam Stri Roga",
+            "Kaumarbhritya (Paediatrics)",
+            "Agada Tantra (Toxicology)",
+            "Roga Nidana (Diagnostics)",
+            "Samhita and Siddhanta",
+            "Rachana Sharira (Anatomy)",
+            "Kriya Sharira (Physiology)",
+        ):
+            with self.subTest(subject=subject):
+                self.assertTrue(is_ayush_field(subject))
+
+    def test_allopathic_and_unrelated_fields_are_not_claimed(self) -> None:
+        # The expensive direction. Claiming a field that is not Ayush would give
+        # an MBBS or engineering cohort a curriculum signal about Panchakarma,
+        # which is a worse failure than missing an Ayush student.
+        for field in (
+            "General Medicine", "Cardiology", "Neurosurgery", "Dentistry",
+            "Nursing", "Physiotherapy", "Pharmacy", "Computer Science",
+            "Anatomy", "Physiology", "Surgery", "Mechanical Engineering",
+        ):
+            with self.subTest(field=field):
+                self.assertFalse(is_ayush_field(field))
+
+    def test_it_reads_any_of_the_three_places_a_discipline_is_recorded(self) -> None:
+        self.assertTrue(is_ayush_field("BAMS", None, None))
+        self.assertTrue(is_ayush_field(None, "Panchakarma", None))
+        self.assertFalse(is_ayush_field(None, None, "Medicine"))
 
 
 class TestTheRolesAreReal(unittest.TestCase):

@@ -190,9 +190,18 @@ AYUSH_DOMAIN = "Ayurveda and Ayush"
 #: cohort Panchakarma. The discipline lives in the more specific field, and that
 #: is what has to be read.
 AYUSH_FIELD_MARKERS: tuple[str, ...] = (
+    # Degrees and systems
     "ayurved", "ayush", "bams", "unani", "bums", "siddha", "bsms",
     "homoeopath", "homeopath", "bhms", "naturopath", "bnys", "yoga",
-    "panchakarma", "rasashastra", "dravyaguna",
+    # NCISM subject names, because a profile may record only the
+    # specialisation. Measured: nine of the fourteen subjects offered at
+    # sign-up matched nothing on their own - "Kayachikitsa", "Shalya Tantra"
+    # and "Roga Nidana" among them - so a student who recorded their subject
+    # and not their degree would have been handed the wrong demand table.
+    "panchakarma", "rasashastra", "dravyaguna", "kayachikitsa",
+    "swasthavritta", "shalya tantra", "shalakya", "prasuti tantra",
+    "kaumarbhritya", "agada tantra", "roga nidana", "samhita",
+    "rachana sharira", "kriya sharira", "bhaishajya",
 )
 
 
