@@ -43,6 +43,10 @@ SIH_DEMO_DOMAIN = "sih-demo.vidyaverse.invalid"
 
 COLLEGE = "Government Ayurveda College, Demo"
 
+#: Fixed so the demo login is reproducible. These accounts are on an .invalid
+#: domain, hold no real data, and are deleted by --revert.
+REGISTRAR_PASSWORD = "VidyaVerse@2026"
+
 #: Competence profiles, not answers. Each names how far through the course the
 #: student is and which areas they have actually practised; the answers are
 #: derived from that below, so the shape of the cohort is stated openly rather
@@ -233,9 +237,46 @@ async def main() -> int:
         created += 1
         print(f"  [created ] {email:52} readiness {result.readiness_score:5.1f}")
 
+    # The account a demo is given, so the cohort has somewhere to be read from.
+    #
+    # Without it the only institution login points at Lovely Professional
+    # University and shows a cohort of engineering students - the Ayush signal
+    # exists in the database and nothing in the product reaches it, which is the
+    # demo failing for a reason no screen explains.
+    registrar_email = f"registrar@{SIH_DEMO_DOMAIN}"
+    registrar = await User.find_one(User.email == registrar_email)
+    if registrar is None:
+        print(f"  [{'would  ' if not args.apply else 'created'}] {registrar_email:52} institution account for the cohort")
+        if args.apply:
+            registrar = User(
+                email=registrar_email,
+                hashed_password=get_password_hash(REGISTRAR_PASSWORD),
+                full_name="Ayurveda College Registrar",
+                account_type="institution",
+                is_active=True,
+                auth_provider="password",
+            )
+            await registrar.insert()
+            await Profile(
+                user_id=registrar.id,
+                account_type="institution",
+                first_name="Ayurveda College",
+                last_name="Registrar",
+                college_name=COLLEGE,
+                institution_type="Government Ayurveda College",
+                institution_city="Demo",
+                institution_state="Demo",
+                contact_designation="Registrar",
+                consent_data_processing=True,
+                onboarding_completed=True,
+            ).save()
+    else:
+        print(f"  [exists ] {registrar_email}")
+
     print()
     if args.apply:
         print(f"Created {created} student(s) with assessments.")
+        print(f"Institution login: {registrar_email} / {REGISTRAR_PASSWORD}")
         print("Remove them with:  python scripts/sih_seed_ayush_cohort.py --revert --apply")
     else:
         print("Dry run. Re-run with --apply.")

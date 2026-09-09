@@ -193,6 +193,54 @@ class TestDisciplineDetection(unittest.TestCase):
         self.assertFalse(is_ayush_field(None, None, "Medicine"))
 
 
+class TestSingleDisciplineCohortsGetTheirOwnTable(unittest.TestCase):
+    """An Ayurveda college measured against the tech market produced nothing.
+
+    The cohort endpoint always used the whole-market demand table. For a mixed
+    institution that is the honest choice and the docstring argues it well. For
+    a single-discipline one it is simply the wrong table: crossed against twelve
+    BAMS students it yielded zero rows, and the dashboard said "no skill has
+    enough assessed students in common" - which reads as too little data and was
+    really a comparison against a profession they are not entering.
+    """
+
+    def _resolve(self, rows):
+        from app.api.api_v1.endpoints.academia import institution_domain_for_signal
+
+        return institution_domain_for_signal(rows)
+
+    def _student(self, course, spec, domain="Medicine"):
+        return {"course": course, "course_specialization": spec, "domain": domain}
+
+    def test_an_all_bams_cohort_uses_the_ayush_table(self) -> None:
+        from app.services.sih_ayush_standards import AYUSH_DOMAIN
+
+        rows = [self._student("BAMS", "Panchakarma")] * 12
+        self.assertEqual(self._resolve(rows), AYUSH_DOMAIN)
+
+    def test_a_mixed_cohort_still_uses_the_whole_market(self) -> None:
+        # The behaviour that was already right must not change. A minority
+        # discipline deciding the table for everyone else is the failure this
+        # threshold exists to prevent.
+        from app.services.skill_demand import GLOBAL_DOMAIN
+
+        rows = [self._student("BAMS", "Panchakarma")] * 4 + [
+            self._student("B.Tech", "Computer Science", "Engineering")
+        ] * 8
+        self.assertEqual(self._resolve(rows), GLOBAL_DOMAIN)
+
+    def test_an_empty_cohort_does_not_raise(self) -> None:
+        from app.services.skill_demand import GLOBAL_DOMAIN
+
+        self.assertEqual(self._resolve([]), GLOBAL_DOMAIN)
+
+    def test_the_threshold_is_a_large_majority(self) -> None:
+        # Set deliberately high: below it the institution really is mixed.
+        from app.api.api_v1.endpoints.academia import SINGLE_DISCIPLINE_SHARE
+
+        self.assertGreaterEqual(SINGLE_DISCIPLINE_SHARE, 0.7)
+
+
 class TestTheRolesAreReal(unittest.TestCase):
     def test_every_role_requires_something_defined(self) -> None:
         known = {item.skill for item in COMPETENCIES}

@@ -372,16 +372,46 @@ class CohortResponse(BaseModel):
     briefing: Optional[BriefingResponse] = None
 
 
+#: How much of a cohort has to share a discipline before the signal is measured
+#: against that discipline rather than against the whole market. High on
+#: purpose: below this the institution really is mixed, and the widest evidence
+#: is the honest choice.
+SINGLE_DISCIPLINE_SHARE = 0.7
+
+
 def institution_domain_for_signal(rows: list[dict[str, Any]]) -> str:
     """Which demand table to measure this cohort against.
 
-    Students in one institution sit across many domains, so there is no single
-    right answer. The whole-market table is used rather than picking one
-    student's domain and calling it the institution's - a curriculum argument
-    built on an arbitrary choice is worse than one built on the widest evidence
-    available.
+    Students in one institution usually sit across many domains, so there is no
+    single right answer and the whole-market table is used - a curriculum
+    argument built on one arbitrary student's domain is worse than one built on
+    the widest evidence available.
+
+    That reasoning stops holding for a single-discipline institution. An
+    Ayurveda college is not a mixed cohort with an Ayurveda component; every
+    student is BAMS, and measuring them against a market table whose top rows
+    are machine learning and Java produces a curriculum argument about a
+    profession they are not entering. Measured on the seeded Ayurveda cohort,
+    the global table crossed against twelve BAMS students yielded zero rows and
+    the dashboard reported "no skill has enough assessed students in common" -
+    which reads as too little data and was really the wrong table.
+
+    So: when a large majority of the cohort shares one discipline, and a demand
+    table exists for it, use that. Otherwise nothing changes.
     """
+    from app.services.sih_ayush_standards import AYUSH_DOMAIN, is_ayush_field
     from app.services.skill_demand import GLOBAL_DOMAIN
+
+    if not rows:
+        return GLOBAL_DOMAIN
+
+    ayush = sum(
+        1
+        for row in rows
+        if is_ayush_field(row.get("course"), row.get("course_specialization"), row.get("domain"))
+    )
+    if ayush / max(1, len(rows)) >= SINGLE_DISCIPLINE_SHARE:
+        return AYUSH_DOMAIN
 
     return GLOBAL_DOMAIN
 
@@ -468,6 +498,15 @@ async def institution_cohort(
                 "readiness": getattr(assessment, "readiness_score", None) if assessment else None,
                 "gaps": getattr(assessment, "gaps", None) if assessment else None,
                 "applications": application_counts.get(key, 0),
+                # Carried so the signal can be measured against the discipline
+                # this cohort actually studies. Without these the resolver below
+                # has nothing to read and every institution is measured against
+                # the whole market.
+                "course": getattr(profile, "course", None) if profile else None,
+                "course_specialization": (
+                    getattr(profile, "course_specialization", None) if profile else None
+                ),
+                "domain": getattr(profile, "domain", None) if profile else None,
             }
         )
 

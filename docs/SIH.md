@@ -33,6 +33,7 @@ each carries other work from the same period.
 | `backend/app/services/skill_assessment_service.py` | `_rationale_for`, which stops a standards row being captioned "named in 0 live postings" |
 | `backend/app/api/api_v1/endpoints/skills.py` | the `is_ayush_field` branch in `_resolve_domain` |
 | `frontend/src/lib/education-taxonomy.ts` | the `AYUSH_FIELDS` block and its use in `FIELD_OPTIONS_BY_PROGRAM` for bams/bhms/bums/bnys |
+| `backend/app/api/api_v1/endpoints/academia.py` | `SINGLE_DISCIPLINE_SHARE` and the cohort branch in `institution_domain_for_signal`, plus the three discipline fields added to each cohort row |
 
 Two of those are worth keeping even if SIH is abandoned. `basis` on the snapshot
 and `_rationale_for` both exist to stop a number of one provenance being
@@ -48,6 +49,17 @@ rather than with code.
 |---|---|
 | `app.skill_demand_snapshots` | `WHERE basis = 'occupational_standard'` |
 | `app.users`, `app.profiles`, `app.skill_assessments` | the seeded BAMS cohort — every account is on `@sih-demo.vidyaverse.invalid`; remove with `python backend/scripts/sih_seed_ayush_cohort.py --revert --apply` |
+
+## The demo login
+
+```
+registrar@sih-demo.vidyaverse.invalid   VidyaVerse@2026
+```
+
+An institution account for the Ayurveda college, so the cohort has somewhere
+to be read from. Without it the only institution login pointed at Lovely
+Professional University and showed engineering students — the Ayush signal
+existed in the database and nothing in the product reached it.
 
 ## Commits
 
