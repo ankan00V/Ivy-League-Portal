@@ -1,4 +1,10 @@
-"""Trust was scored against one rubric written for student jobs.
+"""Trust scoring: accredited domains, cold-start cross-validation, and WHOIS.
+
+Originally written when trust was scored against one rubric for student jobs
+while academician and institution sources were being added for SIH 2026. Those
+audiences are gone; the structural fixes below were never about them.
+
+Trust was scored against one rubric written for student jobs.
 
 Measured across every non-student source in probation, the pattern was the same
 on all four: field completeness a perfect 20 of 20, extraction confidence 19-21
@@ -26,7 +32,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from app.core.audiences import FACULTY, INSTITUTION, STUDENT
+from app.core.audiences import STUDENT
 from app.services.source_discovery import TrustScoringEngine, _infer_opportunity_type
 
 ENGINE = TrustScoringEngine()
@@ -46,35 +52,6 @@ def sample(**overrides):
 
 
 class TestRelevanceSpeaksEachAudiencesLanguage(unittest.TestCase):
-    def test_a_faculty_posting_scores_on_the_faculty_rubric(self) -> None:
-        rows = [
-            sample(
-                title="Advertisement for the post of Assistant Professor",
-                description_preview="Applications are invited for Assistant Professor, pay level 10.",
-                opportunity_type="faculty",
-            )
-        ]
-        faculty_score = ENGINE._relevance_score(rows, audience=FACULTY)
-        student_score = ENGINE._relevance_score(rows, audience=STUDENT)
-        self.assertGreater(
-            faculty_score,
-            student_score,
-            "a professorship must read as more relevant to faculty than to students",
-        )
-
-    def test_an_institution_scheme_scores_on_the_institution_rubric(self) -> None:
-        rows = [
-            sample(
-                title="Call for Proposals under the Institutional Development Scheme",
-                description_preview="Colleges and universities may submit a proposal for a grant.",
-                opportunity_type="proposal",
-            )
-        ]
-        self.assertGreater(
-            ENGINE._relevance_score(rows, audience=INSTITUTION),
-            ENGINE._relevance_score(rows, audience=STUDENT),
-        )
-
     def test_the_student_rubric_is_unchanged(self) -> None:
         # The student corpus is the one that was working. This change must not
         # move a single student source's score.
@@ -96,7 +73,7 @@ class TestRelevanceSpeaksEachAudiencesLanguage(unittest.TestCase):
 
     def test_no_samples_scores_zero_rather_than_raising(self) -> None:
         # This runs inside a scoring batch; raising would fail the batch.
-        for audience in (STUDENT, FACULTY, INSTITUTION):
+        for audience in (STUDENT, "anything-else"):
             with self.subTest(audience=audience):
                 self.assertEqual(ENGINE._relevance_score([], audience=audience), 0)
 
@@ -135,52 +112,22 @@ class TestCrossValidationCannotPunishBeingFirst(unittest.TestCase):
         self.assertLess(ENGINE.COLD_START_CROSS_VALIDATION, 10.0)
 
 
-class TestOpportunityTypeUsesTheAudiencesVocabulary(unittest.TestCase):
-    """`"internship" if "intern" in text else "job"` was at five call sites.
+class TestOpportunityTypeInference(unittest.TestCase):
+    """Student types are inferred from the posting's own words.
 
-    Fine for a student corpus. For the other two it types a call for proposals
-    as a job, which then fails that audience's own relevance check downstream
-    and drags the source's trust below the promote gate.
+    The academician and institution type vocabularies were added for SIH 2026
+    and removed with it; an unknown audience now falls back to these.
     """
-
-    def test_faculty_notices_get_faculty_types(self) -> None:
-        cases = [
-            ("Faculty Development Programme on Machine Learning", "fdp"),
-            ("Advertisement for the post of Associate Professor", "faculty"),
-            ("Post-Doctoral Fellowship in Ayurveda Pharmacology", "postdoc"),
-        ]
-        for text, expected in cases:
-            with self.subTest(text=text):
-                self.assertEqual(_infer_opportunity_type(text, audience=FACULTY), expected)
-
-    def test_institution_notices_get_institution_types(self) -> None:
-        cases = [
-            ("Call for Proposals under the ATAL Scheme", "proposal"),
-            ("Application for NBA Accreditation of UG Programmes", "accreditation"),
-        ]
-        for text, expected in cases:
-            with self.subTest(text=text):
-                self.assertEqual(_infer_opportunity_type(text, audience=INSTITUTION), expected)
-
-    def test_longer_phrases_win(self) -> None:
-        # "faculty development programme" is a course, not a vacancy. Matching
-        # "faculty" first would advertise a training course as a job opening.
-        self.assertEqual(
-            _infer_opportunity_type("Faculty Development Programme", audience=FACULTY), "fdp"
-        )
 
     def test_student_behaviour_is_preserved(self) -> None:
         self.assertEqual(_infer_opportunity_type("Summer Internship 2026", audience=STUDENT), "internship")
         self.assertEqual(_infer_opportunity_type("Backend Developer", audience=STUDENT), "job")
 
-    def test_the_fallback_is_in_the_audiences_own_words(self) -> None:
-        # Calling an unrecognised AICTE circular a "Job" is what made every
-        # academic row read as a vacancy.
-        self.assertNotEqual(_infer_opportunity_type("Notice regarding timetable", audience=INSTITUTION), "job")
-
-
-if __name__ == "__main__":
-    unittest.main()
+    def test_an_unknown_audience_uses_the_student_vocabulary(self) -> None:
+        self.assertEqual(
+            _infer_opportunity_type("Summer Internship 2026", audience="faculty"),
+            _infer_opportunity_type("Summer Internship 2026", audience=STUDENT),
+        )
 
 
 class TestUnreadableWhoisIsNotYoungDomain(unittest.TestCase):

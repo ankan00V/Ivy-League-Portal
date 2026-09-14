@@ -581,42 +581,6 @@ const MEDICAL_FIELDS = [
   "Pharmacy",
 ];
 
-// SIH 2026 (PS 26044, Ministry of Ayush). See docs/SIH.md.
-//
-// The undergraduate subjects of the NCISM Ayurveda curriculum, plus the Unani,
-// Siddha, Homoeopathy and Naturopathy disciplines alongside it.
-//
-// Without these a BAMS student searching for their own specialisation found
-// nothing. The field-of-study selector offered them 300 options - measured -
-// beginning "Accounting, Actuarial Science, Aerospace Engineering", of which
-// exactly three were Ayush-relevant: Ayurveda, Homeopathy, Unani Medicine. A
-// student whose degree is in Panchakarma could not say so.
-//
-// The names are the subjects as NCISM lists them, because that is what a
-// student will type and what an examiner will recognise.
-const AYUSH_FIELDS = [
-  "Ayurveda",
-  "Kayachikitsa (General Medicine)",
-  "Panchakarma",
-  "Dravyaguna Vigyana (Materia Medica)",
-  "Rasashastra evam Bhaishajya Kalpana",
-  "Swasthavritta evam Yoga",
-  "Shalya Tantra (Surgery)",
-  "Shalakya Tantra (ENT and Ophthalmology)",
-  "Prasuti Tantra evam Stri Roga",
-  "Kaumarbhritya (Paediatrics)",
-  "Agada Tantra (Toxicology)",
-  "Roga Nidana (Diagnostics)",
-  "Samhita and Siddhanta",
-  "Rachana Sharira (Anatomy)",
-  "Kriya Sharira (Physiology)",
-  "Unani Medicine",
-  "Siddha Medicine",
-  "Homeopathy",
-  "Naturopathy and Yogic Sciences",
-  "Yoga Therapy",
-];
-
 const LAW_FIELDS = [
   "Corporate Law",
   "Criminal Law",
@@ -799,12 +763,10 @@ const FIELD_OPTIONS_BY_PROGRAM: Record<string, string[]> = {
   bpharm: MEDICAL_FIELDS,
   mpharm: MEDICAL_FIELDS,
   pharmd: MEDICAL_FIELDS,
-  // Ayush degrees lead with their own subjects, then the wider medical list -
-  // a BAMS student needs Panchakarma before Neurosurgery.
-  bhms: [...AYUSH_FIELDS, ...MEDICAL_FIELDS],
-  bams: [...AYUSH_FIELDS, ...MEDICAL_FIELDS],
-  bums: [...AYUSH_FIELDS, ...MEDICAL_FIELDS],
-  bnys: [...AYUSH_FIELDS, ...MEDICAL_FIELDS],
+  bhms: MEDICAL_FIELDS,
+  bams: MEDICAL_FIELDS,
+  bums: MEDICAL_FIELDS,
+  bnys: MEDICAL_FIELDS,
   bpt: MEDICAL_FIELDS,
   mpt: MEDICAL_FIELDS,
   bsc_nursing: MEDICAL_FIELDS,

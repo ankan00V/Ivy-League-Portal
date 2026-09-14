@@ -66,18 +66,12 @@ class Settings(BaseSettings):
     # employer powers was a non-freemail email domain -- so self-serve signup
     # let anyone with a bought domain post straight into the candidate feed.
     # Flip this to True to bring the whole workflow back; nothing was removed.
-    # Re-enabled for the Academia-Industry collaboration workflow, which
-    # requires industries to post their own openings. Publishing to the
-    # candidate feed is gated on a verified careers-page claim, so turning
-    # this on does not restore the self-serve hole it was retired for.
-    # Academicians (FDPs, faculty internships, consultancy) and institutions
-    # (cohort dashboards) are the two roles problem statement 26044 asks for
-    # beyond students and industry. Gated individually for the same reason
-    # the employer portal is: each hands out powers a self-serve signup
-    # should not grant silently.
-    FACULTY_PORTAL_ENABLED: bool = True
-    INSTITUTION_PORTAL_ENABLED: bool = True
-    EMPLOYER_PORTAL_ENABLED: bool = True
+    #
+    # It was briefly re-enabled for SIH 2026, alongside academician and
+    # institution roles, and returned to retired afterwards: VidyaVerse is a
+    # student portal for finding opportunities and internships. Publishing is
+    # still gated on a verified careers-page claim if it is ever turned back on.
+    EMPLOYER_PORTAL_ENABLED: bool = False
     # Deliberately empty. This identity is reserved for the hidden admin control
     # plane, so baking a real address into source shipped one maintainer's
     # personal email to every clone of the repository and made it the admin
@@ -130,10 +124,6 @@ class Settings(BaseSettings):
     # How often the feed re-asks the database whether the corpus is stale.
     # The check guards a scrape trigger, not correctness, so paying a round
     # trip for it on every page load was the wrong trade.
-    # How far back the academician feed looks when salvaging faculty roles
-    # from student-audience rows. Bounded because scanning the whole corpus
-    # cost ~8s on the first page a faculty member opens.
-    FACULTY_KEYWORD_SCAN_WINDOW: int = 600
     FEED_STALENESS_CHECK_INTERVAL_SECONDS: float = 60.0
     OPPORTUNITY_READ_BACKEND: str = "postgres"  # postgres | mongo
     NEON_POOL_MIN_SIZE: int = 1
@@ -575,19 +565,6 @@ class Settings(BaseSettings):
     RAG_LLM_MAX_TOKENS: int = 2000
     RAG_JUDGE_TIMEOUT_SECONDS: float = 8.0
 
-    # Role briefings: the grounded paragraph on each dashboard.
-    #
-    # A briefing is a panel loading beside other panels, not a chat turn with a
-    # cursor blinking in it, so it is allowed to be slower than Ask AI. Measured
-    # against the configured endpoint, a 30B-A3B model answers this prompt in
-    # 4-27 seconds, and the interactive 12-second budget was rejecting answers
-    # for being slow rather than for being wrong.
-    BRIEFING_LLM_TIMEOUT_SECONDS: float = 30.0
-    # Larger than it looks like it needs to be. Models on this endpoint prepend
-    # an unrequested reasoning preamble, and at 700 tokens one spent the entire
-    # budget on it and stopped before emitting a single brace - which surfaces
-    # as "unparseable" and reads like a bad model rather than a small budget.
-    BRIEFING_LLM_MAX_TOKENS: int = 1600
 
     # Wall-clock budget for one source's probation run. The batch is sequential,
     # and without a bound one unreachable site holds all of them: nbaind.org
@@ -597,7 +574,7 @@ class Settings(BaseSettings):
 
     # Models the provider has withdrawn, which a deployment's .env may still
     # name. Anything listed here is replaced at construction with
-    # BRIEFING_LLM_MODEL and the substitution is logged at WARNING.
+    # FALLBACK_LLM_MODEL and the substitution is logged at WARNING.
     #
     # This exists because the failure is invisible without it. When
     # meta/llama-3.1-8b-instruct was retired on 2026-08-26 the endpoint began
@@ -612,8 +589,8 @@ class Settings(BaseSettings):
     ]
     # Chosen by measuring the candidates, not by picking the largest name.
     #
-    # Measured end to end through role_briefings on the configured endpoint,
-    # reasoning preamble disabled, same employer prompt:
+    # Measured end to end on the configured endpoint, reasoning preamble
+    # disabled, same prompt:
     #     nemotron-3-super-120b-a12b     2.4s  best reading of the data
     #     nemotron-3-nano-omni-30b-a3b   3.6s  correct but generic
     #     nemotron-3.5-lightning-30b-a3b 4.9s  leaked "actions:" as prose
@@ -621,7 +598,7 @@ class Settings(BaseSettings):
     #     deepseek-v4-flash-0731         timed out at 45s
     # Most of the rest of the catalogue 404s. The largest model here is also the
     # fastest, which is why this is measured rather than assumed.
-    BRIEFING_LLM_MODEL: Optional[str] = "nvidia/nemotron-3-super-120b-a12b"
+    FALLBACK_LLM_MODEL: Optional[str] = "nvidia/nemotron-3-super-120b-a12b"
 
     # Cross-encoder reranking of the bi-encoder shortlist. The bi-encoder scores
     # query and document independently, which is what lets it scan the corpus but
@@ -783,11 +760,6 @@ class Settings(BaseSettings):
     # survive GIL starvation from the scrape threads and the pgbouncer in
     # front of Supabase; one full-table read does not.
     VECTOR_LOAD_PAGE_SIZE: int = 500
-    # Skill demand is derived from the live corpus by the skills.demand_refresh
-    # job. Slow cadence: a full pass costs ~45s and what it measures moves
-    # over weeks.
-    SKILL_DEMAND_REFRESH_ENABLED: bool = True
-    SKILL_DEMAND_REFRESH_INTERVAL_HOURS: int = 12
     MONGODB_ATLAS_VECTOR_SEARCH: bool = False
     MONGODB_ATLAS_VECTOR_INDEX_NAME: str = "opportunity_embedding_index"
     VECTOR_INDEX_STALE_HOURS: int = 6

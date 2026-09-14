@@ -16,15 +16,17 @@ Audience travels source -> discovered source -> opportunity, so a feed becomes a
 lookup on a column rather than a guess about a title. Legacy rows carry no
 audience, and are treated as student rows: that is what they are, and it keeps
 the student feed - the only one that was ever working - byte-identical.
+
+VidyaVerse is a student portal again. The academician and institution audiences
+were added for SIH 2026 and removed afterwards; the column stays because every
+opportunity, source and seed row carries it, and it only ever takes "student".
 """
 
 from __future__ import annotations
 
 STUDENT = "student"
-FACULTY = "faculty"
-INSTITUTION = "institution"
 
-KNOWN_AUDIENCES: frozenset[str] = frozenset({STUDENT, FACULTY, INSTITUTION})
+KNOWN_AUDIENCES: frozenset[str] = frozenset({STUDENT})
 
 #: What a row with no audience means. Every opportunity predating this column
 #: came from a student-facing scraper, so this is a statement of fact rather
@@ -33,8 +35,6 @@ DEFAULT_AUDIENCE = STUDENT
 
 AUDIENCE_LABELS: dict[str, str] = {
     STUDENT: "Students",
-    FACULTY: "Academicians",
-    INSTITUTION: "Institutions",
 }
 
 
