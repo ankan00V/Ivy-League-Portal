@@ -19,7 +19,7 @@ from app.schemas.rag import (
 from app.services.bedrock_llm_client import BedrockLLMClient, BedrockLLMConfig
 from app.services.evaluation_service import evaluation_service
 from app.services.nlp_service import nlp_service
-from app.services.grounded_ai import live_model
+from app.services.llm_models import live_model
 from app.services.openai_client import create_async_openai_client
 from app.services.rag_template_registry_service import (
     _default_system_prompt,
@@ -63,7 +63,7 @@ class RAGService:
             # that points at a model, rather than aging quietly inside a branch
             # nobody reads.
             self._rag_model = (
-                (settings.BRIEFING_LLM_MODEL or "").strip()
+                (settings.FALLBACK_LLM_MODEL or "").strip()
                 or "nvidia/nemotron-3-super-120b-a12b"
             )
             logger.warning(
@@ -78,7 +78,7 @@ class RAGService:
         # deployment's .env just as easily as from a hardcoded literal.
         self._rag_model = live_model(
             self._rag_model,
-            fallback=(settings.BRIEFING_LLM_MODEL or "").strip() or "nvidia/nemotron-3-super-120b-a12b",
+            fallback=(settings.FALLBACK_LLM_MODEL or "").strip() or "nvidia/nemotron-3-super-120b-a12b",
             context="Ask AI",
         )
         self._bedrock_model = (

@@ -67,7 +67,7 @@ class TestScopeNormalisation(unittest.TestCase):
         return resolve_account_type(value)
 
     def test_each_role_scopes_to_itself(self) -> None:
-        for value in ("candidate", "employer", "faculty", "institution"):
+        for value in ("candidate", "employer"):
             with self.subTest(value=value):
                 self.assertEqual(self._scope(value), value)
 
@@ -78,7 +78,7 @@ class TestScopeNormalisation(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertIn(
                     self._scope(value),
-                    {"candidate", "employer", "faculty", "institution"},
+                    {"candidate", "employer"},
                 )
 
 

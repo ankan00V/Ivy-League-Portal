@@ -2096,14 +2096,6 @@ class SourceQualificationService:
     # language of both.
     DENSITY_TERMS: dict[str, tuple[str, ...]] = {
         "student": ("apply", "intern", "job", "role", "opening", "hiring"),
-        "faculty": (
-            "apply", "vacanc", "recruit", "faculty", "fellowship", "professor",
-            "post of", "advertisement", "walk-in", "grant",
-        ),
-        "institution": (
-            "scheme", "call for", "proposal", "grant", "collaborat", "accredit",
-            "programme", "initiative", "apply", "circular", "notification", "empanel",
-        ),
     }
 
     def _opportunity_density_check(
@@ -2850,33 +2842,11 @@ class TrustScoringEngine:
     #: rejected as bad sources.
     AUDIENCE_RELEVANCE_TERMS: dict[str, tuple[str, ...]] = {
         "student": ("₹", "inr", "student", "fresher", "stipend"),
-        "faculty": (
-            "faculty", "professor", "phd", "post-doc", "postdoc", "fellowship",
-            "research", "assistant professor", "associate professor", "scientist",
-            "emeritus", "chair", "principal investigator", "₹", "pay level",
-        ),
-        "institution": (
-            "institution", "college", "university", "department", "scheme",
-            "accreditation", "ranking", "affiliat", "grant", "proposal",
-            "collaborat", "mou", "centre of excellence", "curriculum",
-        ),
     }
 
     AUDIENCE_RELEVANT_TYPES: dict[str, frozenset[str]] = {
         "student": frozenset(
             {"internship", "job", "hackathon", "competition", "workshop", "conference"}
-        ),
-        "faculty": frozenset(
-            {
-                "job", "fellowship", "faculty", "research", "postdoc", "grant",
-                "workshop", "conference", "training", "fdp",
-            }
-        ),
-        "institution": frozenset(
-            {
-                "scheme", "grant", "programme", "program", "collaboration",
-                "accreditation", "proposal", "workshop", "conference", "training",
-            }
         ),
     }
 
@@ -3823,45 +3793,6 @@ _TYPE_PATTERNS: dict[str, tuple[tuple[str, str], ...]] = {
         ("workshop", "workshop"),
         ("conference", "conference"),
     ),
-    "faculty": (
-        ("faculty development", "fdp"),
-        ("fdp", "fdp"),
-        ("refresher course", "training"),
-        ("short term course", "training"),
-        ("post doctoral", "postdoc"),
-        ("post-doctoral", "postdoc"),
-        ("postdoc", "postdoc"),
-        ("fellowship", "fellowship"),
-        ("emeritus", "fellowship"),
-        ("chair professor", "faculty"),
-        ("assistant professor", "faculty"),
-        ("associate professor", "faculty"),
-        ("professor", "faculty"),
-        ("faculty", "faculty"),
-        ("consultancy", "consultancy"),
-        ("research project", "research"),
-        ("research associate", "research"),
-        ("grant", "grant"),
-        ("conference", "conference"),
-        ("workshop", "workshop"),
-    ),
-    "institution": (
-        ("call for proposal", "proposal"),
-        ("call for", "proposal"),
-        ("expression of interest", "proposal"),
-        ("accreditation", "accreditation"),
-        ("accredit", "accreditation"),
-        ("ranking", "accreditation"),
-        ("empanel", "scheme"),
-        ("scheme", "scheme"),
-        ("grant", "grant"),
-        ("memorandum of understanding", "collaboration"),
-        ("mou", "collaboration"),
-        ("collaborat", "collaboration"),
-        ("programme", "programme"),
-        ("workshop", "workshop"),
-        ("conference", "conference"),
-    ),
 }
 
 #: What a row is when nothing matched. A student row falls back to "job"
@@ -3869,7 +3800,7 @@ _TYPE_PATTERNS: dict[str, tuple[tuple[str, str], ...]] = {
 #: other two fall back to the neutral word their audience actually uses, since
 #: calling an unrecognised AICTE circular a "Job" is what made every academic
 #: row read as a vacancy.
-_TYPE_FALLBACK = {"student": "job", "faculty": "opportunity", "institution": "programme"}
+_TYPE_FALLBACK = {"student": "job"}
 
 
 def _infer_opportunity_type(text: str, *, audience: str = "student") -> str:

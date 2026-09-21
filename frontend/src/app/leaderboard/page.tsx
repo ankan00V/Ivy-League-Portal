@@ -5,7 +5,10 @@ import React, { useEffect, useState } from "react";
 import { Crown, Medal, Trophy } from "lucide-react";
 import { apiUrl } from "@/lib/api";
 import { getAccessToken } from "@/lib/auth-session";
-import { accountRole } from "@/lib/account-roles";
+// The board is scoped server-side to the viewer's own account type. Labels are
+// local because the shared role module went with the SIH academician and
+// institution roles; only these two account types exist.
+const ROLE_LABELS: Record<string, string> = { candidate: "Student", employer: "Industry" };
 
 interface LeaderboardEntry {
     rank: number;
@@ -28,7 +31,7 @@ export default function LeaderboardPage() {
     // "Top 10 Students" for everyone while listing recruiters, registrars and
     // academicians - a label that was wrong about the rows underneath it.
     const [accountType, setAccountType] = useState<string>("candidate");
-    const roleLabel = accountRole(accountType)?.label ?? "Student";
+    const roleLabel = ROLE_LABELS[accountType] ?? "Student";
 
     useEffect(() => {
         let cancelled = false;

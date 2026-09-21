@@ -154,21 +154,6 @@ class ProfileUpdate(BaseModel):
     college_name: Optional[str] = None
     company_name: Optional[str] = None
     company_website: Optional[str] = None
-    # Academician fields. Nullable like everything else here: a student profile
-    # leaves these empty and an academician leaves the student ones empty.
-    department: Optional[str] = None
-    designation: Optional[str] = None
-    specialisation: Optional[str] = None
-    teaching_experience_years: Optional[int] = None
-    vidwan_id: Optional[str] = None
-    # Institution fields.
-    institution_type: Optional[str] = None
-    aishe_code: Optional[str] = None
-    institution_city: Optional[str] = None
-    institution_state: Optional[str] = None
-    institution_website: Optional[str] = None
-    contact_designation: Optional[str] = None
-    student_strength: Optional[int] = None
     company_size: Optional[str] = None
     company_description: Optional[str] = None
     hiring_for: Optional[str] = None
@@ -574,24 +559,6 @@ def _required_onboarding_checks(profile: Profile) -> list[tuple[str, bool]]:
         checks.append(("company_name", bool((profile.company_name or "").strip())))
         checks.append(("current_job_role", bool((profile.current_job_role or "").strip())))
         checks.append(("hiring_for", str(profile.hiring_for or "").strip().lower() in VALID_HIRING_FOR))
-    elif profile.account_type == "faculty":
-        # Where they teach and what they teach. Not skills, not a preferred work
-        # mode - an academician answering the student questions is filling in
-        # somebody else's form.
-        checks.append(("college_name", bool((profile.college_name or "").strip())))
-        checks.append(("department", bool((profile.department or "").strip())))
-        checks.append(("designation", bool((profile.designation or "").strip())))
-    elif profile.account_type == "institution":
-        # The account holder is an organisation, so its identity is the
-        # institution's and the human filling the form is recorded separately.
-        checks.append(("college_name", bool((profile.college_name or "").strip())))
-        checks.append(("institution_type", bool((profile.institution_type or "").strip())))
-        # The Ministry of Education's own identifier. Required because it is the
-        # one field on this form that can later be checked against an
-        # authoritative list rather than taken on trust - which matters for the
-        # only role that reads data about other people's students.
-        checks.append(("aishe_code", bool((profile.aishe_code or "").strip())))
-        checks.append(("contact_designation", bool((profile.contact_designation or "").strip())))
 
     return checks
 
@@ -611,7 +578,7 @@ def _normalize_account_scope(account_type: Optional[str]) -> str:
     # Kept two-valued on purpose: this drives candidate-vs-employer branching in
     # the profile API, and the two later roles want the non-candidate shape.
     value = str(account_type or "").strip().lower()
-    return "employer" if value in {"employer", "faculty", "institution"} else "candidate"
+    return "employer" if value == "employer" else "candidate"
 
 
 def _resume_storage_dir() -> Path:
@@ -1089,21 +1056,12 @@ def _apply_profile_patch(*, profile: Profile, user: User, payload: ProfileUpdate
         requested = str(payload.account_type).strip().lower()
         # Gated on the role set, not on one role's name.
         #
-        # This check read `== "employer"` twice. It was written when the
-        # platform had two roles, and faculty and institution were added later
-        # and fell straight through to the write below. The escalation was one
-        # request:
-        #
-        #   PUT /users/me/profile {"account_type": "institution",
-        #                          "college_name": "<any university>"}
-        #
-        # then GET /academia/institution/cohort, whose only check is
-        # _require_role reading this same field. That returns another
-        # university's aggregate - average readiness, profile completion,
-        # application counts and ranked skill gaps for their students.
-        #
-        # Every one of these roles reads other people's data, which is the
-        # property that mattered for employer and matters identically here.
+        # This check used to read `== "employer"`. While the platform briefly had
+        # four roles for SIH 2026, the two added later fell straight through to
+        # the write below, and one request promoted a candidate into a role that
+        # read other people's data. Keyed on PRIVILEGED_ACCOUNT_TYPES, anything
+        # that is not a candidate is gated whether or not someone remembered to
+        # list it here.
         if requested in PRIVILEGED_ACCOUNT_TYPES:
             if not account_type_enabled(requested):
                 raise HTTPException(

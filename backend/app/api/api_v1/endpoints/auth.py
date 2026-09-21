@@ -22,8 +22,6 @@ from app.core.account_types import (
     ACCOUNT_TYPE_LABELS,
     CANDIDATE,
     EMPLOYER,
-    FACULTY,
-    INSTITUTION,
     KNOWN_ACCOUNT_TYPES,
     account_type_enabled,
     describe_allowed,
@@ -110,20 +108,14 @@ def _ensure_employer_corporate_email(email: str) -> None:
 def _ensure_email_policy_for_account_type(account_type: str, email: str) -> None:
     """Apply the address rule that goes with this role.
 
-    Previously this was an if/elif over candidate and employer, so the two roles
-    added later were the only ones with no rule at all - and one of them reads
-    cohort data about other people's students. A dispatch keyed on the role means
-    adding a role without deciding its rule is a visible omission rather than an
-    open door.
+    Keyed on the role so that adding one without deciding its rule is a visible
+    omission rather than an open door - which is exactly what happened when two
+    roles were briefly added for SIH 2026 and arrived with no rule at all.
     """
     role = str(account_type or "").strip().lower()
     if role == EMPLOYER:
         _ensure_employer_corporate_email(email)
-    elif role in {CANDIDATE, FACULTY, INSTITUTION}:
-        # Academicians and institutions are held to the same bar as students:
-        # an address at the organisation they claim to belong to, not a consumer
-        # mailbox. It is the weakest check that is still worth something, and
-        # the institution portal additionally scopes every read to this domain.
+    elif role == CANDIDATE:
         _ensure_candidate_institutional_email(email)
 
 

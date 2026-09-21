@@ -15,9 +15,6 @@ import {
   Target,
   Trophy,
   X,
-  Compass,
-  GraduationCap,
-  Building2,
 } from "lucide-react";
 
 import BrandLogo from "@/components/BrandLogo";
@@ -35,9 +32,9 @@ type NavLink = {
   mobileLabel?: string;
 };
 
-// Links carry the roles that should see them. An academician handed the student
-// feed, or a student shown a cohort dashboard they cannot open, are both
-// navigation that only leads to a refusal.
+// Links carry the roles that should see them, so navigation never offers a
+// route that only leads to a refusal. VidyaVerse is a student portal; the
+// employer role is retired and has no pages linked here.
 const STUDENT_ONLY = ["candidate"];
 const EVERY_ROLE: string[] = [];
 
@@ -46,9 +43,6 @@ const links: NavLink[] = [
   { name: "Opportunities", href: "/opportunities", icon: <Target size={18} />, mobileLabel: "Opps", roles: STUDENT_ONLY },
   { name: "Internships/Jobs", href: "/internships-jobs", icon: <Briefcase size={18} />, mobileLabel: "Jobs", roles: STUDENT_ONLY },
   { name: "Applications", href: "/applications", icon: <FileText size={18} />, mobileLabel: "Applied", roles: STUDENT_ONLY },
-  { name: "Skill Gaps", href: "/skills", icon: <Compass size={18} />, mobileLabel: "Skills", roles: STUDENT_ONLY },
-  { name: "Faculty Portal", href: "/faculty", icon: <GraduationCap size={18} />, mobileLabel: "Faculty", roles: ["faculty"] },
-  { name: "Cohort", href: "/institution", icon: <Building2 size={18} />, mobileLabel: "Cohort", roles: ["institution"] },
   { name: "Social Network", href: "/social", icon: <Globe size={18} />, mobileLabel: "Social", roles: EVERY_ROLE },
   { name: "Leaderboard", href: "/leaderboard", icon: <Trophy size={18} />, roles: STUDENT_ONLY },
 ];
@@ -56,12 +50,8 @@ const links: NavLink[] = [
 // Intentionally NOT computed here.
 //
 // This was `links.slice(0, 5)` - the full list, before role filtering - so the
-// mobile bottom bar offered Dashboard, Opportunities, Internships/Jobs,
-// Applications and Skill Gaps to every account including faculty and
-// institution. Those routes do not 403; they serve the student feed to an
-// academician, which is the same mis-scoping as the leaderboard bug. It is
-// derived from visibleLinks inside the component instead, where the role is
-// known.
+// mobile bottom bar ignored roles entirely. It is derived from visibleLinks
+// inside the component instead, where the role is known.
 
 export default function Sidebar() {
   const pathname = usePathname();
@@ -201,7 +191,7 @@ export default function Sidebar() {
   // The role is read from an authenticated request, so it is null for a signed
   // out or expired session and for any hiccup on that one endpoint - and the
   // first version of this stripped the sidebar down to two links whenever that
-  // happened. A faculty member seeing a student link for a moment is a much
+  // happened. Briefly showing a student link to the wrong role is a much
   // smaller failure than every user losing their navigation.
   const effectiveRole = accountType || "candidate";
   const visibleLinks = links.filter((link) => {

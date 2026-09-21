@@ -60,7 +60,10 @@ class TestEmployerEscalationIsBlocked:
         """Not just employer. This is the assertion that was missing."""
         from app.core.account_types import PRIVILEGED_ACCOUNT_TYPES
 
-        assert PRIVILEGED_ACCOUNT_TYPES == {"employer", "faculty", "institution"}
+        # Two roles now that the SIH academician and institution roles are gone.
+        # The derivation below is what matters, not this literal: any role added
+        # later is privileged by default.
+        assert PRIVILEGED_ACCOUNT_TYPES == {"employer"}
         source = USERS_PATH.read_text(encoding="utf-8")
         assert "PRIVILEGED_ACCOUNT_TYPES" in source, (
             "the gate must test membership of the privileged set, not one role's "

@@ -23,7 +23,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from app.core.audiences import FACULTY, INSTITUTION, STUDENT
+from app.core.audiences import STUDENT
 from app.services.source_discovery import is_self_link, looks_like_opportunity
 
 #: Verbatim from the rows IIT Bombay promoted.
@@ -48,32 +48,13 @@ class TestTheRowsThatGotThrough(unittest.TestCase):
         for title in REAL_MENU_ITEMS:
             with self.subTest(title=title):
                 self.assertFalse(
-                    looks_like_opportunity(title, audience=FACULTY),
-                    f"{title!r} reached the faculty feed once and must not again",
+                    looks_like_opportunity(title, audience=STUDENT),
+                    f"{title!r} reached a feed once and must not again",
                 )
 
 
 class TestRealPostingsSurvive(unittest.TestCase):
     """The filter is worthless if it also removes the thing it protects."""
-
-    def test_faculty_postings_pass(self) -> None:
-        for title in [
-            "Advertisement for the post of Assistant Professor in Computer Science",
-            "Applications invited for Post-Doctoral Fellowship in Ayurveda",
-            "Faculty Development Programme on Machine Learning, apply by 30 September",
-            "Walk-in interview for Research Associate",
-        ]:
-            with self.subTest(title=title):
-                self.assertTrue(looks_like_opportunity(title, audience=FACULTY))
-
-    def test_institution_notices_pass(self) -> None:
-        for title in [
-            "Call for Proposals under the Institutional Development Scheme",
-            "Circular regarding accreditation of UG programmes",
-            "Notification: empanelment of institutions for the collaboration grant",
-        ]:
-            with self.subTest(title=title):
-                self.assertTrue(looks_like_opportunity(title, audience=INSTITUTION))
 
     def test_student_postings_pass(self) -> None:
         # The student corpus is 2,222 live rows and the only feed that has ever
@@ -90,7 +71,7 @@ class TestRealPostingsSurvive(unittest.TestCase):
 class TestAudienceVocabulariesDoNotLeak(unittest.TestCase):
     def test_a_menu_item_is_not_rescued_by_another_audience(self) -> None:
         for title in ("Donate", "Director’s Message", "Digital Photo Archive"):
-            for audience in (STUDENT, FACULTY, INSTITUTION):
+            for audience in (STUDENT, "anything-else"):
                 with self.subTest(title=title, audience=audience):
                     self.assertFalse(looks_like_opportunity(title, audience=audience))
 

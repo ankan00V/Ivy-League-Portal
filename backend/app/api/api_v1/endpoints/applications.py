@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -12,12 +13,40 @@ from app.api.deps import get_current_active_user
 from app.models.application import Application
 from app.models.opportunity import Opportunity
 from app.models.user import User
+from app.services.email import send_application_confirmation
 from app.services.interaction_service import interaction_service
 from app.services.opportunity_visibility import is_student_visible_opportunity
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+#: Strong references to in-flight confirmation emails. The event loop only keeps
+#: weak references to tasks, so an unreferenced one can be collected mid-send.
+_confirmation_tasks: set[asyncio.Task] = set()
+
+
+def _queue_application_confirmation(*, user: User, opportunity: Opportunity, application: Application) -> None:
+    """Send the thank-you email without holding up the redirect.
+
+    The student is on their way to the company's page; making them wait on an
+    SMTP handshake would put our email in front of their application.
+    """
+    email = str(getattr(user, "email", "") or "").strip()
+    if not email:
+        return
+    task = asyncio.create_task(
+        send_application_confirmation(
+            to_email=email,
+            full_name=getattr(user, "full_name", None),
+            position=opportunity.title,
+            company=getattr(opportunity, "university", None),
+            application_id=str(application.id),
+            opportunity_url=opportunity.url,
+        )
+    )
+    _confirmation_tasks.add(task)
+    task.add_done_callback(_confirmation_tasks.discard)
 
 class ApplicationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -176,5 +205,9 @@ async def apply_to_opportunity(
             opp.id,
             application.id,
         )
+
+    # Only for a new application: the idempotent early return above means a
+    # second click on Apply does not send a second thank-you.
+    _queue_application_confirmation(user=current_user, opportunity=opp, application=application)
 
     return _serialize_application_response(application=application, opportunity=opp)

@@ -202,24 +202,15 @@ async def _deliver_via_resend(
     return message_id
 
 
-async def send_email_otp(to_email: str, otp: str):
-    """
-    Sends a one-time alphanumeric code to the end user for two-step authentication.
-    """
-    expiry_minutes = 5
-    subject = f"VidyaVerse verification code - expires in {expiry_minutes} minutes"
-    text_body = _otp_text_body(otp=otp, expiry_minutes=expiry_minutes)
-    html_body = _otp_html_body(otp=otp, expiry_minutes=expiry_minutes)
+async def _deliver_message(
+    *, to_email: str, subject: str, text_body: str, html_body: str, kind: str
+) -> None:
+    """Send one message through the configured provider, retrying transient failures.
 
-    message = EmailMessage()
-    from_email = smtp_from_email_value()
-    from_name = smtp_from_name_value()
-    message["From"] = formataddr((from_name, from_email)) if from_name else from_email
-    message["To"] = to_email
-    message["Subject"] = subject
-    message.set_content(text_body)
-    message.add_alternative(html_body, subtype="html")
-
+    Raises if the message was not accepted. ``kind`` only labels log lines, so an
+    OTP failure and an application-confirmation failure can be told apart
+    without either one logging the address.
+    """
     provider = email_provider_value()
     delivery_id = recipient_log_id(to_email)
     max_attempts = max(1, int(getattr(settings, "OTP_EMAIL_MAX_RETRIES", 3)))
@@ -235,20 +226,21 @@ async def send_email_otp(to_email: str, otp: str):
                     html_body=html_body,
                 )
                 logger.info(
-                    "OTP email accepted by resend delivery_id=%s attempt=%s message_id=%s",
+                    "%s email accepted by resend delivery_id=%s attempt=%s message_id=%s",
+                    kind,
                     delivery_id,
                     attempt,
                     message_id,
                 )
-                _record_otp_delivery("sent")
-                return True
+                return
             except Exception as exc:
                 last_error = exc
                 if attempt >= max_attempts:
                     break
                 backoff_seconds = min(4.0, 0.6 * (2 ** (attempt - 1)))
                 logger.warning(
-                    "OTP email delivery retry provider=resend delivery_id=%s attempt=%s max_attempts=%s error_class=%s backoff_seconds=%.1f",
+                    "%s email delivery retry provider=resend delivery_id=%s attempt=%s max_attempts=%s error_class=%s backoff_seconds=%.1f",
+                    kind,
                     delivery_id,
                     attempt,
                     max_attempts,
@@ -257,24 +249,30 @@ async def send_email_otp(to_email: str, otp: str):
                 )
                 await asyncio.sleep(backoff_seconds)
         logger.error(
-            "OTP email delivery failed provider=resend delivery_id=%s attempts=%s error_class=%s",
+            "%s email delivery failed provider=resend delivery_id=%s attempts=%s error_class=%s",
+            kind,
             delivery_id,
             max_attempts,
             last_error.__class__.__name__ if last_error else "Unknown",
         )
-        _record_otp_delivery("failed")
         raise last_error or RuntimeError("Unknown Resend delivery failure")
 
     smtp_server = smtp_server_value()
     if not smtp_server:
-        _record_otp_delivery("failed")
         raise RuntimeError("SMTP_SERVER is not configured.")
     if settings.SMTP_USE_TLS and settings.SMTP_STARTTLS:
-        _record_otp_delivery("failed")
         raise RuntimeError("Invalid SMTP settings: enable either SMTP_USE_TLS or SMTP_STARTTLS, not both.")
     if settings.SMTP_REQUIRE_AUTH and not (settings.SMTP_USER and settings.SMTP_PASSWORD):
-        _record_otp_delivery("failed")
         raise RuntimeError("SMTP_USER and SMTP_PASSWORD are required for authenticated SMTP delivery.")
+
+    message = EmailMessage()
+    from_email = smtp_from_email_value()
+    from_name = smtp_from_name_value()
+    message["From"] = formataddr((from_name, from_email)) if from_name else from_email
+    message["To"] = to_email
+    message["Subject"] = subject
+    message.set_content(text_body)
+    message.add_alternative(html_body, subtype="html")
 
     send_kwargs: dict[str, object] = {
         "hostname": smtp_server,
@@ -295,21 +293,21 @@ async def send_email_otp(to_email: str, otp: str):
     if settings.SMTP_PASSWORD:
         send_kwargs["password"] = settings.SMTP_PASSWORD
 
-    last_error: Exception | None = None
+    last_error = None
     for attempt in range(1, max_attempts + 1):
         try:
             await aiosmtplib.send(message, **send_kwargs)
             if attempt > 1:
-                logger.warning("OTP email delivery recovered delivery_id=%s attempt=%s", delivery_id, attempt)
-            _record_otp_delivery("sent")
-            return True
+                logger.warning("%s email delivery recovered delivery_id=%s attempt=%s", kind, delivery_id, attempt)
+            return
         except Exception as exc:
             last_error = exc
             if attempt >= max_attempts:
                 break
             backoff_seconds = min(4.0, 0.6 * (2 ** (attempt - 1)))
             logger.warning(
-                "OTP email delivery retry delivery_id=%s attempt=%s max_attempts=%s error_class=%s backoff_seconds=%.1f",
+                "%s email delivery retry delivery_id=%s attempt=%s max_attempts=%s error_class=%s backoff_seconds=%.1f",
+                kind,
                 delivery_id,
                 attempt,
                 max_attempts,
@@ -318,15 +316,205 @@ async def send_email_otp(to_email: str, otp: str):
             )
             await asyncio.sleep(backoff_seconds)
 
-    if last_error:
-        logger.error(
-            "OTP email delivery failed delivery_id=%s attempts=%s error_class=%s",
-            delivery_id,
-            max_attempts,
-            last_error.__class__.__name__,
+    logger.error(
+        "%s email delivery failed delivery_id=%s attempts=%s error_class=%s",
+        kind,
+        delivery_id,
+        max_attempts,
+        last_error.__class__.__name__ if last_error else "Unknown",
+    )
+    raise last_error or RuntimeError("Unknown SMTP delivery failure")
+
+
+async def send_email_otp(to_email: str, otp: str):
+    """
+    Sends a one-time alphanumeric code to the end user for two-step authentication.
+    """
+    expiry_minutes = 5
+    try:
+        await _deliver_message(
+            to_email=to_email,
+            subject=f"VidyaVerse verification code - expires in {expiry_minutes} minutes",
+            text_body=_otp_text_body(otp=otp, expiry_minutes=expiry_minutes),
+            html_body=_otp_html_body(otp=otp, expiry_minutes=expiry_minutes),
+            kind="OTP",
         )
+    except Exception:
         _record_otp_delivery("failed")
-        raise last_error
-    logger.error("OTP email delivery failed delivery_id=%s attempts=%s", delivery_id, max_attempts)
-    _record_otp_delivery("failed")
-    raise RuntimeError("Unknown SMTP delivery failure")
+        raise
+    _record_otp_delivery("sent")
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Application confirmation
+# ---------------------------------------------------------------------------
+
+#: Values the scrapers store in the company column when the real employer is
+#: unknown. Thanking someone for applying "at Glassdoor Employers" reads as a
+#: form letter, which is the one thing this email must not do.
+_PLACEHOLDER_COMPANIES = frozenset(
+    {"", "global", "unknown", "n/a", "na", "glassdoor employers", "confidential", "company"}
+)
+
+_ABOUT_VIDYAVERSE = (
+    "VidyaVerse started from a simple frustration: the opportunities students need "
+    "are scattered across dozens of portals, many of them are duplicates, and some "
+    "are scams asking you to pay before you can \"join\". So we bring internships, "
+    "jobs, hackathons and competitions into one place, check every listing for "
+    "pay-to-apply fraud before you ever see it, and rank them around what you "
+    "actually study and want to do."
+)
+
+
+def _first_name(full_name: str | None) -> str:
+    parts = str(full_name or "").split()
+    if not parts:
+        return "there"
+    first = parts[0][:40]
+    # "ankan" becomes "Ankan"; "DeShawn" is left alone.
+    return first.capitalize() if first.islower() else first
+
+
+def _company_or_none(company: str | None) -> str | None:
+    value = " ".join(str(company or "").split())[:120]
+    return None if value.lower() in _PLACEHOLDER_COMPANIES else value
+
+
+def _application_copy(
+    *, first_name: str, position: str, company: str | None, application_id: str
+) -> dict[str, str]:
+    """The words of the email, shared by the text and HTML versions."""
+    role = f"the {position} role at {company}" if company else f"the {position} role"
+    return {
+        "greeting": f"Hi {first_name},",
+        "thanks": (
+            f"Thank you for taking the time to apply for {role}. We know applications "
+            "take real effort, from reading the listing twice to wondering whether you "
+            "are ready for it, and we genuinely appreciate that you chose to apply "
+            "through VidyaVerse."
+        ),
+        "about": _ABOUT_VIDYAVERSE,
+        "saved": (
+            f"Your application is saved in your VidyaVerse applications "
+            f"(reference {application_id}), so you can come back to it any time. "
+            "Whatever happens next, putting yourself forward is the part that takes "
+            "courage, and you have already done it. A quiet week is not a no; "
+            "hiring teams move at their own pace, and every application you send "
+            "makes the next one easier to write."
+        ),
+        "nudge": (
+            "If you did not get to finish on the company's page, the listing link "
+            "below will take you straight back."
+        ),
+        "closing": "We hope you get the next email as soon as possible. Until then, keep applying.",
+        "signoff": "Warm regards,",
+        "team": "Talent Team @ VidyaVerse",
+    }
+
+
+def _application_text_body(copy: dict[str, str], *, opportunity_url: str) -> str:
+    return (
+        f"{copy['greeting']}\n\n"
+        f"{copy['thanks']}\n\n"
+        f"A little about us: {copy['about']}\n\n"
+        f"{copy['saved']}\n\n"
+        f"{copy['nudge']}\n{opportunity_url}\n\n"
+        f"{copy['closing']}\n\n"
+        f"{copy['signoff']}\n\n"
+        f"{copy['team']}\n"
+    )
+
+
+def _application_html_body(copy: dict[str, str], *, opportunity_url: str) -> str:
+    c = {key: escape(value) for key, value in copy.items()}
+    url = escape(opportunity_url, quote=True)
+    paragraph = 'style="margin:0 0 16px 0;font-size:16px;line-height:1.7;color:#27272a;"'
+    return f"""\
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Thank you for applying</title>
+  </head>
+  <body style="margin:0;padding:24px;background:#f2e6ca;font-family:Arial,Helvetica,sans-serif;color:#111827;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:640px;margin:0 auto;">
+      <tr>
+        <td style="padding:0;">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#f9f4ea;border:2px solid #27272a;border-radius:8px;box-shadow:4px 4px 0 #27272a;">
+            <tr>
+              <td style="padding:28px 28px 22px 28px;">
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px 0;border-collapse:separate;">
+                  <tr>
+                    <td style="padding:8px 10px;background:#0f172a;border:2px solid #27272a;border-radius:6px 0 0 6px;">
+                      <span style="font-size:18px;line-height:1;font-weight:700;color:#f9f4ea;font-family:Georgia,'Times New Roman',serif;">Vidya</span>
+                    </td>
+                    <td style="padding:8px 10px;background:#4ade80;border-top:2px solid #27272a;border-right:2px solid #27272a;border-bottom:2px solid #27272a;border-radius:0 6px 6px 0;">
+                      <span style="font-size:18px;line-height:1;font-weight:700;color:#111827;font-family:Georgia,'Times New Roman',serif;">Verse</span>
+                    </td>
+                  </tr>
+                </table>
+                <p {paragraph}>{c['greeting']}</p>
+                <p {paragraph}>{c['thanks']}</p>
+                <p {paragraph}><strong>A little about us:</strong> {c['about']}</p>
+                <p {paragraph}>{c['saved']}</p>
+                <p {paragraph}>{c['nudge']}</p>
+                <p style="margin:0 0 20px 0;">
+                  <a href="{url}" style="display:inline-block;background:#fcd34d;border:2px solid #27272a;border-radius:6px;padding:10px 16px;font-weight:700;color:#111827;text-decoration:none;box-shadow:2px 2px 0 #27272a;">Open the listing</a>
+                </p>
+                <p {paragraph}>{c['closing']}</p>
+                <p style="margin:0;font-size:16px;line-height:1.7;color:#27272a;">{c['signoff']}<br /><br /><strong>{c['team']}</strong></p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>
+"""
+
+
+async def send_application_confirmation(
+    *,
+    to_email: str,
+    full_name: str | None,
+    position: str,
+    company: str | None,
+    application_id: str,
+    opportunity_url: str,
+) -> bool:
+    """Thank a student for applying. Never raises.
+
+    This runs after the application is already saved and the student has been
+    redirected, so a mail failure must not surface as an error anywhere: it is
+    logged (redacted) and reported as False.
+    """
+    if not str(to_email or "").strip():
+        return False
+    position = " ".join(str(position or "").split())[:160] or "opportunity"
+    company_name = _company_or_none(company)
+    copy = _application_copy(
+        first_name=_first_name(full_name),
+        position=position,
+        company=company_name,
+        application_id=str(application_id),
+    )
+    subject = (
+        f"Thank you for applying to {company_name}, {position}"
+        if company_name
+        else f"Thank you for applying: {position}"
+    )
+    try:
+        await _deliver_message(
+            to_email=to_email,
+            subject=subject[:200],
+            text_body=_application_text_body(copy, opportunity_url=opportunity_url),
+            html_body=_application_html_body(copy, opportunity_url=opportunity_url),
+            kind="Application",
+        )
+    except Exception:
+        # _deliver_message already logged the redacted failure.
+        return False
+    return True
