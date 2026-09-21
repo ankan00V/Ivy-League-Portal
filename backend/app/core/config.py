@@ -133,6 +133,21 @@ class Settings(BaseSettings):
     POSTGRES_IDLE_CONNECTION_LIFETIME_SECONDS: float = 120.0
     NEON_POOL_MAX_SIZE: int = 10
     NEON_COMMAND_TIMEOUT_SECONDS: float = 30.0
+    # Bounds how long a pooled connection may take to come back after use.
+    #
+    # asyncpg passes the acquire timeout on as the release budget. With none,
+    # releasing a connection whose query was cancelled waits for the
+    # cancellation to be acknowledged - forever, on Supabase's transaction-mode
+    # pooler, which does not acknowledge it. So NEON_COMMAND_TIMEOUT_SECONDS did
+    # not fail a slow query, it hung the caller permanently at 0% CPU with
+    # nothing logged. That is why Ask AI never answered after a restart: the
+    # vector rebuild's first page crossed 30s on a slow link, was cancelled, and
+    # its connection was never handed back. With a budget, asyncpg terminates
+    # the stuck connection and the pool opens a fresh one.
+    #
+    # Longer than the command timeout, so a query that legitimately runs close
+    # to it is never cut short on the way back to the pool.
+    POSTGRES_ACQUIRE_TIMEOUT_SECONDS: float = 45.0
 
     # Supabase Postgres (ap-south-1). Replaced Neon as the migration target:
     # Neon has no India region and its nearest, Singapore, measured 130ms per
@@ -759,7 +774,14 @@ class Settings(BaseSettings):
     # Rows per page when the rebuild reads the corpus. Small statements
     # survive GIL starvation from the scrape threads and the pgbouncer in
     # front of Supabase; one full-table read does not.
-    VECTOR_LOAD_PAGE_SIZE: int = 500
+    #
+    # 100, down from 500. A page is SELECT * including the 384-float embedding,
+    # measured at 1.7 MB per 500 rows. The server produces it in about a second;
+    # the link to ap-southeast-2 delivered it in 5s on a good minute and past the
+    # 30s command timeout on a bad one, which is what cancelled the query that
+    # hung the rebuild. A fifth of that page stays well inside the timeout even
+    # on the slow minutes, at the cost of more round trips.
+    VECTOR_LOAD_PAGE_SIZE: int = 100
     MONGODB_ATLAS_VECTOR_SEARCH: bool = False
     MONGODB_ATLAS_VECTOR_INDEX_NAME: str = "opportunity_embedding_index"
     VECTOR_INDEX_STALE_HOURS: int = 6

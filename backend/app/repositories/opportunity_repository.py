@@ -28,6 +28,8 @@ from typing import Any, Optional
 
 import asyncpg
 
+from app.db.pg_documents import acquire_timeout
+
 from app.core.config import settings, resolve_postgres_dsn, postgres_connect_args
 
 logger = logging.getLogger(__name__)
@@ -161,7 +163,7 @@ async def load_active_opportunities(
         f"ORDER BY last_seen_at DESC NULLS LAST, created_at DESC "
         f"LIMIT ${len(params)}"
     )
-    async with pool.acquire() as conn:
+    async with pool.acquire(timeout=acquire_timeout()) as conn:
         rows = await conn.fetch(sql, *params)
     return [_to_model(r) for r in rows]
 
@@ -257,7 +259,7 @@ async def load_opportunity_page(
     safe_per_page = max(1, min(int(per_page), 100))
     offset = max(0, (max(1, int(page)) - 1) * safe_per_page)
 
-    async with pool.acquire() as conn:
+    async with pool.acquire(timeout=acquire_timeout()) as conn:
         total = int(await conn.fetchval(
             f"SELECT count(*) FROM app.opportunities WHERE {where}", *params
         ) or 0)
@@ -302,7 +304,7 @@ async def feed_facet_counts(
         track_clauses.append(f"role_track = ${len(track_params)}")
     track_where = " AND ".join(track_clauses)
 
-    async with pool.acquire() as conn:
+    async with pool.acquire(timeout=acquire_timeout()) as conn:
         track_rows = await conn.fetch(
             f"SELECT role_track, count(*) AS n FROM app.opportunities WHERE {where} GROUP BY 1",
             *params,
@@ -336,7 +338,7 @@ async def feed_facet_counts(
 
 async def count_active() -> int:
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with pool.acquire(timeout=acquire_timeout()) as conn:
         return int(await conn.fetchval(
             "SELECT count(*) FROM app.opportunities WHERE opportunity_status <> 'removed'"
         ) or 0)
@@ -345,7 +347,7 @@ async def count_active() -> int:
 async def health() -> dict[str, Any]:
     try:
         pool = await get_pool()
-        async with pool.acquire() as conn:
+        async with pool.acquire(timeout=acquire_timeout()) as conn:
             total = await conn.fetchval("SELECT count(*) FROM app.opportunities")
         return {"ok": True, "rows": int(total or 0)}
     except Exception as exc:
@@ -484,7 +486,7 @@ async def upsert_opportunities(models: list) -> int:
         rows.append(tuple(_write_value(model, c) for c in _WRITE_COLUMNS))
     if not rows:
         return 0
-    async with pool.acquire() as conn:
+    async with pool.acquire(timeout=acquire_timeout()) as conn:
         # A mirror failure must never fail the scrape that produced the data.
         try:
             await conn.executemany(sql, rows)
