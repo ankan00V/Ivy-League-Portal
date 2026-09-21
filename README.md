@@ -2,15 +2,6 @@
 
 > AI-powered opportunity intelligence platform that helps students discover, prioritize, and act on internships, jobs, hackathons, competitions, workshops, and conferences.
 
-**Code/status updated:** September 21, 2026. Dated benchmark and data-snapshot sections retain their original evidence dates — figures measured on 2026-08-10 still say so, because restating an old measurement under a new date is how a number stops being evidence.
-**Status:** Active local build, production-readiness gates enabled. Not deployed: there is no hosted instance, so every figure below was measured against a local stack talking to the live database.
-
-**Since the September 2 update:** VidyaVerse is a student portal again. Between 27 August and 10 September it was extended for SIH 2026 (problem statement 26044, Ministry of Ayush) with academician and institution roles, a revived employer portal, skill assessment, industry learning programmes, per-role sources and an Ayush corpus. All of that has been removed: the routes, pages, roles, sign-up paths and seeded data are gone, the employer portal is retired again, and the sources and scrapers added for it are retired rather than deleted, with their original rejection reasons preserved.
-
-What stayed is the engineering done in the same period that the student portal depends on: the fix for a worker that hung for 44 hours on a pooled connection's reset, the ODM change that restores id types so joins stop silently matching nothing, the extraction filters that stop admit cards, merit lists and a site's own navigation entering the feed, the leaderboard's scoping and removal of unscored profiles, the retired-model guard that brought Ask AI back after its model was withdrawn, the source-pipeline fixes that let a promotion actually complete, and every CI fix.
-
-**Since the August 22 update:** the database moved to a new Supabase project (56 tables verified row by row); the internships feed pages server-side, taking a feed view from 3.55 MB to 16.6 KB; and the pay-to-apply trust detector was corrected after measuring at precision 0.17 — it had been hiding real Paytm and Razorpay internships while catching no fraud.
-
 ## 1) Executive Summary
 VidyaVerse is a full-stack AI/ML system, not just a listings app.
 It combines ingestion, semantic retrieval, learned ranking, explainable AI responses, experimentation, and operational guardrails in one product loop.
