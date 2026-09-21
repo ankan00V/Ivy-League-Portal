@@ -2,7 +2,7 @@
 
 > AI-powered opportunity intelligence platform that helps students discover, prioritize, and act on internships, jobs, hackathons, competitions, workshops, and conferences.
 
-**Code/status updated:** September 14, 2026. Dated benchmark and data-snapshot sections retain their original evidence dates — figures measured on 2026-08-10 still say so, because restating an old measurement under a new date is how a number stops being evidence.
+**Code/status updated:** September 21, 2026. Dated benchmark and data-snapshot sections retain their original evidence dates — figures measured on 2026-08-10 still say so, because restating an old measurement under a new date is how a number stops being evidence.
 **Status:** Active local build, production-readiness gates enabled. Not deployed: there is no hosted instance, so every figure below was measured against a local stack talking to the live database.
 
 **Since the September 2 update:** VidyaVerse is a student portal again. Between 27 August and 10 September it was extended for SIH 2026 (problem statement 26044, Ministry of Ayush) with academician and institution roles, a revived employer portal, skill assessment, industry learning programmes, per-role sources and an Ayush corpus. All of that has been removed: the routes, pages, roles, sign-up paths and seeded data are gone, the employer portal is retired again, and the sources and scrapers added for it are retired rather than deleted, with their original rejection reasons preserved.
@@ -204,6 +204,7 @@ class node_mongo,node_redis,node_warehouse,node_delivery toneIndigo
 - Security headers with strict CSP + Trusted Types controls.
 - Auth lockout/audit instrumentation.
 - OTP delivery retries record redacted recipient identifiers and error classes only; plaintext email addresses, OTP values, and SMTP error bodies are excluded from application logs.
+- Applying to a listing sends the student a thank-you email naming the role, the company and the application reference. It is sent in the background once the application is saved, so it never delays the redirect to the company's page, and only for a new application (a second click on Apply sends nothing). It uses the same provider and redacted logging as OTP mail; a delivery failure is logged and never surfaces to the student. Scraper placeholder employers such as "Glassdoor Employers" are left out of the email rather than thanked.
 - Hidden admin control plane with TOTP and admin action auditing.
 
 ### Privacy
