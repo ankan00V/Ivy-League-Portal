@@ -156,7 +156,22 @@ class OpportunityVectorService:
             return np.empty((0, embedding_service.dimension), dtype=np.float32)
 
         opp_ids = [opportunity.id for opportunity in opportunities]
-        existing_rows = await VectorIndexEntry.find_many(In(VectorIndexEntry.opportunity_id, opp_ids)).to_list()
+        # Read in chunks, for the same reason the corpus load is paged.
+        #
+        # This was one statement: every existing entry for every opportunity,
+        # each carrying a 384-float embedding - about 10 MB for 3,157 rows in a
+        # single fetch. Over the link to ap-southeast-2 that crossed the 30s
+        # command timeout, the rebuild failed after loading the whole corpus, and
+        # the index never became ready, so Ask AI returned nothing on every
+        # request while each one started another full build.
+        chunk = max(1, int(getattr(settings, "VECTOR_LOAD_PAGE_SIZE", 100)))
+        existing_rows: list[VectorIndexEntry] = []
+        for start in range(0, len(opp_ids), chunk):
+            existing_rows.extend(
+                await VectorIndexEntry.find_many(
+                    In(VectorIndexEntry.opportunity_id, opp_ids[start : start + chunk])
+                ).to_list()
+            )
         existing_map = {str(row.opportunity_id): row for row in existing_rows}
 
         to_embed_texts: list[str] = []
@@ -394,26 +409,45 @@ class OpportunityVectorService:
             # transfer off the critical path and into contention with it. The
             # scheduled `embeddings.rebuild` job owns refreshing.
             return
-        # No index at all yet: this one request has to build it.
-        await self.rebuild()
+        # No index at all yet. Build it in a task this request does not own.
+        #
+        # This used to `await self.rebuild()` directly, inside a request whose
+        # retrieval is capped at RAG_RETRIEVAL_TIMEOUT_SECONDS (45s). Measured
+        # against ap-southeast-2 the full build takes ~84s, so the cap cancelled
+        # it every time and the next request started again from nothing: with
+        # startup warmup disabled, Ask AI could never become ready at all.
+        #
+        # Shielded, the build survives the request that started it. This request
+        # still waits as long as its own budget allows - on a fast link it gets
+        # the answer - and if the budget runs out, only the wait is abandoned.
+        # Every later request finds the index built.
+        await asyncio.shield(self._schedule_background_refresh())
 
-    def _schedule_background_refresh(self) -> None:
+    def _schedule_background_refresh(self) -> "asyncio.Task[None]":
+        """Start one rebuild, or return the one already running.
+
+        Returning the task lets a caller wait on it without owning it, and
+        reusing a running one means concurrent first requests share a single
+        build instead of each starting their own.
+        """
         task = getattr(self, "_refresh_task", None)
         if task is not None and not task.done():
-            return
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return
+            return task
+        loop = asyncio.get_running_loop()
         self._refresh_task = loop.create_task(self._background_refresh())
+        return self._refresh_task
 
     async def _background_refresh(self) -> None:
         try:
             await self.rebuild()
         except Exception:
             # A refresh failure must not surface on the request that triggered
-            # it; the index simply stays as it was.
-            pass
+            # it; the index simply stays as it was. But it must be recorded.
+            # This used to `pass`, so a build that loaded every row and then
+            # failed left no trace at all: the next request found no index,
+            # started another full build, and Ask AI looped through rebuilds
+            # returning nothing, with not one line in the log to say why.
+            logger.exception("Vector index build failed; the next request will retry it.")
 
     async def rebuild(self, force: bool = False) -> None:
         # Phase timings, because the failure mode here is a silent one. This job

@@ -87,6 +87,18 @@ async def get_pool() -> asyncpg.Pool:
 
 
 
+def acquire_timeout() -> float:
+    """Budget for taking a connection from the pool and handing it back.
+
+    Every `pool.acquire()` in the app passes this. asyncpg reuses the acquire
+    timeout as the release budget, and without one a connection whose query was
+    cancelled waits for a cancellation acknowledgement that Supabase's pooler
+    never sends - so a statement that crossed the command timeout hung its
+    caller forever instead of failing. See POSTGRES_ACQUIRE_TIMEOUT_SECONDS.
+    """
+    return float(getattr(settings, "POSTGRES_ACQUIRE_TIMEOUT_SECONDS", 45.0))
+
+
 async def _reset_is_the_poolers_job(connection: asyncpg.Connection) -> None:
     """Return a connection to the pool without running asyncpg's reset query.
 
@@ -181,7 +193,7 @@ async def columns_of(table: str) -> dict[str, str]:
     """Column names in ordinal order, mapped to their Postgres data type."""
     if table not in _columns_cache:
         pool = await get_pool()
-        async with pool.acquire() as conn:
+        async with pool.acquire(timeout=acquire_timeout()) as conn:
             rows = await conn.fetch(
                 "SELECT column_name, data_type FROM information_schema.columns "
                 "WHERE table_schema='app' AND table_name=$1 ORDER BY ordinal_position",
@@ -310,7 +322,7 @@ class PgQuery:
             params.append(int(self._skip))
             sql += f" OFFSET ${len(params)}"
         pool = await get_pool()
-        async with pool.acquire() as conn:
+        async with pool.acquire(timeout=acquire_timeout()) as conn:
             rows = await conn.fetch(sql, *params)
         return [record_to_model(self.model_cls, r) for r in rows]
 
@@ -322,7 +334,7 @@ class PgQuery:
         table = table_of(self.model_cls)
         where, params = await self._where()
         pool = await get_pool()
-        async with pool.acquire() as conn:
+        async with pool.acquire(timeout=acquire_timeout()) as conn:
             return int(await conn.fetchval(
                 f'SELECT count(*) FROM app."{table}" WHERE {where}', *params
             ) or 0)
@@ -331,7 +343,7 @@ class PgQuery:
         table = table_of(self.model_cls)
         where, params = await self._where()
         pool = await get_pool()
-        async with pool.acquire() as conn:
+        async with pool.acquire(timeout=acquire_timeout()) as conn:
             status = await conn.execute(
                 f'DELETE FROM app."{table}" WHERE {where}', *params
             )
@@ -355,7 +367,7 @@ class PgQuery:
         else:
             sql = f'UPDATE app."{table}" SET {assignments} WHERE {where}'
         pool = await get_pool()
-        async with pool.acquire() as conn:
+        async with pool.acquire(timeout=acquire_timeout()) as conn:
             status = await conn.execute(sql, *params)
         modified = int(status.rsplit(" ", 1)[-1]) if status else 0
         return type("UpdateResult", (), {
@@ -402,7 +414,7 @@ class PgCollection:
             f'  FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING *'
         )
         pool = await get_pool()
-        async with pool.acquire() as conn:
+        async with pool.acquire(timeout=acquire_timeout()) as conn:
             row = await conn.fetchrow(sql, *params)
         return record_to_document(row) if row else None
 
@@ -411,7 +423,7 @@ class PgCollection:
         params: list[Any] = []
         where = _render_filter(dict(filter or {}), params, await columns_of(table))
         pool = await get_pool()
-        async with pool.acquire() as conn:
+        async with pool.acquire(timeout=acquire_timeout()) as conn:
             return int(await conn.fetchval(
                 f'SELECT count(*) FROM app."{table}" WHERE {where}', *params) or 0)
 
@@ -420,7 +432,7 @@ class PgCollection:
         params: list[Any] = []
         where = _render_filter(dict(filter or {}), params, await columns_of(table))
         pool = await get_pool()
-        async with pool.acquire() as conn:
+        async with pool.acquire(timeout=acquire_timeout()) as conn:
             status = await conn.execute(
                 f'DELETE FROM app."{table}" WHERE {where}', *params)
         deleted = int(status.rsplit(" ", 1)[-1]) if status else 0
@@ -433,7 +445,7 @@ class PgCollection:
         where = _render_filter(dict(filter or {}), params, columns)
         assignments = render_update(dict(update), columns, params)
         pool = await get_pool()
-        async with pool.acquire() as conn:
+        async with pool.acquire(timeout=acquire_timeout()) as conn:
             status = await conn.execute(
                 f'UPDATE app."{table}" SET {assignments} WHERE {where}', *params)
         modified = int(status.rsplit(" ", 1)[-1]) if status else 0
@@ -446,7 +458,7 @@ class PgCollection:
         where = _render_filter(dict(filter or {}), params, await columns_of(table))
         column = _map_key(str(key))
         pool = await get_pool()
-        async with pool.acquire() as conn:
+        async with pool.acquire(timeout=acquire_timeout()) as conn:
             rows = await conn.fetch(
                 f'SELECT DISTINCT "{column}" AS v FROM app."{table}" '
                 f'WHERE {where} AND "{column}" IS NOT NULL', *params)
@@ -498,7 +510,7 @@ class PgCollection:
             f'ORDER BY "{column}" <=> $1::vector LIMIT ${len(params)}'
         )
         pool = await get_pool()
-        async with pool.acquire() as conn:
+        async with pool.acquire(timeout=acquire_timeout()) as conn:
             rows = await conn.fetch(sql, *params)
         out = []
         for row in rows:
@@ -537,7 +549,7 @@ class PgCollection:
             f"WHERE {where} GROUP BY {grouped}"
         )
         pool = await get_pool()
-        async with pool.acquire() as conn:
+        async with pool.acquire(timeout=acquire_timeout()) as conn:
             rows = await conn.fetch(sql, *params)
         out = []
         for row in rows:
@@ -607,7 +619,7 @@ async def _insert_instance(instance) -> Any:
     placeholders = ", ".join(f"${i+1}" for i in range(len(cols)))
     quoted = ", ".join(f'"{c}"' for c in cols)
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with pool.acquire(timeout=acquire_timeout()) as conn:
         row_id = await conn.fetchval(
             f'INSERT INTO app."{table}" ({quoted}) VALUES ({placeholders}) RETURNING id',
             *values,
@@ -630,7 +642,7 @@ async def _save_instance(instance) -> Any:
     assignments = ", ".join(f'"{c}" = ${i+1}' for i, c in enumerate(cols))
     values.append(row_id)
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with pool.acquire(timeout=acquire_timeout()) as conn:
         await conn.execute(
             f'UPDATE app."{table}" SET {assignments} WHERE id = ${len(values)}', *values
         )
@@ -641,7 +653,7 @@ async def _delete_instance(instance) -> Any:
     table = table_of(type(instance))
     row_id = getattr(instance, "_pg_row_id", None)
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with pool.acquire(timeout=acquire_timeout()) as conn:
         if row_id is not None:
             await conn.execute(f'DELETE FROM app."{table}" WHERE id = $1', row_id)
         elif getattr(instance, "id", None) is not None:
@@ -725,7 +737,7 @@ async def bulk_save(model_cls, instances: list) -> int:
 
     written = 0
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with pool.acquire(timeout=acquire_timeout()) as conn:
         for key, group in inserts.items():
             from bson import ObjectId
 

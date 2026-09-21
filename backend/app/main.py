@@ -606,7 +606,11 @@ async def _warmup_rag_components() -> None:
     # Preload embeddings + vector index so first Ask AI request isn't penalized by cold starts.
     await embedding_service.embed_query("warmup query")
     await nlp_service.classify_intent("data science internships")
-    await opportunity_vector_service.rebuild(force=False)
+    # Through the same path a request takes, so warmup's own 120s cap abandons
+    # only the wait and never the build. Over the link to ap-southeast-2 the
+    # build measured ~90s for the load alone, and a cancelled build leaves no
+    # index at all.
+    await opportunity_vector_service._ensure_index()
     # The cross-encoder is the most expensive of these to load: measured at ~30s
     # for the first Ask AI request versus 2-3s once resident. Without this the
     # first real user after every boot pays that, and RAG_LLM_TIMEOUT_SECONDS
