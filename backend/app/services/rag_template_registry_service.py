@@ -30,11 +30,14 @@ class RAGTemplateResolution:
     assigned_via_experiment: bool
 
 
-# Bumped whenever the prompt's output contract changes. ensure_defaults()
-# supersedes a stored template built against an older contract, because the
-# generator parses what comes back: a row seeded under SCHEMA v1 keeps asking for
-# opportunity_id and url forever, and the v2 parser drops every entry it returns.
-SYSTEM_PROMPT_SCHEMA_VERSION = 2
+# Bumped whenever this prompt changes in a way that must reach deployments that
+# already seeded a template. ensure_defaults() supersedes a stored row built
+# against a lower version, because the row - not this function - is what the
+# generator actually sends: a row seeded under v1 keeps asking for opportunity_id
+# and url forever, and the v2 parser drops every entry it returns. v3 adds the
+# summary rules; without the bump every existing deployment would keep sending v2
+# and keep writing summaries the corpus does not support.
+SYSTEM_PROMPT_SCHEMA_VERSION = 3
 
 
 def _default_system_prompt() -> str:
@@ -66,7 +69,13 @@ def _default_system_prompt() -> str:
         "- Do not emit ids, urls, titles or citations; the server attaches them.\n"
         "- why_fit must cite concrete evidence from that candidate's own description "
         "- the skill, domain, deadline or eligibility that matches. "
-        "Never restate the query back."
+        "Never restate the query back.\n"
+        "- summary must describe what the candidates below actually are, never what "
+        "the query asked for. Do not repeat the query's role, domain, location or "
+        "opportunity type in the summary unless a candidate's own text carries it.\n"
+        "- When no candidate meets a constraint the query stated, say so plainly in "
+        "summary and describe what was found instead. A near miss is a near miss: "
+        "call it one."
     )
 
 

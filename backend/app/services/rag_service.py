@@ -272,7 +272,50 @@ class RAGService:
             "contract_version": "rag_insights.v1",
         }
 
-    def _heuristic_insight(self, query: str, results: list[dict[str, Any]]) -> dict[str, Any]:
+    def _heuristic_insight(
+        self,
+        query: str,
+        results: list[dict[str, Any]],
+        *,
+        retrieval_error: Optional[str] = None,
+    ) -> dict[str, Any]:
+        if not results:
+            # "Top 0 opportunities retrieved for: data science internships in
+            # Bangalore" was the whole answer a student got here, and it reads as
+            # though the query itself were the finding. The two ways of arriving at
+            # zero rows also need different words: a search that ran and matched
+            # nothing is an answer, while a search that never ran is an outage, and
+            # telling a student nothing is listed when the retriever timed out is a
+            # claim about the corpus that was never checked.
+            if retrieval_error:
+                summary = (
+                    "The listings could not be searched just now, so this is not a "
+                    "statement about what is available - the search itself did not "
+                    "complete."
+                )
+                action = "Try again in a moment."
+            else:
+                summary = (
+                    "Nothing currently listed matches this. The search ran against "
+                    "the full corpus and returned no opportunity meeting what was asked for."
+                )
+                action = (
+                    "Try a broader phrasing, drop one constraint such as the city or "
+                    "the field, or check back once more listings have been ingested."
+                )
+            return {
+                "summary": summary,
+                "top_opportunities": [],
+                "deadline_urgency": "Not applicable - nothing was shortlisted.",
+                "recommended_action": action,
+                "citations": [],
+                "safety": {
+                    "hallucination_checks_passed": False,
+                    "failed_checks": [retrieval_error or "no_retrieval_results"],
+                },
+                "contract_version": "rag_insights.v1",
+            }
+
         top = results[:3]
         top_opportunities: list[dict[str, Any]] = []
         citations: list[dict[str, Any]] = []
@@ -480,12 +523,18 @@ class RAGService:
         profile: Optional[Profile],
         system_prompt: Optional[str] = None,
     ) -> dict[str, Any]:
+        retrieval_error = str(retrieval_payload.get("retrieval_error") or "") or None
+
         if not self._llm_configured():
-            return self._heuristic_insight(query, retrieval_payload.get("results", []))
+            return self._heuristic_insight(
+                query, retrieval_payload.get("results", []), retrieval_error=retrieval_error
+            )
 
         # If nothing was retrieved, skip expensive LLM invocation and return deterministic fallback.
         if not (retrieval_payload.get("results") or []):
-            return self._heuristic_insight(query, retrieval_payload.get("results", []))
+            return self._heuristic_insight(
+                query, retrieval_payload.get("results", []), retrieval_error=retrieval_error
+            )
 
         # Nothing retrieved is rare; nothing *relevant* retrieved is common, and
         # until now looked identical to a good answer. Checked before the LLM
@@ -641,10 +690,24 @@ class RAGService:
             )
         except asyncio.TimeoutError:
             logger.warning("RAG retrieval timed out; returning empty retrieval payload.")
-            retrieval_payload = {"intent": {}, "entities": {}, "results": [], "filters": {}}
+            retrieval_payload = {
+                "intent": {},
+                "entities": {},
+                "results": [],
+                "filters": {},
+                # Carried so the answer can distinguish "found nothing" from
+                # "could not look", which are the same empty list here.
+                "retrieval_error": "retrieval_timed_out",
+            }
         except Exception as exc:
             logger.warning("RAG retrieval failed; returning empty retrieval payload: %s", exc)
-            retrieval_payload = {"intent": {}, "entities": {}, "results": [], "filters": {}}
+            retrieval_payload = {
+                "intent": {},
+                "entities": {},
+                "results": [],
+                "filters": {},
+                "retrieval_error": "retrieval_failed",
+            }
 
         insights = await self._llm_insight(
             query=query,
