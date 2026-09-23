@@ -2100,6 +2100,12 @@ async def ask_ai_shortlist(
         except CollectionWasNotInitialized:
             # Unit tests that call this endpoint directly can skip document persistence.
             pass
+        except Exception:
+            # The answer is already computed; this write only records the query for
+            # the saved-searches list. Letting it raise turned a good shortlist into
+            # a 500 - observed locally when a slow pool release timed out mid-upsert,
+            # 107s after a request whose answer was sitting right there.
+            logger.exception("Ask AI saved-query upsert failed; returning the answer anyway.")
 
         request_id = str(result.get("request_id") or "").strip()
         if request_id:
@@ -2145,31 +2151,45 @@ async def ask_ai_shortlist(
             except CollectionWasNotInitialized:
                 # Unit tests that call this endpoint directly can skip document persistence.
                 pass
+            except Exception:
+                # Same reasoning as the saved-query write above: the snapshot is an
+                # analytics record of an answer the caller is still entitled to.
+                logger.exception("Ask AI snapshot write failed; returning the answer anyway.")
 
-        await ranking_request_telemetry_service.log(
-            request_kind="ask_ai",
-            surface="ask_ai",
-            latency_ms=(time.perf_counter() - started_at) * 1000.0,
-            success=True,
-            user_id=current_user.id,
-            results_count=len(result.get("results") or []),
-            experiment_key=(governance.get("experiment_key") or "ask_ai_rag_template"),
-            experiment_variant=(governance.get("experiment_variant") or governance.get("template_label")),
-            rag_template_label=governance.get("template_label"),
-            rag_template_version_id=governance.get("template_version_id"),
-            traffic_type="real",
-        )
+        try:
+            await ranking_request_telemetry_service.log(
+                request_kind="ask_ai",
+                surface="ask_ai",
+                latency_ms=(time.perf_counter() - started_at) * 1000.0,
+                success=True,
+                user_id=current_user.id,
+                results_count=len(result.get("results") or []),
+                experiment_key=(governance.get("experiment_key") or "ask_ai_rag_template"),
+                experiment_variant=(governance.get("experiment_variant") or governance.get("template_label")),
+                rag_template_label=governance.get("template_label"),
+                rag_template_version_id=governance.get("template_version_id"),
+                traffic_type="real",
+            )
+        except Exception:
+            logger.exception("Ask AI success telemetry failed; returning the answer anyway.")
         return result
     except Exception as exc:
-        await ranking_request_telemetry_service.log(
-            request_kind="ask_ai",
-            surface="ask_ai",
-            latency_ms=(time.perf_counter() - started_at) * 1000.0,
-            success=False,
-            user_id=current_user.id,
-            error_code=exc.__class__.__name__,
-            traffic_type="real",
-        )
+        try:
+            await ranking_request_telemetry_service.log(
+                request_kind="ask_ai",
+                surface="ask_ai",
+                latency_ms=(time.perf_counter() - started_at) * 1000.0,
+                success=False,
+                user_id=current_user.id,
+                error_code=exc.__class__.__name__,
+                traffic_type="real",
+            )
+        except Exception:
+            # This insert goes to the same database that most failures here come
+            # from, so it is the likeliest thing to fail second. Raising from the
+            # handler would replace the real error with a database error and send
+            # the diagnosis chasing the wrong layer.
+            logger.exception("Ask AI failure telemetry failed; re-raising the original error.")
         raise
 
 
