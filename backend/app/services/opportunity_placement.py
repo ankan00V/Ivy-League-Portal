@@ -179,6 +179,30 @@ _INTERNATIONAL_CODES = (
 )
 
 
+#: The same place names, exposed for matching against a student's *question*
+#: rather than a listing.
+#:
+#: Ask AI filters by location only when the query parser finds one, and the
+#: general-purpose NER model it used does not know this vocabulary: "Bangalore"
+#: was not a place to it at all (only "Bengaluru" was), and "Hyderabad" came back
+#: labelled as a company. Both failures are silent - the location filter is
+#: simply never applied - so "data science internships in Bangalore" was answered
+#: from the whole corpus and returned roles in neither the field nor the city.
+#:
+#: This corpus is overwhelmingly Indian and students type the colloquial spellings,
+#: so the gazetteer that already classifies the listings is the right authority for
+#: the query too. One list, matched on both sides.
+#:
+#: Two-letter entries are excluded: `_INTERNATIONAL_CODES` and the short aliases in
+#: the city tuples ("la", "sf", "dc") are safe against a listing's location column
+#: but not against free text, where "la" and "or" appear as ordinary words.
+PLACE_TERMS: frozenset[str] = frozenset(
+    term
+    for term in _INDIA_TERMS + _INDIA_STATES + _INDIA_CITIES + _INTERNATIONAL_CITIES + _INTERNATIONAL_COUNTRIES
+    if len(term) > 2
+)
+
+
 #: Sources that only ever list Indian roles. Used as a last-resort geography hint
 #: when the row itself carries no usable location.
 #:
