@@ -660,18 +660,51 @@ class OpportunityVectorService:
             top_indices = np.argsort(-raw_scores)[:shortlist]
             rank_items = [(int(idx), float(raw_scores[idx])) for idx in top_indices]
 
-        results: list[dict[str, Any]] = []
-        for idx, score in rank_items:
-            if idx < 0 or idx >= len(self._metas):
-                continue
-            meta = self._metas[idx]
-            if not self._passes_filters(meta, filters):
-                continue
-            payload = dict(meta)
-            payload["similarity"] = round(self._score_to_similarity(float(score)), 6)
-            results.append(payload)
-            if len(results) >= safe_top_k:
-                break
+        def _collect(active_filters: dict[str, Any] | None) -> list[dict[str, Any]]:
+            collected: list[dict[str, Any]] = []
+            for idx, score in rank_items:
+                if idx < 0 or idx >= len(self._metas):
+                    continue
+                meta = self._metas[idx]
+                if not self._passes_filters(meta, active_filters):
+                    continue
+                payload = dict(meta)
+                payload["similarity"] = round(self._score_to_similarity(float(score)), 6)
+                collected.append(payload)
+                if len(collected) >= safe_top_k:
+                    break
+            return collected
+
+        results = _collect(filters)
+
+        # Intent is the one filter nobody asked for. Location, work mode and type
+        # come from the student's own words; intent is inferred by a classifier
+        # that is wrong often enough to matter - measured 34/40 on
+        # app/data/intent_queries.json, and every one of the six misses read an
+        # internship query as "research". Because it is applied as a hard filter,
+        # a miss does not degrade the ranking, it deletes the corpus: only 59 of
+        # the 203 Bangalore listings carry research/fellowship/assistant, so
+        # "data science internships in Bangalore" was answered from the 59.
+        #
+        # Confidence cannot gate this. The wrong labels came back at 0.67-0.75
+        # while correct ones sat at 0.70-0.84, and the top-two margins overlap,
+        # so any threshold either keeps misses or discards good filtering.
+        #
+        # So the result decides instead of the score: if the filtered pass could
+        # not fill the page, the inferred constraint is the one to drop. When the
+        # classifier is right this changes nothing - the page was already full.
+        if len(results) < safe_top_k and (filters or {}).get("intent"):
+            relaxed = {key: value for key, value in (filters or {}).items() if key != "intent"}
+            widened = _collect(relaxed)
+            if len(widened) > len(results):
+                logger.info(
+                    "vector search: intent filter %r left %d of %d rows; retrying without it gave %d",
+                    filters.get("intent") if filters else None,
+                    len(results),
+                    safe_top_k,
+                    len(widened),
+                )
+                results = widened
         return results
 
     async def search(
