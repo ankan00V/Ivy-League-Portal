@@ -518,14 +518,21 @@ class RAGService:
                 if any(word in _CLAIM_STOPWORDS for word in words):
                     continue
                 pattern = _pattern(words)
-                if not pattern.search(summary_text) or pattern.search(haystack):
+                if not pattern.search(summary_text):
                     continue
-                unsupported.append(" ".join(words))
+                # A phrase the listings do carry is settled either way, so it
+                # consumes its words like a reported one. Letting a supported
+                # bigram fall through left its second word free to pair with the
+                # next, which is how a live answer whose "data science" was
+                # genuinely backed by a retrieved row still drew the caveat
+                # 'None of the listings below mentions "science internships"' -
+                # a window artifact, and not a phrase anybody wrote.
+                if not pattern.search(haystack):
+                    unsupported.append(" ".join(words))
                 index += width
                 break
             else:
                 index += 1
-                continue
         return unsupported
 
     def _check_summary_against_results(

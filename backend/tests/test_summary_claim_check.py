@@ -61,6 +61,25 @@ class ClaimDetectionTests(unittest.TestCase):
         )
         self.assertNotIn("science internships", claims)
 
+    def test_a_supported_phrase_does_not_spawn_one(self):
+        """Caught live. With a listing that does say "data science", the phrase
+        is settled - but its second word was still free to pair with the next,
+        and the answer carried 'None of the listings below mentions "science
+        internships"', which is a window artifact, not anybody's claim."""
+        rows = [
+            {"title": "Internship - Product Development", "description": "product team, Bangalore"},
+            {
+                "title": "Data Engineering & Analytics Intern",
+                "description": "data science and SQL pipelines, Bangalore",
+            },
+        ]
+        claims = self._claims(
+            "data science internships in Bangalore",
+            "Found 2 data science internships in Bangalore matching Python and SQL.",
+            rows,
+        )
+        self.assertEqual(claims, [])
+
     def test_an_accurate_summary_is_left_alone(self):
         claims = self._claims(
             "internships in Bangalore",
