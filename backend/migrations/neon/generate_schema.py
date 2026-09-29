@@ -142,7 +142,17 @@ def ddl_for(model) -> tuple[str, list[str]]:
     for raw in (getattr(settings, "indexes", None) or []):
         keys = getattr(raw, "document", None) or getattr(raw, "_doc", None)
         spec = None
-        if isinstance(raw, (list, tuple)):
+        if isinstance(raw, str):
+            # Beanie's single-field shorthand, and by far the commonest form
+            # here: 297 of the 383 declarations across these models. It used to
+            # fall through to `if not spec: continue` and vanish without a word,
+            # which is how vector_index_entries ended up with all three of its
+            # declared indexes missing from a schema whose own docstring
+            # promises to be a function of the models. A leading "-" is
+            # descending, as in Mongo.
+            field = raw[1:] if raw.startswith("-") else raw
+            spec = [(field, -1 if raw.startswith("-") else 1)]
+        elif isinstance(raw, (list, tuple)):
             spec = raw
         elif isinstance(keys, dict) and "key" in keys:
             spec = list(keys["key"].items())
