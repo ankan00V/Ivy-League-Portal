@@ -7,6 +7,45 @@ import numpy as np
 
 from app.services.embedding_service import embedding_service
 from app.services.nlp_model_service import nlp_model_service
+from app.services.opportunity_placement import PLACE_TERMS
+
+#: Longest first, so "new delhi" is read as one place rather than "delhi" with a
+#: stray adjective, and "tamil nadu" is not shadowed by a substring of itself.
+_PLACE_PATTERN = re.compile(
+    r"(?i)(?<![\w-])(" + "|".join(re.escape(term) for term in sorted(PLACE_TERMS, key=len, reverse=True)) + r")(?![\w-])"
+)
+
+
+def _place_terms_in(text: str) -> list[str]:
+    """Place names appearing in the text, in the caller's own spelling.
+
+    Returns the matched substring rather than the gazetteer entry, so "Bangalore"
+    stays "Bangalore" in the response the student reads back.
+    """
+    found: list[str] = []
+    seen: set[str] = set()
+    for match in _PLACE_PATTERN.finditer(text or ""):
+        value = match.group(1).strip()
+        key = value.lower()
+        if not value or key in seen:
+            continue
+        seen.add(key)
+        found.append(value)
+    return found
+
+
+def _without_places(names: list[str], places: list[str]) -> list[str]:
+    """Drop entries the gazetteer identified as places, keep every other name.
+
+    A city landing in `companies` is not merely mislabelled: companies are
+    applied as their own filter, so the query gets narrowed on the wrong axis.
+    Kept separate from `extract_entities` because the NER model's vocabulary
+    varies by spaCy build - a CI runner tagged "Oracle" as nothing at all - and
+    what this code owns is which names are removed, not which the model finds.
+    """
+    known = {place.lower() for place in places}
+    return [name for name in names if name.lower() not in known]
+
 
 ELIGIBILITY_PATTERN = re.compile(
     r"(?i)(eligible|eligibility|minimum|required|must have|cgpa|gpa|age limit|undergraduate|graduate|final year|experience)"
@@ -180,6 +219,15 @@ class NLPService:
                 locations.append(ent.text.strip())
             elif ent.label_ in {"ORG"}:
                 companies.append(ent.text.strip())
+
+        # The NER model is general-purpose English and does not carry this corpus's
+        # geography: it read "Bangalore" as nothing at all and "Hyderabad" as a
+        # company. Both mistakes are invisible downstream - a query with no location
+        # is a query with no location filter - so the shortlist silently came from
+        # the whole corpus. The gazetteer that classifies the listings settles it.
+        gazetteer_hits = _place_terms_in(clean_text)
+        locations.extend(gazetteer_hits)
+        companies = _without_places(companies, gazetteer_hits)
 
         duration = [match.group(1).strip() for match in DURATION_PATTERN.finditer(clean_text)]
 

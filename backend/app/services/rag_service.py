@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from typing import Any, Optional
 from uuid import uuid4
 
@@ -29,6 +30,33 @@ from app.services.vector_service import opportunity_vector_service
 from app.services.reranker_service import reranker_service
 
 logger = logging.getLogger(__name__)
+
+
+#: Words excluded from the summary claim check, because their absence from a
+#: listing's text is not evidence that the listing fails them.
+#:
+#: Three kinds. Function words carry no claim at all. Framing words are how a
+#: student phrases a request, not a property a listing advertises - no posting
+#: says "upcoming", and flagging it would put a caveat on every correct answer.
+#: Finally the words the summary uses to *count* and *place* its own results
+#: ("found", "matching", "listings") describe the answer rather than quote the
+#: query.
+_CLAIM_STOPWORDS: frozenset[str] = frozenset(
+    {
+        # function words
+        "a", "an", "and", "are", "as", "at", "be", "by", "can", "do", "for", "from",
+        "i", "in", "is", "it", "me", "my", "of", "on", "or", "that", "the", "these",
+        "this", "to", "with", "which", "who",
+        # framing and quality words a listing never has to contain
+        "any", "available", "best", "current", "currently", "find", "get", "good",
+        "great", "latest", "like", "looking", "more", "need", "new", "now", "ongoing",
+        "open", "please", "recent", "show", "some", "soon", "suitable", "top",
+        "upcoming", "want", "near", "next", "relevant", "related", "good",
+        # words about the answer rather than the query
+        "found", "listing", "listings", "matching", "match", "matches", "opportunity",
+        "opportunities", "result", "results", "role", "roles",
+    }
+)
 
 
 class RAGService:
@@ -272,7 +300,50 @@ class RAGService:
             "contract_version": "rag_insights.v1",
         }
 
-    def _heuristic_insight(self, query: str, results: list[dict[str, Any]]) -> dict[str, Any]:
+    def _heuristic_insight(
+        self,
+        query: str,
+        results: list[dict[str, Any]],
+        *,
+        retrieval_error: Optional[str] = None,
+    ) -> dict[str, Any]:
+        if not results:
+            # "Top 0 opportunities retrieved for: data science internships in
+            # Bangalore" was the whole answer a student got here, and it reads as
+            # though the query itself were the finding. The two ways of arriving at
+            # zero rows also need different words: a search that ran and matched
+            # nothing is an answer, while a search that never ran is an outage, and
+            # telling a student nothing is listed when the retriever timed out is a
+            # claim about the corpus that was never checked.
+            if retrieval_error:
+                summary = (
+                    "The listings could not be searched just now, so this is not a "
+                    "statement about what is available - the search itself did not "
+                    "complete."
+                )
+                action = "Try again in a moment."
+            else:
+                summary = (
+                    "Nothing currently listed matches this. The search ran against "
+                    "the full corpus and returned no opportunity meeting what was asked for."
+                )
+                action = (
+                    "Try a broader phrasing, drop one constraint such as the city or "
+                    "the field, or check back once more listings have been ingested."
+                )
+            return {
+                "summary": summary,
+                "top_opportunities": [],
+                "deadline_urgency": "Not applicable - nothing was shortlisted.",
+                "recommended_action": action,
+                "citations": [],
+                "safety": {
+                    "hallucination_checks_passed": False,
+                    "failed_checks": [retrieval_error or "no_retrieval_results"],
+                },
+                "contract_version": "rag_insights.v1",
+            }
+
         top = results[:3]
         top_opportunities: list[dict[str, Any]] = []
         citations: list[dict[str, Any]] = []
@@ -381,6 +452,112 @@ class RAGService:
         out["citations"] = citations
         return out
 
+    @staticmethod
+    def _candidate_haystack(results: list[dict[str, Any]]) -> str:
+        return " ".join(
+            " ".join(
+                str(item.get(field) or "")
+                for field in ("title", "description", "domain", "opportunity_type", "university", "location")
+            )
+            for item in results or []
+        ).lower()
+
+    def _unsupported_summary_claims(
+        self, query: str, summary: str, results: list[dict[str, Any]]
+    ) -> list[str]:
+        """Terms the summary takes from the query that no retrieved row carries.
+
+        The generator's failure mode is not inventing an opportunity - the ref
+        scheme closed that - it is narrating the question back as a finding.
+        Live, against a shortlist whose top entry was "Internship - Product
+        Development", it wrote "Found 2 data science internships in Bangalore".
+        Nothing in that sentence is checkable by the citation gate: the ids are
+        real and the rows were retrieved. The claim is in the adjectives.
+
+        Prompt rules did not hold - the instruction to describe the candidates
+        rather than the query is in the template and the model wrote that
+        sentence anyway - so this checks the text instead of asking nicely.
+
+        A phrase is only reported when it appears in the query, appears in the
+        summary, and appears in no candidate's own text. Bigrams are tested
+        before the words that compose them, because "data science" is exactly the
+        claim that survives when "data" and "science" are each present apart, and
+        a reported phrase consumes its words so the neighbouring bigram cannot be
+        reported as well - otherwise one claim surfaces twice, as "data science"
+        and again as "science internships".
+
+        Matching tolerates the plural, because a student writes "internships" and
+        a posting is titled "Internship". Without that, the check fires on the
+        answers it should leave alone.
+        """
+        haystack = self._candidate_haystack(results)
+        if not haystack.strip():
+            return []
+
+        summary_text = (summary or "").lower()
+        tokens = re.findall(r"[a-z]+", (query or "").lower())
+
+        def _pattern(words: list[str]) -> re.Pattern[str]:
+            # "internships" must match "internship", and "matches" must match
+            # "match"; the trailing s or es is optional in both directions.
+            parts = []
+            for word in words:
+                stem = word[:-2] if word.endswith("es") and len(word) > 4 else (
+                    word[:-1] if word.endswith("s") and len(word) > 3 else word
+                )
+                parts.append(rf"{re.escape(stem)}(?:e?s)?")
+            return re.compile(rf"(?<![\w-]){r'\s+'.join(parts)}(?![\w-])")
+
+        unsupported: list[str] = []
+        index = 0
+        while index < len(tokens):
+            for width in (2, 1):
+                if index + width > len(tokens):
+                    continue
+                words = tokens[index : index + width]
+                if any(word in _CLAIM_STOPWORDS for word in words):
+                    continue
+                pattern = _pattern(words)
+                if not pattern.search(summary_text) or pattern.search(haystack):
+                    continue
+                unsupported.append(" ".join(words))
+                index += width
+                break
+            else:
+                index += 1
+                continue
+        return unsupported
+
+    def _check_summary_against_results(
+        self, insights: RAGInsights, query: str, results: list[dict[str, Any]]
+    ) -> RAGInsights:
+        """Record an unsupported claim, and say so in the line that made it.
+
+        The summary is not rewritten. A server-composed replacement would throw
+        away the parts that are accurate and useful, and this service already
+        prefers recording a substitution over performing one silently. The
+        sentence appended is only ever a negative the server has verified.
+        """
+        unsupported = self._unsupported_summary_claims(query, insights.summary, results)
+        if not unsupported:
+            return insights
+
+        quoted = ", ".join(f'"{phrase}"' for phrase in unsupported[:3])
+        caveat = f" None of the listings below mentions {quoted}."
+        safety = insights.safety
+        return insights.model_copy(
+            update={
+                "summary": insights.summary.rstrip() + caveat,
+                "safety": safety.model_copy(
+                    update={
+                        "hallucination_checks_passed": False,
+                        "failed_checks": list(safety.failed_checks)
+                        + [f"summary_claim_unsupported:{phrase}" for phrase in unsupported[:3]],
+                    }
+                ),
+            }
+        )
+
     def _apply_hallucination_checks(self, insights: RAGInsights, results: list[dict[str, Any]]) -> RAGInsights:
         allowed = self._allowed_sources(results)
         failed_checks: list[str] = []
@@ -480,12 +657,18 @@ class RAGService:
         profile: Optional[Profile],
         system_prompt: Optional[str] = None,
     ) -> dict[str, Any]:
+        retrieval_error = str(retrieval_payload.get("retrieval_error") or "") or None
+
         if not self._llm_configured():
-            return self._heuristic_insight(query, retrieval_payload.get("results", []))
+            return self._heuristic_insight(
+                query, retrieval_payload.get("results", []), retrieval_error=retrieval_error
+            )
 
         # If nothing was retrieved, skip expensive LLM invocation and return deterministic fallback.
         if not (retrieval_payload.get("results") or []):
-            return self._heuristic_insight(query, retrieval_payload.get("results", []))
+            return self._heuristic_insight(
+                query, retrieval_payload.get("results", []), retrieval_error=retrieval_error
+            )
 
         # Nothing retrieved is rare; nothing *relevant* retrieved is common, and
         # until now looked identical to a good answer. Checked before the LLM
@@ -641,10 +824,24 @@ class RAGService:
             )
         except asyncio.TimeoutError:
             logger.warning("RAG retrieval timed out; returning empty retrieval payload.")
-            retrieval_payload = {"intent": {}, "entities": {}, "results": [], "filters": {}}
+            retrieval_payload = {
+                "intent": {},
+                "entities": {},
+                "results": [],
+                "filters": {},
+                # Carried so the answer can distinguish "found nothing" from
+                # "could not look", which are the same empty list here.
+                "retrieval_error": "retrieval_timed_out",
+            }
         except Exception as exc:
             logger.warning("RAG retrieval failed; returning empty retrieval payload: %s", exc)
-            retrieval_payload = {"intent": {}, "entities": {}, "results": [], "filters": {}}
+            retrieval_payload = {
+                "intent": {},
+                "entities": {},
+                "results": [],
+                "filters": {},
+                "retrieval_error": "retrieval_failed",
+            }
 
         insights = await self._llm_insight(
             query=query,
@@ -657,6 +854,7 @@ class RAGService:
         allowed = self._allowed_sources(results)
         insights_model = RAGInsights.model_validate(insights)
         insights_model = self._apply_hallucination_checks(insights_model, results)
+        insights_model = self._check_summary_against_results(insights_model, query, results)
 
         # Optional LLM-as-judge quality gate (disabled by default).
         if settings.LLM_JUDGE_ENABLED and self._llm_configured():

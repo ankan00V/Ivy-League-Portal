@@ -1,0 +1,52 @@
+{
+  "_what": "Labelled student queries for the Ask AI intent classifier.",
+  "_provenance": "The first five are real, taken from AskAISavedQuery on the live database (the only genuine ones stored at the time). The rest are hand-written in the same register and are NOT observed traffic - treat accuracy measured here as indicative, not as a production metric.",
+  "_why": "Intent was a hard filter in vector_service._passes_filters, so a wrong label silently removed most of the corpus: 'data science internships in Bangalore' was labelled research, and only 59 of 203 Bangalore listings carry research/fellowship/assistant. Any change to how intent is trusted needs a set to measure against.",
+  "_labels": ["internships", "research", "scholarships", "hackathons"],
+  "queries": [
+    {"query": "software internships that fit React and TypeScript skills", "intent": "internships"},
+    {"query": "hackathons on ai/ml engineering", "intent": "hackathons"},
+    {"query": "remote internships for data science and analytics with citations", "intent": "internships"},
+    {"query": "data science internships in Bangalore for a final year student", "intent": "internships"},
+    {"query": "remote python backend internship", "intent": "internships"},
+
+    {"query": "data science internships in Bangalore", "intent": "internships"},
+    {"query": "machine learning internship in Bangalore", "intent": "internships"},
+    {"query": "software internships in Bengaluru", "intent": "internships"},
+    {"query": "internships in Mumbai", "intent": "internships"},
+    {"query": "paid internship with stipend", "intent": "internships"},
+    {"query": "summer internship for 3rd year btech", "intent": "internships"},
+    {"query": "frontend developer intern remote", "intent": "internships"},
+    {"query": "product management internship", "intent": "internships"},
+    {"query": "full time job for fresher in Hyderabad", "intent": "internships"},
+    {"query": "off campus hiring for 2027 batch", "intent": "internships"},
+    {"query": "data analyst internship in Pune", "intent": "internships"},
+
+    {"query": "summer research fellowship", "intent": "research"},
+    {"query": "research internship at iisc", "intent": "research"},
+    {"query": "undergraduate research programme in physics", "intent": "research"},
+    {"query": "phd positions in computer vision", "intent": "research"},
+    {"query": "research assistant opening in nlp lab", "intent": "research"},
+    {"query": "winter research programme for engineering students", "intent": "research"},
+    {"query": "postdoc fellowship in biotechnology", "intent": "research"},
+    {"query": "paper writing opportunity with a professor", "intent": "research"},
+
+    {"query": "scholarships for engineering students", "intent": "scholarships"},
+    {"query": "phd funding opportunities", "intent": "scholarships"},
+    {"query": "merit scholarship for btech first year", "intent": "scholarships"},
+    {"query": "financial aid for masters abroad", "intent": "scholarships"},
+    {"query": "government scholarship for sc st students", "intent": "scholarships"},
+    {"query": "grants for undergraduate projects", "intent": "scholarships"},
+    {"query": "fee waiver for low income students", "intent": "scholarships"},
+    {"query": "study abroad funding for indian students", "intent": "scholarships"},
+
+    {"query": "upcoming hackathons", "intent": "hackathons"},
+    {"query": "ai competitions to join", "intent": "hackathons"},
+    {"query": "coding contests this month", "intent": "hackathons"},
+    {"query": "national level hackathon for students", "intent": "hackathons"},
+    {"query": "online datathon with prizes", "intent": "hackathons"},
+    {"query": "robotics challenge for college teams", "intent": "hackathons"},
+    {"query": "case study competition for business students", "intent": "hackathons"},
+    {"query": "capture the flag security contest", "intent": "hackathons"}
+  ]
+}
