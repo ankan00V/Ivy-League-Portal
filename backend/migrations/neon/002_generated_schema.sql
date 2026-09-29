@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS app.users (
     , full_name text
     , username text
     , account_type text
+    , secondary_email text
+    , secondary_email_verified boolean
     , auth_provider text
     , is_active boolean
     , is_admin boolean
@@ -25,6 +27,14 @@ CREATE TABLE IF NOT EXISTS app.users (
     , created_at timestamptz
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
+CREATE INDEX IF NOT EXISTS users_email_idx ON app.users (email ASC);
+CREATE INDEX IF NOT EXISTS users_secondary_email_idx ON app.users (secondary_email ASC);
+CREATE INDEX IF NOT EXISTS users_username_idx ON app.users (username ASC);
+CREATE INDEX IF NOT EXISTS users_full_name_idx ON app.users (full_name ASC);
+CREATE INDEX IF NOT EXISTS users_account_type_idx ON app.users (account_type ASC);
+CREATE INDEX IF NOT EXISTS users_auth_provider_idx ON app.users (auth_provider ASC);
+CREATE INDEX IF NOT EXISTS users_profile_embedding_model_version_idx ON app.users (profile_embedding_model_version ASC);
+CREATE INDEX IF NOT EXISTS users_profile_embedding_updated_at_idx ON app.users (profile_embedding_updated_at ASC);
 
 -- Post
 CREATE TABLE IF NOT EXISTS app.posts (
@@ -37,6 +47,8 @@ CREATE TABLE IF NOT EXISTS app.posts (
     , created_at timestamptz
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
+CREATE INDEX IF NOT EXISTS posts_domain_idx ON app.posts (domain ASC);
+CREATE INDEX IF NOT EXISTS posts_user_id_idx ON app.posts (user_id ASC);
 
 -- Comment
 CREATE TABLE IF NOT EXISTS app.comments (
@@ -48,6 +60,8 @@ CREATE TABLE IF NOT EXISTS app.comments (
     , created_at timestamptz
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
+CREATE INDEX IF NOT EXISTS comments_post_id_idx ON app.comments (post_id ASC);
+CREATE INDEX IF NOT EXISTS comments_user_id_idx ON app.comments (user_id ASC);
 
 -- Profile
 CREATE TABLE IF NOT EXISTS app.profiles (
@@ -105,6 +119,12 @@ CREATE TABLE IF NOT EXISTS app.profiles (
     , interest_graph text[] DEFAULT '{}'
     , achievements text
     , education text
+    , education_entries jsonb DEFAULT '{}'::jsonb
+    , experience_entries jsonb DEFAULT '{}'::jsonb
+    , project_entries jsonb DEFAULT '{}'::jsonb
+    , certification_entries jsonb DEFAULT '{}'::jsonb
+    , honor_entries jsonb DEFAULT '{}'::jsonb
+    , volunteer_entries jsonb DEFAULT '{}'::jsonb
     , certificates text
     , projects text
     , responsibilities text
@@ -127,6 +147,11 @@ CREATE TABLE IF NOT EXISTS app.profiles (
     , incoscore double precision
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
+CREATE INDEX IF NOT EXISTS profiles_user_id_idx ON app.profiles (user_id ASC);
+CREATE INDEX IF NOT EXISTS profiles_preferred_work_mode_idx ON app.profiles (preferred_work_mode ASC);
+CREATE INDEX IF NOT EXISTS profiles_graduation_year_idx ON app.profiles (graduation_year ASC);
+CREATE INDEX IF NOT EXISTS profiles_persona_cluster_id_idx ON app.profiles (persona_cluster_id ASC);
+CREATE INDEX IF NOT EXISTS profiles_preference_embedding_model_version_idx ON app.profiles (preference_embedding_model_version ASC);
 CREATE INDEX IF NOT EXISTS profiles_account_type_persona_cluster_id_idx ON app.profiles (account_type ASC, persona_cluster_id ASC);
 CREATE INDEX IF NOT EXISTS profiles_cold_start_strategy_cold_start_quality_score_idx ON app.profiles (cold_start_strategy ASC, cold_start_quality_score DESC);
 
@@ -162,6 +187,23 @@ CREATE TABLE IF NOT EXISTS app.opportunity_interactions (
     , created_at timestamptz
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
+CREATE INDEX IF NOT EXISTS opportunity_interactions_user_id_idx ON app.opportunity_interactions (user_id ASC);
+CREATE INDEX IF NOT EXISTS opportunity_interactions_opportunity_id_idx ON app.opportunity_interactions (opportunity_id ASC);
+CREATE INDEX IF NOT EXISTS opportunity_interactions_interaction_type_idx ON app.opportunity_interactions (interaction_type ASC);
+CREATE INDEX IF NOT EXISTS opportunity_interactions_event_type_idx ON app.opportunity_interactions (event_type ASC);
+CREATE INDEX IF NOT EXISTS opportunity_interactions_session_id_idx ON app.opportunity_interactions (session_id ASC);
+CREATE INDEX IF NOT EXISTS opportunity_interactions_exposure_id_idx ON app.opportunity_interactions (exposure_id ASC);
+CREATE INDEX IF NOT EXISTS opportunity_interactions_feature_snapshot_id_idx ON app.opportunity_interactions (feature_snapshot_id ASC);
+CREATE INDEX IF NOT EXISTS opportunity_interactions_opportunity_version_id_idx ON app.opportunity_interactions (opportunity_version_id ASC);
+CREATE INDEX IF NOT EXISTS opportunity_interactions_feedback_reason_idx ON app.opportunity_interactions (feedback_reason ASC);
+CREATE INDEX IF NOT EXISTS opportunity_interactions_cold_start_idx ON app.opportunity_interactions (cold_start ASC);
+CREATE INDEX IF NOT EXISTS opportunity_interactions_reward_idx ON app.opportunity_interactions (reward ASC);
+CREATE INDEX IF NOT EXISTS opportunity_interactions_ranking_mode_idx ON app.opportunity_interactions (ranking_mode ASC);
+CREATE INDEX IF NOT EXISTS opportunity_interactions_experiment_key_idx ON app.opportunity_interactions (experiment_key ASC);
+CREATE INDEX IF NOT EXISTS opportunity_interactions_experiment_variant_idx ON app.opportunity_interactions (experiment_variant ASC);
+CREATE INDEX IF NOT EXISTS opportunity_interactions_model_version_id_idx ON app.opportunity_interactions (model_version_id ASC);
+CREATE INDEX IF NOT EXISTS opportunity_interactions_traffic_type_idx ON app.opportunity_interactions (traffic_type ASC);
+CREATE INDEX IF NOT EXISTS opportunity_interactions_created_at_idx ON app.opportunity_interactions (created_at ASC);
 CREATE INDEX IF NOT EXISTS opportunity_interactions_traffic_type_created_at_idx ON app.opportunity_interactions (traffic_type ASC, created_at DESC);
 CREATE INDEX IF NOT EXISTS opportunity_interactions_user_id_created_at_idx ON app.opportunity_interactions (user_id ASC, created_at DESC);
 CREATE INDEX IF NOT EXISTS opportunity_interactions_opportunity_id_created_at_idx ON app.opportunity_interactions (opportunity_id ASC, created_at DESC);
@@ -196,6 +238,10 @@ CREATE TABLE IF NOT EXISTS app.recommendation_sessions (
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
 CREATE INDEX IF NOT EXISTS recommendation_sessions_session_id_idx ON app.recommendation_sessions (session_id ASC);
+CREATE INDEX IF NOT EXISTS recommendation_sessions_user_id_idx ON app.recommendation_sessions (user_id ASC);
+CREATE INDEX IF NOT EXISTS recommendation_sessions_started_at_idx ON app.recommendation_sessions (started_at ASC);
+CREATE INDEX IF NOT EXISTS recommendation_sessions_last_activity_at_idx ON app.recommendation_sessions (last_activity_at ASC);
+CREATE INDEX IF NOT EXISTS recommendation_sessions_traffic_type_idx ON app.recommendation_sessions (traffic_type ASC);
 CREATE INDEX IF NOT EXISTS recommendation_sessions_user_id_last_activity_at_idx ON app.recommendation_sessions (user_id ASC, last_activity_at DESC);
 
 -- RecommendationExposure
@@ -223,6 +269,12 @@ CREATE TABLE IF NOT EXISTS app.recommendation_exposures (
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
 CREATE INDEX IF NOT EXISTS recommendation_exposures_exposure_id_idx ON app.recommendation_exposures (exposure_id ASC);
+CREATE INDEX IF NOT EXISTS recommendation_exposures_session_id_idx ON app.recommendation_exposures (session_id ASC);
+CREATE INDEX IF NOT EXISTS recommendation_exposures_user_id_idx ON app.recommendation_exposures (user_id ASC);
+CREATE INDEX IF NOT EXISTS recommendation_exposures_opportunity_id_idx ON app.recommendation_exposures (opportunity_id ASC);
+CREATE INDEX IF NOT EXISTS recommendation_exposures_feature_snapshot_id_idx ON app.recommendation_exposures (feature_snapshot_id ASC);
+CREATE INDEX IF NOT EXISTS recommendation_exposures_traffic_type_idx ON app.recommendation_exposures (traffic_type ASC);
+CREATE INDEX IF NOT EXISTS recommendation_exposures_served_at_idx ON app.recommendation_exposures (served_at ASC);
 CREATE INDEX IF NOT EXISTS recommendation_exposures_user_id_opportunity_id_served_at_id ON app.recommendation_exposures (user_id ASC, opportunity_id ASC, served_at DESC);
 CREATE INDEX IF NOT EXISTS recommendation_exposures_session_id_rank_position_idx ON app.recommendation_exposures (session_id ASC, rank_position ASC);
 
@@ -245,6 +297,10 @@ CREATE TABLE IF NOT EXISTS app.recommendation_feature_snapshots (
 );
 CREATE INDEX IF NOT EXISTS recommendation_feature_snapshots_snapshot_id_idx ON app.recommendation_feature_snapshots (snapshot_id ASC);
 CREATE INDEX IF NOT EXISTS recommendation_feature_snapshots_snapshot_hash_idx ON app.recommendation_feature_snapshots (snapshot_hash ASC);
+CREATE INDEX IF NOT EXISTS recommendation_feature_snapshots_user_id_idx ON app.recommendation_feature_snapshots (user_id ASC);
+CREATE INDEX IF NOT EXISTS recommendation_feature_snapshots_opportunity_id_idx ON app.recommendation_feature_snapshots (opportunity_id ASC);
+CREATE INDEX IF NOT EXISTS recommendation_feature_snapshots_opportunity_version_id_idx ON app.recommendation_feature_snapshots (opportunity_version_id ASC);
+CREATE INDEX IF NOT EXISTS recommendation_feature_snapshots_captured_at_idx ON app.recommendation_feature_snapshots (captured_at ASC);
 
 -- OpportunityVersion
 CREATE TABLE IF NOT EXISTS app.opportunity_versions (
@@ -274,6 +330,11 @@ CREATE TABLE IF NOT EXISTS app.recommendation_feedback (
     , created_at timestamptz
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
+CREATE INDEX IF NOT EXISTS recommendation_feedback_user_id_idx ON app.recommendation_feedback (user_id ASC);
+CREATE INDEX IF NOT EXISTS recommendation_feedback_opportunity_id_idx ON app.recommendation_feedback (opportunity_id ASC);
+CREATE INDEX IF NOT EXISTS recommendation_feedback_exposure_id_idx ON app.recommendation_feedback (exposure_id ASC);
+CREATE INDEX IF NOT EXISTS recommendation_feedback_reason_idx ON app.recommendation_feedback (reason ASC);
+CREATE INDEX IF NOT EXISTS recommendation_feedback_created_at_idx ON app.recommendation_feedback (created_at ASC);
 
 -- CareerOutcomeEvent
 CREATE TABLE IF NOT EXISTS app.career_outcome_events (
@@ -290,6 +351,12 @@ CREATE TABLE IF NOT EXISTS app.career_outcome_events (
     , created_at timestamptz
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
+CREATE INDEX IF NOT EXISTS career_outcome_events_user_id_idx ON app.career_outcome_events (user_id ASC);
+CREATE INDEX IF NOT EXISTS career_outcome_events_opportunity_id_idx ON app.career_outcome_events (opportunity_id ASC);
+CREATE INDEX IF NOT EXISTS career_outcome_events_application_id_idx ON app.career_outcome_events (application_id ASC);
+CREATE INDEX IF NOT EXISTS career_outcome_events_exposure_id_idx ON app.career_outcome_events (exposure_id ASC);
+CREATE INDEX IF NOT EXISTS career_outcome_events_stage_idx ON app.career_outcome_events (stage ASC);
+CREATE INDEX IF NOT EXISTS career_outcome_events_occurred_at_idx ON app.career_outcome_events (occurred_at ASC);
 CREATE INDEX IF NOT EXISTS career_outcome_events_user_id_occurred_at_idx ON app.career_outcome_events (user_id ASC, occurred_at DESC);
 
 -- UserJourney
@@ -310,6 +377,11 @@ CREATE TABLE IF NOT EXISTS app.user_journeys (
     , updated_at timestamptz
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
+CREATE INDEX IF NOT EXISTS user_journeys_user_id_idx ON app.user_journeys (user_id ASC);
+CREATE INDEX IF NOT EXISTS user_journeys_session_id_idx ON app.user_journeys (session_id ASC);
+CREATE INDEX IF NOT EXISTS user_journeys_started_at_idx ON app.user_journeys (started_at ASC);
+CREATE INDEX IF NOT EXISTS user_journeys_ended_at_idx ON app.user_journeys (ended_at ASC);
+CREATE INDEX IF NOT EXISTS user_journeys_cold_start_idx ON app.user_journeys (cold_start ASC);
 CREATE INDEX IF NOT EXISTS user_journeys_user_id_ended_at_idx ON app.user_journeys (user_id ASC, ended_at DESC);
 CREATE INDEX IF NOT EXISTS user_journeys_user_id_session_id_idx ON app.user_journeys (user_id ASC, session_id ASC);
 
@@ -327,6 +399,12 @@ CREATE TABLE IF NOT EXISTS app.application_outcomes (
     , created_at timestamptz
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
+CREATE INDEX IF NOT EXISTS application_outcomes_user_id_idx ON app.application_outcomes (user_id ASC);
+CREATE INDEX IF NOT EXISTS application_outcomes_opportunity_id_idx ON app.application_outcomes (opportunity_id ASC);
+CREATE INDEX IF NOT EXISTS application_outcomes_application_id_idx ON app.application_outcomes (application_id ASC);
+CREATE INDEX IF NOT EXISTS application_outcomes_interaction_id_idx ON app.application_outcomes (interaction_id ASC);
+CREATE INDEX IF NOT EXISTS application_outcomes_prompt_type_idx ON app.application_outcomes (prompt_type ASC);
+CREATE INDEX IF NOT EXISTS application_outcomes_created_at_idx ON app.application_outcomes (created_at ASC);
 CREATE INDEX IF NOT EXISTS application_outcomes_user_id_opportunity_id_prompt_type_idx ON app.application_outcomes (user_id ASC, opportunity_id ASC, prompt_type ASC);
 
 -- Application
@@ -347,6 +425,11 @@ CREATE TABLE IF NOT EXISTS app.applications (
     , created_at timestamptz
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
+CREATE INDEX IF NOT EXISTS applications_user_id_idx ON app.applications (user_id ASC);
+CREATE INDEX IF NOT EXISTS applications_opportunity_id_idx ON app.applications (opportunity_id ASC);
+CREATE INDEX IF NOT EXISTS applications_pipeline_state_idx ON app.applications (pipeline_state ASC);
+CREATE INDEX IF NOT EXISTS applications_pipeline_updated_at_idx ON app.applications (pipeline_updated_at ASC);
+CREATE INDEX IF NOT EXISTS applications_pipeline_updated_by_idx ON app.applications (pipeline_updated_by ASC);
 
 -- OTPCode
 CREATE TABLE IF NOT EXISTS app.otp_codes (
@@ -361,6 +444,7 @@ CREATE TABLE IF NOT EXISTS app.otp_codes (
 );
 CREATE INDEX IF NOT EXISTS otp_codes_email_purpose_idx ON app.otp_codes (email ASC, purpose ASC);
 CREATE INDEX IF NOT EXISTS otp_codes_expires_at_idx ON app.otp_codes (expires_at ASC);
+CREATE INDEX IF NOT EXISTS otp_codes_email_idx ON app.otp_codes (email ASC);
 
 -- KnowledgeChunk
 CREATE TABLE IF NOT EXISTS app.knowledge_chunks (
@@ -379,6 +463,10 @@ CREATE TABLE IF NOT EXISTS app.knowledge_chunks (
     , updated_at timestamptz
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
+CREATE INDEX IF NOT EXISTS knowledge_chunks_source_type_idx ON app.knowledge_chunks (source_type ASC);
+CREATE INDEX IF NOT EXISTS knowledge_chunks_source_id_idx ON app.knowledge_chunks (source_id ASC);
+CREATE INDEX IF NOT EXISTS knowledge_chunks_domain_idx ON app.knowledge_chunks (domain ASC);
+CREATE INDEX IF NOT EXISTS knowledge_chunks_updated_at_idx ON app.knowledge_chunks (updated_at ASC);
 CREATE INDEX IF NOT EXISTS knowledge_chunks_source_type_source_id_chunk_index_idx ON app.knowledge_chunks (source_type ASC, source_id ASC, chunk_index ASC);
 
 -- EvaluationRun
@@ -394,6 +482,8 @@ CREATE TABLE IF NOT EXISTS app.evaluation_runs (
     , created_at timestamptz
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
+CREATE INDEX IF NOT EXISTS evaluation_runs_created_at_idx ON app.evaluation_runs (created_at ASC);
+CREATE INDEX IF NOT EXISTS evaluation_runs_evaluator_idx ON app.evaluation_runs (evaluator ASC);
 
 -- ImpactEvent
 CREATE TABLE IF NOT EXISTS app.impact_events (
@@ -406,6 +496,10 @@ CREATE TABLE IF NOT EXISTS app.impact_events (
     , created_at timestamptz
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
+CREATE INDEX IF NOT EXISTS impact_events_user_id_idx ON app.impact_events (user_id ASC);
+CREATE INDEX IF NOT EXISTS impact_events_event_type_idx ON app.impact_events (event_type ASC);
+CREATE INDEX IF NOT EXISTS impact_events_created_at_idx ON app.impact_events (created_at ASC);
+CREATE INDEX IF NOT EXISTS impact_events_opportunity_id_idx ON app.impact_events (opportunity_id ASC);
 
 -- Experiment
 CREATE TABLE IF NOT EXISTS app.experiments (
@@ -430,6 +524,12 @@ CREATE TABLE IF NOT EXISTS app.experiments (
     , updated_at timestamptz
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
+CREATE INDEX IF NOT EXISTS experiments_key_idx ON app.experiments (key ASC);
+CREATE INDEX IF NOT EXISTS experiments_status_idx ON app.experiments (status ASC);
+CREATE INDEX IF NOT EXISTS experiments_start_date_idx ON app.experiments (start_date ASC);
+CREATE INDEX IF NOT EXISTS experiments_end_date_idx ON app.experiments (end_date ASC);
+CREATE INDEX IF NOT EXISTS experiments_graduated_at_idx ON app.experiments (graduated_at ASC);
+CREATE INDEX IF NOT EXISTS experiments_updated_at_idx ON app.experiments (updated_at ASC);
 
 -- ExperimentAssignment
 CREATE TABLE IF NOT EXISTS app.experiment_assignments (
@@ -446,6 +546,9 @@ CREATE TABLE IF NOT EXISTS app.experiment_assignments (
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
 CREATE INDEX IF NOT EXISTS experiment_assignments_user_id_experiment_key_idx ON app.experiment_assignments (user_id ASC, experiment_key ASC);
+CREATE INDEX IF NOT EXISTS experiment_assignments_experiment_key_idx ON app.experiment_assignments (experiment_key ASC);
+CREATE INDEX IF NOT EXISTS experiment_assignments_variant_idx ON app.experiment_assignments (variant ASC);
+CREATE INDEX IF NOT EXISTS experiment_assignments_assigned_at_idx ON app.experiment_assignments (assigned_at ASC);
 
 -- RankingModelVersion
 CREATE TABLE IF NOT EXISTS app.ranking_model_versions (
@@ -474,6 +577,9 @@ CREATE TABLE IF NOT EXISTS app.ranking_model_versions (
     , created_at timestamptz
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
+CREATE INDEX IF NOT EXISTS ranking_model_versions_created_at_idx ON app.ranking_model_versions (created_at ASC);
+CREATE INDEX IF NOT EXISTS ranking_model_versions_is_active_idx ON app.ranking_model_versions (is_active ASC);
+CREATE INDEX IF NOT EXISTS ranking_model_versions_name_idx ON app.ranking_model_versions (name ASC);
 
 -- NLPModelVersion
 CREATE TABLE IF NOT EXISTS app.nlp_model_versions (
@@ -497,6 +603,9 @@ CREATE TABLE IF NOT EXISTS app.nlp_model_versions (
     , updated_at timestamptz
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
+CREATE INDEX IF NOT EXISTS nlp_model_versions_is_active_idx ON app.nlp_model_versions (is_active ASC);
+CREATE INDEX IF NOT EXISTS nlp_model_versions_created_at_idx ON app.nlp_model_versions (created_at ASC);
+CREATE INDEX IF NOT EXISTS nlp_model_versions_updated_at_idx ON app.nlp_model_versions (updated_at ASC);
 
 -- ModelDriftReport
 CREATE TABLE IF NOT EXISTS app.model_drift_reports (
@@ -511,6 +620,10 @@ CREATE TABLE IF NOT EXISTS app.model_drift_reports (
     , created_at timestamptz
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
+CREATE INDEX IF NOT EXISTS model_drift_reports_created_at_idx ON app.model_drift_reports (created_at ASC);
+CREATE INDEX IF NOT EXISTS model_drift_reports_model_version_id_idx ON app.model_drift_reports (model_version_id ASC);
+CREATE INDEX IF NOT EXISTS model_drift_reports_alert_idx ON app.model_drift_reports (alert ASC);
+CREATE INDEX IF NOT EXISTS model_drift_reports_alert_notified_at_idx ON app.model_drift_reports (alert_notified_at ASC);
 
 -- RankingRequestTelemetry
 CREATE TABLE IF NOT EXISTS app.ranking_request_telemetry (
@@ -541,6 +654,21 @@ CREATE TABLE IF NOT EXISTS app.ranking_request_telemetry (
     , created_at timestamptz
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
+CREATE INDEX IF NOT EXISTS ranking_request_telemetry_request_kind_idx ON app.ranking_request_telemetry (request_kind ASC);
+CREATE INDEX IF NOT EXISTS ranking_request_telemetry_requested_ranking_mode_idx ON app.ranking_request_telemetry (requested_ranking_mode ASC);
+CREATE INDEX IF NOT EXISTS ranking_request_telemetry_ranking_mode_idx ON app.ranking_request_telemetry (ranking_mode ASC);
+CREATE INDEX IF NOT EXISTS ranking_request_telemetry_experiment_key_idx ON app.ranking_request_telemetry (experiment_key ASC);
+CREATE INDEX IF NOT EXISTS ranking_request_telemetry_experiment_variant_idx ON app.ranking_request_telemetry (experiment_variant ASC);
+CREATE INDEX IF NOT EXISTS ranking_request_telemetry_rollout_variant_idx ON app.ranking_request_telemetry (rollout_variant ASC);
+CREATE INDEX IF NOT EXISTS ranking_request_telemetry_shadow_mode_idx ON app.ranking_request_telemetry (shadow_mode ASC);
+CREATE INDEX IF NOT EXISTS ranking_request_telemetry_shadow_model_version_id_idx ON app.ranking_request_telemetry (shadow_model_version_id ASC);
+CREATE INDEX IF NOT EXISTS ranking_request_telemetry_rag_template_label_idx ON app.ranking_request_telemetry (rag_template_label ASC);
+CREATE INDEX IF NOT EXISTS ranking_request_telemetry_rag_template_version_id_idx ON app.ranking_request_telemetry (rag_template_version_id ASC);
+CREATE INDEX IF NOT EXISTS ranking_request_telemetry_model_version_id_idx ON app.ranking_request_telemetry (model_version_id ASC);
+CREATE INDEX IF NOT EXISTS ranking_request_telemetry_surface_idx ON app.ranking_request_telemetry (surface ASC);
+CREATE INDEX IF NOT EXISTS ranking_request_telemetry_success_idx ON app.ranking_request_telemetry (success ASC);
+CREATE INDEX IF NOT EXISTS ranking_request_telemetry_traffic_type_idx ON app.ranking_request_telemetry (traffic_type ASC);
+CREATE INDEX IF NOT EXISTS ranking_request_telemetry_created_at_idx ON app.ranking_request_telemetry (created_at ASC);
 CREATE INDEX IF NOT EXISTS ranking_request_telemetry_traffic_type_created_at_idx ON app.ranking_request_telemetry (traffic_type ASC, created_at DESC);
 CREATE INDEX IF NOT EXISTS ranking_request_telemetry_request_kind_traffic_type_created_ ON app.ranking_request_telemetry (request_kind ASC, traffic_type ASC, created_at DESC);
 CREATE INDEX IF NOT EXISTS ranking_request_telemetry_experiment_key_experiment_variant_ ON app.ranking_request_telemetry (experiment_key ASC, experiment_variant ASC, traffic_type ASC, created_at DESC);
@@ -564,6 +692,13 @@ CREATE TABLE IF NOT EXISTS app.rag_feedback_events (
     , created_at timestamptz
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
+CREATE INDEX IF NOT EXISTS rag_feedback_events_user_id_idx ON app.rag_feedback_events (user_id ASC);
+CREATE INDEX IF NOT EXISTS rag_feedback_events_request_id_idx ON app.rag_feedback_events (request_id ASC);
+CREATE INDEX IF NOT EXISTS rag_feedback_events_feedback_idx ON app.rag_feedback_events (feedback ASC);
+CREATE INDEX IF NOT EXISTS rag_feedback_events_rag_template_label_idx ON app.rag_feedback_events (rag_template_label ASC);
+CREATE INDEX IF NOT EXISTS rag_feedback_events_rag_template_version_id_idx ON app.rag_feedback_events (rag_template_version_id ASC);
+CREATE INDEX IF NOT EXISTS rag_feedback_events_surface_idx ON app.rag_feedback_events (surface ASC);
+CREATE INDEX IF NOT EXISTS rag_feedback_events_created_at_idx ON app.rag_feedback_events (created_at ASC);
 
 -- AskAIQuerySnapshot
 CREATE TABLE IF NOT EXISTS app.ask_ai_query_snapshots (
@@ -585,6 +720,10 @@ CREATE TABLE IF NOT EXISTS app.ask_ai_query_snapshots (
 );
 CREATE INDEX IF NOT EXISTS ask_ai_query_snapshots_user_id_request_id_idx ON app.ask_ai_query_snapshots (user_id ASC, request_id ASC);
 CREATE INDEX IF NOT EXISTS ask_ai_query_snapshots_user_id_surface_created_at_idx ON app.ask_ai_query_snapshots (user_id ASC, surface ASC, created_at DESC);
+CREATE INDEX IF NOT EXISTS ask_ai_query_snapshots_user_id_idx ON app.ask_ai_query_snapshots (user_id ASC);
+CREATE INDEX IF NOT EXISTS ask_ai_query_snapshots_request_id_idx ON app.ask_ai_query_snapshots (request_id ASC);
+CREATE INDEX IF NOT EXISTS ask_ai_query_snapshots_surface_idx ON app.ask_ai_query_snapshots (surface ASC);
+CREATE INDEX IF NOT EXISTS ask_ai_query_snapshots_created_at_idx ON app.ask_ai_query_snapshots (created_at ASC);
 
 -- AskAISavedQuery
 CREATE TABLE IF NOT EXISTS app.ask_ai_saved_queries (
@@ -599,6 +738,9 @@ CREATE TABLE IF NOT EXISTS app.ask_ai_saved_queries (
 );
 CREATE INDEX IF NOT EXISTS ask_ai_saved_queries_user_id_surface_query_idx ON app.ask_ai_saved_queries (user_id ASC, surface ASC, query ASC);
 CREATE INDEX IF NOT EXISTS ask_ai_saved_queries_user_id_surface_last_used_at_idx ON app.ask_ai_saved_queries (user_id ASC, surface ASC, last_used_at DESC);
+CREATE INDEX IF NOT EXISTS ask_ai_saved_queries_user_id_idx ON app.ask_ai_saved_queries (user_id ASC);
+CREATE INDEX IF NOT EXISTS ask_ai_saved_queries_surface_idx ON app.ask_ai_saved_queries (surface ASC);
+CREATE INDEX IF NOT EXISTS ask_ai_saved_queries_last_used_at_idx ON app.ask_ai_saved_queries (last_used_at ASC);
 
 -- RAGTemplateVersion
 CREATE TABLE IF NOT EXISTS app.rag_template_versions (
@@ -622,6 +764,14 @@ CREATE TABLE IF NOT EXISTS app.rag_template_versions (
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
 CREATE INDEX IF NOT EXISTS rag_template_versions_template_key_version_idx ON app.rag_template_versions (template_key ASC, version ASC);
+CREATE INDEX IF NOT EXISTS rag_template_versions_template_key_idx ON app.rag_template_versions (template_key ASC);
+CREATE INDEX IF NOT EXISTS rag_template_versions_label_idx ON app.rag_template_versions (label ASC);
+CREATE INDEX IF NOT EXISTS rag_template_versions_version_idx ON app.rag_template_versions (version ASC);
+CREATE INDEX IF NOT EXISTS rag_template_versions_status_idx ON app.rag_template_versions (status ASC);
+CREATE INDEX IF NOT EXISTS rag_template_versions_is_active_idx ON app.rag_template_versions (is_active ASC);
+CREATE INDEX IF NOT EXISTS rag_template_versions_is_online_candidate_idx ON app.rag_template_versions (is_online_candidate ASC);
+CREATE INDEX IF NOT EXISTS rag_template_versions_created_at_idx ON app.rag_template_versions (created_at ASC);
+CREATE INDEX IF NOT EXISTS rag_template_versions_updated_at_idx ON app.rag_template_versions (updated_at ASC);
 
 -- RAGTemplateEvaluationRun
 CREATE TABLE IF NOT EXISTS app.rag_template_evaluation_runs (
@@ -638,6 +788,12 @@ CREATE TABLE IF NOT EXISTS app.rag_template_evaluation_runs (
     , created_at timestamptz
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
+CREATE INDEX IF NOT EXISTS rag_template_evaluation_runs_template_key_idx ON app.rag_template_evaluation_runs (template_key ASC);
+CREATE INDEX IF NOT EXISTS rag_template_evaluation_runs_template_label_idx ON app.rag_template_evaluation_runs (template_label ASC);
+CREATE INDEX IF NOT EXISTS rag_template_evaluation_runs_template_version_id_idx ON app.rag_template_evaluation_runs (template_version_id ASC);
+CREATE INDEX IF NOT EXISTS rag_template_evaluation_runs_mode_idx ON app.rag_template_evaluation_runs (mode ASC);
+CREATE INDEX IF NOT EXISTS rag_template_evaluation_runs_accepted_idx ON app.rag_template_evaluation_runs (accepted ASC);
+CREATE INDEX IF NOT EXISTS rag_template_evaluation_runs_created_at_idx ON app.rag_template_evaluation_runs (created_at ASC);
 
 -- VectorIndexEntry
 CREATE TABLE IF NOT EXISTS app.vector_index_entries (
@@ -651,6 +807,9 @@ CREATE TABLE IF NOT EXISTS app.vector_index_entries (
     , updated_at timestamptz
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
+CREATE INDEX IF NOT EXISTS vector_index_entries_opportunity_id_idx ON app.vector_index_entries (opportunity_id ASC);
+CREATE INDEX IF NOT EXISTS vector_index_entries_text_hash_idx ON app.vector_index_entries (text_hash ASC);
+CREATE INDEX IF NOT EXISTS vector_index_entries_updated_at_idx ON app.vector_index_entries (updated_at ASC);
 
 -- BackgroundJob
 CREATE TABLE IF NOT EXISTS app.background_jobs (
@@ -674,6 +833,12 @@ CREATE TABLE IF NOT EXISTS app.background_jobs (
     , updated_at timestamptz
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
+CREATE INDEX IF NOT EXISTS background_jobs_status_idx ON app.background_jobs (status ASC);
+CREATE INDEX IF NOT EXISTS background_jobs_run_after_idx ON app.background_jobs (run_after ASC);
+CREATE INDEX IF NOT EXISTS background_jobs_locked_at_idx ON app.background_jobs (locked_at ASC);
+CREATE INDEX IF NOT EXISTS background_jobs_job_type_idx ON app.background_jobs (job_type ASC);
+CREATE INDEX IF NOT EXISTS background_jobs_dedupe_key_idx ON app.background_jobs (dedupe_key ASC);
+CREATE INDEX IF NOT EXISTS background_jobs_created_at_idx ON app.background_jobs (created_at ASC);
 CREATE INDEX IF NOT EXISTS background_jobs_status_run_after_created_at_idx ON app.background_jobs (status ASC, run_after ASC, created_at ASC);
 CREATE INDEX IF NOT EXISTS background_jobs_dedupe_key_status_idx ON app.background_jobs (dedupe_key ASC, status ASC);
 CREATE INDEX IF NOT EXISTS background_jobs_locked_by_locked_at_idx ON app.background_jobs (locked_by ASC, locked_at ASC);
@@ -692,6 +857,13 @@ CREATE TABLE IF NOT EXISTS app.recruiter_audit_logs (
     , created_at timestamptz
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
+CREATE INDEX IF NOT EXISTS recruiter_audit_logs_recruiter_user_id_idx ON app.recruiter_audit_logs (recruiter_user_id ASC);
+CREATE INDEX IF NOT EXISTS recruiter_audit_logs_action_idx ON app.recruiter_audit_logs (action ASC);
+CREATE INDEX IF NOT EXISTS recruiter_audit_logs_entity_type_idx ON app.recruiter_audit_logs (entity_type ASC);
+CREATE INDEX IF NOT EXISTS recruiter_audit_logs_entity_id_idx ON app.recruiter_audit_logs (entity_id ASC);
+CREATE INDEX IF NOT EXISTS recruiter_audit_logs_opportunity_id_idx ON app.recruiter_audit_logs (opportunity_id ASC);
+CREATE INDEX IF NOT EXISTS recruiter_audit_logs_application_id_idx ON app.recruiter_audit_logs (application_id ASC);
+CREATE INDEX IF NOT EXISTS recruiter_audit_logs_created_at_idx ON app.recruiter_audit_logs (created_at ASC);
 
 -- AuthAuditEvent
 CREATE TABLE IF NOT EXISTS app.auth_audit_events (
@@ -711,6 +883,15 @@ CREATE TABLE IF NOT EXISTS app.auth_audit_events (
     , created_at timestamptz
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
+CREATE INDEX IF NOT EXISTS auth_audit_events_event_type_idx ON app.auth_audit_events (event_type ASC);
+CREATE INDEX IF NOT EXISTS auth_audit_events_email_idx ON app.auth_audit_events (email ASC);
+CREATE INDEX IF NOT EXISTS auth_audit_events_account_type_idx ON app.auth_audit_events (account_type ASC);
+CREATE INDEX IF NOT EXISTS auth_audit_events_purpose_idx ON app.auth_audit_events (purpose ASC);
+CREATE INDEX IF NOT EXISTS auth_audit_events_success_idx ON app.auth_audit_events (success ASC);
+CREATE INDEX IF NOT EXISTS auth_audit_events_ip_address_idx ON app.auth_audit_events (ip_address ASC);
+CREATE INDEX IF NOT EXISTS auth_audit_events_user_id_idx ON app.auth_audit_events (user_id ASC);
+CREATE INDEX IF NOT EXISTS auth_audit_events_lock_applied_idx ON app.auth_audit_events (lock_applied ASC);
+CREATE INDEX IF NOT EXISTS auth_audit_events_lock_until_idx ON app.auth_audit_events (lock_until ASC);
 CREATE INDEX IF NOT EXISTS auth_audit_events_created_at_idx ON app.auth_audit_events (created_at ASC);
 
 -- AuthAbuseState
@@ -729,6 +910,11 @@ CREATE TABLE IF NOT EXISTS app.auth_abuse_states (
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
 CREATE INDEX IF NOT EXISTS auth_abuse_states_key_idx ON app.auth_abuse_states (key ASC);
+CREATE INDEX IF NOT EXISTS auth_abuse_states_email_idx ON app.auth_abuse_states (email ASC);
+CREATE INDEX IF NOT EXISTS auth_abuse_states_action_idx ON app.auth_abuse_states (action ASC);
+CREATE INDEX IF NOT EXISTS auth_abuse_states_purpose_idx ON app.auth_abuse_states (purpose ASC);
+CREATE INDEX IF NOT EXISTS auth_abuse_states_lock_until_idx ON app.auth_abuse_states (lock_until ASC);
+CREATE INDEX IF NOT EXISTS auth_abuse_states_updated_at_idx ON app.auth_abuse_states (updated_at ASC);
 
 -- AnalyticsDailyAggregate
 CREATE TABLE IF NOT EXISTS app.analytics_daily_aggregates (
@@ -747,6 +933,14 @@ CREATE TABLE IF NOT EXISTS app.analytics_daily_aggregates (
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
 CREATE INDEX IF NOT EXISTS analytics_daily_aggregates_date_metric_type_traffic_type_ran ON app.analytics_daily_aggregates (date ASC, metric_type ASC, traffic_type ASC, ranking_mode ASC, experiment_key ASC, experiment_variant ASC, request_kind ASC);
+CREATE INDEX IF NOT EXISTS analytics_daily_aggregates_date_idx ON app.analytics_daily_aggregates (date ASC);
+CREATE INDEX IF NOT EXISTS analytics_daily_aggregates_metric_type_idx ON app.analytics_daily_aggregates (metric_type ASC);
+CREATE INDEX IF NOT EXISTS analytics_daily_aggregates_traffic_type_idx ON app.analytics_daily_aggregates (traffic_type ASC);
+CREATE INDEX IF NOT EXISTS analytics_daily_aggregates_ranking_mode_idx ON app.analytics_daily_aggregates (ranking_mode ASC);
+CREATE INDEX IF NOT EXISTS analytics_daily_aggregates_experiment_key_idx ON app.analytics_daily_aggregates (experiment_key ASC);
+CREATE INDEX IF NOT EXISTS analytics_daily_aggregates_experiment_variant_idx ON app.analytics_daily_aggregates (experiment_variant ASC);
+CREATE INDEX IF NOT EXISTS analytics_daily_aggregates_request_kind_idx ON app.analytics_daily_aggregates (request_kind ASC);
+CREATE INDEX IF NOT EXISTS analytics_daily_aggregates_updated_at_idx ON app.analytics_daily_aggregates (updated_at ASC);
 
 -- AnalyticsFunnelAggregate
 CREATE TABLE IF NOT EXISTS app.analytics_funnel_aggregates (
@@ -765,6 +959,12 @@ CREATE TABLE IF NOT EXISTS app.analytics_funnel_aggregates (
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
 CREATE INDEX IF NOT EXISTS analytics_funnel_aggregates_date_traffic_type_ranking_mode_e ON app.analytics_funnel_aggregates (date ASC, traffic_type ASC, ranking_mode ASC, experiment_key ASC, experiment_variant ASC);
+CREATE INDEX IF NOT EXISTS analytics_funnel_aggregates_date_idx ON app.analytics_funnel_aggregates (date ASC);
+CREATE INDEX IF NOT EXISTS analytics_funnel_aggregates_traffic_type_idx ON app.analytics_funnel_aggregates (traffic_type ASC);
+CREATE INDEX IF NOT EXISTS analytics_funnel_aggregates_ranking_mode_idx ON app.analytics_funnel_aggregates (ranking_mode ASC);
+CREATE INDEX IF NOT EXISTS analytics_funnel_aggregates_experiment_key_idx ON app.analytics_funnel_aggregates (experiment_key ASC);
+CREATE INDEX IF NOT EXISTS analytics_funnel_aggregates_experiment_variant_idx ON app.analytics_funnel_aggregates (experiment_variant ASC);
+CREATE INDEX IF NOT EXISTS analytics_funnel_aggregates_updated_at_idx ON app.analytics_funnel_aggregates (updated_at ASC);
 
 -- AnalyticsCohortAggregate
 CREATE TABLE IF NOT EXISTS app.analytics_cohort_aggregates (
@@ -783,6 +983,10 @@ CREATE TABLE IF NOT EXISTS app.analytics_cohort_aggregates (
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
 CREATE INDEX IF NOT EXISTS analytics_cohort_aggregates_cohort_date_days_since_cohort_tr ON app.analytics_cohort_aggregates (cohort_date ASC, days_since_cohort ASC, traffic_type ASC);
+CREATE INDEX IF NOT EXISTS analytics_cohort_aggregates_cohort_date_idx ON app.analytics_cohort_aggregates (cohort_date ASC);
+CREATE INDEX IF NOT EXISTS analytics_cohort_aggregates_days_since_cohort_idx ON app.analytics_cohort_aggregates (days_since_cohort ASC);
+CREATE INDEX IF NOT EXISTS analytics_cohort_aggregates_traffic_type_idx ON app.analytics_cohort_aggregates (traffic_type ASC);
+CREATE INDEX IF NOT EXISTS analytics_cohort_aggregates_updated_at_idx ON app.analytics_cohort_aggregates (updated_at ASC);
 
 -- FeatureStoreRow
 CREATE TABLE IF NOT EXISTS app.feature_store_rows (
@@ -806,6 +1010,15 @@ CREATE TABLE IF NOT EXISTS app.feature_store_rows (
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
 CREATE INDEX IF NOT EXISTS feature_store_rows_row_key_idx ON app.feature_store_rows (row_key ASC);
+CREATE INDEX IF NOT EXISTS feature_store_rows_date_idx ON app.feature_store_rows (date ASC);
+CREATE INDEX IF NOT EXISTS feature_store_rows_user_id_idx ON app.feature_store_rows (user_id ASC);
+CREATE INDEX IF NOT EXISTS feature_store_rows_opportunity_id_idx ON app.feature_store_rows (opportunity_id ASC);
+CREATE INDEX IF NOT EXISTS feature_store_rows_ranking_mode_idx ON app.feature_store_rows (ranking_mode ASC);
+CREATE INDEX IF NOT EXISTS feature_store_rows_experiment_key_idx ON app.feature_store_rows (experiment_key ASC);
+CREATE INDEX IF NOT EXISTS feature_store_rows_experiment_variant_idx ON app.feature_store_rows (experiment_variant ASC);
+CREATE INDEX IF NOT EXISTS feature_store_rows_traffic_type_idx ON app.feature_store_rows (traffic_type ASC);
+CREATE INDEX IF NOT EXISTS feature_store_rows_source_event_id_idx ON app.feature_store_rows (source_event_id ASC);
+CREATE INDEX IF NOT EXISTS feature_store_rows_updated_at_idx ON app.feature_store_rows (updated_at ASC);
 CREATE INDEX IF NOT EXISTS feature_store_rows_traffic_type_updated_at_idx ON app.feature_store_rows (traffic_type ASC, updated_at DESC);
 CREATE INDEX IF NOT EXISTS feature_store_rows_user_id_opportunity_id_updated_at_idx ON app.feature_store_rows (user_id ASC, opportunity_id ASC, updated_at DESC);
 CREATE INDEX IF NOT EXISTS feature_store_rows_experiment_key_experiment_variant_traffic ON app.feature_store_rows (experiment_key ASC, experiment_variant ASC, traffic_type ASC, updated_at DESC);
@@ -838,6 +1051,16 @@ CREATE TABLE IF NOT EXISTS app.mlops_incidents (
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
 CREATE INDEX IF NOT EXISTS mlops_incidents_incident_key_idx ON app.mlops_incidents (incident_key ASC);
+CREATE INDEX IF NOT EXISTS mlops_incidents_source_type_idx ON app.mlops_incidents (source_type ASC);
+CREATE INDEX IF NOT EXISTS mlops_incidents_source_id_idx ON app.mlops_incidents (source_id ASC);
+CREATE INDEX IF NOT EXISTS mlops_incidents_report_id_idx ON app.mlops_incidents (report_id ASC);
+CREATE INDEX IF NOT EXISTS mlops_incidents_model_version_id_idx ON app.mlops_incidents (model_version_id ASC);
+CREATE INDEX IF NOT EXISTS mlops_incidents_severity_idx ON app.mlops_incidents (severity ASC);
+CREATE INDEX IF NOT EXISTS mlops_incidents_status_idx ON app.mlops_incidents (status ASC);
+CREATE INDEX IF NOT EXISTS mlops_incidents_owner_idx ON app.mlops_incidents (owner ASC);
+CREATE INDEX IF NOT EXISTS mlops_incidents_breached_sla_idx ON app.mlops_incidents (breached_sla ASC);
+CREATE INDEX IF NOT EXISTS mlops_incidents_created_at_idx ON app.mlops_incidents (created_at ASC);
+CREATE INDEX IF NOT EXISTS mlops_incidents_updated_at_idx ON app.mlops_incidents (updated_at ASC);
 
 -- AssistantConversationTurn
 CREATE TABLE IF NOT EXISTS app.assistant_conversation_turns (
@@ -853,6 +1076,9 @@ CREATE TABLE IF NOT EXISTS app.assistant_conversation_turns (
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
 CREATE INDEX IF NOT EXISTS assistant_conversation_turns_user_id_surface_created_at_idx ON app.assistant_conversation_turns (user_id ASC, surface ASC, created_at DESC);
+CREATE INDEX IF NOT EXISTS assistant_conversation_turns_surface_idx ON app.assistant_conversation_turns (surface ASC);
+CREATE INDEX IF NOT EXISTS assistant_conversation_turns_request_id_idx ON app.assistant_conversation_turns (request_id ASC);
+CREATE INDEX IF NOT EXISTS assistant_conversation_turns_created_at_idx ON app.assistant_conversation_turns (created_at ASC);
 
 -- AssistantMemoryState
 CREATE TABLE IF NOT EXISTS app.assistant_memory_states (
@@ -865,6 +1091,9 @@ CREATE TABLE IF NOT EXISTS app.assistant_memory_states (
     , updated_at timestamptz
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
+CREATE INDEX IF NOT EXISTS assistant_memory_states_user_id_idx ON app.assistant_memory_states (user_id ASC);
+CREATE INDEX IF NOT EXISTS assistant_memory_states_surface_idx ON app.assistant_memory_states (surface ASC);
+CREATE INDEX IF NOT EXISTS assistant_memory_states_updated_at_idx ON app.assistant_memory_states (updated_at ASC);
 
 -- AssistantAuditEvent
 CREATE TABLE IF NOT EXISTS app.assistant_audit_events (
@@ -884,6 +1113,14 @@ CREATE TABLE IF NOT EXISTS app.assistant_audit_events (
     , created_at timestamptz
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
+CREATE INDEX IF NOT EXISTS assistant_audit_events_user_id_idx ON app.assistant_audit_events (user_id ASC);
+CREATE INDEX IF NOT EXISTS assistant_audit_events_surface_idx ON app.assistant_audit_events (surface ASC);
+CREATE INDEX IF NOT EXISTS assistant_audit_events_request_id_idx ON app.assistant_audit_events (request_id ASC);
+CREATE INDEX IF NOT EXISTS assistant_audit_events_route_idx ON app.assistant_audit_events (route ASC);
+CREATE INDEX IF NOT EXISTS assistant_audit_events_tool_name_idx ON app.assistant_audit_events (tool_name ASC);
+CREATE INDEX IF NOT EXISTS assistant_audit_events_prompt_version_idx ON app.assistant_audit_events (prompt_version ASC);
+CREATE INDEX IF NOT EXISTS assistant_audit_events_success_idx ON app.assistant_audit_events (success ASC);
+CREATE INDEX IF NOT EXISTS assistant_audit_events_created_at_idx ON app.assistant_audit_events (created_at ASC);
 
 -- ModelArtifactVersion
 CREATE TABLE IF NOT EXISTS app.model_artifact_versions (
@@ -908,6 +1145,13 @@ CREATE TABLE IF NOT EXISTS app.model_artifact_versions (
     , updated_at timestamptz
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
+CREATE INDEX IF NOT EXISTS model_artifact_versions_model_family_idx ON app.model_artifact_versions (model_family ASC);
+CREATE INDEX IF NOT EXISTS model_artifact_versions_model_version_id_idx ON app.model_artifact_versions (model_version_id ASC);
+CREATE INDEX IF NOT EXISTS model_artifact_versions_artifact_uri_idx ON app.model_artifact_versions (artifact_uri ASC);
+CREATE INDEX IF NOT EXISTS model_artifact_versions_storage_provider_idx ON app.model_artifact_versions (storage_provider ASC);
+CREATE INDEX IF NOT EXISTS model_artifact_versions_checksum_sha256_idx ON app.model_artifact_versions (checksum_sha256 ASC);
+CREATE INDEX IF NOT EXISTS model_artifact_versions_status_idx ON app.model_artifact_versions (status ASC);
+CREATE INDEX IF NOT EXISTS model_artifact_versions_created_at_idx ON app.model_artifact_versions (created_at ASC);
 
 -- WarehouseExportRun
 CREATE TABLE IF NOT EXISTS app.warehouse_export_runs (
@@ -925,6 +1169,10 @@ CREATE TABLE IF NOT EXISTS app.warehouse_export_runs (
     , created_at timestamptz
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
+CREATE INDEX IF NOT EXISTS warehouse_export_runs_traffic_type_idx ON app.warehouse_export_runs (traffic_type ASC);
+CREATE INDEX IF NOT EXISTS warehouse_export_runs_export_format_idx ON app.warehouse_export_runs (export_format ASC);
+CREATE INDEX IF NOT EXISTS warehouse_export_runs_status_idx ON app.warehouse_export_runs (status ASC);
+CREATE INDEX IF NOT EXISTS warehouse_export_runs_created_at_idx ON app.warehouse_export_runs (created_at ASC);
 
 -- SecurityEvent
 CREATE TABLE IF NOT EXISTS app.security_events (
@@ -936,6 +1184,9 @@ CREATE TABLE IF NOT EXISTS app.security_events (
     , created_at timestamptz
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
+CREATE INDEX IF NOT EXISTS security_events_event_type_idx ON app.security_events (event_type ASC);
+CREATE INDEX IF NOT EXISTS security_events_source_idx ON app.security_events (source ASC);
+CREATE INDEX IF NOT EXISTS security_events_created_at_idx ON app.security_events (created_at ASC);
 
 -- DuplicateMergeEvent
 CREATE TABLE IF NOT EXISTS app.duplicate_merge_events (
@@ -954,6 +1205,12 @@ CREATE TABLE IF NOT EXISTS app.duplicate_merge_events (
     , created_at timestamptz
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
+CREATE INDEX IF NOT EXISTS duplicate_merge_events_canonical_opportunity_id_idx ON app.duplicate_merge_events (canonical_opportunity_id ASC);
+CREATE INDEX IF NOT EXISTS duplicate_merge_events_duplicate_opportunity_id_idx ON app.duplicate_merge_events (duplicate_opportunity_id ASC);
+CREATE INDEX IF NOT EXISTS duplicate_merge_events_canonical_source_idx ON app.duplicate_merge_events (canonical_source ASC);
+CREATE INDEX IF NOT EXISTS duplicate_merge_events_duplicate_source_idx ON app.duplicate_merge_events (duplicate_source ASC);
+CREATE INDEX IF NOT EXISTS duplicate_merge_events_stage_idx ON app.duplicate_merge_events (stage ASC);
+CREATE INDEX IF NOT EXISTS duplicate_merge_events_created_at_idx ON app.duplicate_merge_events (created_at ASC);
 CREATE INDEX IF NOT EXISTS duplicate_merge_events_canonical_source_duplicate_source_cre ON app.duplicate_merge_events (canonical_source ASC, duplicate_source ASC, created_at DESC);
 CREATE INDEX IF NOT EXISTS duplicate_merge_events_canonical_opportunity_id_created_at_i ON app.duplicate_merge_events (canonical_opportunity_id ASC, created_at DESC);
 
@@ -981,6 +1238,12 @@ CREATE TABLE IF NOT EXISTS app.scraper_run_logs (
     , created_at timestamptz
     , extras jsonb NOT NULL DEFAULT '{}'::jsonb
 );
+CREATE INDEX IF NOT EXISTS scraper_run_logs_source_name_idx ON app.scraper_run_logs (source_name ASC);
+CREATE INDEX IF NOT EXISTS scraper_run_logs_status_idx ON app.scraper_run_logs (status ASC);
+CREATE INDEX IF NOT EXISTS scraper_run_logs_silent_failure_idx ON app.scraper_run_logs (silent_failure ASC);
+CREATE INDEX IF NOT EXISTS scraper_run_logs_run_start_idx ON app.scraper_run_logs (run_start ASC);
+CREATE INDEX IF NOT EXISTS scraper_run_logs_run_end_idx ON app.scraper_run_logs (run_end ASC);
+CREATE INDEX IF NOT EXISTS scraper_run_logs_created_at_idx ON app.scraper_run_logs (created_at ASC);
 CREATE INDEX IF NOT EXISTS scraper_run_logs_source_name_run_end_idx ON app.scraper_run_logs (source_name ASC, run_end DESC);
 CREATE INDEX IF NOT EXISTS scraper_run_logs_source_name_status_run_end_idx ON app.scraper_run_logs (source_name ASC, status ASC, run_end DESC);
 
@@ -992,6 +1255,8 @@ CREATE TABLE IF NOT EXISTS app.discovered_sources (
     , domain text
     , name text
     , source_type text
+    , audience text
+    , rubric_version bigint
     , priority_score double precision
     , priority_reasons text[] DEFAULT '{}'
     , priority_features jsonb DEFAULT '{}'::jsonb
@@ -1051,6 +1316,7 @@ CREATE TABLE IF NOT EXISTS app.company_seeds (
     , company_name text
     , domain text
     , careers_url text
+    , audience text
     , industry text
     , company_size text
     , india_presence boolean
@@ -1136,6 +1402,7 @@ CREATE TABLE IF NOT EXISTS app.scraper_registrations (
     , scraper_key text
     , source_name text
     , domain text
+    , audience text
     , careers_url text
     , source_type text
     , extraction_method text
