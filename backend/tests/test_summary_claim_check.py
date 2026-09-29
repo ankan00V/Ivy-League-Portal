@@ -118,16 +118,52 @@ class CaveatTests(unittest.TestCase):
     def setUp(self):
         self.service = RAGService()
 
-    def _checked(self, query, summary, rows=BANGALORE_ROWS):
+    def _checked(self, query, summary, rows=BANGALORE_ROWS, top=None):
         insights = RAGInsights.model_validate(
             {
                 "summary": summary,
-                "top_opportunities": [],
+                "top_opportunities": top or [],
                 "deadline_urgency": "soon",
                 "recommended_action": "apply",
             }
         )
         return self.service._check_summary_against_results(insights, query, rows)
+
+    def test_the_claim_is_checked_against_the_rows_it_puts_forward(self):
+        """"Found 2 data science internships" is a claim about those two. A row
+        further down the shortlist, which the student is never shown, cannot
+        vouch for it - that is the original complaint in miniature."""
+        rows = [
+            {"id": "shown", "url": "https://e.com/1", "title": "Internship - Product Development",
+             "description": "product team, Bangalore"},
+            {"id": "unshown", "url": "https://e.com/2", "title": "Research Intern",
+             "description": "data science lab, Bangalore"},
+        ]
+        top = [
+            {
+                "opportunity_id": "shown",
+                "title": "Internship - Product Development",
+                "why_fit": "location",
+                "urgency": "medium",
+                "match_score": 50.0,
+            }
+        ]
+        checked = self._checked(
+            "data science internships in Bangalore",
+            "Found a data science internship in Bangalore.",
+            rows,
+            top,
+        )
+        self.assertIn("summary_claim_unsupported:data science", checked.safety.failed_checks)
+
+    def test_an_uncited_summary_falls_back_to_the_whole_shortlist(self):
+        """Abstentions and heuristic answers carry no top_opportunities; the
+        check still has the retrieved rows to work from."""
+        checked = self._checked(
+            "data science internships in Bangalore",
+            "Found 2 data science internships in Bangalore.",
+        )
+        self.assertIn("summary_claim_unsupported:data science", checked.safety.failed_checks)
 
     def test_the_caveat_is_appended_and_the_check_recorded(self):
         checked = self._checked(

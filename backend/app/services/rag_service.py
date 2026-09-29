@@ -540,12 +540,22 @@ class RAGService:
     ) -> RAGInsights:
         """Record an unsupported claim, and say so in the line that made it.
 
+        Checked against the rows the summary actually put forward, not against
+        everything retrieval touched. "Found 2 data science internships" is a
+        claim about those two. Measured live, the wider reading let it stand on
+        the strength of a row further down the shortlist that the student was
+        never shown - which is the original complaint in miniature.
+
         The summary is not rewritten. A server-composed replacement would throw
         away the parts that are accurate and useful, and this service already
         prefers recording a substitution over performing one silently. The
         sentence appended is only ever a negative the server has verified.
         """
-        unsupported = self._unsupported_summary_claims(query, insights.summary, results)
+        cited_ids = {item.opportunity_id for item in insights.top_opportunities}
+        claimed_rows = [row for row in results if str(row.get("id") or "") in cited_ids]
+        unsupported = self._unsupported_summary_claims(
+            query, insights.summary, claimed_rows or results
+        )
         if not unsupported:
             return insights
 
