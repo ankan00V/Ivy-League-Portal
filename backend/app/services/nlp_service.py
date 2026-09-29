@@ -34,6 +34,19 @@ def _place_terms_in(text: str) -> list[str]:
     return found
 
 
+def _without_places(names: list[str], places: list[str]) -> list[str]:
+    """Drop entries the gazetteer identified as places, keep every other name.
+
+    A city landing in `companies` is not merely mislabelled: companies are
+    applied as their own filter, so the query gets narrowed on the wrong axis.
+    Kept separate from `extract_entities` because the NER model's vocabulary
+    varies by spaCy build - a CI runner tagged "Oracle" as nothing at all - and
+    what this code owns is which names are removed, not which the model finds.
+    """
+    known = {place.lower() for place in places}
+    return [name for name in names if name.lower() not in known]
+
+
 ELIGIBILITY_PATTERN = re.compile(
     r"(?i)(eligible|eligibility|minimum|required|must have|cgpa|gpa|age limit|undergraduate|graduate|final year|experience)"
 )
@@ -213,9 +226,8 @@ class NLPService:
         # is a query with no location filter - so the shortlist silently came from
         # the whole corpus. The gazetteer that classifies the listings settles it.
         gazetteer_hits = _place_terms_in(clean_text)
-        known_places = {hit.lower() for hit in gazetteer_hits}
         locations.extend(gazetteer_hits)
-        companies = [name for name in companies if name.lower() not in known_places]
+        companies = _without_places(companies, gazetteer_hits)
 
         duration = [match.group(1).strip() for match in DURATION_PATTERN.finditer(clean_text)]
 

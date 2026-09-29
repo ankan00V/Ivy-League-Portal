@@ -26,8 +26,27 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from app.services.nlp_service import _place_terms_in
+from app.services.nlp_service import _place_terms_in, _without_places
 from app.services.opportunity_placement import PLACE_TERMS
+
+
+class CompanyFilteringTests(unittest.TestCase):
+    """Deterministic, because which names the NER model finds varies by spaCy
+    build - a CI runner returned no company for "jobs at Oracle in Pune" while
+    the same call locally returned Oracle. What this code owns is which names
+    are removed."""
+
+    def test_only_the_place_is_removed(self):
+        self.assertEqual(_without_places(["Google", "Hyderabad"], ["Hyderabad"]), ["Google"])
+
+    def test_an_employer_is_never_removed(self):
+        self.assertEqual(_without_places(["Oracle"], ["Pune"]), ["Oracle"])
+
+    def test_matching_ignores_case(self):
+        self.assertEqual(_without_places(["HYDERABAD"], ["Hyderabad"]), [])
+
+    def test_no_places_means_no_change(self):
+        self.assertEqual(_without_places(["Oracle", "Infosys"], []), ["Oracle", "Infosys"])
 
 
 class GazetteerMatchingTests(unittest.TestCase):
@@ -85,11 +104,10 @@ class EntityRoutingTests(unittest.TestCase):
         self.assertIn("Hyderabad", entities["locations"])
         self.assertNotIn("Hyderabad", entities["companies"])
 
-    def test_a_real_company_beside_a_city_survives(self):
-        """The de-duplication must not strip employers out of company queries."""
+    def test_a_city_is_not_left_in_companies(self):
         entities = self.nlp_service.extract_entities("jobs at Oracle in Pune")
         self.assertIn("Pune", entities["locations"])
-        self.assertIn("Oracle", entities["companies"])
+        self.assertNotIn("Pune", entities["companies"])
 
     def test_the_model_s_own_correct_answers_are_kept(self):
         entities = self.nlp_service.extract_entities("internships in Bengaluru")
