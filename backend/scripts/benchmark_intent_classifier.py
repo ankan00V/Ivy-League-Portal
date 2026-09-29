@@ -165,13 +165,21 @@ def main() -> int:
     parser.add_argument("--laya", action="store_true", help="also evaluate Laya (needs `pip install laya`)")
     parser.add_argument("--laya-model", default="convaiinnovations/laya")
     parser.add_argument("--device", default="", help="e.g. cuda; default lets laya choose")
+    parser.add_argument(
+        "--skip-incumbent",
+        action="store_true",
+        help="evaluate only the candidate, for running from an environment that has "
+        "laya installed but not this project's dependencies",
+    )
     args = parser.parse_args()
 
     queries = _load_queries()
     print(f"dataset: {DATASET.relative_to(Path.cwd()) if DATASET.is_relative_to(Path.cwd()) else DATASET}")
     print(f"queries: {len(queries)} (5 real, the rest hand-written - indicative, not production traffic)")
 
-    summaries = [_report("incumbent (nlp_service.classify_intent)", asyncio.run(_run_incumbent(queries)))]
+    summaries = []
+    if not args.skip_incumbent:
+        summaries.append(_report("incumbent (nlp_service.classify_intent)", asyncio.run(_run_incumbent(queries))))
 
     if args.laya:
         try:
