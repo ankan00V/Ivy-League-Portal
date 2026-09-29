@@ -518,14 +518,21 @@ class RAGService:
                 if any(word in _CLAIM_STOPWORDS for word in words):
                     continue
                 pattern = _pattern(words)
-                if not pattern.search(summary_text) or pattern.search(haystack):
+                if not pattern.search(summary_text):
                     continue
-                unsupported.append(" ".join(words))
+                # A phrase the listings do carry is settled either way, so it
+                # consumes its words like a reported one. Letting a supported
+                # bigram fall through left its second word free to pair with the
+                # next, which is how a live answer whose "data science" was
+                # genuinely backed by a retrieved row still drew the caveat
+                # 'None of the listings below mentions "science internships"' -
+                # a window artifact, and not a phrase anybody wrote.
+                if not pattern.search(haystack):
+                    unsupported.append(" ".join(words))
                 index += width
                 break
             else:
                 index += 1
-                continue
         return unsupported
 
     def _check_summary_against_results(
@@ -533,12 +540,22 @@ class RAGService:
     ) -> RAGInsights:
         """Record an unsupported claim, and say so in the line that made it.
 
+        Checked against the rows the summary actually put forward, not against
+        everything retrieval touched. "Found 2 data science internships" is a
+        claim about those two. Measured live, the wider reading let it stand on
+        the strength of a row further down the shortlist that the student was
+        never shown - which is the original complaint in miniature.
+
         The summary is not rewritten. A server-composed replacement would throw
         away the parts that are accurate and useful, and this service already
         prefers recording a substitution over performing one silently. The
         sentence appended is only ever a negative the server has verified.
         """
-        unsupported = self._unsupported_summary_claims(query, insights.summary, results)
+        cited_ids = {item.opportunity_id for item in insights.top_opportunities}
+        claimed_rows = [row for row in results if str(row.get("id") or "") in cited_ids]
+        unsupported = self._unsupported_summary_claims(
+            query, insights.summary, claimed_rows or results
+        )
         if not unsupported:
             return insights
 
