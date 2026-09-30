@@ -8,6 +8,7 @@ import React from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { MapPin, Calendar, Send, Bookmark, EyeOff } from "lucide-react";
 import Image from "next/image";
+import { staleSince } from "@/lib/listing-freshness";
 import { Opportunity, useOpportunityFeed } from "@/hooks/useOpportunityFeed";
 import { useOpportunityFeedImpressions } from "@/lib/opportunity-feed-tracker";
 
@@ -242,8 +243,16 @@ export default function OpportunitiesPage() {
                                       month: "short",
                                       day: "numeric",
                                   })}`
-                                : "Rolling basis"}
+                                : "No deadline listed"}
                         </span>
+                        {staleSince(opp.last_seen_at) ? (
+                            <span
+                                title="No source has listed this opening since then. It may already be closed."
+                                style={{ color: "#ffd9a0", fontWeight: 700, fontSize: "0.78rem" }}
+                            >
+                                Unconfirmed for {staleSince(opp.last_seen_at)} days
+                            </span>
+                        ) : null}
                     </div>
                 </div>
                 <div style={{ padding: "1.5rem", display: "flex", flexDirection: "column", gap: "1rem" }}>
@@ -358,7 +367,7 @@ export default function OpportunitiesPage() {
                                           day: "numeric",
                                           year: "numeric",
                                       })
-                                    : "Rolling Basis"}
+                                    : "No deadline listed"}
                             </span>
                         </div>
                         <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap", justifyContent: "end" }}>
@@ -523,7 +532,7 @@ export default function OpportunitiesPage() {
                                           day: "numeric",
                                           year: "numeric",
                                       })
-                                    : "Rolling Basis"}
+                                    : "No deadline listed"}
                             </div>
                         </div>
                     </div>
