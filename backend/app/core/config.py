@@ -192,6 +192,18 @@ class Settings(BaseSettings):
     SCRAPER_ON_DEMAND_REFRESH_ENABLED: bool = True
     OPPORTUNITY_STATUS_AUTORUN_ENABLED: bool = True
     OPPORTUNITY_STATUS_REFRESH_INTERVAL_HOURS: int = 4
+    #: Whether the scheduled status refresh verifies that a listing's link still
+    #: resolves. This was hardcoded off at the call site, so it had never run:
+    #: 0 of 2,587 active listings had ever been checked, while 52% had not been
+    #: seen by a scraper in over 30 days. Only a 404 or 410 retires a row - a
+    #: bot-block or a timeout is recorded as "error" and changes nothing - so
+    #: the check removes listings that are provably gone, not ones that are
+    #: merely unreachable from here.
+    OPPORTUNITY_LIVENESS_CHECK_ENABLED: bool = True
+    #: Links verified per run. At 4-hour intervals this reaches every active
+    #: listing in about two days, and the queue is ordered least-recently-checked
+    #: first, so every row is verified once before any row is verified twice.
+    OPPORTUNITY_LIVENESS_PER_RUN: int = 250
     SCRAPER_TIMEOUT_SECONDS: int = 20
     SCRAPER_HTTP_RETRIES: int = 4
     SCRAPER_RETRY_BACKOFF: float = 0.8

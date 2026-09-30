@@ -356,7 +356,11 @@ async def lifespan(app: FastAPI):
                 try:
                     await job_runner.enqueue(
                         job_type="opportunities.status_refresh",
-                        payload={"limit": 5000, "check_liveness": False},
+                        payload={
+                            "limit": 5000,
+                            "check_liveness": bool(settings.OPPORTUNITY_LIVENESS_CHECK_ENABLED),
+                            "liveness_limit": int(settings.OPPORTUNITY_LIVENESS_PER_RUN),
+                        },
                         max_attempts=2,
                         dedupe_key="opportunities.status_refresh",
                     )
