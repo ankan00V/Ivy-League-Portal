@@ -197,3 +197,85 @@ class RebindingTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 await self.service.check_url_liveness(_row("https://example.com/job/1")), "alive"
             )
+
+
+class PinnedTransportTests(unittest.IsolatedAsyncioTestCase):
+    """Checking a hostname and then letting the client resolve it again leaves
+    a window a hostile resolver can walk through. The transport removes the
+    second lookup instead of racing it."""
+
+    async def _send(self, url, addresses):
+        import httpx
+
+        from app.services.opportunity_status_service import PinnedPublicTransport
+
+        captured = {}
+
+        async def _parent(self, request):
+            captured["url"] = str(request.url)
+            captured["host_header"] = request.headers.get("Host")
+            captured["sni"] = (request.extensions or {}).get("sni_hostname")
+            return httpx.Response(200)
+
+        with (
+            patch(
+                "app.services.opportunity_status_service.public_addresses_for",
+                return_value=addresses,
+            ),
+            patch.object(httpx.AsyncHTTPTransport, "handle_async_request", _parent),
+        ):
+            await PinnedPublicTransport().handle_async_request(
+                httpx.Request("HEAD", url)
+            )
+        return captured
+
+    async def test_the_connection_goes_to_the_validated_address(self):
+        import ipaddress
+
+        sent = await self._send(
+            "https://example.com/job/1", [ipaddress.ip_address("93.184.216.34")]
+        )
+        self.assertIn("93.184.216.34", sent["url"])
+        self.assertNotIn("example.com", sent["url"])
+
+    async def test_the_original_hostname_survives_for_tls_and_routing(self):
+        """Connecting by IP without this fails certificate verification for
+        every ordinary listing, and virtual hosts serve the wrong site."""
+        import ipaddress
+
+        sent = await self._send(
+            "https://example.com/job/1", [ipaddress.ip_address("93.184.216.34")]
+        )
+        self.assertEqual(sent["sni"], "example.com")
+        self.assertEqual(sent["host_header"], "example.com")
+
+    async def test_ipv4_is_preferred_when_both_resolve(self):
+        import ipaddress
+
+        sent = await self._send(
+            "https://example.com/x",
+            [ipaddress.ip_address("2606:2800:220:1:248:1893:25c8:1946"), ipaddress.ip_address("93.184.216.34")],
+        )
+        self.assertIn("93.184.216.34", sent["url"])
+
+    async def test_a_blocked_host_never_reaches_the_socket(self):
+        import httpx
+
+        from app.core.url_guard import BlockedTargetURL
+        from app.services.opportunity_status_service import PinnedPublicTransport
+
+        with (
+            patch(
+                "app.services.opportunity_status_service.public_addresses_for",
+                side_effect=BlockedTargetURL("target_address_forbidden:169.254.169.254"),
+            ),
+            patch.object(
+                httpx.AsyncHTTPTransport,
+                "handle_async_request",
+                AsyncMock(side_effect=AssertionError("socket opened for a blocked target")),
+            ),
+        ):
+            with self.assertRaises(BlockedTargetURL):
+                await PinnedPublicTransport().handle_async_request(
+                    httpx.Request("HEAD", "https://evil.example/x")
+                )

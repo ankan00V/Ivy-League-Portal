@@ -89,6 +89,23 @@ def assert_public_http_url(url: str) -> str:
     return candidate
 
 
+def public_addresses_for(url: str) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
+    """Validate `url` and hand back the addresses it resolved to.
+
+    `assert_public_http_url` answers "was this safe a moment ago", which is all
+    a caller can act on if it then lets its HTTP client resolve the name again:
+    between the two lookups a resolver the attacker controls can swap a public
+    answer for 169.254.169.254. Returning the checked addresses lets a caller
+    connect to one of them instead, so there is no second lookup to poison.
+
+    Same validation as assert_public_http_url, and it raises the same
+    BlockedTargetURL; only the return value differs.
+    """
+    assert_public_http_url(url)
+    hostname = (urlparse(str(url).strip()).hostname or "").rstrip(".").lower()
+    return _addresses_for(hostname)
+
+
 def is_public_http_url(url: str) -> bool:
     try:
         assert_public_http_url(url)

@@ -10,7 +10,7 @@ from typing import Any, Literal, Optional
 import httpx
 
 from app.core.time import as_utc_aware, utc_now
-from app.core.url_guard import assert_public_http_url
+from app.core.url_guard import BlockedTargetURL, assert_public_http_url, public_addresses_for
 from app.models.opportunity import Opportunity
 
 logger = logging.getLogger(__name__)
@@ -37,6 +37,40 @@ class OpportunityStatusRefreshReport:
             "liveness_checked": self.liveness_checked,
         }
 
+
+
+
+class PinnedPublicTransport(httpx.AsyncHTTPTransport):
+    """Connect to the address that was checked, not to whatever DNS says next.
+
+    Validating a hostname and then handing the name to an HTTP client leaves a
+    window: the client resolves it a second time, and a resolver the attacker
+    controls can answer public once and 169.254.169.254 once. Checking the peer
+    after the fact narrows that window but does not close it, because the
+    request has already gone out.
+
+    So the name is resolved once, every returned address is checked, and the
+    request is rewritten to connect to one of them. The original hostname stays
+    in the Host header and in the TLS SNI extension, so certificate
+    verification still happens against the real hostname rather than the
+    literal - connecting by IP without that would fail verification for every
+    ordinary listing.
+
+    IPv4 is preferred when both exist, only because the IPv6 literal form in a
+    URL needs bracketing that buys nothing here.
+    """
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        hostname = request.url.host
+        addresses = await asyncio.to_thread(public_addresses_for, str(request.url))
+        if not addresses:
+            raise BlockedTargetURL(f"target_host_unresolvable:{hostname}")
+        address = next((a for a in addresses if a.version == 4), addresses[0])
+
+        request.headers["Host"] = request.url.netloc.decode("ascii")
+        request.extensions = {**dict(request.extensions or {}), "sni_hostname": hostname}
+        request.url = request.url.copy_with(host=str(address))
+        return await super().handle_async_request(request)
 
 
 def _peer_is_public(response: Any) -> bool:
@@ -146,7 +180,9 @@ class OpportunityStatusService:
             return "unknown"
         try:
             async with httpx.AsyncClient(
-                timeout=max(1.0, float(timeout_seconds)), follow_redirects=False
+                timeout=max(1.0, float(timeout_seconds)),
+                follow_redirects=False,
+                transport=PinnedPublicTransport(),
             ) as client:
                 response = await client.head(url)
                 if not _peer_is_public(response):
