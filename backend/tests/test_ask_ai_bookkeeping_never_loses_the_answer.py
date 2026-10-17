@@ -64,6 +64,7 @@ class BookkeepingFailureTests(unittest.IsolatedAsyncioTestCase):
         request = opportunities_endpoint.AskAIRequest(query="data science internships in Bangalore")
         with (
             patch.object(opportunities_endpoint, "_get_or_create_profile", new=AsyncMock(return_value=object())),
+            patch.object(opportunities_endpoint, "enforce_ai_budget", new=AsyncMock()),
             patch.object(opportunities_endpoint.rag_service, "ask", new=AsyncMock(return_value=_answer())),
         ):
             with patch.multiple(opportunities_endpoint, **extra_patches):
@@ -106,6 +107,7 @@ class FailurePathTests(unittest.IsolatedAsyncioTestCase):
         request = opportunities_endpoint.AskAIRequest(query="anything")
         with (
             patch.object(opportunities_endpoint, "_get_or_create_profile", new=AsyncMock(return_value=object())),
+            patch.object(opportunities_endpoint, "enforce_ai_budget", new=AsyncMock()),
             patch.object(
                 opportunities_endpoint.rag_service,
                 "ask",

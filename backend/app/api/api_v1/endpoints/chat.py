@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from typing import Any, List, Optional
 from app.api.deps import get_current_user
+from app.core.rate_limit import enforce_ai_budget
 from app.models.profile import Profile
 from app.models.user import User
 from app.services.assistant_service import assistant_service
@@ -32,6 +33,8 @@ async def chat_with_vidya(
     request: ChatRequest,
     current_user: User = Depends(get_current_user)
 ):
+    # Paid endpoint: metered per account, like Ask AI.
+    await enforce_ai_budget(user_id=str(current_user.id), action="ai.chat")
     try:
         profile = await _get_profile(current_user.id)
         result = await assistant_service.chat(

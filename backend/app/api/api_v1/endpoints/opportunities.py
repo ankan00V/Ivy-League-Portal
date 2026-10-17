@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field
 from app.api.deps import get_current_active_user, get_current_admin_user
 from app.core.cache import cache_get_json, cache_key, cache_set_json
 from app.core.config import settings
+from app.core.rate_limit import enforce_ai_budget
 from app.models.application import Application
 from app.models.ask_ai_query_snapshot import AskAIQuerySnapshot
 from app.models.ask_ai_saved_query import AskAISavedQuery
@@ -2084,6 +2085,11 @@ async def ask_ai_shortlist(
     request: AskAIRequest,
     current_user: User = Depends(get_current_active_user),
 ) -> Any:
+    # Metered against the account, not the address. Every call here runs
+    # retrieval, a cross-encoder and an LLM generation, and the IP-keyed
+    # middleware limit is both too high for that (240/min) and keyed wrongly:
+    # one college NAT shares a bucket, rotating addresses have none.
+    await enforce_ai_budget(user_id=str(current_user.id), action="ai.ask")
     started_at = time.perf_counter()
     try:
         profile = await _get_or_create_profile(current_user.id)

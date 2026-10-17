@@ -453,6 +453,20 @@ class Settings(BaseSettings):
     RATE_LIMIT_AUTH_REQUESTS_PER_MINUTE: int = 30
     RATE_LIMIT_ADMIN_REQUESTS_PER_MINUTE: int = 20
     RATE_LIMIT_FEED_REQUESTS_PER_MINUTE: int = 100
+    #: Per-account budget for the endpoints that spend money on every call:
+    #: Ask AI, the assistant and the resume review each run retrieval, a
+    #: cross-encoder and an LLM generation.
+    #:
+    #: The middleware limit does not cover this. It is keyed by IP, and at the
+    #: default 240/min a single address could drive roughly 14,000 model calls
+    #: an hour. Keying by IP is also wrong in both directions for this corpus:
+    #: a college behind one NAT shares a bucket, while anyone with rotating
+    #: addresses has none. A paid endpoint has to be metered against the
+    #: account that is spending.
+    RATE_LIMIT_AI_REQUESTS_PER_MINUTE: int = 12
+    #: Daily ceiling per account, so a steady trickle under the per-minute
+    #: limit cannot quietly run up a month's budget in a day.
+    RATE_LIMIT_AI_REQUESTS_PER_DAY: int = 300
 
     # Background jobs (Mongo-backed queue + retry + DLQ)
     JOBS_ENABLED: bool = True
