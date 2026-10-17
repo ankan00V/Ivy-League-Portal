@@ -397,7 +397,10 @@ async def _send_scraper_health_alert(red_sources: list[dict[str, Any]]) -> dict[
             errors["slack"] = str(exc)
 
     if not sent_channels:
-        print(f"[ScraperHealthAlert] {payload}")
+        # Every delivery channel failed. This record is the only trace the
+        # alert ever existed, so it has to carry a level a log pipeline can
+        # route on rather than going to stdout unlabelled.
+        logger.error("[ScraperHealthAlert] undelivered, no channel accepted it: %s", payload)
 
     return {
         "status": "sent" if sent_channels else "logged",

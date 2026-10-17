@@ -184,7 +184,7 @@ class EmbeddingService:
                 self._report_health(provider=self.provider, mode="openai", healthy=True)
                 return vectors
             except Exception as exc:
-                print(f"[EmbeddingService] OpenAI embeddings failed, falling back: {exc}")
+                logger.warning("[EmbeddingService] OpenAI embeddings failed, falling back: %s", exc)
                 self._report_health(provider=self.provider, mode="unavailable", healthy=False)
                 return None
 

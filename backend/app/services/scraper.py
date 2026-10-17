@@ -4388,7 +4388,10 @@ async def _insert_and_broadcast(
             continue
         except Exception as exc:
             failed_count += 1
-            print(f"[ScraperInsert] Failed to upsert '{normalized_payload.get('title', 'unknown')}': {exc}")
+            logger.warning(
+                "[ScraperInsert] Failed to upsert %r: %s",
+                normalized_payload.get("title", "unknown"), exc,
+            )
 
     # Mirror to Postgres once the Mongo writes are done. The feed reads from
     # Postgres, so without this a scrape would land rows nobody could see.
@@ -4407,7 +4410,7 @@ async def _insert_and_broadcast(
                 list(mirrored.values())
             )
         except Exception as exc:
-            print(f"[ScraperMirror] postgres mirror failed: {type(exc).__name__}: {exc}")
+            logger.warning("[ScraperMirror] postgres mirror failed: %s: %s", type(exc).__name__, exc)
 
     return {
         "inserted": inserted_count,
@@ -4465,7 +4468,7 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
             system_user = await User.find_one({"is_admin": True})
             system_user_id = system_user.id if system_user else None
 
-            print("[ScraperEngine] Running resilient live fetch for Ivy + core + extended opportunity platforms...")
+            logger.info("[ScraperEngine] Running resilient live fetch for Ivy + core + extended opportunity platforms")
 
             async def fetch_unstop_batch() -> tuple[list[dict], list[str]]:
                 errors: list[str] = []
@@ -4795,10 +4798,9 @@ async def run_scheduled_scrapers(force: bool = False) -> dict[str, Any]:
             except Exception as exc:
                 logger.warning("Failed to persist scraper run logs: %s", exc)
 
-            print(
-                f"[ScraperEngine] Completed ({status}) | "
-                f"fetched={totals['fetched']} inserted={totals['inserted']} "
-                f"updated={totals['updated']} deleted={totals['deleted']}"
+            logger.info(
+                "[ScraperEngine] Completed (%s) | fetched=%s inserted=%s updated=%s deleted=%s",
+                status, totals["fetched"], totals["inserted"], totals["updated"], totals["deleted"],
             )
             return report
         finally:
