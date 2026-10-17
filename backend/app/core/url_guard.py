@@ -52,14 +52,19 @@ def _addresses_for(hostname: str) -> list[ipaddress.IPv4Address | ipaddress.IPv6
     return addresses
 
 
-def assert_public_http_url(url: str) -> str:
-    """Validate that `url` is a public http(s) target, or raise BlockedTargetURL.
+def public_addresses_for(url: str) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
+    """Validate `url` and return the addresses that were actually checked.
 
-    Guards server-side fetches of user-supplied URLs. Without this, submitting
-    a source pointed at http://169.254.169.254/ made the server read cloud
-    instance metadata - including IAM credentials on IMDSv1 - and submitting
-    http://10.0.0.5:8080/ turned the qualification pipeline into an internal
-    port scanner, with the reachability result handed back to the submitter.
+    One resolution, and the list handed back is that same list. This matters
+    more than it looks: a caller that validates a hostname and then lets its
+    HTTP client resolve the name again has not validated anything the client
+    will use. Between the two lookups a resolver the attacker controls can
+    answer public once and 169.254.169.254 once, so the caller connects to an
+    address nothing checked.
+
+    Returning the checked addresses lets a caller pin its connection to one of
+    them, which is the only version of this guard that closes the window rather
+    than narrowing it.
     """
     candidate = str(url or "").strip()
     if not candidate:
@@ -79,31 +84,32 @@ def assert_public_http_url(url: str) -> str:
     if hostname in _BLOCKED_HOSTNAMES or hostname.endswith(_BLOCKED_HOST_SUFFIXES):
         raise BlockedTargetURL(f"target_host_forbidden:{hostname}")
 
-    for address in _addresses_for(hostname):
+    addresses = _addresses_for(hostname)
+    for address in addresses:
         # is_global excludes loopback, link-local (169.254.0.0/16, which is the
         # cloud metadata range), private RFC1918, multicast, reserved and
         # unspecified addresses in one check.
         if not address.is_global:
             raise BlockedTargetURL(f"target_address_forbidden:{address}")
 
-    return candidate
+    return addresses
 
 
-def public_addresses_for(url: str) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
-    """Validate `url` and hand back the addresses it resolved to.
+def assert_public_http_url(url: str) -> str:
+    """Validate that `url` is a public http(s) target, or raise BlockedTargetURL.
 
-    `assert_public_http_url` answers "was this safe a moment ago", which is all
-    a caller can act on if it then lets its HTTP client resolve the name again:
-    between the two lookups a resolver the attacker controls can swap a public
-    answer for 169.254.169.254. Returning the checked addresses lets a caller
-    connect to one of them instead, so there is no second lookup to poison.
+    Guards server-side fetches of user-supplied URLs. Without this, submitting
+    a source pointed at http://169.254.169.254/ made the server read cloud
+    instance metadata - including IAM credentials on IMDSv1 - and submitting
+    http://10.0.0.5:8080/ turned the qualification pipeline into an internal
+    port scanner, with the reachability result handed back to the submitter.
 
-    Same validation as assert_public_http_url, and it raises the same
-    BlockedTargetURL; only the return value differs.
+    Callers that go on to open a connection should prefer public_addresses_for
+    and connect to an address it returned; this one answers "was it safe a
+    moment ago", which a second DNS lookup can invalidate.
     """
-    assert_public_http_url(url)
-    hostname = (urlparse(str(url).strip()).hostname or "").rstrip(".").lower()
-    return _addresses_for(hostname)
+    public_addresses_for(url)
+    return str(url or "").strip()
 
 
 def is_public_http_url(url: str) -> bool:

@@ -279,3 +279,51 @@ class PinnedTransportTests(unittest.IsolatedAsyncioTestCase):
                 await PinnedPublicTransport().handle_async_request(
                     httpx.Request("HEAD", "https://evil.example/x")
                 )
+
+
+class SingleResolutionTests(unittest.TestCase):
+    """The addresses handed back must be the ones that were validated.
+
+    An earlier version of public_addresses_for validated through
+    assert_public_http_url and then resolved a second time to build its return
+    value, so the addresses a caller pinned to were never the addresses that
+    passed the check - the exact rebinding hole the function exists to close,
+    reintroduced inside the fix for it.
+    """
+
+    def test_the_resolver_is_called_once(self):
+        from app.core import url_guard
+
+        calls: list[str] = []
+
+        def _resolve(hostname):
+            calls.append(hostname)
+            return ["93.184.216.34"]
+
+        with patch.object(url_guard, "resolve_hostname", side_effect=_resolve):
+            addresses = url_guard.public_addresses_for("https://example.com/job/1")
+
+        self.assertEqual(len(calls), 1, f"resolved {len(calls)} times: {calls}")
+        self.assertEqual([str(a) for a in addresses], ["93.184.216.34"])
+
+    def test_a_poisoned_second_answer_cannot_be_returned(self):
+        """With one lookup there is no second answer to poison. If the resolver
+        is ever called twice this flips the result and fails."""
+        from app.core import url_guard
+
+        answers = iter([["93.184.216.34"], ["169.254.169.254"]])
+
+        with patch.object(url_guard, "resolve_hostname", side_effect=lambda h: next(answers)):
+            addresses = url_guard.public_addresses_for("https://example.com/job/1")
+
+        self.assertEqual([str(a) for a in addresses], ["93.184.216.34"])
+
+    def test_assert_still_rejects_an_internal_answer(self):
+        from app.core import url_guard
+        from app.core.url_guard import BlockedTargetURL
+
+        with patch.object(url_guard, "resolve_hostname", return_value=["169.254.169.254"]):
+            with self.assertRaises(BlockedTargetURL):
+                url_guard.assert_public_http_url("https://evil.example/x")
+            with self.assertRaises(BlockedTargetURL):
+                url_guard.public_addresses_for("https://evil.example/x")

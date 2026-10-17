@@ -66,6 +66,11 @@ class PinnedPublicTransport(httpx.AsyncHTTPTransport):
         if not addresses:
             raise BlockedTargetURL(f"target_host_unresolvable:{hostname}")
         address = next((a for a in addresses if a.version == 4), addresses[0])
+        # The guard already rejected a non-global answer, so this can only fire
+        # if that validation and this selection ever drift apart. It costs one
+        # comparison and it is the last point before a socket is opened.
+        if not address.is_global:
+            raise BlockedTargetURL(f"target_address_forbidden:{address}")
 
         request.headers["Host"] = request.url.netloc.decode("ascii")
         request.extensions = {**dict(request.extensions or {}), "sni_hostname": hostname}
