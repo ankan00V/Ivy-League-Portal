@@ -142,6 +142,7 @@ class TestOpportunitiesAPI(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(opportunities_endpoint, "_get_or_create_profile", new=AsyncMock(return_value=object())),
+            patch.object(opportunities_endpoint, "enforce_ai_budget", new=AsyncMock()),
             patch.object(opportunities_endpoint.rag_service, "ask", new=AsyncMock(return_value=expected)),
             patch.object(opportunities_endpoint.ranking_request_telemetry_service, "log", new=AsyncMock()) as telemetry_log,
         ):
