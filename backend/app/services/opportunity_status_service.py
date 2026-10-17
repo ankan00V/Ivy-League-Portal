@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Literal, Optional
@@ -7,7 +8,10 @@ from typing import Any, Literal, Optional
 import httpx
 
 from app.core.time import as_utc_aware, utc_now
+from app.core.url_guard import assert_public_http_url
 from app.models.opportunity import Opportunity
+
+logger = logging.getLogger(__name__)
 
 OpportunityStatus = Literal["active", "closing_soon", "expired", "filled", "removed"]
 
@@ -69,11 +73,39 @@ class OpportunityStatusService:
         return round(max(0.0, min(1.0, score)), 4)
 
     async def check_url_liveness(self, opportunity: Opportunity, *, timeout_seconds: float = 6.0) -> str:
+        """Ask whether a listing's link still resolves, without becoming a probe.
+
+        This runs unattended against whatever URLs the corpus happens to hold,
+        including rows from automatically discovered sources, so the address is
+        untrusted input even though no person typed it. Two things keep it from
+        being a server-side request forgery primitive:
+
+        The destination is resolved and checked before the request, so a URL
+        that points at loopback, RFC1918 or the cloud metadata range never gets
+        fetched. `source_discovery` already guards its own fetches this way; the
+        liveness sweep reached arbitrary stored URLs without it.
+
+        Redirects are not followed. Following them hands the decision back to
+        the remote host, which can answer a perfectly public URL with a 302 to
+        169.254.169.254 and walk straight past the check above. A 3xx still
+        counts as alive: the posting resolved to something, which is all this
+        sweep is asking.
+
+        A URL that fails the check returns "unknown" rather than "dead". It was
+        never verified, and only 404/410 is allowed to retire a listing.
+        """
         url = str(getattr(opportunity, "url", "") or "").strip()
         if not url:
             return "unknown"
         try:
-            async with httpx.AsyncClient(timeout=max(1.0, float(timeout_seconds)), follow_redirects=True) as client:
+            assert_public_http_url(url)
+        except Exception:
+            logger.warning("liveness check skipped: %s is not a public http(s) target", url[:120])
+            return "unknown"
+        try:
+            async with httpx.AsyncClient(
+                timeout=max(1.0, float(timeout_seconds)), follow_redirects=False
+            ) as client:
                 response = await client.head(url)
                 if response.status_code in {405, 403}:
                     response = await client.get(url)

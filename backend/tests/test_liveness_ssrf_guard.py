@@ -1,0 +1,119 @@
+"""The liveness sweep fetches whatever URLs the corpus happens to hold.
+
+It runs unattended every few hours against rows that came from automatically
+discovered sources, so the address is untrusted input even though no person
+typed it. `source_discovery` already resolves and checks its own targets before
+fetching; the liveness sweep reached arbitrary stored URLs without that, which
+made it a blind server-side request forgery primitive: alive/dead is a boolean
+oracle about whatever the server can reach, including loopback, RFC1918 and the
+cloud metadata address.
+
+Following redirects reopened the same hole from the other side. A perfectly
+public URL can answer with a 302 to 169.254.169.254, and a check that follows
+it has handed the decision back to the remote host.
+"""
+
+from __future__ import annotations
+
+import sys
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
+
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
+
+from app.services.opportunity_status_service import OpportunityStatusService
+
+
+def _row(url):
+    return SimpleNamespace(url=url)
+
+
+class SsrfGuardTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.service = OpportunityStatusService()
+
+    async def _check(self, url):
+        """Fails the test if any HTTP call is attempted."""
+        with patch(
+            "app.services.opportunity_status_service.httpx.AsyncClient",
+            side_effect=AssertionError(f"network call attempted for {url}"),
+        ):
+            return await self.service.check_url_liveness(_row(url))
+
+    async def test_the_cloud_metadata_address_is_never_fetched(self):
+        self.assertEqual(await self._check("http://169.254.169.254/latest/meta-data/"), "unknown")
+
+    async def test_loopback_is_never_fetched(self):
+        for url in ("http://127.0.0.1:8011/health", "http://localhost/admin"):
+            self.assertEqual(await self._check(url), "unknown", url)
+
+    async def test_private_ranges_are_never_fetched(self):
+        for url in ("http://10.0.0.5/", "http://192.168.1.1/", "http://172.16.0.9/"):
+            self.assertEqual(await self._check(url), "unknown", url)
+
+    async def test_non_http_schemes_are_refused(self):
+        for url in ("file:///etc/passwd", "gopher://x/", "ftp://example.com/"):
+            self.assertEqual(await self._check(url), "unknown", url)
+
+    async def test_a_blocked_target_is_unknown_not_dead(self):
+        """"Dead" retires a listing. A URL that was never contacted has not
+        earned that verdict, and only 404/410 may retire a row."""
+        self.assertNotEqual(await self._check("http://169.254.169.254/"), "dead")
+
+
+class RedirectTests(unittest.IsolatedAsyncioTestCase):
+    """A public URL that answers 302 to an internal one must not be followed."""
+
+    def setUp(self):
+        self.service = OpportunityStatusService()
+
+    async def test_redirects_are_not_followed(self):
+        captured = {}
+
+        class _FakeClient:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def head(self, url):
+                return SimpleNamespace(status_code=302)
+
+        with patch("app.services.opportunity_status_service.httpx.AsyncClient", _FakeClient):
+            verdict = await self.service.check_url_liveness(_row("https://example.com/job/1"))
+
+        self.assertFalse(captured.get("follow_redirects"))
+        # A 3xx still means the posting resolved to something.
+        self.assertEqual(verdict, "alive")
+
+    async def test_a_public_url_is_still_checked(self):
+        """The guard must not block the ordinary case it exists to allow."""
+
+        class _FakeClient:
+            def __init__(self, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def head(self, url):
+                return SimpleNamespace(status_code=404)
+
+        with patch("app.services.opportunity_status_service.httpx.AsyncClient", _FakeClient):
+            verdict = await self.service.check_url_liveness(_row("https://example.com/job/gone"))
+        self.assertEqual(verdict, "dead")
+
+
+if __name__ == "__main__":
+    unittest.main()
