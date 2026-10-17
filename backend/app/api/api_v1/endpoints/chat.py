@@ -55,7 +55,7 @@ async def chat_with_vidya(
             detail=str(exc),
         ) from exc
     except Exception as e:
-        print(f"LLM API Error: {str(e)}")
+        logger.exception("Assistant generation failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to generate AI response. The service might be temporarily overloaded or the model may be unavailable."

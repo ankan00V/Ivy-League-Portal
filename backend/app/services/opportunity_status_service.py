@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import ipaddress
+import logging
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Literal, Optional
@@ -7,7 +10,10 @@ from typing import Any, Literal, Optional
 import httpx
 
 from app.core.time import as_utc_aware, utc_now
+from app.core.url_guard import BlockedTargetURL, assert_public_http_url, public_addresses_for
 from app.models.opportunity import Opportunity
+
+logger = logging.getLogger(__name__)
 
 OpportunityStatus = Literal["active", "closing_soon", "expired", "filled", "removed"]
 
@@ -30,6 +36,83 @@ class OpportunityStatusRefreshReport:
             "active": self.active,
             "liveness_checked": self.liveness_checked,
         }
+
+
+
+
+class PinnedPublicTransport(httpx.AsyncHTTPTransport):
+    """Connect to the address that was checked, not to whatever DNS says next.
+
+    Validating a hostname and then handing the name to an HTTP client leaves a
+    window: the client resolves it a second time, and a resolver the attacker
+    controls can answer public once and 169.254.169.254 once. Checking the peer
+    after the fact narrows that window but does not close it, because the
+    request has already gone out.
+
+    So the name is resolved once, every returned address is checked, and the
+    request is rewritten to connect to one of them. The original hostname stays
+    in the Host header and in the TLS SNI extension, so certificate
+    verification still happens against the real hostname rather than the
+    literal - connecting by IP without that would fail verification for every
+    ordinary listing.
+
+    IPv4 is preferred when both exist, only because the IPv6 literal form in a
+    URL needs bracketing that buys nothing here.
+    """
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        hostname = request.url.host
+        addresses = await asyncio.to_thread(public_addresses_for, str(request.url))
+        if not addresses:
+            raise BlockedTargetURL(f"target_host_unresolvable:{hostname}")
+        address = next((a for a in addresses if a.version == 4), addresses[0])
+        # The guard already rejected a non-global answer, so this can only fire
+        # if that validation and this selection ever drift apart. It costs one
+        # comparison and it is the last point before a socket is opened.
+        if not address.is_global:
+            raise BlockedTargetURL(f"target_address_forbidden:{address}")
+
+        request.headers["Host"] = request.url.netloc.decode("ascii")
+        request.extensions = {**dict(request.extensions or {}), "sni_hostname": hostname}
+        request.url = request.url.copy_with(host=str(address))
+        return await super().handle_async_request(request)
+
+
+def _peer_is_public(response: Any) -> bool:
+    """Was the socket we actually reached a public address?
+
+    The pre-flight check resolves the hostname, then httpx resolves it again to
+    connect. Between those two lookups a hostile resolver can answer once with a
+    public address and once with 169.254.169.254 - classic DNS rebinding, and
+    the reason a name-based check alone is not a guarantee.
+
+    So the peer is re-checked after connecting, from the socket rather than from
+    DNS. A request has already been sent by then, which is why this is a second
+    line rather than the first: the verdict is discarded, nothing about the
+    response is read, and the row keeps its previous status.
+
+    Transports that expose no socket return True. This is a defence in depth on
+    top of the pre-flight check, not a reason to fail every check when the
+    extension is missing.
+    """
+    stream = (getattr(response, "extensions", None) or {}).get("network_stream")
+    if stream is None:
+        return True
+    try:
+        peer = stream.get_extra_info("server_addr")
+    except Exception:
+        return True
+    if not peer:
+        return True
+    host = peer[0] if isinstance(peer, (tuple, list)) else peer
+    try:
+        address = ipaddress.ip_address(str(host).strip("[]"))
+    except ValueError:
+        return True
+    if address.is_global:
+        return True
+    logger.warning("liveness check aborted: connection resolved to non-public address %s", address)
+    return False
 
 
 class OpportunityStatusService:
@@ -69,14 +152,50 @@ class OpportunityStatusService:
         return round(max(0.0, min(1.0, score)), 4)
 
     async def check_url_liveness(self, opportunity: Opportunity, *, timeout_seconds: float = 6.0) -> str:
+        """Ask whether a listing's link still resolves, without becoming a probe.
+
+        This runs unattended against whatever URLs the corpus happens to hold,
+        including rows from automatically discovered sources, so the address is
+        untrusted input even though no person typed it. Two things keep it from
+        being a server-side request forgery primitive:
+
+        The destination is resolved and checked before the request, so a URL
+        that points at loopback, RFC1918 or the cloud metadata range never gets
+        fetched. `source_discovery` already guards its own fetches this way; the
+        liveness sweep reached arbitrary stored URLs without it.
+
+        Redirects are not followed. Following them hands the decision back to
+        the remote host, which can answer a perfectly public URL with a 302 to
+        169.254.169.254 and walk straight past the check above. A 3xx still
+        counts as alive: the posting resolved to something, which is all this
+        sweep is asking.
+
+        A URL that fails the check returns "unknown" rather than "dead". It was
+        never verified, and only 404/410 is allowed to retire a listing.
+        """
         url = str(getattr(opportunity, "url", "") or "").strip()
         if not url:
             return "unknown"
         try:
-            async with httpx.AsyncClient(timeout=max(1.0, float(timeout_seconds)), follow_redirects=True) as client:
+            # getaddrinfo blocks. Inside an async sweep of 250 URLs that stalls
+            # the whole event loop, including the request handlers sharing it.
+            await asyncio.to_thread(assert_public_http_url, url)
+        except Exception:
+            logger.warning("liveness check skipped: %s is not a public http(s) target", url[:120])
+            return "unknown"
+        try:
+            async with httpx.AsyncClient(
+                timeout=max(1.0, float(timeout_seconds)),
+                follow_redirects=False,
+                transport=PinnedPublicTransport(),
+            ) as client:
                 response = await client.head(url)
+                if not _peer_is_public(response):
+                    return "unknown"
                 if response.status_code in {405, 403}:
                     response = await client.get(url)
+                    if not _peer_is_public(response):
+                        return "unknown"
             if 200 <= int(response.status_code) < 400:
                 return "alive"
             if int(response.status_code) in {404, 410}:
