@@ -117,3 +117,83 @@ class RedirectTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RebindingTests(unittest.IsolatedAsyncioTestCase):
+    """The pre-flight check resolves the name; httpx resolves it again to
+    connect. A hostile resolver can answer differently each time, so the peer
+    is re-checked from the socket after connecting."""
+
+    def setUp(self):
+        self.service = OpportunityStatusService()
+
+    def _client_with_peer(self, peer):
+        class _Stream:
+            @staticmethod
+            def get_extra_info(key):
+                return peer if key == "server_addr" else None
+
+        class _FakeClient:
+            def __init__(self, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def head(self, url):
+                return SimpleNamespace(
+                    status_code=200, extensions={"network_stream": _Stream()}
+                )
+
+        return _FakeClient
+
+    async def test_a_connection_that_lands_on_metadata_is_discarded(self):
+        with patch(
+            "app.services.opportunity_status_service.httpx.AsyncClient",
+            self._client_with_peer(("169.254.169.254", 80)),
+        ):
+            verdict = await self.service.check_url_liveness(_row("https://example.com/job/1"))
+        self.assertEqual(verdict, "unknown")
+
+    async def test_a_connection_that_lands_on_loopback_is_discarded(self):
+        with patch(
+            "app.services.opportunity_status_service.httpx.AsyncClient",
+            self._client_with_peer(("127.0.0.1", 8011)),
+        ):
+            self.assertEqual(
+                await self.service.check_url_liveness(_row("https://example.com/job/1")), "unknown"
+            )
+
+    async def test_a_public_peer_is_accepted(self):
+        with patch(
+            "app.services.opportunity_status_service.httpx.AsyncClient",
+            self._client_with_peer(("93.184.216.34", 443)),
+        ):
+            self.assertEqual(
+                await self.service.check_url_liveness(_row("https://example.com/job/1")), "alive"
+            )
+
+    async def test_a_transport_without_socket_info_is_not_penalised(self):
+        """Defence in depth on top of the pre-flight check, not a reason to
+        fail every check when the extension is absent."""
+
+        class _FakeClient:
+            def __init__(self, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def head(self, url):
+                return SimpleNamespace(status_code=200, extensions={})
+
+        with patch("app.services.opportunity_status_service.httpx.AsyncClient", _FakeClient):
+            self.assertEqual(
+                await self.service.check_url_liveness(_row("https://example.com/job/1")), "alive"
+            )

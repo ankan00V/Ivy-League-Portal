@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import ipaddress
 import logging
 from dataclasses import dataclass
 from datetime import timedelta
@@ -34,6 +36,44 @@ class OpportunityStatusRefreshReport:
             "active": self.active,
             "liveness_checked": self.liveness_checked,
         }
+
+
+
+def _peer_is_public(response: Any) -> bool:
+    """Was the socket we actually reached a public address?
+
+    The pre-flight check resolves the hostname, then httpx resolves it again to
+    connect. Between those two lookups a hostile resolver can answer once with a
+    public address and once with 169.254.169.254 - classic DNS rebinding, and
+    the reason a name-based check alone is not a guarantee.
+
+    So the peer is re-checked after connecting, from the socket rather than from
+    DNS. A request has already been sent by then, which is why this is a second
+    line rather than the first: the verdict is discarded, nothing about the
+    response is read, and the row keeps its previous status.
+
+    Transports that expose no socket return True. This is a defence in depth on
+    top of the pre-flight check, not a reason to fail every check when the
+    extension is missing.
+    """
+    stream = (getattr(response, "extensions", None) or {}).get("network_stream")
+    if stream is None:
+        return True
+    try:
+        peer = stream.get_extra_info("server_addr")
+    except Exception:
+        return True
+    if not peer:
+        return True
+    host = peer[0] if isinstance(peer, (tuple, list)) else peer
+    try:
+        address = ipaddress.ip_address(str(host).strip("[]"))
+    except ValueError:
+        return True
+    if address.is_global:
+        return True
+    logger.warning("liveness check aborted: connection resolved to non-public address %s", address)
+    return False
 
 
 class OpportunityStatusService:
@@ -98,7 +138,9 @@ class OpportunityStatusService:
         if not url:
             return "unknown"
         try:
-            assert_public_http_url(url)
+            # getaddrinfo blocks. Inside an async sweep of 250 URLs that stalls
+            # the whole event loop, including the request handlers sharing it.
+            await asyncio.to_thread(assert_public_http_url, url)
         except Exception:
             logger.warning("liveness check skipped: %s is not a public http(s) target", url[:120])
             return "unknown"
@@ -107,8 +149,12 @@ class OpportunityStatusService:
                 timeout=max(1.0, float(timeout_seconds)), follow_redirects=False
             ) as client:
                 response = await client.head(url)
+                if not _peer_is_public(response):
+                    return "unknown"
                 if response.status_code in {405, 403}:
                     response = await client.get(url)
+                    if not _peer_is_public(response):
+                        return "unknown"
             if 200 <= int(response.status_code) < 400:
                 return "alive"
             if int(response.status_code) in {404, 410}:
