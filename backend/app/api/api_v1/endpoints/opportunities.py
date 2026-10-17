@@ -411,6 +411,61 @@ def _filter_active_opportunities(opportunities: list[Opportunity]) -> list[Oppor
     return active
 
 
+#: The visible corpus, shared by every request for a few seconds.
+#:
+#: The personalised feed read the entire opportunities table on every single
+#: request - `Opportunity.find_many().to_list()`, no filter, no limit - then
+#: filtered and ranked it in Python. Measured against the live database that
+#: load alone was 8 seconds warm and 13 cold, on a page that already took 20
+#: seconds end to end.
+#:
+#: The read is identical for every user: the same rows, the same visibility
+#: rule, the same ordering. Only the ranking that follows is personal. So it is
+#: done once and shared, and a request arriving during the window pays nothing
+#: for it.
+#:
+#: Deliberately short. The scraper writes continuously, and a student refreshing
+#: after applying should see the feed move. Thirty seconds is far below the
+#: scrape interval, so no listing is hidden for a meaningful part of its life,
+#: and it still collapses a burst of requests into one read.
+#:
+#: Process-local on purpose. Redis would serialise several thousand documents on
+#: every miss, which is the cost being avoided; with more than one worker each
+#: simply keeps its own copy.
+_VISIBLE_CORPUS_TTL_SECONDS = 30.0
+_visible_corpus_cache: dict[str, Any] = {"at": 0.0, "rows": None}
+_visible_corpus_lock = asyncio.Lock()
+
+
+async def _load_visible_opportunities(*, force: bool = False) -> list[Opportunity]:
+    now = time.monotonic()
+    cached = _visible_corpus_cache.get("rows")
+    if (
+        not force
+        and cached is not None
+        and (now - float(_visible_corpus_cache.get("at") or 0.0)) < _VISIBLE_CORPUS_TTL_SECONDS
+    ):
+        return cached
+
+    async with _visible_corpus_lock:
+        # Re-check inside the lock: while this request waited, another may have
+        # already paid for the read. Without this a burst of concurrent
+        # requests on a cold cache each run their own full table scan, which is
+        # the exact behaviour being removed.
+        now = time.monotonic()
+        cached = _visible_corpus_cache.get("rows")
+        if (
+            not force
+            and cached is not None
+            and (now - float(_visible_corpus_cache.get("at") or 0.0)) < _VISIBLE_CORPUS_TTL_SECONDS
+        ):
+            return cached
+        rows = _filter_active_opportunities(await Opportunity.find_many().to_list())
+        _visible_corpus_cache["rows"] = rows
+        _visible_corpus_cache["at"] = time.monotonic()
+        return rows
+
+
 def _feed_priority(opportunity: Opportunity) -> tuple[int, int, int, float, float, datetime, datetime]:
     trust_status = str(getattr(opportunity, "trust_status", "") or "").strip().lower()
     trust_tier = 2 if trust_status == "verified" else 1 if trust_status == "unreviewed" else 0
@@ -1535,7 +1590,7 @@ async def get_personalized_recommendations(
     requested_mode = ranking_mode
     try:
         profile = await _get_or_create_profile(current_user.id)
-        opportunities = _filter_active_opportunities(await Opportunity.find_many().to_list())
+        opportunities = await _load_visible_opportunities()
         if portal:
             opportunities = [
                 item
@@ -1658,7 +1713,7 @@ async def get_smart_shortlist(
         my_apps = await Application.find(Application.user_id == current_user.id).to_list()
         applied_ids = {str(application.opportunity_id) for application in my_apps}
 
-        opportunities = _filter_active_opportunities(await Opportunity.find_many().to_list())
+        opportunities = await _load_visible_opportunities()
         if portal:
             opportunities = [
                 item
