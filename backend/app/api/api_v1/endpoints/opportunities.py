@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field
 from app.api.deps import get_current_active_user, get_current_admin_user
 from app.core.cache import cache_get_json, cache_key, cache_set_json
 from app.core.config import settings
+from app.core.rate_limit import enforce_ai_budget
 from app.models.application import Application
 from app.models.ask_ai_query_snapshot import AskAIQuerySnapshot
 from app.models.ask_ai_saved_query import AskAISavedQuery
@@ -408,6 +409,61 @@ def _filter_active_opportunities(opportunities: list[Opportunity]) -> list[Oppor
         active.append(opportunity)
     active.sort(key=_activity_sort_key, reverse=True)
     return active
+
+
+#: The visible corpus, shared by every request for a few seconds.
+#:
+#: The personalised feed read the entire opportunities table on every single
+#: request - `Opportunity.find_many().to_list()`, no filter, no limit - then
+#: filtered and ranked it in Python. Measured against the live database that
+#: load alone was 8 seconds warm and 13 cold, on a page that already took 20
+#: seconds end to end.
+#:
+#: The read is identical for every user: the same rows, the same visibility
+#: rule, the same ordering. Only the ranking that follows is personal. So it is
+#: done once and shared, and a request arriving during the window pays nothing
+#: for it.
+#:
+#: Deliberately short. The scraper writes continuously, and a student refreshing
+#: after applying should see the feed move. Thirty seconds is far below the
+#: scrape interval, so no listing is hidden for a meaningful part of its life,
+#: and it still collapses a burst of requests into one read.
+#:
+#: Process-local on purpose. Redis would serialise several thousand documents on
+#: every miss, which is the cost being avoided; with more than one worker each
+#: simply keeps its own copy.
+_VISIBLE_CORPUS_TTL_SECONDS = 30.0
+_visible_corpus_cache: dict[str, Any] = {"at": 0.0, "rows": None}
+_visible_corpus_lock = asyncio.Lock()
+
+
+async def _load_visible_opportunities(*, force: bool = False) -> list[Opportunity]:
+    now = time.monotonic()
+    cached = _visible_corpus_cache.get("rows")
+    if (
+        not force
+        and cached is not None
+        and (now - float(_visible_corpus_cache.get("at") or 0.0)) < _VISIBLE_CORPUS_TTL_SECONDS
+    ):
+        return cached
+
+    async with _visible_corpus_lock:
+        # Re-check inside the lock: while this request waited, another may have
+        # already paid for the read. Without this a burst of concurrent
+        # requests on a cold cache each run their own full table scan, which is
+        # the exact behaviour being removed.
+        now = time.monotonic()
+        cached = _visible_corpus_cache.get("rows")
+        if (
+            not force
+            and cached is not None
+            and (now - float(_visible_corpus_cache.get("at") or 0.0)) < _VISIBLE_CORPUS_TTL_SECONDS
+        ):
+            return cached
+        rows = _filter_active_opportunities(await Opportunity.find_many().to_list())
+        _visible_corpus_cache["rows"] = rows
+        _visible_corpus_cache["at"] = time.monotonic()
+        return rows
 
 
 def _feed_priority(opportunity: Opportunity) -> tuple[int, int, int, float, float, datetime, datetime]:
@@ -1534,7 +1590,7 @@ async def get_personalized_recommendations(
     requested_mode = ranking_mode
     try:
         profile = await _get_or_create_profile(current_user.id)
-        opportunities = _filter_active_opportunities(await Opportunity.find_many().to_list())
+        opportunities = await _load_visible_opportunities()
         if portal:
             opportunities = [
                 item
@@ -1657,7 +1713,7 @@ async def get_smart_shortlist(
         my_apps = await Application.find(Application.user_id == current_user.id).to_list()
         applied_ids = {str(application.opportunity_id) for application in my_apps}
 
-        opportunities = _filter_active_opportunities(await Opportunity.find_many().to_list())
+        opportunities = await _load_visible_opportunities()
         if portal:
             opportunities = [
                 item
@@ -2084,6 +2140,11 @@ async def ask_ai_shortlist(
     request: AskAIRequest,
     current_user: User = Depends(get_current_active_user),
 ) -> Any:
+    # Metered against the account, not the address. Every call here runs
+    # retrieval, a cross-encoder and an LLM generation, and the IP-keyed
+    # middleware limit is both too high for that (240/min) and keyed wrongly:
+    # one college NAT shares a bucket, rotating addresses have none.
+    await enforce_ai_budget(user_id=str(current_user.id), action="ai.ask")
     started_at = time.perf_counter()
     try:
         profile = await _get_or_create_profile(current_user.id)

@@ -192,6 +192,18 @@ class Settings(BaseSettings):
     SCRAPER_ON_DEMAND_REFRESH_ENABLED: bool = True
     OPPORTUNITY_STATUS_AUTORUN_ENABLED: bool = True
     OPPORTUNITY_STATUS_REFRESH_INTERVAL_HOURS: int = 4
+    #: Whether the scheduled status refresh verifies that a listing's link still
+    #: resolves. This was hardcoded off at the call site, so it had never run:
+    #: 0 of 2,587 active listings had ever been checked, while 52% had not been
+    #: seen by a scraper in over 30 days. Only a 404 or 410 retires a row - a
+    #: bot-block or a timeout is recorded as "error" and changes nothing - so
+    #: the check removes listings that are provably gone, not ones that are
+    #: merely unreachable from here.
+    OPPORTUNITY_LIVENESS_CHECK_ENABLED: bool = True
+    #: Links verified per run. At 4-hour intervals this reaches every active
+    #: listing in about two days, and the queue is ordered least-recently-checked
+    #: first, so every row is verified once before any row is verified twice.
+    OPPORTUNITY_LIVENESS_PER_RUN: int = 250
     SCRAPER_TIMEOUT_SECONDS: int = 20
     SCRAPER_HTTP_RETRIES: int = 4
     SCRAPER_RETRY_BACKOFF: float = 0.8
@@ -441,6 +453,20 @@ class Settings(BaseSettings):
     RATE_LIMIT_AUTH_REQUESTS_PER_MINUTE: int = 30
     RATE_LIMIT_ADMIN_REQUESTS_PER_MINUTE: int = 20
     RATE_LIMIT_FEED_REQUESTS_PER_MINUTE: int = 100
+    #: Per-account budget for the endpoints that spend money on every call:
+    #: Ask AI, the assistant and the resume review each run retrieval, a
+    #: cross-encoder and an LLM generation.
+    #:
+    #: The middleware limit does not cover this. It is keyed by IP, and at the
+    #: default 240/min a single address could drive roughly 14,000 model calls
+    #: an hour. Keying by IP is also wrong in both directions for this corpus:
+    #: a college behind one NAT shares a bucket, while anyone with rotating
+    #: addresses has none. A paid endpoint has to be metered against the
+    #: account that is spending.
+    RATE_LIMIT_AI_REQUESTS_PER_MINUTE: int = 12
+    #: Daily ceiling per account, so a steady trickle under the per-minute
+    #: limit cannot quietly run up a month's budget in a day.
+    RATE_LIMIT_AI_REQUESTS_PER_DAY: int = 300
 
     # Background jobs (Mongo-backed queue + retry + DLQ)
     JOBS_ENABLED: bool = True

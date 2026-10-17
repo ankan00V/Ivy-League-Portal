@@ -100,6 +100,38 @@ class OpportunityStatusService:
         liveness_checked = 0
         now = utc_now()
 
+        # Who gets the liveness budget, decided before the loop rather than by
+        # whoever comes first in it.
+        #
+        # The page is ordered by -updated_at, so walking it and checking the
+        # first `liveness_limit` rows spends the whole budget on the most
+        # recently touched listings - the ones a scraper just confirmed. The
+        # rows that need checking are the opposite ones: 1,347 of 2,587 active
+        # listings have not been seen by any scraper in over 30 days, most from
+        # one-off company career-page scrapes that will never run again, and
+        # 81% carry no deadline, so nothing else can ever retire them. Ordered
+        # by -updated_at they sit at the bottom and were never reached.
+        #
+        # Least-recently-verified first, never-verified before that, which is
+        # the order that converges: every row gets checked once before any row
+        # is checked twice.
+        liveness_queue: set[int] = set()
+        if check_liveness and int(liveness_limit) > 0:
+            def _checked_at_key(row: Opportunity) -> tuple[int, float]:
+                checked = as_utc_aware(getattr(row, "url_last_checked_at", None))
+                if checked is None:
+                    return (0, 0.0)
+                return (1, checked.timestamp())
+
+            eligible = [
+                row
+                for row in rows
+                if not getattr(row, "url_last_checked_at", None)
+                or as_utc_aware(getattr(row, "url_last_checked_at", None)) < now - timedelta(days=1)
+            ]
+            eligible.sort(key=_checked_at_key)
+            liveness_queue = {id(row) for row in eligible[: max(0, int(liveness_limit))]}
+
         for row in rows:
             status = self.resolve_status(row)
             freshness = self.freshness_score(row)
@@ -111,15 +143,7 @@ class OpportunityStatusService:
                 active += 1
 
             liveness_status: Optional[str] = None
-            should_check_liveness = (
-                check_liveness
-                and liveness_checked < max(0, int(liveness_limit))
-                and (
-                    not getattr(row, "url_last_checked_at", None)
-                    or as_utc_aware(getattr(row, "url_last_checked_at", None)) < now - timedelta(days=1)
-                )
-            )
-            if should_check_liveness:
+            if id(row) in liveness_queue:
                 liveness_status = await self.check_url_liveness(row)
                 liveness_checked += 1
                 if liveness_status == "dead":

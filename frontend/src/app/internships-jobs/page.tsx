@@ -1,6 +1,7 @@
 "use client";
 import Sidebar from "@/components/Sidebar";
 import AskAIPanel from "@/components/AskAIPanel";
+import { staleSince } from "@/lib/listing-freshness";
 import { OpportunityCardsSkeleton } from "@/components/LoadingSkeletons";
 import React, { startTransition, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
@@ -122,6 +123,7 @@ const CAREER_KEYWORDS = ["internship", "intern", "job", "hiring", "developer", "
    Pinned to en-IN because the corpus is India-focused, and to UTC because a
    deadline is a date rather than a moment: formatting a midnight-UTC deadline in
    a local timezone can move it a day in either direction. */
+
 const DEADLINE_LOCALE = "en-IN";
 
 function formatDeadline(
@@ -880,8 +882,20 @@ export default function InternshipsJobsPage() {
                         <span style={{ color: "#ffffff", fontWeight: 700, fontSize: "0.85rem" }}>
                             {opp.deadline
                                 ? `Closes ${formatDeadline(opp.deadline, { month: "short", day: "numeric" })}`
-                                : "Rolling basis"}
+                                : "No deadline listed"}
                         </span>
+                        {staleSince(opp.last_seen_at) ? (
+                            <span
+                                title="No source has listed this opening since then. It may already be closed."
+                                style={{
+                                    color: "#ffd9a0",
+                                    fontWeight: 700,
+                                    fontSize: "0.78rem",
+                                }}
+                            >
+                                Unconfirmed for {staleSince(opp.last_seen_at)} days
+                            </span>
+                        ) : null}
                     </div>
                 </div>
                 <div style={{ padding: "1.5rem", display: "flex", flexDirection: "column", gap: "1rem" }}>
@@ -992,7 +1006,7 @@ export default function InternshipsJobsPage() {
                                 <Calendar size={14} />
                                 {opp.deadline
                                     ? formatDeadline(opp.deadline, { month: "short", day: "numeric", year: "numeric" })
-                                    : "Rolling Basis"}
+                                    : "No deadline listed"}
                             </span>
                         </div>
                         <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap", justifyContent: "end" }}>
@@ -1156,7 +1170,7 @@ export default function InternshipsJobsPage() {
                             <div style={{ fontWeight: 800, color: "var(--text-primary)" }}>
                                 {opp.deadline
                                     ? formatDeadline(opp.deadline, { month: "short", day: "numeric", year: "numeric" })
-                                    : "Rolling Basis"}
+                                    : "No deadline listed"}
                             </div>
                         </div>
                     </div>
@@ -1323,7 +1337,7 @@ export default function InternshipsJobsPage() {
                             ["Type", opp.opportunity_type || "Opportunity"],
                             ["Deadline", opp.deadline
                                 ? formatDeadline(opp.deadline, { month: "short", day: "numeric", year: "numeric" })
-                                : "Rolling Basis"],
+                                : "No deadline listed"],
                         ].map(([label, value]) => (
                             <div key={label}>
                                 <div style={{ fontSize: "0.72rem", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 900, color: "var(--text-secondary)", marginBottom: "0.3rem" }}>

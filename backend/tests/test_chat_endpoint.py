@@ -21,6 +21,7 @@ class TestChatEndpoint(unittest.IsolatedAsyncioTestCase):
         fake_profile = SimpleNamespace(user_id="u1")
 
         with (
+            patch.object(chat_endpoint, "enforce_ai_budget", new=AsyncMock()),
             patch.object(chat_endpoint, "_get_profile", new=AsyncMock(return_value=fake_profile)),
             patch.object(
                 chat_endpoint.assistant_service,
