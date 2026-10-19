@@ -6,6 +6,7 @@ from jose import jwt, JWTError
 from beanie import PydanticObjectId
 
 from app.core.config import auth_cookie_only_mode_enabled, settings
+from app.core.client_ip import client_ip
 from app.core.email_policy import is_corporate_email
 from app.models.user import User
 from app.schemas.user import TokenData
@@ -115,12 +116,7 @@ async def get_current_active_user(
 
 
 def _client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for") or ""
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    if request.client and request.client.host:
-        return str(request.client.host)
-    return "unknown"
+    return client_ip(request)
 
 
 def _admin_ip_allowed(ip_address: str) -> bool:

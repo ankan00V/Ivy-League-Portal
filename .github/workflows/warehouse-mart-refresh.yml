@@ -53,12 +53,12 @@ jobs:
         with:
           python-version: "3.12"
           cache: "pip"
-          cache-dependency-path: backend/requirements.txt
+          cache-dependency-path: backend/requirements.lock.txt
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r backend/requirements.txt
+          pip install -r backend/requirements.lock.txt
 
       - name: Seed deterministic warehouse fixture
         run: python backend/scripts/seed_release_ml_gate_fixture.py --days 30 --reset

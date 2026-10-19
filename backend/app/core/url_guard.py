@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import socket
 from urllib.parse import urlparse
+
+import httpx
 
 
 class BlockedTargetURL(ValueError):
@@ -112,9 +115,41 @@ def assert_public_http_url(url: str) -> str:
     return str(url or "").strip()
 
 
+async def assert_public_http_url_async(url: str) -> str:
+    """Run DNS-backed target validation without blocking the event loop."""
+
+    return await asyncio.to_thread(assert_public_http_url, url)
+
+
 def is_public_http_url(url: str) -> bool:
     try:
         assert_public_http_url(url)
     except BlockedTargetURL:
         return False
     return True
+
+
+class PinnedPublicTransport(httpx.AsyncHTTPTransport):
+    """Open outbound HTTP connections only to the address just validated.
+
+    Validating a hostname and then handing that hostname to an HTTP client is
+    insufficient: the client performs its own DNS lookup and a hostile resolver
+    can return a private address on that second lookup.  This transport resolves
+    once, validates every answer and dials one of those exact public addresses.
+    The original hostname remains in the Host header and TLS SNI, preserving
+    normal virtual-host routing and certificate verification.
+    """
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        hostname = request.url.host
+        addresses = await asyncio.to_thread(public_addresses_for, str(request.url))
+        if not addresses:
+            raise BlockedTargetURL(f"target_host_unresolvable:{hostname}")
+        address = next((item for item in addresses if item.version == 4), addresses[0])
+        if not address.is_global:
+            raise BlockedTargetURL(f"target_address_forbidden:{address}")
+
+        request.headers["Host"] = request.url.netloc.decode("ascii")
+        request.extensions = {**dict(request.extensions or {}), "sni_hostname": hostname}
+        request.url = request.url.copy_with(host=str(address))
+        return await super().handle_async_request(request)

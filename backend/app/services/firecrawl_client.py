@@ -1,17 +1,16 @@
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import logging
 import time
 import warnings
 from dataclasses import dataclass
 from typing import Any, Callable
-from urllib.parse import urlparse
 
 from app.core.async_limits import LoopLocalSemaphore
 from app.core.config import settings
 from app.core import metrics
+from app.core.url_guard import BlockedTargetURL, assert_public_http_url_async
 
 logger = logging.getLogger(__name__)
 
@@ -72,24 +71,12 @@ class FirecrawlClient:
         )
 
     @staticmethod
-    def _validate_target_url(url: str) -> str:
+    async def _validate_target_url(url: str) -> str:
         candidate = str(url or "").strip()
-        parsed = urlparse(candidate)
-        if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
-            raise FirecrawlUnavailableError("firecrawl_target_url_invalid")
-        if parsed.username or parsed.password:
-            raise FirecrawlUnavailableError("firecrawl_target_credentials_forbidden")
-
-        hostname = parsed.hostname.rstrip(".").lower()
-        if hostname == "localhost" or hostname.endswith((".localhost", ".local", ".internal")):
-            raise FirecrawlUnavailableError("firecrawl_private_target_forbidden")
         try:
-            address = ipaddress.ip_address(hostname)
-        except ValueError:
-            return candidate
-        if not address.is_global:
-            raise FirecrawlUnavailableError("firecrawl_private_target_forbidden")
-        return candidate
+            return await assert_public_http_url_async(candidate)
+        except BlockedTargetURL as exc:
+            raise FirecrawlUnavailableError(f"firecrawl_target_forbidden:{exc}") from exc
 
     def _client(self) -> Any:
         if self._sdk_client is not None:
@@ -143,7 +130,7 @@ class FirecrawlClient:
 
     async def scrape(self, url: str, *, timeout_seconds: float | None = None) -> FirecrawlFetchResult:
         self._ensure_circuit_closed()
-        url = self._validate_target_url(url)
+        url = await self._validate_target_url(url)
         client = self._client()
         timeout = max(1.0, float(timeout_seconds or settings.FIRECRAWL_TIMEOUT_SECONDS))
         started = self._monotonic()
@@ -218,7 +205,7 @@ class FirecrawlClient:
                 if not url:
                     continue
                 try:
-                    url = self._validate_target_url(url)
+                    url = await self._validate_target_url(url)
                 except FirecrawlUnavailableError:
                     continue
                 metadata = getattr(row, "metadata", None)

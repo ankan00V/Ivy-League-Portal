@@ -80,7 +80,7 @@ subgraph group_intelligence["Retrieval and learning"]
 end
 
 subgraph group_data["Data and operations"]
-  node_mongo[("MongoDB operational store<br/>primary database<br/>[opportunity.py]")]
+  node_postgres[("Supabase Postgres operational store<br/>primary database<br/>[opportunity.py]")]
   node_redis["Redis online state<br/>cache and queue<br/>[redis.py]"]
   node_warehouse[("ClickHouse warehouse<br/>analytics warehouse")]
   node_delivery["Delivery and observability<br/>deployment automation<br/>[docker-compose.yml]"]
@@ -93,16 +93,16 @@ node_security -->|"authorizes requests"| node_api_domains
 node_api_domains -->|"admin endpoints"| node_admin
 node_api_domains -->|"feed requests"| node_recommendations
 node_api_domains -->|"chat requests"| node_assistant
-node_api_domains -->|"reads and writes"| node_mongo
+node_api_domains -->|"reads and writes"| node_postgres
 node_security -->|"sessions and limits"| node_redis
 node_worker -->|"runs scheduled jobs"| node_acquisition
 node_worker -->|"consumes queues"| node_redis
 node_acquisition -->|"fetches sources"| node_providers
 node_providers -->|"listing candidates"| node_curation
-node_curation -->|"persists curated records"| node_mongo
-node_mongo -->|"opportunity text"| node_vectors
+node_curation -->|"persists curated records"| node_postgres
+node_postgres -->|"opportunity text"| node_vectors
 node_vectors -->|"semantic candidates"| node_recommendations
-node_mongo -->|"profiles and interactions"| node_recommendations
+node_postgres -->|"profiles and interactions"| node_recommendations
 node_vectors -->|"retrieval context"| node_assistant
 node_recommendations -->|"impressions and ranking telemetry"| node_experiments
 node_experiments -->|"governed analytics export"| node_warehouse
@@ -126,7 +126,7 @@ click node_vectors "https://github.com/ankan00v/ivy-league-portal/blob/main/back
 click node_assistant "https://github.com/ankan00v/ivy-league-portal/blob/main/backend/app/services/assistant_service.py"
 click node_experiments "https://github.com/ankan00v/ivy-league-portal/blob/main/backend/app/services/experiment_service.py"
 click node_mlops "https://github.com/ankan00v/ivy-league-portal/blob/main/backend/app/services/mlops/retraining_service.py"
-click node_mongo "https://github.com/ankan00v/ivy-league-portal/blob/main/backend/app/models/opportunity.py"
+click node_postgres "https://github.com/ankan00v/ivy-league-portal/blob/main/backend/app/models/opportunity.py"
 click node_redis "https://github.com/ankan00v/ivy-league-portal/blob/main/backend/app/core/redis.py"
 click node_warehouse "https://github.com/ankan00v/ivy-league-portal/blob/main/backend/warehouse/clickhouse_schema.sql"
 click node_delivery "https://github.com/ankan00v/ivy-league-portal/blob/main/docker-compose.yml"
@@ -142,7 +142,7 @@ class node_web,node_proxy toneBlue
 class node_fastapi,node_api_domains,node_security,node_admin toneAmber
 class node_worker,node_acquisition,node_providers,node_curation toneMint
 class node_recommendations,node_vectors,node_assistant,node_experiments,node_mlops toneRose
-class node_mongo,node_redis,node_warehouse,node_delivery toneIndigo
+class node_postgres,node_redis,node_warehouse,node_delivery toneIndigo
 ```
 ## 5) Technology Stack
 | Layer | Technologies |
@@ -180,7 +180,7 @@ class node_mongo,node_redis,node_warehouse,node_delivery toneIndigo
 - Background jobs with retry, dead-letter behavior, bounded concurrency, queue caps, and handler timeouts.
 - Opportunity ingestion is scheduled immediately at API startup and then every `SCRAPER_INTERVAL_MINUTES` (30 minutes by default). Each `scraper.run` is persisted in the Postgres-backed job queue for retry and operational visibility; primary sources are saved before generic portals, each fetch batch has a bounded `SCRAPER_FETCH_BATCH_TIMEOUT_SECONDS` (180 seconds by default), and model-backed semantic dedup/embedding rebuilds remain off the ingestion critical path by default.
 - Past-deadline opportunities are retired by setting `opportunity_status="expired"`, which hides them from every student-facing surface. Ingestion never hard-deletes opportunity rows: many connectors synthesise a deadline when the source exposes none, so deletion destroyed records that had not genuinely closed.
-- Source discovery pipeline with company seeds, user submissions, qualification queues, adaptive extraction, JavaScript rendering for pages that mount their board client-side, probation, dynamic scraper registration, and health quarantine. Rendering is served by obscura ahead of crawlee; the paid providers (Firecrawl, Browser Use) remain wired but default to `disabled` via `FIRECRAWL_MODE` / `BROWSER_USE_MODE` after failing on every URL of the 2026-08-05 sweep.
+- Source discovery pipeline with company seeds, user submissions, qualification queues, adaptive extraction, JavaScript rendering for pages that mount their board client-side, probation, dynamic scraper registration, and health quarantine. Local development can opt into Obscura/Crawlee rendering; production disables those non-pinning local/browser clients to prevent DNS-rebinding SSRF, while the direct HTTP provider pins requests to the vetted address. The paid providers (Firecrawl, Browser Use) remain wired but default to `disabled` via `FIRECRAWL_MODE` / `BROWSER_USE_MODE` after failing on every URL of the 2026-08-05 sweep.
 - Opportunity quality scoring normalizes location, work mode, duration, stipend, and tags; it also evaluates deadline, eligibility, compensation, and duplicate signals. Low-completeness records enter the admin review queue with explicit reasons, while trust-risk records remain separately blocked from student-facing surfaces.
 - Source-discovery skill tags use a guarded, optional skill-span extractor and retain the static keyword fallback whenever its local artifact is unavailable or inference fails.
 - Official company careers intelligence with a curated S-tier internship watchlist across global tech, quant/trading, Indian product, IT services, government/PSU, research, consulting, analytics, banking, manufacturing, aerospace, energy, FMCG, and hidden-gem employers.
@@ -384,6 +384,37 @@ Required external services:
 - Production BI URL for analytics inspection.
 - SMTP, OAuth, Turnstile, and alerting secrets.
 
+### Production Compose
+
+The production overlay intentionally refuses to use `backend/.env`, which is a
+local-development file. Create a secret-managed runtime file from
+`backend/.env.production.example` outside the repository, fill every required
+value, and expose it only to the deployment host or CI secret store.
+
+```bash
+export RUNTIME_ENV_FILE=/etc/vidyaverse/runtime.env
+docker compose --env-file "$RUNTIME_ENV_FILE" \
+  -f docker-compose.yml -f docker-compose.prod.yml config --quiet
+docker compose --env-file "$RUNTIME_ENV_FILE" \
+  -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+
+`RUNTIME_ENV_FILE` is mandatory for the production overlay. It supplies both
+application settings and the Compose values for `APP_DOMAIN` and `ACME_EMAIL`.
+The public network surface is Caddy only (`80/tcp`, `443/tcp`, and `443/udp` for
+HTTP/3); the frontend and API have no production host ports. The production
+overlay deliberately does not start local MongoDB, Redis, ClickHouse, MinIO,
+Grafana, or Prometheus: it uses the managed services configured in the runtime
+file. `/metrics` has neither a host port nor a Caddy route. If it is collected,
+the collector must join `app_internal` explicitly.
+
+The default image omits Obscura, a third-party browser binary. Its local/browser
+fetchers are disabled in production because their networking stacks cannot pin a
+connection to the DNS address that passed validation. If a non-production
+environment must use Obscura, opt in explicitly with `INSTALL_OBSCURA=true` and
+the exact trusted `OBSCURA_SHA256`; the image build rejects an opt-in without
+that digest.
+
 ## 13) Developer Verification Harness
 Use this only to reproduce checks before production deployment. It is not the production architecture.
 
@@ -399,7 +430,8 @@ python3 scripts/smoke_test_local.py \
 The local harness uses Docker dependencies and ignored `.env` placeholders only to prove code paths. Do not promote those values to production.
 
 ## 14) Key Configuration Areas
-- Production endpoints: `MONGODB_URL`, `REDIS_URL`, `ANALYTICS_WAREHOUSE_CLICKHOUSE_*`, `MLOPS_MODEL_ARTIFACT_S3_*`, `MODEL_ARTIFACT_BUCKET`
+- Production endpoints: `SUPABASE_DATABASE_URL`, `SUPABASE_DATABASE_DIRECT_URL`, `REDIS_URL`, `ANALYTICS_WAREHOUSE_CLICKHOUSE_*`, `MLOPS_MODEL_ARTIFACT_S3_*`, `MODEL_ARTIFACT_BUCKET`
+- Production Compose: `RUNTIME_ENV_FILE`, `APP_DOMAIN`, `ACME_EMAIL`, `TRUSTED_PROXY_IPS`
 - Auth/Security: `AUTH_SESSION_COOKIE_*`, `AUTH_COOKIE_ONLY_MODE`, `CSRF_*`, `SECURITY_CSP_*`
 - Session store: `AUTH_SESSION_STORE_ENABLED`, `AUTH_SESSION_REQUIRE_SERVER_STATE`, `AUTH_SESSION_BIND_DEVICE`
 - Job scaling: `JOBS_MAX_CONCURRENCY`, `JOBS_HANDLER_TIMEOUT_SECONDS`, `JOBS_MAX_PENDING_PER_TYPE`
@@ -407,7 +439,7 @@ The local harness uses Docker dependencies and ignored `.env` placeholders only 
 - MLOps alerts/incidents: `MLOPS_ALERT_SLACK_WEBHOOK_URL`, `MLOPS_ALERT_PAGERDUTY_ROUTING_KEY`, `MLOPS_INCIDENT_DEFAULT_OWNER`
 - Parity gates: `MLOPS_PARITY_*`
 - Privacy: `TELEMETRY_RAW_RETENTION_DAYS`, `ANALYTICS_WAREHOUSE_PSEUDONYMIZE_USERS`, `ANALYTICS_WAREHOUSE_REQUIRE_CONSENT`
-- Source discovery: `DISCOVERY_ENABLED`, `SERPAPI_KEY`, `FIRECRAWL_ENABLED`, `FIRECRAWL_API_KEY`, `FIRECRAWL_MODE`, `FIRECRAWL_MAX_CONCURRENT`, `CLAUDE_API_KEY`, `MAX_LLM_EXTRACTIONS_PER_HOUR`, `MONTHLY_LLM_BUDGET_USD`, `QUALIFICATION_MIN_SCORE`, `TRUST_MIN_SCORE_AUTO_PROMOTE`, `PROBATION_*`, `SOURCE_FETCH_RATE_LIMIT`
+- Source discovery: `DISCOVERY_ENABLED`, `SERPAPI_KEY`, `FIRECRAWL_ENABLED`, `FIRECRAWL_API_KEY`, `FIRECRAWL_MODE`, `FIRECRAWL_MAX_CONCURRENT`, `CLAUDE_API_KEY`, `MAX_LLM_EXTRACTIONS_PER_HOUR`, `MONTHLY_LLM_BUDGET_USD`, `QUALIFICATION_MIN_SCORE`, `TRUST_MIN_SCORE_AUTO_PROMOTE`, `PROBATION_*`, `SOURCE_FETCH_RATE_LIMIT`. Keep `SCRAPLING_ENABLED`, `CRAWLEE_ENABLED`, and `OBSCURA_ENABLED` false in production.
 
 ## 15) High-Value Code Paths
 - Backend core: `backend/app`

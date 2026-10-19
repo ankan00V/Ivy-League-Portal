@@ -84,6 +84,10 @@ class Settings(BaseSettings):
     ADMIN_TOTP_PERIOD_SECONDS: int = 30
     ADMIN_TOTP_WINDOW_STEPS: int = 1
     ADMIN_ALLOWED_IPS: list[str] = []
+    # Forwarded client-address headers are attacker-controlled until the TCP
+    # peer is listed here.  Use fixed proxy IPs/CIDRs, never a broad private
+    # range unless every address in it is operated as a trusted proxy.
+    TRUSTED_PROXY_IPS: list[str] = []
     ADMIN_SESSION_MAX_AGE_SECONDS: int = 60 * 60 * 4
     CSRF_PROTECTION_ENABLED: bool = True
     CSRF_ENFORCE_ON_AUTH_COOKIE: bool = True
@@ -902,7 +906,9 @@ class Settings(BaseSettings):
 
     # Security event reporting
     SECURITY_CSP_REPORT_URI: str = "/api/v1/security/csp-report"
+    SECURITY_CSP_REPORT_MAX_BYTES: int = 64 * 1024
     SECURITY_CSP_REPORT_ONLY_FRONTEND: bool = False
+    SOURCE_DISCOVERY_IMPORT_MAX_BYTES: int = 2 * 1024 * 1024
 
     # Embedding health posture
     EMBEDDING_HEALTH_ENFORCE_IN_PRODUCTION: bool = True

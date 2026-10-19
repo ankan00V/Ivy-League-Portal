@@ -23,7 +23,6 @@ last because Obscura does not succeed everywhere - some targets return nothing.
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import logging
 import os
 import shutil
@@ -31,10 +30,10 @@ import subprocess
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
-from urllib.parse import urlparse
 
 from app.core.async_limits import LoopLocalSemaphore
 from app.core.config import settings
+from app.core.url_guard import BlockedTargetURL, assert_public_http_url_async
 
 logger = logging.getLogger(__name__)
 
@@ -82,23 +81,12 @@ class ObscuraClient:
         return bool(settings.OBSCURA_ENABLED) and bool(self.binary_path())
 
     @staticmethod
-    def _validate_target_url(url: str) -> str:
+    async def _validate_target_url(url: str) -> str:
         candidate = str(url or "").strip()
-        parsed = urlparse(candidate)
-        if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
-            raise ObscuraUnavailableError("obscura_target_url_invalid")
-        if parsed.username or parsed.password:
-            raise ObscuraUnavailableError("obscura_target_credentials_forbidden")
-        hostname = parsed.hostname.rstrip(".").lower()
-        if hostname == "localhost" or hostname.endswith((".localhost", ".local", ".internal")):
-            raise ObscuraUnavailableError("obscura_private_target_forbidden")
         try:
-            address = ipaddress.ip_address(hostname)
-        except ValueError:
-            return candidate
-        if not address.is_global:
-            raise ObscuraUnavailableError("obscura_private_target_forbidden")
-        return candidate
+            return await assert_public_http_url_async(candidate)
+        except BlockedTargetURL as exc:
+            raise ObscuraUnavailableError(f"obscura_target_forbidden:{exc}") from exc
 
     def _ensure_circuit_closed(self) -> None:
         if self._circuit_open_until > self._monotonic():
@@ -121,7 +109,7 @@ class ObscuraClient:
         binary = self.binary_path()
         if not binary:
             raise ObscuraUnavailableError("obscura_binary_missing")
-        url = self._validate_target_url(url)
+        url = await self._validate_target_url(url)
         timeout = max(5.0, float(timeout_seconds or settings.OBSCURA_TIMEOUT_SECONDS))
 
         # argv list, never a shell string: the URL is passed as a single

@@ -1,9 +1,21 @@
 services:
   backend:
+    # A production Compose invocation must name an external, ignored runtime
+    # env file. This keeps application secrets out of the repository and avoids
+    # accidentally loading backend/.env (the local development file).
+    env_file:
+      - ${RUNTIME_ENV_FILE:?RUNTIME_ENV_FILE must reference a production runtime env file}
     environment:
       ENVIRONMENT: production
       AUTH_COOKIE_ONLY_MODE: "true"
       AUTH_SESSION_COOKIE_SECURE: "true"
+      # The only permitted trust boundary for forwarded client headers is the
+      # internal service network. Caddy is public-facing; backend, databases,
+      # queues and observability services are not.
+      TRUSTED_PROXY_IPS: ${TRUSTED_PROXY_IPS:-172.30.0.0/24}
+      # /metrics has no host port or Caddy route. An observability collector
+      # must join app_internal explicitly; network isolation is its access
+      # control, so an expiring browser-token is not required for scraping.
       METRICS_REQUIRE_AUTH: ${METRICS_REQUIRE_AUTH:-false}
       ANALYTICS_WAREHOUSE_ENFORCE_CLICKHOUSE_IN_PRODUCTION: "true"
       ANALYTICS_WAREHOUSE_ENFORCE_FRESHNESS_IN_PRODUCTION: "true"
@@ -24,6 +36,8 @@ services:
         max-file: "5"
 
   worker:
+    env_file:
+      - ${RUNTIME_ENV_FILE:?RUNTIME_ENV_FILE must reference a production runtime env file}
     environment:
       ENVIRONMENT: production
       ANALYTICS_WAREHOUSE_ENFORCE_CLICKHOUSE_IN_PRODUCTION: "true"
@@ -46,26 +60,35 @@ services:
       NODE_ENV: production
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL}
       BACKEND_INTERNAL_URL: http://backend:8000
+    networks:
+      - app_internal
+      - edge
     logging:
       driver: json-file
       options:
         max-size: 10m
         max-file: "5"
 
-  mongo:
-    restart: always
+  caddy:
+    image: caddy:2.8.4-alpine
+    restart: unless-stopped
+    depends_on:
+      frontend:
+        condition: service_healthy
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?APP_DOMAIN must be set to the public application domain}
+      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL must be set for certificate notifications}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./ops/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - app_internal
+      - edge
 
-  redis:
-    restart: always
-
-  clickhouse:
-    restart: always
-
-  minio:
-    restart: always
-
-  prometheus:
-    restart: always
-
-  grafana:
-    restart: always
+networks:
+  edge:

@@ -5,9 +5,15 @@ import { spawn } from "node:child_process";
 
 const __filename = fileURLToPath(import.meta.url);
 const projectRoot = path.resolve(path.dirname(__filename), "..");
-const standaloneRoot = path.join(projectRoot, ".next", "standalone", "frontend");
+// A verification build can set NEXT_DIST_DIR so it never overwrites the build
+// artifacts a running local server is serving. Keep the standalone synchronizer
+// on that same directory; otherwise a successful isolated build would copy
+// stale assets from .next into its bundle.
+const distDir = process.env.NEXT_DIST_DIR || ".next";
+const buildRoot = path.resolve(projectRoot, distDir);
+const standaloneRoot = path.join(buildRoot, "standalone", "frontend");
 const standaloneServer = path.join(standaloneRoot, "server.js");
-const sourceStaticDir = path.join(projectRoot, ".next", "static");
+const sourceStaticDir = path.join(buildRoot, "static");
 const targetStaticDir = path.join(standaloneRoot, ".next", "static");
 const sourcePublicDir = path.join(projectRoot, "public");
 const targetPublicDir = path.join(standaloneRoot, "public");

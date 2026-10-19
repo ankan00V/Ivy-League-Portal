@@ -13,6 +13,7 @@ from fastapi import Request
 from jose import JWTError, jwt
 
 from app.core.config import settings
+from app.core.client_ip import client_ip
 from app.core.redis import get_redis
 from app.core.time import utc_now
 from app.models.user import User
@@ -259,12 +260,7 @@ class SessionSecurityService:
     def _client_ip(self, request: Request | None) -> str:
         if request is None:
             return "unknown"
-        forwarded = request.headers.get("x-forwarded-for") or ""
-        if forwarded:
-            return forwarded.split(",")[0].strip() or "unknown"
-        if request.client and request.client.host:
-            return str(request.client.host)
-        return "unknown"
+        return client_ip(request)
 
     def _ip_prefix(self, value: str) -> str:
         candidate = str(value or "").strip()

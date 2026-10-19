@@ -90,6 +90,33 @@ def validate_production_operational_config() -> None:
     redis_url = (settings.REDIS_URL or "").strip().lower()
     if settings.SECRET_KEY.startswith("your_super_secret_key_here"):
         raise RuntimeError("SECRET_KEY must be set via environment in production.")
+    if not settings.POSTGRES_ODM_ENABLED:
+        raise RuntimeError("POSTGRES_ODM_ENABLED must remain enabled in production.")
+    # Resolve at startup rather than allowing a missing primary DSN to become a
+    # lower-level connection failure after the web process has accepted traffic.
+    from app.core.config import resolve_postgres_dsn
+
+    resolve_postgres_dsn()
+    if not settings.AUTH_SESSION_REQUIRE_SERVER_STATE:
+        raise RuntimeError("AUTH_SESSION_REQUIRE_SERVER_STATE must be true in production.")
+    # These clients validate the requested URL, but their underlying browser or
+    # third-party HTTP engines cannot be forced to connect to the validated DNS
+    # answer. Keeping them off prevents DNS-rebinding from turning ingestion
+    # into an internal-network fetch. The direct httpx provider pins each
+    # connection to the vetted address instead.
+    non_pinning_fetchers = {
+        "SCRAPLING_ENABLED": settings.SCRAPLING_ENABLED,
+        "CRAWLEE_ENABLED": settings.CRAWLEE_ENABLED,
+        "OBSCURA_ENABLED": settings.OBSCURA_ENABLED,
+    }
+    enabled_non_pinning_fetchers = [
+        name for name, enabled in non_pinning_fetchers.items() if enabled
+    ]
+    if enabled_non_pinning_fetchers:
+        raise RuntimeError(
+            "Production must disable non-pinning local fetchers: "
+            + ", ".join(enabled_non_pinning_fetchers)
+        )
     # The MongoDB guard that used to live here is gone: MONGODB_URL is unused
     # under POSTGRES_ODM_ENABLED, but it defaults to mongodb://localhost:27017,
     # so simply deleting the line from .env would have failed this check and

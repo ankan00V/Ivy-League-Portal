@@ -1,14 +1,15 @@
 import sys
+import ipaddress
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.core import url_guard
-from app.core.url_guard import BlockedTargetURL, assert_public_http_url, is_public_http_url
+from app.core.url_guard import BlockedTargetURL, PinnedPublicTransport, assert_public_http_url, is_public_http_url
 
 
 class TestUrlGuardBlocksSSRF(unittest.TestCase):
@@ -86,6 +87,46 @@ class TestUrlGuardBlocksSSRF(unittest.TestCase):
         with patch.object(url_guard, "resolve_hostname", side_effect=OSError("nxdomain")):
             with self.assertRaises(BlockedTargetURL):
                 assert_public_http_url("https://does-not-exist.example/")
+
+
+class TestPinnedPublicTransport(unittest.IsolatedAsyncioTestCase):
+    async def test_pins_the_socket_to_the_validated_address(self) -> None:
+        import httpx
+
+        captured: dict[str, object] = {}
+
+        async def parent_transport(_self, request: httpx.Request) -> httpx.Response:
+            captured["url"] = str(request.url)
+            captured["host"] = request.headers.get("host")
+            captured["sni"] = request.extensions.get("sni_hostname")
+            return httpx.Response(200)
+
+        with (
+            patch.object(url_guard, "public_addresses_for", return_value=[ipaddress.ip_address("93.184.216.34")]),
+            patch.object(httpx.AsyncHTTPTransport, "handle_async_request", new=parent_transport),
+        ):
+            await PinnedPublicTransport().handle_async_request(httpx.Request("GET", "https://example.com/jobs"))
+
+        self.assertIn("93.184.216.34", str(captured["url"]))
+        self.assertEqual(captured["host"], "example.com")
+        self.assertEqual(captured["sni"], "example.com")
+
+    async def test_blocked_address_never_reaches_the_socket(self) -> None:
+        import httpx
+
+        with patch.object(
+            url_guard,
+            "public_addresses_for",
+            side_effect=BlockedTargetURL("target_address_forbidden"),
+        ), patch.object(
+            httpx.AsyncHTTPTransport,
+            "handle_async_request",
+            new=AsyncMock(),
+        ) as parent_transport:
+            with self.assertRaises(BlockedTargetURL):
+                await PinnedPublicTransport().handle_async_request(httpx.Request("GET", "https://evil.example/"))
+
+        parent_transport.assert_not_awaited()
 
 
 if __name__ == "__main__":
