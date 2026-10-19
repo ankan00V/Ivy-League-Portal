@@ -1,0 +1,20 @@
+{
+    email {$ACME_EMAIL}
+}
+
+# Caddy terminates TLS and is the sole public entry point. Browser API calls
+# stay same-origin: the Next.js route handler proxies /api/v1/* to FastAPI on
+# the private app_internal network, so the backend never needs a host port.
+{$APP_DOMAIN} {
+    encode zstd gzip
+    request_body {
+        # Resume uploads are limited to 8 MiB by the API. Leave headroom for
+        # multipart framing but reject oversized requests at the edge before
+        # Next.js buffers them for its same-origin API proxy.
+        max_size 10MB
+    }
+    header {
+        -Server
+    }
+    reverse_proxy frontend:3000
+}

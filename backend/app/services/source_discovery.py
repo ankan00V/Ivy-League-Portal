@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 from pymongo.errors import DuplicateKeyError
 
 from app.core.async_limits import LoopLocalLockMap, LoopLocalSemaphore
-from app.core.url_guard import BlockedTargetURL, assert_public_http_url
+from app.core.url_guard import BlockedTargetURL, PinnedPublicTransport, assert_public_http_url
 from app.services.scrapling_client import scrapling_client
 from app.core.audiences import normalise_audience
 from app.services.source_rubric import (
@@ -1046,8 +1046,12 @@ class SourceHttpClient:
             follow_redirects=False,
             timeout=timeout_seconds,
             headers=DEFAULT_HEADERS,
+            transport=PinnedPublicTransport(),
         ) as client:
-            target = assert_public_http_url(url)
+            # PinnedPublicTransport performs the authoritative validation at
+            # connection time.  Do not pre-resolve here: a second lookup would
+            # recreate the DNS-rebinding window this transport exists to close.
+            target = url
             for _hop in range(max_hops + 1):
                 response = await client.get(target)
                 if response.status_code not in {301, 302, 303, 307, 308}:
@@ -1055,7 +1059,7 @@ class SourceHttpClient:
                 location = response.headers.get("location")
                 if not location:
                     break
-                target = assert_public_http_url(str(httpx.URL(target).join(location)))
+                target = str(httpx.URL(target).join(location))
             else:
                 raise BlockedTargetURL(f"target_redirect_limit_exceeded:{url}")
         return FetchedPage(

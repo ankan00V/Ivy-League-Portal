@@ -74,6 +74,26 @@ def _json_doc(row: Any) -> dict[str, Any]:
     return payload
 
 
+async def _read_import_file(file: UploadFile) -> bytes:
+    """Read a CSV import under a hard cap before passing it to a parser."""
+
+    max_bytes = max(1_024, int(settings.SOURCE_DISCOVERY_IMPORT_MAX_BYTES))
+    chunks: list[bytes] = []
+    received = 0
+    while True:
+        chunk = await file.read(64 * 1024)
+        if not chunk:
+            break
+        received += len(chunk)
+        if received > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Import exceeds maximum size ({max_bytes} bytes).",
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 def _source_progress(row: DiscoveredSource) -> str:
     if row.status != SourceStatus.probation:
         return str(row.status)
@@ -392,7 +412,7 @@ async def bulk_import_sources(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_admin_user),
 ) -> Any:
-    raw = await file.read()
+    raw = await _read_import_file(file)
     return await source_discovery_engine.bulk_import_sources(
         csv_text=raw.decode("utf-8-sig"),
         actor=current_user,
@@ -476,7 +496,7 @@ async def bulk_seed_import(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_admin_user),
 ) -> Any:
-    raw = (await file.read()).decode("utf-8-sig")
+    raw = (await _read_import_file(file)).decode("utf-8-sig")
     import csv
     from io import StringIO
 

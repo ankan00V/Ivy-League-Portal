@@ -167,9 +167,34 @@ def _validate_crawlee(*, production: bool) -> list[CheckResult]:
     ]
 
 
+def _validate_primary_database(*, production: bool) -> list[CheckResult]:
+    postgres_odm_enabled = _bool_env("POSTGRES_ODM_ENABLED", default=True)
+    supabase_dsn = not _is_placeholder("SUPABASE_DATABASE_URL")
+    neon_dsn = not _is_placeholder("NEON_DATABASE_URL")
+    return [
+        CheckResult(
+            name="POSTGRES_ODM_ENABLED",
+            ok=postgres_odm_enabled,
+            severity="fatal" if production else "warning",
+            detail="enabled" if postgres_odm_enabled else "disabled",
+        ),
+        CheckResult(
+            name="Serving Postgres DSN",
+            ok=supabase_dsn or neon_dsn,
+            severity="fatal",
+            detail=(
+                "SUPABASE_DATABASE_URL=set"
+                if supabase_dsn
+                else "NEON_DATABASE_URL=set"
+                if neon_dsn
+                else "missing"
+            ),
+        ),
+    ]
+
+
 def validate(*, production: bool = False) -> list[CheckResult]:
     results = [
-        _check_required("MONGODB_URL"),
         _check_required("REDIS_URL"),
         _check_required("SECRET_KEY"),
         CheckResult(
@@ -199,6 +224,7 @@ def validate(*, production: bool = False) -> list[CheckResult]:
             detail="enabled" if _bool_env("TURNSTILE_ENABLED") else "disabled",
         ),
     ]
+    results.extend(_validate_primary_database(production=production))
     results.extend(_validate_llm())
     results.extend(_validate_firecrawl(production=production))
     results.extend(_validate_browser_use(production=production))

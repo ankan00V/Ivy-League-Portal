@@ -13,6 +13,7 @@ from starlette.responses import JSONResponse
 from starlette.responses import Response
 
 from app.core import metrics as metrics_module
+from app.core.client_ip import client_ip
 from app.core.config import resolved_csp_value, settings
 from app.core.rate_limit import check_rate_limit
 
@@ -20,12 +21,7 @@ logger = logging.getLogger("vidyaverse.http")
 
 
 def _client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for") or ""
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    if request.client and request.client.host:
-        return request.client.host
-    return "unknown"
+    return client_ip(request)
 
 
 def _route_label(request: Request) -> str:

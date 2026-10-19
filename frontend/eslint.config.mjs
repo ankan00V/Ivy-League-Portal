@@ -9,6 +9,10 @@ const eslintConfig = defineConfig([
   globalIgnores([
     // Default ignores of eslint-config-next:
     ".next/**",
+    // Verification builds set NEXT_DIST_DIR to an isolated .next-* folder so
+    // a running local server keeps its current assets. Treat every generated
+    // Next output directory as build output, not application source.
+    ".next-*/**",
     "out/**",
     "build/**",
     "test-results/**",

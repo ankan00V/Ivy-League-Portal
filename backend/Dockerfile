@@ -13,9 +13,10 @@ RUN apt-get update \
     && apt-get -y install libpq-dev gcc \
     && apt-get clean
 
-# Install python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
+# Install the reviewed, pinned dependency graph. Runtime images must not resolve
+# a new dependency set merely because an upstream package published a release.
+COPY requirements.lock.txt .
+RUN pip install --no-cache-dir --user -r requirements.lock.txt
 
 #########
 # FINAL #
@@ -40,40 +41,38 @@ RUN apt-get update \
     && apt-get install -y libpq-dev curl ca-certificates \
     && apt-get clean
 
-# Obscura is the render provider that executes JavaScript, and it is a native
-# binary rather than a Python package, so requirements.txt cannot bring it in.
-# Without it the provider reports itself unconfigured and the chain quietly
-# falls through to crawlee - the scraper keeps working but stops reaching the
-# client-rendered job boards Obscura was added for, which is a failure that
-# would only show up as a gradual drop in listings.
+# Obscura is an optional JavaScript-rendering provider distributed as a native
+# binary. The default image deliberately omits it: downloading an executable
+# without a verified digest during application builds is a supply-chain risk.
+# An operator can opt in only by setting INSTALL_OBSCURA=true and providing the
+# exact trusted SHA-256 for the selected release.
+ARG INSTALL_OBSCURA=false
 ARG OBSCURA_VERSION=v0.1.11
-ARG OBSCURA_SHA256=""
+ARG OBSCURA_SHA256
 RUN set -eux; \
-    arch="$(uname -m)"; \
-    case "$arch" in \
-      aarch64|arm64) obs_arch="aarch64" ;; \
-      x86_64|amd64)  obs_arch="x86_64" ;; \
-      *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
-    esac; \
-    asset="obscura-${obs_arch}-linux.tar.gz"; \
-    curl -fsSL --retry 3 -o /tmp/obscura.tar.gz \
-      "https://github.com/h4ckf0r0day/obscura/releases/download/${OBSCURA_VERSION}/${asset}"; \
-    if [ -n "$OBSCURA_SHA256" ]; then \
+    if [ "$INSTALL_OBSCURA" = "true" ]; then \
+      test -n "$OBSCURA_SHA256"; \
+      arch="$(uname -m)"; \
+      case "$arch" in \
+        aarch64|arm64) obs_arch="aarch64" ;; \
+        x86_64|amd64)  obs_arch="x86_64" ;; \
+        *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
+      esac; \
+      asset="obscura-${obs_arch}-linux.tar.gz"; \
+      curl -fsSL --retry 3 -o /tmp/obscura.tar.gz \
+        "https://github.com/h4ckf0r0day/obscura/releases/download/${OBSCURA_VERSION}/${asset}"; \
       echo "${OBSCURA_SHA256}  /tmp/obscura.tar.gz" | sha256sum -c -; \
-    fi; \
-    tar xzf /tmp/obscura.tar.gz -C /tmp; \
-    install -m 0755 /tmp/obscura /usr/local/bin/obscura; \
-    if [ -f /tmp/obscura-worker ]; then install -m 0755 /tmp/obscura-worker /usr/local/bin/obscura-worker; fi; \
-    rm -rf /tmp/obscura*; \
-    obscura --version
-ENV OBSCURA_BINARY_PATH=/usr/local/bin/obscura
+      tar xzf /tmp/obscura.tar.gz -C /tmp; \
+      install -m 0755 /tmp/obscura /usr/local/bin/obscura; \
+      if [ -f /tmp/obscura-worker ]; then install -m 0755 /tmp/obscura-worker /usr/local/bin/obscura-worker; fi; \
+      rm -rf /tmp/obscura*; \
+      obscura --version; \
+    fi
+ENV OBSCURA_BINARY_PATH=
 
 # Copy Python packages from builder
 COPY --from=builder /root/.local /root/.local
 ENV PATH=/root/.local/bin:$PATH
-
-# Install gunicorn for production usage
-RUN pip install gunicorn uvicorn[standard]
 
 # Copy project
 COPY . $APP_HOME

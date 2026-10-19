@@ -1,101 +1,17 @@
 services:
-  mongo:
-    image: mongo:7.0
-    restart: unless-stopped
-    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--auth", "--keyFile", "/etc/mongo-keyfile"]
-    environment:
-      MONGO_INITDB_DATABASE: ${MONGODB_DB_NAME:-vidyaverse}
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:-vidyaverse}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:-vidyaverse-dev-password}
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "mongosh --quiet -u $$MONGO_INITDB_ROOT_USERNAME -p $$MONGO_INITDB_ROOT_PASSWORD --authenticationDatabase admin --eval 'try { rs.status().ok } catch (e) { rs.initiate({_id:\"rs0\",members:[{_id:0,host:\"mongo:27017\"}]}).ok }' | grep -q 1",
-        ]
-      interval: 15s
-      timeout: 10s
-      retries: 20
-      start_period: 30s
-    volumes:
-      - mongo_data:/data/db
-      - mongo_config:/data/configdb
-      - ./.local-runtime/mongo-keyfile:/etc/mongo-keyfile:ro
-    ports:
-      - "${MONGO_HOST_PORT:-27018}:27017"
-
-  redis:
-    image: redis:7.2-alpine
-    restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "512mb", "--maxmemory-policy", "allkeys-lru"]
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-    volumes:
-      - redis_data:/data
-
-  clickhouse:
-    image: clickhouse/clickhouse-server:24.3
-    restart: unless-stopped
-    environment:
-      CLICKHOUSE_DB: ${ANALYTICS_WAREHOUSE_CLICKHOUSE_DATABASE:-vidyaverse}
-      CLICKHOUSE_USER: ${ANALYTICS_WAREHOUSE_CLICKHOUSE_USERNAME:-vidyaverse}
-      CLICKHOUSE_PASSWORD: ${ANALYTICS_WAREHOUSE_CLICKHOUSE_PASSWORD:-vidyaverse-clickhouse-password}
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "clickhouse-client --user $$CLICKHOUSE_USER --password $$CLICKHOUSE_PASSWORD --query 'SELECT 1' | grep -q 1",
-        ]
-      interval: 15s
-      timeout: 10s
-      retries: 20
-      start_period: 30s
-    volumes:
-      - clickhouse_data:/var/lib/clickhouse
-      - ./ops/clickhouse/config.d/low-memory.xml:/etc/clickhouse-server/config.d/low-memory.xml:ro
-
-  minio:
-    image: minio/minio:latest
-    restart: unless-stopped
-    command: ["server", "/data", "--console-address", ":9001"]
-    environment:
-      MINIO_ROOT_USER: ${MLOPS_MODEL_ARTIFACT_S3_ACCESS_KEY_ID:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MLOPS_MODEL_ARTIFACT_S3_SECRET_ACCESS_KEY:-minioadmin}
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/minio/health/ready >/dev/null"]
-      interval: 15s
-      timeout: 5s
-      retries: 12
-    volumes:
-      - minio_data:/data
-
-  minio-init:
-    image: minio/mc:latest
-    depends_on:
-      minio:
-        condition: service_healthy
-    environment:
-      MINIO_ROOT_USER: ${MLOPS_MODEL_ARTIFACT_S3_ACCESS_KEY_ID:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MLOPS_MODEL_ARTIFACT_S3_SECRET_ACCESS_KEY:-minioadmin}
-      MODEL_ARTIFACT_BUCKET: ${MODEL_ARTIFACT_BUCKET:-vidyaverse-model-artifacts}
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://minio:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD &&
-      mc mb --ignore-existing local/$$MODEL_ARTIFACT_BUCKET
-      "
-    restart: "no"
-
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        # Obscura is intentionally opt-in: a browser binary must be supplied
+        # with a trusted release digest, never fetched unchecked during every
+        # application build.
+        INSTALL_OBSCURA: ${INSTALL_OBSCURA:-false}
+        OBSCURA_VERSION: ${OBSCURA_VERSION:-v0.1.11}
+        OBSCURA_SHA256: ${OBSCURA_SHA256:-}
     image: vidyaverse-backend:latest
     restart: unless-stopped
-    env_file:
-      - ./backend/.env
     environment:
       ENVIRONMENT: ${ENVIRONMENT:-local}
       MONGODB_URL: ${MONGODB_URL:-mongodb://vidyaverse:vidyaverse-dev-password@mongo:27017/vidyaverse?authSource=admin&replicaSet=rs0}
@@ -116,17 +32,6 @@ services:
       METRICS_REQUIRE_AUTH: ${METRICS_REQUIRE_AUTH:-false}
       LOG_FORMAT: ${LOG_FORMAT:-json}
       REQUEST_ID_HEADER_NAME: ${REQUEST_ID_HEADER_NAME:-X-Request-ID}
-    depends_on:
-      mongo:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      clickhouse:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
     healthcheck:
       test:
         [
@@ -137,18 +42,15 @@ services:
       timeout: 8s
       retries: 12
       start_period: 60s
-    ports:
-      - "8000:8000"
     volumes:
       - backend_storage:/home/app/web/storage
       - backend_models:/home/app/web/models
+    networks: [app_internal]
 
   worker:
     image: vidyaverse-backend:latest
     restart: unless-stopped
     command: ["python", "-m", "app.worker"]
-    env_file:
-      - ./backend/.env
     environment:
       ENVIRONMENT: ${ENVIRONMENT:-local}
       MONGODB_URL: ${MONGODB_URL:-mongodb://vidyaverse:vidyaverse-dev-password@mongo:27017/vidyaverse?authSource=admin&replicaSet=rs0}
@@ -173,6 +75,7 @@ services:
     volumes:
       - backend_storage:/home/app/web/storage
       - backend_models:/home/app/web/models
+    networks: [app_internal]
 
   frontend:
     build:
@@ -197,64 +100,7 @@ services:
       timeout: 8s
       retries: 12
       start_period: 30s
-    ports:
-      - "3000:3000"
-
-  mongodb-exporter:
-    image: percona/mongodb_exporter:0.40
-    restart: unless-stopped
-    command:
-      - "--mongodb.uri=mongodb://${MONGO_INITDB_ROOT_USERNAME:-vidyaverse}:${MONGO_INITDB_ROOT_PASSWORD:-vidyaverse-dev-password}@mongo:27017/admin?authSource=admin&replicaSet=rs0"
-      - "--collect-all"
-    depends_on:
-      mongo:
-        condition: service_healthy
-
-  redis-exporter:
-    image: oliver006/redis_exporter:v1.62.0
-    restart: unless-stopped
-    environment:
-      REDIS_ADDR: redis://redis:6379
-    depends_on:
-      redis:
-        condition: service_healthy
-
-  prometheus:
-    image: prom/prometheus:v2.51.2
-    restart: unless-stopped
-    command:
-      - "--config.file=/etc/prometheus/prometheus.yml"
-      - "--storage.tsdb.retention.time=15d"
-    volumes:
-      - ./ops/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ./ops/alerts/prometheus-rules.yml:/etc/prometheus/rules/prometheus-rules.yml:ro
-      - prometheus_data:/prometheus
-    depends_on:
-      backend:
-        condition: service_healthy
-      mongodb-exporter:
-        condition: service_started
-      redis-exporter:
-        condition: service_started
-    ports:
-      - "9090:9090"
-
-  grafana:
-    image: grafana/grafana:10.4.7
-    restart: unless-stopped
-    environment:
-      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
-      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost:3001}
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./ops/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./ops/grafana:/var/lib/grafana/dashboards:ro
-    depends_on:
-      prometheus:
-        condition: service_started
-    ports:
-      - "3001:3000"
+    networks: [app_internal]
 
 volumes:
   mongo_data:
@@ -266,3 +112,14 @@ volumes:
   backend_models:
   prometheus_data:
   grafana_data:
+  caddy_data:
+  caddy_config:
+
+networks:
+  app_internal:
+    # Container-to-container traffic lives here. No service is published from
+    # this network in the production overlay; backend workers still need egress
+    # to managed services and verified public opportunity sources.
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24

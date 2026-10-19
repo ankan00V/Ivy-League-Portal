@@ -85,6 +85,20 @@ def _check_env_contracts(failures: list[str]) -> None:
         if local_env_path.exists():
             _require(key in local_env, f"backend/.env missing {key}", failures)
 
+    # These values describe the production deployment topology; local compose
+    # deliberately supplies safe development defaults and does not need a
+    # public hostname, certificate email, or managed Postgres credentials.
+    production_only_keys = [
+        "POSTGRES_ODM_ENABLED",
+        "SUPABASE_DATABASE_URL",
+        "SUPABASE_DATABASE_DIRECT_URL",
+        "TRUSTED_PROXY_IPS",
+        "APP_DOMAIN",
+        "ACME_EMAIL",
+    ]
+    for key in production_only_keys:
+        _require(key in production, f"backend/.env.production.example missing {key}", failures)
+
     for key in [
         "AUTH_SESSION_COOKIE_ENABLED",
         "AUTH_SESSION_COOKIE_SECURE",
@@ -109,6 +123,42 @@ def _check_env_contracts(failures: list[str]) -> None:
         "admin rate limit should remain conservative",
         failures,
     )
+    _contains(
+        REPO_ROOT / "docker-compose.prod.yml",
+        [
+            "caddy:",
+            "RUNTIME_ENV_FILE must reference a production runtime env file",
+            "METRICS_REQUIRE_AUTH: ${METRICS_REQUIRE_AUTH:-false}",
+            '"443:443/udp"',
+        ],
+        failures,
+    )
+    production_compose = (REPO_ROOT / "docker-compose.prod.yml").read_text(encoding="utf-8")
+    for local_service in ("mongo", "redis", "clickhouse", "minio", "prometheus", "grafana"):
+        _require(
+            f"  {local_service}:" not in production_compose,
+            f"production compose must not start local {local_service}; use the managed dependency instead",
+            failures,
+        )
+    _contains(
+        REPO_ROOT / "docker-compose.yml",
+        [
+            "app_internal:",
+            "subnet: 172.30.0.0/24",
+            "INSTALL_OBSCURA",
+        ],
+        failures,
+    )
+    _contains(
+        REPO_ROOT / "backend/Dockerfile",
+        [
+            "requirements.lock.txt",
+            "INSTALL_OBSCURA=false",
+            'test -n "$OBSCURA_SHA256"',
+        ],
+        failures,
+    )
+    _contains(REPO_ROOT / "backend/requirements.lock.txt", ["gunicorn==23.0.0"], failures)
     _require(
         _int_value(production, "RATE_LIMIT_AUTH_REQUESTS_PER_MINUTE") <= 30,
         "auth rate limit should remain conservative",
@@ -163,6 +213,7 @@ def _check_workflow_contracts(failures: list[str]) -> None:
         [
             "python -m pytest -q backend/tests",
             "python backend/scripts/check_release_contracts.py",
+            "backend/requirements.lock.txt",
             "npm run lint",
             "npm run build",
         ],
