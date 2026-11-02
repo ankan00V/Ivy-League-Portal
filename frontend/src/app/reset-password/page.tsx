@@ -9,10 +9,12 @@ import PasswordStrengthMeter from "@/components/PasswordStrengthMeter";
 import { neonAuthClient } from "@/lib/neon-auth-client";
 import { getUnknownErrorMessage } from "@/lib/error-utils";
 import { evaluatePasswordStrength } from "@/lib/password-strength";
+import { AUTH_FETCH_OPTIONS } from "@/lib/auth-network";
 
 export default function ResetPasswordPage() {
   const searchParams = useSearchParams();
   const token = String(searchParams.get("token") || "").trim();
+  const invalidLink = !token || Boolean(searchParams.get("error"));
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -38,7 +40,7 @@ export default function ResetPasswordPage() {
 
     setLoading(true);
     try {
-      const result = await neonAuthClient.resetPassword({ token, newPassword: password });
+      const result = await neonAuthClient.resetPassword({ token, newPassword: password, fetchOptions: AUTH_FETCH_OPTIONS });
       if (result.error) throw result.error;
       setComplete(true);
       setPassword("");
@@ -61,6 +63,8 @@ export default function ResetPasswordPage() {
           </div>
           {complete ? (
             <p className="auth-message" role="status">Your password has been reset. You can sign in now.</p>
+          ) : invalidLink ? (
+            <p className="auth-message auth-message-error" role="alert">This reset link is missing or expired. Request a new one below.</p>
           ) : (
             <form onSubmit={handleSubmit} className="auth-form-stack">
               <label>New password<input type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} disabled={loading} required /></label>

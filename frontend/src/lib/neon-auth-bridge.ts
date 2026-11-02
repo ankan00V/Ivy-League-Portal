@@ -1,6 +1,7 @@
 "use client";
 
 import { setAccessToken } from "@/lib/auth-session";
+import { fetchWithTimeout } from "@/lib/auth-network";
 
 type BridgeResponse = {
   access_token?: string;
@@ -13,7 +14,7 @@ type BridgeResponse = {
  * the Next route reads the HttpOnly Neon cookie and signs the internal request.
  */
 export async function establishApplicationSession(): Promise<string> {
-  const response = await fetch("/api/auth/bridge", {
+  const response = await fetchWithTimeout("/api/auth/bridge", {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },

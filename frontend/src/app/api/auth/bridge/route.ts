@@ -72,6 +72,7 @@ export async function POST(request: Request) {
       method: "POST",
       headers: upstreamHeaders,
       cache: "no-store",
+      signal: AbortSignal.timeout(12_000),
     });
     const body = await upstream.text();
     const headers = new Headers({

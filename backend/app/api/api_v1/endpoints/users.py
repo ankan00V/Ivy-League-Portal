@@ -1327,18 +1327,14 @@ async def upload_resume(
     )
 
     storage_key = f"{str(current_user.id)}_{uuid4().hex}{extension}"
-    storage_path = _resume_storage_dir() / storage_key
-    await asyncio.to_thread(storage_path.write_bytes, storable)
+    try:
+        storage_path = _resume_storage_dir() / storage_key
+        await asyncio.to_thread(storage_path.write_bytes, storable)
+    except OSError:
+        logger.exception("Resume storage is unavailable")
+        raise HTTPException(status_code=503, detail="Resume storage is temporarily unavailable. Please retry shortly.") from None
 
     previous_key = (profile.resume_storage_key or "").strip()
-    if previous_key:
-        previous_path = _resume_storage_dir() / previous_key
-
-        def _remove_previous() -> None:
-            if previous_path.exists():
-                previous_path.unlink(missing_ok=True)
-
-        await asyncio.to_thread(_remove_previous)
 
     text = (
         await asyncio.to_thread(_extract_resume_text, extension=extension, content=content)
@@ -1377,6 +1373,12 @@ async def upload_resume(
     profile.incoscore = (await score_profile_with_outcomes(profile)).total
 
     await profile.save()
+    # Retire the old file only after the replacement is persisted.
+    if previous_key:
+        try:
+            await asyncio.to_thread((storage_path.parent / previous_key).unlink, missing_ok=True)
+        except OSError:
+            logger.warning("Could not retire the previous resume file for user %s", current_user.id)
     await cache_manager.invalidate_after_profile_update(user_id=str(current_user.id))
     return profile
 

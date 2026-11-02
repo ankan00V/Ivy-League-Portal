@@ -10,10 +10,11 @@ import { establishApplicationSession } from "@/lib/neon-auth-bridge";
 import { neonAuthClient } from "@/lib/neon-auth-client";
 import { resolvePostAuthRoute } from "@/lib/auth-session";
 import { getUnknownErrorMessage } from "@/lib/error-utils";
+import { AUTH_FETCH_OPTIONS } from "@/lib/auth-network";
 
 function safeNext(value: string | null): string {
   const candidate = String(value || "").trim();
-  return candidate.startsWith("/") && !candidate.startsWith("//") ? candidate : "/dashboard";
+  return candidate.startsWith("/") && !candidate.startsWith("//") && !/[\\\u0000-\u001f]/.test(candidate) ? candidate : "/dashboard";
 }
 
 function readableAuthError(error: unknown, fallback: string): string {
@@ -47,18 +48,19 @@ export default function LoginPage() {
     setCheckingSession(true);
     setError(null);
     try {
-      const { data, error: sessionError } = await neonAuthClient.getSession();
+      const { data, error: sessionError } = await neonAuthClient.getSession({ query: { disableCookieCache: true }, fetchOptions: AUTH_FETCH_OPTIONS });
       if (sessionError || !data?.user) {
+        setCanRetrySession(false);
         throw new Error("Your secure sign-in session has expired. Please sign in again.");
       }
       if (!data.user.emailVerified) {
         router.replace(`/verify-email?email=${encodeURIComponent(data.user.email || "")}`);
         return;
       }
+      setCanRetrySession(true);
       const token = await establishApplicationSession();
       router.replace(await resolveDestination(token));
     } catch (cause) {
-      setCanRetrySession(true);
       setError(readableAuthError(cause, "We could not finish preparing your account. Please retry."));
     } finally {
       setCheckingSession(false);
@@ -69,18 +71,21 @@ export default function LoginPage() {
     let active = true;
     void (async () => {
       try {
-        const { data } = await neonAuthClient.getSession();
+        const { data, error: sessionError } = await neonAuthClient.getSession({ query: { disableCookieCache: true }, fetchOptions: AUTH_FETCH_OPTIONS });
+        if (sessionError) throw sessionError;
         if (active && data?.user) {
           if (!data.user.emailVerified) {
             router.replace(`/verify-email?email=${encodeURIComponent(data.user.email || "")}`);
             return;
           }
-          await continueExistingSession();
+          setCanRetrySession(true);
+          const token = await establishApplicationSession();
+          const next = await resolveDestination(token);
+          if (active) router.replace(next);
           return;
         }
       } catch (cause) {
         if (active) {
-          setCanRetrySession(false);
           setError(readableAuthError(cause, "We could not restore your secure session. Please retry."));
         }
       } finally {
@@ -99,7 +104,7 @@ export default function LoginPage() {
     setError(null);
     setCanRetrySession(false);
     try {
-      const result = await neonAuthClient.signIn.email({ email: email.trim().toLowerCase(), password });
+      const result = await neonAuthClient.signIn.email({ email: email.trim().toLowerCase(), password, fetchOptions: AUTH_FETCH_OPTIONS });
       if (result.error?.code === "EMAIL_NOT_VERIFIED") {
         router.replace(`/verify-email?email=${encodeURIComponent(email.trim().toLowerCase())}`);
         return;
@@ -109,6 +114,10 @@ export default function LoginPage() {
         router.replace(`/verify-email?email=${encodeURIComponent(email.trim().toLowerCase())}`);
         return;
       }
+      // Authentication succeeded even if the profile/database service fails.
+      // Keep a retry action that does not submit the password again.
+      setCanRetrySession(true);
+      setPassword("");
       const token = await establishApplicationSession();
       router.replace(await resolveDestination(token));
     } catch (cause) {
@@ -125,6 +134,7 @@ export default function LoginPage() {
     try {
       const result = await neonAuthClient.signIn.social({
         provider: "google",
+        fetchOptions: AUTH_FETCH_OPTIONS,
         callbackURL: `${window.location.origin}/auth/callback${requestedNext ? `?next=${encodeURIComponent(destination)}` : ""}`,
       });
       if (result.error) throw result.error;

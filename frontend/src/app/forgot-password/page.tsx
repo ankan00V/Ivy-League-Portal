@@ -6,6 +6,7 @@ import { FormEvent, useState } from "react";
 import BrandLogo from "@/components/BrandLogo";
 import { neonAuthClient } from "@/lib/neon-auth-client";
 import { getUnknownErrorMessage } from "@/lib/error-utils";
+import { AUTH_FETCH_OPTIONS } from "@/lib/auth-network";
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
@@ -21,6 +22,7 @@ export default function ForgotPasswordPage() {
       const result = await neonAuthClient.requestPasswordReset({
         email: email.trim().toLowerCase(),
         redirectTo: `${window.location.origin}/reset-password`,
+        fetchOptions: AUTH_FETCH_OPTIONS,
       });
       if (result.error) throw result.error;
       // Keep this response non-enumerable: Neon returns the same success shape

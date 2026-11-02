@@ -169,7 +169,7 @@ test("password recovery sends a safe reset link and accepts a replacement passwo
 });
 
 test("a verified managed-auth callback resumes required onboarding even when a dashboard next path is supplied", async ({ page }) => {
-  await page.route("**/api/auth/get-session", async (route) => {
+  await page.route("**/api/auth/get-session**", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",

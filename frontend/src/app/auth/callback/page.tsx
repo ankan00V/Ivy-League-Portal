@@ -7,6 +7,7 @@ import React, { Suspense, useEffect, useMemo, useState } from "react";
 import { resolvePostAuthRoute, setAccessToken } from "@/lib/auth-session";
 import { establishApplicationSession } from "@/lib/neon-auth-bridge";
 import { neonAuthClient } from "@/lib/neon-auth-client";
+import { AUTH_FETCH_OPTIONS } from "@/lib/auth-network";
 
 function OAuthCallbackInner() {
   const router = useRouter();
@@ -45,7 +46,7 @@ function OAuthCallbackInner() {
         }
         return;
       }
-      const { data, error: sessionError } = await neonAuthClient.getSession();
+      const { data, error: sessionError } = await neonAuthClient.getSession({ query: { disableCookieCache: true }, fetchOptions: AUTH_FETCH_OPTIONS });
       if (sessionError || !data?.user) {
         throw new Error("Google sign-in did not create a session. Please try again.");
       }
@@ -85,10 +86,11 @@ function OAuthCallbackInner() {
       }}
     >
       <section className="card-panel" style={{ width: "100%", maxWidth: "560px", padding: "2rem" }}>
-        <h1 style={{ marginBottom: "0.75rem", fontSize: "1.75rem" }}>OAuth Callback</h1>
+        <h1 style={{ marginBottom: "0.75rem", fontSize: "1.75rem" }}>Completing your sign-in</h1>
         <p style={{ color: "var(--text-secondary)", marginBottom: "1.5rem" }}>{status}</p>
         {error ? (
           <div
+            role="alert"
             style={{
               border: "2px solid #ef4444",
               borderRadius: "var(--radius-sm)",
@@ -103,6 +105,9 @@ function OAuthCallbackInner() {
         ) : (
           <p style={{ color: "var(--text-secondary)" }}>Please wait while we secure your session.</p>
         )}
+        {completionError && !callbackError ? (
+          <button type="button" className="auth-primary-button" onClick={() => setCompletionError("")}>Retry account setup</button>
+        ) : null}
         <Link href="/login" style={{ color: "var(--brand-primary)", fontWeight: 700 }}>
           Go back to login
         </Link>

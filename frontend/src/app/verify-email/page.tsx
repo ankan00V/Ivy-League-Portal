@@ -10,6 +10,7 @@ import { neonAuthClient } from "@/lib/neon-auth-client";
 import { resolvePostAuthRoute } from "@/lib/auth-session";
 import { getUnknownErrorMessage } from "@/lib/error-utils";
 import { verificationCallbackURL } from "@/lib/email-verification";
+import { AUTH_FETCH_OPTIONS } from "@/lib/auth-network";
 
 type ManagedUser = { email?: string; emailVerified?: boolean };
 
@@ -71,10 +72,13 @@ export default function VerifyEmailPage() {
     try {
       // The link updates Neon in another tab. Do not reuse a cached
       // emailVerified=false response after the mailbox has been confirmed.
-      const result = await neonAuthClient.getSession({ query: { disableCookieCache: true } });
+      const result = await neonAuthClient.getSession({ query: { disableCookieCache: true }, fetchOptions: AUTH_FETCH_OPTIONS });
       if (result.error) throw result.error;
       const user = result.data?.user as ManagedUser | undefined;
       const sessionEmail = normalizeEmail(user?.email);
+      if (email && sessionEmail && email !== sessionEmail) {
+        throw new Error("A different account is signed in in this browser. Sign out of that account before continuing with this email.");
+      }
       if (sessionEmail) {
         window.sessionStorage.setItem(PENDING_EMAIL_KEY, sessionEmail);
         setPendingEmail(sessionEmail);
@@ -106,7 +110,7 @@ export default function VerifyEmailPage() {
     if (linkError) return;
     void (async () => {
       try {
-        const result = await neonAuthClient.getSession({ query: { disableCookieCache: true } });
+        const result = await neonAuthClient.getSession({ query: { disableCookieCache: true }, fetchOptions: AUTH_FETCH_OPTIONS });
         if (active && (returnedFromLink || result.data?.user?.emailVerified)) {
           await finishVerifiedSession();
         }
@@ -130,6 +134,7 @@ export default function VerifyEmailPage() {
       const result = await neonAuthClient.sendVerificationEmail({
         email,
         callbackURL: verificationCallbackURL(window.location.origin, email),
+        fetchOptions: AUTH_FETCH_OPTIONS,
       });
       if (result.error) throw result.error;
       setResendAvailableAt(Date.now() + RESEND_COOLDOWN_SECONDS * 1_000);

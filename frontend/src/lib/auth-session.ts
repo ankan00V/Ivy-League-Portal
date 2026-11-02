@@ -1,6 +1,7 @@
 import { apiUrl } from "@/lib/api";
 import { ADMIN_DASHBOARD_PATH } from "@/lib/admin-routes";
 import { landingPathForAccountType } from "@/lib/employer-portal";
+import { fetchWithTimeout } from "@/lib/auth-network";
 
 // Kept for backward cleanup compatibility only. Tokens are no longer persisted.
 export const ACCESS_TOKEN_KEY = "access_token";
@@ -29,7 +30,7 @@ type CurrentUser = {
 
 function safeInternalPath(value?: string | null): string | null {
   const candidate = String(value || "").trim();
-  if (!candidate || !candidate.startsWith("/") || candidate.startsWith("//")) {
+  if (!candidate || !candidate.startsWith("/") || candidate.startsWith("//") || /[\\\u0000-\u001f]/.test(candidate)) {
     return null;
   }
   return candidate;
@@ -150,6 +151,12 @@ export function clearAccessToken(reason: AuthStateReason = "logout"): void {
     return;
   }
   volatileAccessToken = null;
+  // Revalidate managed auth on app-session expiry; do not race a remote logout
+  // against the fresh exchange. Explicit logout still revokes both sessions.
+  if (reason === "expired") {
+    clearStoredAuth(reason);
+    return;
+  }
   // Managed Auth owns its HttpOnly session independently of the short-lived
   // application API token. Revoke it too so signing out cannot silently leave
   // a browser authenticated at the Next.js BFF.
@@ -214,11 +221,11 @@ export async function resolvePostAuthRoute(token?: string | null, requestedPath?
   const headers = normalizedToken ? { Authorization: `Bearer ${normalizedToken}` } : undefined;
   try {
     const [userRes, profileRes] = await Promise.all([
-      fetch(apiUrl("/api/v1/users/me"), {
+      fetchWithTimeout(apiUrl("/api/v1/users/me"), {
         credentials: "include",
         headers,
       }),
-      fetch(apiUrl("/api/v1/users/me/profile"), {
+      fetchWithTimeout(apiUrl("/api/v1/users/me/profile"), {
         credentials: "include",
         headers,
       }),

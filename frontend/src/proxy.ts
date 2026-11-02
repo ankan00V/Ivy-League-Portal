@@ -91,7 +91,10 @@ export async function proxy(request: NextRequest) {
   // Only enabled by the local HTTPS Compose overlay. Preserve old email-link
   // paths and queries when moving Safari off HTTP, where Secure cookies fail.
   const localHttpsOrigin = process.env.LOCAL_HTTPS_ORIGIN;
-  if (localHttpsOrigin && request.headers.get("x-forwarded-proto") !== "https") {
+  // Next's image optimizer fetches these public files internally over HTTP.
+  // Redirect browser pages, not these internal asset requests.
+  const publicAuthImage = ["/auth/login-candidate.jpg", "/auth/signup-candidate.jpg"].includes(request.nextUrl.pathname);
+  if (localHttpsOrigin && !publicAuthImage && request.headers.get("x-forwarded-proto") !== "https") {
     const target = new URL(localHttpsOrigin);
     if (target.protocol === "https:" && ["localhost", "127.0.0.1"].includes(target.hostname)) {
       target.pathname = request.nextUrl.pathname;

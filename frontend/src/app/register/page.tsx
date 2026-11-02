@@ -11,6 +11,7 @@ import { verificationCallbackURL } from "@/lib/email-verification";
 import { neonAuthClient } from "@/lib/neon-auth-client";
 import { getUnknownErrorMessage } from "@/lib/error-utils";
 import { evaluatePasswordStrength } from "@/lib/password-strength";
+import { AUTH_FETCH_OPTIONS } from "@/lib/auth-network";
 
 function readableAuthError(error: unknown, fallback: string): string {
   if (error && typeof error === "object" && "message" in error) {
@@ -55,6 +56,7 @@ export default function RegisterPage() {
         name: name.trim(),
         email: normalizedEmail,
         password,
+        fetchOptions: AUTH_FETCH_OPTIONS,
         callbackURL: verificationCallbackURL(window.location.origin, normalizedEmail),
       });
       if (result.error) throw result.error;
@@ -77,6 +79,7 @@ export default function RegisterPage() {
     try {
       const result = await neonAuthClient.signIn.social({
         provider: "google",
+        fetchOptions: AUTH_FETCH_OPTIONS,
         callbackURL: `${window.location.origin}/auth/callback?next=/onboarding`,
       });
       if (result.error) throw result.error;
