@@ -2,9 +2,11 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import React, { Suspense, useEffect, useMemo } from "react";
+import React, { Suspense, useEffect, useMemo, useState } from "react";
 
 import { resolvePostAuthRoute, setAccessToken } from "@/lib/auth-session";
+import { establishApplicationSession } from "@/lib/neon-auth-bridge";
+import { neonAuthClient } from "@/lib/neon-auth-client";
 
 function OAuthCallbackInner() {
   const router = useRouter();
@@ -14,12 +16,13 @@ function OAuthCallbackInner() {
   const callbackError = useMemo(() => searchParams.get("error") || "", [searchParams]);
   const message = useMemo(() => searchParams.get("message") || "", [searchParams]);
   const requestedNext = useMemo(() => searchParams.get("next") || "", [searchParams]);
+  const [completionError, setCompletionError] = useState("");
   const error = useMemo(() => {
     if (callbackError) {
       return message || callbackError || "OAuth sign-in failed.";
     }
-    return null;
-  }, [callbackError, message]);
+    return completionError || null;
+  }, [callbackError, completionError, message]);
   const status = error ? "Unable to complete sign-in." : "Completing sign-in...";
 
   useEffect(() => {
@@ -31,18 +34,41 @@ function OAuthCallbackInner() {
     const run = async () => {
       if (token) {
         setAccessToken(token);
+        const nextRoute = await resolvePostAuthRoute(
+          token,
+          requestedNext && requestedNext.startsWith("/") && requestedNext !== "/auth/callback"
+            ? requestedNext
+            : null,
+        );
+        if (!cancelled) {
+          router.replace(nextRoute);
+        }
+        return;
       }
-      const nextRoute =
-        requestedNext &&
-        requestedNext.startsWith("/") &&
-        requestedNext !== "/auth/callback"
+      const { data, error: sessionError } = await neonAuthClient.getSession();
+      if (sessionError || !data?.user) {
+        throw new Error("Google sign-in did not create a session. Please try again.");
+      }
+      if (!data.user.emailVerified) {
+        if (!cancelled) router.replace(`/verify-email?email=${encodeURIComponent(data.user.email || "")}`);
+        return;
+      }
+      const appToken = await establishApplicationSession();
+      const nextRoute = await resolvePostAuthRoute(
+        appToken,
+        requestedNext && requestedNext.startsWith("/") && requestedNext !== "/auth/callback"
           ? requestedNext
-          : await resolvePostAuthRoute(token || null);
+          : null,
+      );
       if (!cancelled) {
         router.replace(nextRoute);
       }
     };
-    void run();
+    void run().catch((cause) => {
+      if (!cancelled) {
+        setCompletionError(cause instanceof Error ? cause.message : "Unable to complete Google sign-in.");
+      }
+    });
     return () => {
       cancelled = true;
     };

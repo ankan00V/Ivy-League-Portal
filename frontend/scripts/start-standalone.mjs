@@ -11,7 +11,12 @@ const projectRoot = path.resolve(path.dirname(__filename), "..");
 // stale assets from .next into its bundle.
 const distDir = process.env.NEXT_DIST_DIR || ".next";
 const buildRoot = path.resolve(projectRoot, distDir);
-const standaloneRoot = path.join(buildRoot, "standalone", "frontend");
+// Next.js writes `server.js` at the standalone root for a single-app project.
+// Older builds in this repository placed it under `standalone/frontend`; keep
+// that layout as a fallback so local verification can still run old artifacts.
+const standaloneBase = path.join(buildRoot, "standalone");
+const standaloneRoots = [standaloneBase, path.join(standaloneBase, "frontend")];
+const standaloneRoot = standaloneRoots.find((candidate) => existsSync(path.join(candidate, "server.js"))) ?? standaloneBase;
 const standaloneServer = path.join(standaloneRoot, "server.js");
 const sourceStaticDir = path.join(buildRoot, "static");
 const targetStaticDir = path.join(standaloneRoot, ".next", "static");

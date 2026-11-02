@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { getNeonAuth } from "@/lib/neon-auth-server";
+
 function createNonce(): string {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
@@ -64,18 +66,7 @@ function cspValue(nonce: string): string {
   return directives.join("; ");
 }
 
-export function proxy(request: NextRequest) {
-  const nonce = createNonce();
-  const csp = cspValue(nonce);
-  const requestHeaders = new Headers(request.headers);
-  requestHeaders.set("x-nonce", nonce);
-
-  const response = NextResponse.next({
-    request: {
-      headers: requestHeaders,
-    },
-  });
-
+function addSecurityHeaders(response: NextResponse, nonce: string, csp: string): NextResponse {
   response.headers.set("Content-Security-Policy", csp);
   response.headers.set(
     "Report-To",
@@ -94,6 +85,44 @@ export function proxy(request: NextRequest) {
   response.headers.set("Cross-Origin-Resource-Policy", "same-site");
   response.headers.set("x-nonce", nonce);
   return response;
+}
+
+export async function proxy(request: NextRequest) {
+  // Only enabled by the local HTTPS Compose overlay. Preserve old email-link
+  // paths and queries when moving Safari off HTTP, where Secure cookies fail.
+  const localHttpsOrigin = process.env.LOCAL_HTTPS_ORIGIN;
+  if (localHttpsOrigin && request.headers.get("x-forwarded-proto") !== "https") {
+    const target = new URL(localHttpsOrigin);
+    if (target.protocol === "https:" && ["localhost", "127.0.0.1"].includes(target.hostname)) {
+      target.pathname = request.nextUrl.pathname;
+      target.search = request.nextUrl.search;
+      return NextResponse.redirect(target, 307);
+    }
+  }
+  const nonce = createNonce();
+  const csp = cspValue(nonce);
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("x-nonce", nonce);
+
+  // Managed Neon Auth returns an opaque verifier after Google redirects back
+  // to us. Its middleware exchanges that verifier for same-origin cookies.
+  // Without this branch, the provider could succeed while the app remained
+  // unauthenticated and the callback surfaced a misleading HTTP 400.
+  if (request.nextUrl.searchParams.has("neon_auth_session_verifier")) {
+    const authResponse = await getNeonAuth().middleware({
+      loginUrl: "/login",
+      publicRoutes: ["/", "/login", "/register", "/verify-email", "/forgot-password", "/reset-password"],
+    })(request);
+    return addSecurityHeaders(authResponse, nonce, csp);
+  }
+
+  const response = NextResponse.next({
+    request: {
+      headers: requestHeaders,
+    },
+  });
+
+  return addSecurityHeaders(response, nonce, csp);
 }
 
 export const config = {

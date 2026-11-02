@@ -340,7 +340,7 @@ Latest drift report: `n/a`
 
 ## 9) Current Production Readiness Boundary
 - The codebase contains production gates, env contracts, CI workflows, security guardrails, managed-infra checks, and operational runbooks.
-- Production runtime must use deployed services: managed Postgres (Supabase), managed Redis, S3-compatible artifact storage, live frontend/backend domains, configured OAuth/Turnstile/SMTP, production BI, and real alert destinations.
+- Production runtime must use deployed services: managed Postgres (Neon), managed Redis, S3-compatible artifact storage, live frontend/backend domains, configured OAuth/Turnstile/SMTP, production BI, and real alert destinations.
 - Local Docker, localhost ports, MinIO, and local `.env` values are only a developer verification harness. They are not the production architecture and are rejected by the strict production infrastructure readiness gate.
 - Without the real production secrets and deployed service endpoints, production can be validated only up to contract/readiness checks, not proven live.
 
@@ -430,7 +430,11 @@ python3 scripts/smoke_test_local.py \
 The local harness uses Docker dependencies and ignored `.env` placeholders only to prove code paths. Do not promote those values to production.
 
 ## 14) Key Configuration Areas
-- Production endpoints: `SUPABASE_DATABASE_URL`, `SUPABASE_DATABASE_DIRECT_URL`, `REDIS_URL`, `ANALYTICS_WAREHOUSE_CLICKHOUSE_*`, `MLOPS_MODEL_ARTIFACT_S3_*`, `MODEL_ARTIFACT_BUCKET`
+- Production endpoints: `DATABASE_URL`, `DATABASE_URL_UNPOOLED`, `NEON_AUTH_BASE_URL`, `NEON_AUTH_JWKS_URL`, `REDIS_URL`, `ANALYTICS_WAREHOUSE_CLICKHOUSE_*`, `MLOPS_MODEL_ARTIFACT_S3_*`, `MODEL_ARTIFACT_BUCKET`
+- Managed email auth: run `neon deploy`, set the server-only `NEON_AUTH_COOKIE_SECRET` and `NEON_AUTH_BRIDGE_SECRET`, and configure the production app domain plus SMTP/email verification in Neon Auth before opening public sign-up. VidyaVerse requires the managed verification link at sign-up; unverified identities cannot be exchanged for an application API session. Neon session cookies are HttpOnly. The Next.js BFF exchanges the validated identity using a short-lived, signed server-to-server credential; the browser receives the application's API token and session cookies, never that bridge credential.
+- Local managed-auth testing requires HTTPS, including in Safari: install `mkcert`, run `mkcert -install` (approve the operating-system trust prompt), then `bash scripts/start_local_https.sh`. Open `https://localhost:3443`. The optional `docker-compose.https.yml` overlay redirects old HTTP page links to HTTPS and terminates TLS on a loopback-only nginx listener. Certificates stay under ignored `.local-runtime/tls`; never deploy or commit developer certificates. Use a publicly trusted certificate and the production trusted domain for deployment.
+- Verification links retain the email as a form-prefill hint when opened in a new tab. On return, the app refreshes the managed session; a verified session continues to the required profile/onboarding steps, while a missing session goes to sign-in. The callback query is never proof of verification: Neon and the server-side bridge still require a verified identity. Invalid/expired links show recovery instructions and allow a resend.
+- Auth regression checks: `frontend/e2e/auth-employer-and-apply.spec.ts` covers entry, verification, recovery, and onboarding routing. After building and generating local certificates, `cd frontend && node scripts/verify-auth-transport.mjs` exercises the actual Next.js routes and Neon SDK in WebKit against controlled upstream fixtures: HTTPS signup/link/sign-in/onboarding and session persistence, plus the HTTP Secure-cookie failure. This is not evidence of live SMTP delivery or real Google consent; those require a real-account acceptance check. `backend/tests/test_neon_auth_bridge.py` checks signed-credential validation. Frontend Docker builds exclude local environment files and credentials.
 - Production Compose: `RUNTIME_ENV_FILE`, `APP_DOMAIN`, `ACME_EMAIL`, `TRUSTED_PROXY_IPS`
 - Auth/Security: `AUTH_SESSION_COOKIE_*`, `AUTH_COOKIE_ONLY_MODE`, `CSRF_*`, `SECURITY_CSP_*`
 - Session store: `AUTH_SESSION_STORE_ENABLED`, `AUTH_SESSION_REQUIRE_SERVER_STATE`, `AUTH_SESSION_BIND_DEVICE`

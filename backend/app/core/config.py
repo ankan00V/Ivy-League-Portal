@@ -51,13 +51,12 @@ class Settings(BaseSettings):
     AUTH_SESSION_REDIS_PREFIX: str = "vidyaverse:auth"
     AUTH_SESSION_ACTIVITY_UPDATE_INTERVAL_SECONDS: int = 60
     AUTH_COOKIE_ONLY_MODE: bool = False
-    # Student accounts must be created with a college address. Applied only at
-    # signup: existing accounts keep whatever they registered with, because
-    # enforcing it at login would lock out every account that predates the rule.
-    CANDIDATE_REQUIRE_INSTITUTIONAL_EMAIL: bool = True
-    # Off means "any domain that is not a consumer mailbox", which admits real
-    # college domains like lpu.in that carry no academic suffix. Turn on once
-    # the set of known college domains is complete enough to be strict.
+    # Candidates can sign up with any address they can verify, including Gmail.
+    # The address-verification link remains the proof of ownership; institution
+    # is collected during onboarding instead of being inferred from a domain.
+    CANDIDATE_REQUIRE_INSTITUTIONAL_EMAIL: bool = False
+    # Retained only for deployments that intentionally restore a college-only
+    # policy. It has no effect while institutional email is not required.
     CANDIDATE_INSTITUTIONAL_EMAIL_STRICT: bool = False
     ADMIN_BOOTSTRAP_ENABLED: bool = True
 
@@ -111,6 +110,21 @@ class Settings(BaseSettings):
     # connections a request-per-user API makes, while DDL and migrations need
     # the direct endpoint because a transaction-pooled session cannot hold the
     # advisory locks CREATE INDEX requires.
+    # Neon CLI manages these canonical variables. DATABASE_URL is Neon's
+    # PgBouncer endpoint for application traffic; DATABASE_URL_UNPOOLED is
+    # reserved for schema migrations and other DDL.
+    DATABASE_URL: Optional[str] = None
+    DATABASE_URL_UNPOOLED: Optional[str] = None
+    # Managed by `neon env pull`. These remain server-side values; in
+    # particular, NEON_REALTIME_SECRET must never be exposed to the browser.
+    NEON_AUTH_BASE_URL: Optional[str] = None
+    NEON_AUTH_JWKS_URL: Optional[str] = None
+    # Shared only by the Next.js BFF and this API. It authenticates the
+    # short-lived, server-to-server Neon session bridge; it is never public.
+    NEON_AUTH_BRIDGE_SECRET: Optional[str] = None
+    NEON_REALTIME_URL: Optional[str] = None
+    NEON_REALTIME_SECRET: Optional[str] = None
+    # Backwards-compatible aliases for manually configured Neon deployments.
     NEON_DATABASE_URL: Optional[str] = None
     NEON_DATABASE_DIRECT_URL: Optional[str] = None
     NEON_DATABASE_NAME: str = "neondb"
@@ -153,10 +167,8 @@ class Settings(BaseSettings):
     # to it is never cut short on the way back to the pool.
     POSTGRES_ACQUIRE_TIMEOUT_SECONDS: float = 45.0
 
-    # Supabase Postgres (ap-south-1). Replaced Neon as the migration target:
-    # Neon has no India region and its nearest, Singapore, measured 130ms per
-    # query against 44ms here. The Neon settings above are retained so that
-    # project stays usable, but nothing reads them while these are set.
+    # Legacy Supabase variables remain readable during the data-export window.
+    # New application traffic must use DATABASE_URL provisioned by Neon.
     SUPABASE_DATABASE_URL: Optional[str] = None
     SUPABASE_DATABASE_DIRECT_URL: Optional[str] = None
     SUPABASE_DATABASE_NAME: str = "postgres"
@@ -504,6 +516,10 @@ class Settings(BaseSettings):
     ALLOWED_HOSTS: list[str] = [
         "localhost",
         "127.0.0.1",
+        # The Next.js BFF reaches FastAPI across the private Compose network.
+        # This is not a public hostname, but it must be accepted for the
+        # server-to-server Neon Auth session bridge.
+        "backend",
         "api.test",
         "web.test",
     ]
@@ -1045,7 +1061,7 @@ def _dsn_host(dsn: str) -> str:
 
 
 def postgres_connect_args(dsn: str) -> tuple[str, object]:
-    """Split a DSN into (dsn_without_sslmode, asyncpg ssl argument).
+    """Split a DSN into (asyncpg-compatible DSN, asyncpg ssl argument).
 
     ssl="require" was hardcoded at both pool sites, which meant the app could
     not connect to any Postgres that speaks plain TCP - a local container, or a
@@ -1054,40 +1070,47 @@ def postgres_connect_args(dsn: str) -> tuple[str, object]:
     release-blocking gates could not be given a real database to run against.
 
     Supabase and Neon both require TLS, so "require" stays the default; only an
-    explicit sslmode=disable opts out. The parameter is stripped from the DSN
-    because asyncpg takes it as a keyword argument instead.
+    explicit sslmode=disable opts out. Connection-string options owned by
+    libpq (``sslmode`` and ``channel_binding``) are stripped because asyncpg
+    does not accept either as a keyword argument.
     """
     text = str(dsn or "")
     match = re.search(r"[?&]sslmode=([A-Za-z-]+)", text)
     mode = match.group(1).lower() if match else "require"
-    cleaned = re.sub(r"([?&])sslmode=[A-Za-z-]+&?", r"\1", text).rstrip("?&")
+    base, separator, query = text.partition("?")
+    if separator:
+        kept_query_parts = [
+            part
+            for part in query.split("&")
+            if part.split("=", 1)[0].strip().lower() not in {"sslmode", "channel_binding"}
+        ]
+        cleaned = f"{base}?{'&'.join(kept_query_parts)}" if kept_query_parts else base
+    else:
+        cleaned = text
     return cleaned, (False if mode == "disable" else "require")
 
 
 def resolve_postgres_dsn() -> str:
     """The serving Postgres DSN, chosen out loud instead of guessed.
 
-    This used to be `SUPABASE_DATABASE_URL or NEON_DATABASE_URL`. When the
-    Supabase URL went missing from .env, that expression did not fail - it
-    quietly served a stale Neon copy instead: 1,245 active opportunities rather
-    than 1,797, an empty feature store, and a vector index holding 5% of its
-    rows. Every health check passed. The app cannot tell "use the other database"
-    from "someone deleted a line", so it must not choose silently.
+    DATABASE_URL is the canonical Neon CLI variable and is deliberately first.
+    The legacy names are only a transition path for existing deployments.
 
     Now: no DSN is a hard failure, more than one is a warning naming both, and
     the resolved host is always logged so the serving database is visible in the
     first lines of startup.
     """
     candidates = [
-        ("SUPABASE_DATABASE_URL", settings.SUPABASE_DATABASE_URL),
+        ("DATABASE_URL", settings.DATABASE_URL),
         ("NEON_DATABASE_URL", settings.NEON_DATABASE_URL),
+        ("SUPABASE_DATABASE_URL", settings.SUPABASE_DATABASE_URL),
     ]
     configured = [(name, str(value).strip()) for name, value in candidates if str(value or "").strip()]
 
     if not configured:
         raise RuntimeError(
-            "No Postgres DSN is configured. Set SUPABASE_DATABASE_URL (or "
-            "NEON_DATABASE_URL) in backend/.env. Refusing to start rather than "
+            "No Postgres DSN is configured. Set DATABASE_URL from Neon (or "
+            "NEON_DATABASE_URL during migration). Refusing to start rather than "
             "guess which database to serve."
         )
 

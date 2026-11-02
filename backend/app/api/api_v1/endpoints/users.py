@@ -1203,7 +1203,8 @@ async def mark_onboarding_seen(
 ) -> OnboardingPromptSeenResponse:
     """
     Marks that onboarding has been shown once for this user.
-    Used to prevent forcing onboarding on every subsequent login.
+    This is an analytics/display marker only. Routing must still send every
+    incomplete profile to onboarding until the required setup is completed.
     """
     profile = await _get_or_create_profile_for_user(current_user)
     if not bool(profile.onboarding_prompt_seen):

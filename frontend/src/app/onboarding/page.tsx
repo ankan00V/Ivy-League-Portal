@@ -526,6 +526,7 @@ export default function OnboardingPage() {
   });
   const {
     loading,
+    profileLoaded,
     saving,
     step,
     setStep,
@@ -540,6 +541,7 @@ export default function OnboardingPage() {
     handleResumeUpload,
     handleResumeDelete,
     handleSave,
+    retry,
     logout,
   } = useOnboardingFlow<ProfilePayload, OnboardingUpdatePayload, OnboardingStatus>({
     profile,
@@ -687,6 +689,25 @@ export default function OnboardingPage() {
     return <CenteredPageSkeleton paneHeight="760px" />;
   }
 
+  if (!profileLoaded) {
+    return (
+      <main className="auth-page-shell">
+        <section className="card-panel auth-shell auth-verify-shell onboarding-recovery-shell" aria-labelledby="onboarding-recovery-heading">
+          <section className="auth-right-pane">
+            <BrandLogo />
+            <div className="auth-form-intro">
+              <h1 id="onboarding-recovery-heading">Your setup is waiting for you</h1>
+              <p>We could not load your saved onboarding details just now. Nothing has been lost.</p>
+            </div>
+            {error ? <p className="auth-message auth-message-error" role="alert">{error}</p> : null}
+            <button type="button" className="auth-primary-button" onClick={retry}>Retry loading setup</button>
+            <button type="button" className="auth-text-action auth-text-action-left" onClick={logout}>Sign out</button>
+          </section>
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className="onboarding-page-root">
       <section className="card-panel auth-shell onboarding-shell">
@@ -712,11 +733,12 @@ export default function OnboardingPage() {
         <div className="auth-right-pane onboarding-right-pane">
           <div>
             <h1 className="onboarding-page-title">You&apos;re almost there</h1>
-            <div className="onboarding-progress-wrap">
+            <div className="onboarding-progress-wrap" aria-label={`Step ${step} of ${totalSteps}`}>
               {Array.from({ length: totalSteps }, (_, idx) => idx + 1).map((n) => (
                 <div
                   key={n}
                   className={`onboarding-progress-step ${n <= step ? "active" : "pending"}`}
+                  aria-hidden="true"
                 />
               ))}
               <span className="onboarding-progress-text">
@@ -726,7 +748,7 @@ export default function OnboardingPage() {
           </div>
 
           {error && (
-            <div className="onboarding-alert-error">
+            <div className="onboarding-alert-error" role="alert">
               {error}
             </div>
           )}

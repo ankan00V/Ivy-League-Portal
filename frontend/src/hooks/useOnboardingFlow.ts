@@ -22,6 +22,7 @@ type UseOnboardingFlowArgs<TProfile, TPayload> = {
 
 type UseOnboardingFlowResult<TStatus> = {
   loading: boolean;
+  profileLoaded: boolean;
   saving: boolean;
   step: number;
   setStep: Dispatch<SetStateAction<number>>;
@@ -36,6 +37,7 @@ type UseOnboardingFlowResult<TStatus> = {
   handleResumeUpload: (file: File) => Promise<void>;
   handleResumeDelete: () => Promise<void>;
   handleSave: (finish: boolean, totalSteps: number) => Promise<void>;
+  retry: () => void;
   logout: () => void;
 };
 
@@ -53,6 +55,7 @@ export function useOnboardingFlow<TProfile, TPayload, TStatus extends { complete
 }: UseOnboardingFlowArgs<TProfile, TPayload>): UseOnboardingFlowResult<TStatus> {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
+  const [profileLoaded, setProfileLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [step, setStep] = useState(1);
   const [error, setError] = useState<string | null>(null);
@@ -60,26 +63,35 @@ export function useOnboardingFlow<TProfile, TPayload, TStatus extends { complete
   const [employerRoleSelection, setEmployerRoleSelection] = useState<string>("");
   const [selectedUniversity, setSelectedUniversity] = useState<string>("");
   const [status, setStatus] = useState<TStatus | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     const token = getAccessToken();
     if (!token) {
-      router.replace("/login");
+      router.replace("/login?next=/onboarding");
       return;
     }
 
     const run = async () => {
       try {
+        setLoading(true);
+        setProfileLoaded(false);
+        setError(null);
         const [profileRes, statusRes] = await Promise.all([
           fetch(apiUrl("/api/v1/users/me/profile"), createAuthenticatedFetchInit({}, token)),
           fetch(apiUrl("/api/v1/users/me/onboarding-status"), createAuthenticatedFetchInit({}, token)),
         ]);
-        if (!profileRes.ok) {
-          throw new Error("Failed to load profile");
+        if (profileRes.status === 401 || statusRes.status === 401) {
+          clearAccessToken("expired");
+          router.replace("/login?next=/onboarding");
+          return;
+        }
+        if (!profileRes.ok || !statusRes.ok) {
+          throw new Error("We could not load your saved onboarding details. Your progress is safe—please retry.");
         }
 
         const profilePayload = (await profileRes.json()) as Record<string, unknown>;
-        const onboardingStatus = statusRes.ok ? ((await statusRes.json()) as TStatus) : null;
+        const onboardingStatus = (await statusRes.json()) as TStatus;
         if (onboardingStatus?.completed) {
           const accountType = String(profilePayload.account_type || "candidate").toLowerCase();
           router.replace(resolveRouteForAccountType(accountType));
@@ -101,8 +113,10 @@ export function useOnboardingFlow<TProfile, TPayload, TStatus extends { complete
           }
           return next;
         });
+        setProfileLoaded(true);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Unable to load onboarding");
+        setProfileLoaded(false);
+        setError(getUnknownErrorMessage(err, "We could not load onboarding. Your progress is safe—please retry."));
       } finally {
         setLoading(false);
       }
@@ -117,7 +131,13 @@ export function useOnboardingFlow<TProfile, TPayload, TStatus extends { complete
     getCollegeNameFromProfile,
     getCurrentRoleFromProfile,
     resolveRouteForAccountType,
+    reloadKey,
   ]);
+
+  const retry = useCallback(() => {
+    setError(null);
+    setReloadKey((current) => current + 1);
+  }, []);
 
   const handleResumeUpload = useCallback(async (file: File) => {
     const token = getAccessToken();
@@ -239,6 +259,7 @@ export function useOnboardingFlow<TProfile, TPayload, TStatus extends { complete
 
   return {
     loading,
+    profileLoaded,
     saving,
     step,
     setStep,
@@ -253,6 +274,7 @@ export function useOnboardingFlow<TProfile, TPayload, TStatus extends { complete
     handleResumeUpload,
     handleResumeDelete,
     handleSave,
+    retry,
     logout,
   };
 }

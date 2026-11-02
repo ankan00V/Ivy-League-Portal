@@ -1,506 +1,127 @@
 "use client";
 
-import Link from "next/link";
 import Image from "next/image";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import React, { useMemo, useState } from "react";
+import { FormEvent, useMemo, useState } from "react";
 
 import BrandLogo from "@/components/BrandLogo";
 import PasswordStrengthMeter from "@/components/PasswordStrengthMeter";
-import { apiUrl } from "@/lib/api";
-import { setAccessToken } from "@/lib/auth-session";
-import { getApiErrorMessage, getUnknownErrorMessage } from "@/lib/error-utils";
-import { EMPLOYER_PORTAL_ENABLED } from "@/lib/employer-portal";
+import { verificationCallbackURL } from "@/lib/email-verification";
+import { neonAuthClient } from "@/lib/neon-auth-client";
+import { getUnknownErrorMessage } from "@/lib/error-utils";
 import { evaluatePasswordStrength } from "@/lib/password-strength";
-import { getTurnstileToken, mountTurnstile } from "@/lib/turnstile";
 
-type RegisterStep = "details" | "otp";
-type AccountType = "candidate" | "employer";
-
-type OAuthProviderStatus = {
-  google: boolean;
-  linkedin: boolean;
-  microsoft: boolean;
-};
-
-const REGISTER_VISUALS = {
-  candidate: {
-    heading: "Sign up as candidate",
-    image: "/auth/signup-candidate.jpg",
-  },
-  employer: {
-    heading: "Sign up as employer",
-    image: "/auth/signup-employer.jpg",
-  },
-};
-
-function formatCooldown(seconds: number): string {
-  const total = Math.max(0, Math.floor(seconds));
-  const mins = Math.floor(total / 60);
-  const secs = total % 60;
-  return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+function readableAuthError(error: unknown, fallback: string): string {
+  if (error && typeof error === "object" && "message" in error) {
+    const message = String(error.message || "").trim();
+    if (message) return message;
+  }
+  return getUnknownErrorMessage(error, fallback);
 }
 
 export default function RegisterPage() {
   const router = useRouter();
-  const defaultOtpCooldownSeconds = 60;
-  const [accountType, setAccountType] = useState<AccountType>("candidate");
-  const [step, setStep] = useState<RegisterStep>("details");
-  const [firstName, setFirstName] = useState("");
-  const [lastName, setLastName] = useState("");
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [otp, setOtp] = useState("");
-  const [otpCooldownSeconds, setOtpCooldownSeconds] = useState(0);
-  const [otpCooldownKey, setOtpCooldownKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [info, setInfo] = useState<string | null>(null);
-  const [providers, setProviders] = useState<OAuthProviderStatus>({ google: false, linkedin: false, microsoft: false });
-  const [issuedTurnstileToken, setIssuedTurnstileToken] = useState<{ step: RegisterStep; token: string | null } | null>(null);
 
-  const visual = useMemo(() => REGISTER_VISUALS[accountType], [accountType]);
-  const normalizedEmail = useMemo(() => email.trim().toLowerCase(), [email]);
-  const currentOtpKey = useMemo(() => `${accountType}:${normalizedEmail}`, [accountType, normalizedEmail]);
   const passwordStrength = useMemo(() => evaluatePasswordStrength(password), [password]);
-  const passwordsMatch = password.length > 0 && password === confirmPassword;
-  const turnstileToken = issuedTurnstileToken?.step === step ? issuedTurnstileToken.token : null;
 
-  React.useEffect(() => {
-    const run = async () => {
-      try {
-        const res = await fetch(apiUrl("/api/v1/auth/oauth/providers"));
-        if (!res.ok) {
-          return;
-        }
-        const payload = (await res.json()) as OAuthProviderStatus;
-        setProviders(payload);
-      } catch {
-        // Ignore local discovery errors.
-      }
-    };
-    void run();
-  }, []);
-
-  React.useEffect(() => {
-    let dispose: (() => void) | null = null;
-    let cancelled = false;
-    const node = document.getElementById("turnstile-mount");
-    if (!node) {
-      return;
-    }
-
-    mountTurnstile(node, "signup_otp", (token) => {
-      if (!cancelled) {
-        setIssuedTurnstileToken({ step, token });
-      }
-    })
-      .then((cleanup) => {
-        dispose = cleanup;
-      })
-      .catch(() => {
-        // The submit path can request an explicit challenge if the inline
-        // widget is blocked. The API remains the final verifier in either case.
-      });
-
-    return () => {
-      cancelled = true;
-      dispose?.();
-    };
-  }, [step]);
-
-  React.useEffect(() => {
-    if (otpCooldownSeconds <= 0) {
-      return;
-    }
-    const timer = window.setInterval(() => {
-      setOtpCooldownSeconds((current) => (current > 0 ? current - 1 : 0));
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [otpCooldownSeconds]);
-
-  React.useEffect(() => {
-    if (step !== "details") {
-      return;
-    }
-    if (!otpCooldownKey || otpCooldownKey === currentOtpKey) {
-      return;
-    }
-    const timeoutId = window.setTimeout(() => {
-      setOtpCooldownSeconds(0);
-      setOtpCooldownKey(null);
-    }, 0);
-    return () => window.clearTimeout(timeoutId);
-  }, [currentOtpKey, otpCooldownKey, step]);
-
-  const fullName = useMemo(() => `${firstName} ${lastName}`.trim(), [firstName, lastName]);
-
-  const resetMessages = () => {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
     setError(null);
-    setInfo(null);
-  };
 
-  const resolveCooldownSeconds = (response: Response, payload: Record<string, unknown>) => {
-    const fromBody = Number(payload.cooldown_seconds);
-    if (Number.isFinite(fromBody) && fromBody > 0) {
-      return Math.floor(fromBody);
+    if (!name.trim()) {
+      setError("Enter your name to create your profile.");
+      return;
     }
-    const retryAfter = Number(response.headers.get("retry-after"));
-    if (Number.isFinite(retryAfter) && retryAfter > 0) {
-      return Math.floor(retryAfter);
+    if (!passwordStrength.acceptable) {
+      setError("Use at least 8 characters with uppercase, lowercase, and a number.");
+      return;
     }
-    const detail = String(payload.detail || "");
-    const matched = detail.match(/(\d+)/);
-    if (matched) {
-      return Math.max(1, Number(matched[1]));
+    if (password !== confirmPassword) {
+      setError("Password confirmation does not match.");
+      return;
     }
-    return defaultOtpCooldownSeconds;
-  };
 
-  const requestOtp = async () => {
     setLoading(true);
-    resetMessages();
-
     try {
-      if (!passwordStrength.acceptable) {
-        throw new Error("Use at least 8 characters with uppercase, lowercase, and a number.");
-      }
-      if (!passwordsMatch) {
-        throw new Error("Password confirmation does not match.");
-      }
-      if (otpCooldownSeconds > 0 && otpCooldownKey === currentOtpKey) {
-        throw new Error(`Please wait ${otpCooldownSeconds}s before requesting another OTP.`);
-      }
-
-      // A Turnstile token is single-use. The visible widget issues a fresh
-      // token for each step; the explicit challenge is only a recovery path if
-      // the widget script failed to load.
-      const verificationToken = turnstileToken ?? (await getTurnstileToken("signup_otp"));
-
-      const res = await fetch(apiUrl("/api/v1/auth/send-otp"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: normalizedEmail,
-          purpose: "signup",
-          account_type: accountType,
-          turnstile_token: verificationToken,
-        }),
+      const normalizedEmail = email.trim().toLowerCase();
+      const result = await neonAuthClient.signUp.email({
+        name: name.trim(),
+        email: normalizedEmail,
+        password,
+        callbackURL: verificationCallbackURL(window.location.origin, normalizedEmail),
       });
-      const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-      if (!res.ok) {
-        const detail = getApiErrorMessage(payload, "");
-        if (res.status === 429) {
-          const remaining = resolveCooldownSeconds(res, payload);
-          setOtpCooldownSeconds(remaining);
-          setOtpCooldownKey(currentOtpKey);
-          setStep("otp");
-          setInfo(`OTP already sent. Check inbox/spam and retry in ${remaining}s.`);
-          return;
-        }
-        throw new Error(detail || "Failed to send OTP");
-      }
-
-      const cooldown = resolveCooldownSeconds(res, payload);
-      setOtpCooldownSeconds(cooldown);
-      setOtpCooldownKey(currentOtpKey);
-      if (typeof payload.debug_otp === "string" && payload.debug_otp.length === 6) {
-        setOtp(payload.debug_otp);
-        setInfo(`Debug OTP: ${payload.debug_otp} (local fallback)`);
-      } else {
-        setInfo("OTP sent to your email. It expires in 5 minutes.");
-        setOtp("");
-      }
-      setStep("otp");
-    } catch (err) {
-      setError(getUnknownErrorMessage(err, "Unable to send OTP"));
+      if (result.error) throw result.error;
+      // Keep a tab-local fallback for older links. New callbacks also carry the
+      // address as a prefill hint because mail clients often open a new tab.
+      window.sessionStorage.setItem("vidyaverse_pending_verification_email", normalizedEmail);
+      // Neon Auth now requires a verification link at sign-up. Do not bridge a
+      // pending identity into the application before the mailbox is proven.
+      router.replace(`/verify-email?email=${encodeURIComponent(normalizedEmail)}`);
+    } catch (cause) {
+      setError(readableAuthError(cause, "We could not create your account. Please try again."));
     } finally {
       setLoading(false);
     }
-  };
+  }
 
-  const handleSendOtp = async (event: React.FormEvent) => {
-    event.preventDefault();
-    await requestOtp();
-  };
-
-  const handleVerifySignup = async (event: React.FormEvent) => {
-    event.preventDefault();
+  async function continueWithGoogle() {
     setLoading(true);
-    resetMessages();
-
+    setError(null);
     try {
-      const res = await fetch(apiUrl("/api/v1/auth/verify-otp"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email,
-          otp,
-          purpose: "signup",
-          full_name: fullName,
-          account_type: accountType,
-          password,
-        }),
+      const result = await neonAuthClient.signIn.social({
+        provider: "google",
+        callbackURL: `${window.location.origin}/auth/callback?next=/onboarding`,
       });
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(getApiErrorMessage(payload, "OTP verification failed"));
-      }
-      const token = String(payload.access_token || "");
-      if (!token) {
-        throw new Error("Auth token missing from response");
-      }
-      setAccessToken(token);
-      router.push("/onboarding");
-    } catch (err) {
-      setError(getUnknownErrorMessage(err, "Unable to verify OTP"));
-    } finally {
+      if (result.error) throw result.error;
+    } catch (cause) {
+      setError(readableAuthError(cause, "Google sign-up could not be started. Please try again."));
       setLoading(false);
     }
-  };
-
-  const startGoogleOAuth = async () => {
-    setLoading(true);
-    resetMessages();
-    try {
-      const params = new URLSearchParams({
-        account_type: accountType,
-        next: "/auth/callback",
-        frontend_origin: window.location.origin,
-      });
-      const res = await fetch(apiUrl(`/api/v1/auth/oauth/google/start?${params.toString()}`));
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok || !payload.redirect_url) {
-        throw new Error(getApiErrorMessage(payload, "Google OAuth is unavailable. Configure Google OAuth env vars."));
-      }
-      window.location.href = String(payload.redirect_url);
-    } catch (err) {
-      setError(getUnknownErrorMessage(err, "Unable to start Google OAuth"));
-      setLoading(false);
-    }
-  };
+  }
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        display: "grid",
-        placeItems: "center",
-        padding: "1.5rem",
-        background:
-          "radial-gradient(circle at 20% 20%, rgba(251,191,36,0.11), transparent 28%), radial-gradient(circle at 80% 10%, rgba(59,130,246,0.08), transparent 24%), var(--bg-base)",
-      }}
-    >
-      <section
-        className="card-panel auth-shell"
-        style={{
-          width: "min(1100px, 100%)",
-          height: "min(740px, calc(100vh - 3rem))",
-          minHeight: "740px",
-          overflow: "hidden",
-          padding: 0,
-        }}
-      >
-        <aside
-          className="auth-left-pane"
-          style={{
-            background: "#f7c948",
-            padding: "1.25rem",
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: "space-between",
-            borderRight: "2px solid var(--border-subtle)",
-          }}
-        >
-          <BrandLogo size="md" />
-          <div style={{ borderRadius: "var(--radius-md)", overflow: "hidden", border: "2px solid rgba(0,0,0,0.12)", background: "#fff", position: "relative", height: "420px" }}>
-            <Image
-              src={visual.image}
-              alt="Signup visual"
-              fill
-              sizes="(max-width: 1100px) 100vw, 50vw"
-              style={{ objectFit: "cover", display: "block" }}
-            />
+    <main className="auth-page-shell">
+      <section className="card-panel auth-shell" aria-labelledby="register-heading">
+        <aside className="auth-left-pane">
+          <BrandLogo />
+          <div className="auth-image-frame">
+            <Image src="/auth/signup-candidate.jpg" alt="Student preparing for a new opportunity" fill priority sizes="(max-width: 900px) 0px, 50vw" style={{ objectFit: "cover" }} />
           </div>
           <div>
-            <h2 style={{ fontSize: "2rem", marginBottom: "0.4rem", color: "#111" }}>{visual.heading}</h2>
-            <p style={{ color: "rgba(0,0,0,0.78)", fontWeight: 600 }}>
-              Verify with OTP and complete a guided profile setup to unlock personalized recommendations.
-            </p>
+            <h1 id="register-heading">Build your opportunity edge.</h1>
+            <p>One secure account for internships, competitions, and the work that moves your career forward.</p>
           </div>
         </aside>
 
-        <div className="auth-right-pane" style={{ padding: "2rem", display: "flex", flexDirection: "column", gap: "1rem" }}>
-          <h1 style={{ fontSize: "2.2rem", marginBottom: "0.35rem" }}>Create your account</h1>
-
-          {/* Account-type toggle is hidden while the employer portal is retired.
-              accountType stays pinned to "candidate", so every request below
-              keeps sending the field the API still expects. */}
-          {EMPLOYER_PORTAL_ENABLED && (
-            <>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr",
-                gap: "0.5rem",
-                background: "var(--bg-surface-hover)",
-                padding: "0.3rem",
-                borderRadius: "999px",
-                border: "2px solid var(--border-subtle)",
-                maxWidth: "360px",
-              }}
-            >
-              <button type="button" className={accountType === "candidate" ? "btn-primary" : "btn-secondary"} style={{ borderRadius: "999px", width: "100%" }} onClick={() => setAccountType("candidate")} disabled={loading || step === "otp"}>
-                Candidate
-              </button>
-              <button type="button" className={accountType === "employer" ? "btn-primary" : "btn-secondary"} style={{ borderRadius: "999px", width: "100%" }} onClick={() => setAccountType("employer")} disabled={loading || step === "otp"}>
-                Employer
-              </button>
-            </div>
-            {accountType === "employer" && (
-              <p style={{ color: "var(--text-secondary)", fontWeight: 700 }}>
-                Employer sign-up requires a corporate email domain.
-              </p>
-            )}
-            </>
-          )}
-
-
-          {error && (
-            <div style={{ background: "rgba(239,68,68,0.08)", border: "2px solid #ef4444", color: "#b91c1c", borderRadius: "var(--radius-sm)", padding: "0.75rem" }}>
-              {error}
-            </div>
-          )}
-          {info && (
-            <div style={{ background: "rgba(34,197,94,0.08)", border: "2px solid #22c55e", color: "#15803d", borderRadius: "var(--radius-sm)", padding: "0.75rem" }}>
-              {info}
-            </div>
-          )}
-
-          {step === "details" && (
-            <>
-              <div style={{ display: "grid", gap: "0.6rem" }}>
-                <button type="button" className="btn-secondary" onClick={() => void startGoogleOAuth()} disabled={loading || !providers.google} style={{ width: "100%", justifyContent: "center" }}>
-                  Continue with Google
-                </button>
-              </div>
-
-              <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", color: "var(--text-secondary)" }}>
-                <div style={{ height: "1px", background: "var(--border-subtle)", flex: 1 }} />
-                <span>OR</span>
-                <div style={{ height: "1px", background: "var(--border-subtle)", flex: 1 }} />
-              </div>
-            </>
-          )}
-
-          {step === "details" ? (
-            <form onSubmit={handleSendOtp} style={{ display: "grid", gap: "0.85rem" }}>
-              <label style={{ fontWeight: 700 }}>First Name</label>
-              <input type="text" className="input-base" value={firstName} onChange={(event) => setFirstName(event.target.value)} placeholder="Bob" required disabled={loading} />
-
-              <label style={{ fontWeight: 700 }}>Last Name</label>
-              <input type="text" className="input-base" value={lastName} onChange={(event) => setLastName(event.target.value)} placeholder="Builder" disabled={loading} />
-
-              <label style={{ fontWeight: 700 }}>Email</label>
-              <input
-                type="email"
-                className="input-base"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                placeholder={accountType === "employer" ? "name@company.com" : "student@college.edu"}
-                required
-                disabled={loading}
-              />
-
-              <label style={{ fontWeight: 700 }}>Password</label>
-              <input
-                type="password"
-                className="input-base"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder="Create a password"
-                autoComplete="new-password"
-                required
-                disabled={loading}
-              />
-              <PasswordStrengthMeter strength={passwordStrength} />
-
-              <label style={{ fontWeight: 700 }}>Confirm Password</label>
-              <input
-                type="password"
-                className="input-base"
-                value={confirmPassword}
-                onChange={(event) => setConfirmPassword(event.target.value)}
-                placeholder="Re-enter password"
-                autoComplete="new-password"
-                required
-                disabled={loading}
-                style={{ borderColor: confirmPassword.length === 0 || passwordsMatch ? undefined : "#ef4444" }}
-              />
-
-              <div id="turnstile-mount" style={{ display: "grid", justifyContent: "center", minHeight: "1px" }} />
-
-              <button
-                type="submit"
-                className="btn-primary"
-                disabled={loading || otpCooldownSeconds > 0 || !passwordStrength.acceptable || !passwordsMatch}
-                style={{ width: "100%", justifyContent: "center", marginTop: "0.25rem" }}
-              >
-                {loading ? "Please wait..." : (otpCooldownSeconds > 0 ? `Send OTP (${otpCooldownSeconds}s)` : "Send OTP")}
-              </button>
-            </form>
-          ) : (
-            <form onSubmit={handleVerifySignup} style={{ display: "grid", gap: "0.85rem" }}>
-              <label style={{ fontWeight: 700 }}>Email</label>
-              <input type="email" className="input-base" value={email} disabled />
-
-              <label style={{ fontWeight: 700 }}>OTP</label>
-              <input
-                type="text"
-                className="input-base"
-                value={otp}
-                onChange={(event) => setOtp(event.target.value.replace(/\D/g, ""))}
-                placeholder="XXXXXX"
-                maxLength={6}
-                minLength={6}
-                inputMode="numeric"
-                pattern="[0-9]{6}"
-                required
-                disabled={loading}
-                style={{ letterSpacing: "0.25em", textAlign: "center", fontWeight: 800 }}
-              />
-
-              <div id="turnstile-mount" style={{ display: "grid", justifyContent: "center", minHeight: "1px" }} />
-
-              <button type="submit" className="btn-primary" disabled={loading} style={{ width: "100%", justifyContent: "center", marginTop: "0.25rem" }}>
-                {loading ? "Verifying..." : "Verify OTP & Continue"}
-              </button>
-
-              <p className="auth-resend-row">
-                Didn&apos;t receive code?{" "}
-                {otpCooldownSeconds > 0 ? (
-                  <span className="auth-resend-wait">Resend in {formatCooldown(otpCooldownSeconds)}</span>
-                ) : (
-                  <button type="button" className="auth-resend-link" disabled={loading} onClick={() => void requestOtp()}>
-                    Resend
-                  </button>
-                )}
-              </p>
-
-              <button type="button" style={{ border: "none", background: "none", color: "var(--brand-primary)", fontWeight: 700, cursor: "pointer" }} onClick={() => setStep("details")}>
-                Edit details
-              </button>
-            </form>
-          )}
-
-          <div style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
-            Already have an account?{" "}
-            <Link href="/login" style={{ color: "var(--brand-primary)", fontWeight: 800 }}>
-              Sign in
-            </Link>
+        <section className="auth-right-pane">
+          <div className="auth-form-intro">
+            <h2>Create your account</h2>
+            <p>Use the email you check most—Gmail and college email addresses both work. We&apos;ll send a verification link before creating your VidyaVerse session.</p>
           </div>
-        </div>
+          <button type="button" className="auth-oauth-button" onClick={() => void continueWithGoogle()} disabled={loading}>
+            <span aria-hidden="true" className="auth-google-mark">G</span>
+            Continue with Google
+          </button>
+          <p className="auth-divider" aria-hidden="true"><span />or<span /></p>
+          <form onSubmit={handleSubmit} className="auth-form-stack">
+            <label>Full name<input autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} disabled={loading} required /></label>
+            <label>Email<input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} disabled={loading} required /></label>
+            <label>Password<input type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} disabled={loading} required /></label>
+            <PasswordStrengthMeter strength={passwordStrength} compact />
+            <label>Confirm password<input type="password" autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} disabled={loading} required /></label>
+            <p className="auth-form-helper">By continuing, you agree to the <Link href="/terms">Terms</Link> and <Link href="/privacy">Privacy Policy</Link>.</p>
+            {error ? <p className="auth-message auth-message-error" role="alert">{error}</p> : null}
+            <button type="submit" className="auth-primary-button" disabled={loading}>{loading ? "Creating account..." : "Create account"}</button>
+          </form>
+          <p className="auth-switch-row">Already have an account? <Link href="/login">Sign in</Link></p>
+        </section>
       </section>
     </main>
   );
