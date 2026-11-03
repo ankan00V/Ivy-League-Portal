@@ -19,7 +19,10 @@ const nextConfig: NextConfig = {
   // old ones, so every stylesheet 500s and the page renders unstyled. Set
   // NEXT_DIST_DIR to build without disturbing a running instance.
   distDir: process.env.NEXT_DIST_DIR || ".next",
-  outputFileTracingRoot: path.join(__dirname, ".."),
+  // The frontend is built as its own Docker context. Tracing from its parent
+  // resolves to `/` in the image, which prevents Next from emitting the
+  // standalone server bundle required by the production image.
+  outputFileTracingRoot: path.resolve(__dirname),
   skipTrailingSlashRedirect: true,
   allowedDevOrigins: ["127.0.0.1", "localhost", "web.test"],
   async headers() {

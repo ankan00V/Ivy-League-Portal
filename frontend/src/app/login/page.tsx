@@ -1,931 +1,197 @@
 "use client";
 
-import Link from "next/link";
 import Image from "next/image";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import React, { useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 
 import BrandLogo from "@/components/BrandLogo";
-import PasswordStrengthMeter from "@/components/PasswordStrengthMeter";
-import { apiUrl } from "@/lib/api";
-import {
-  getAccessToken,
-  hasAuthSession,
-  resolvePostAuthRoute,
-  setAccessToken,
-  setPendingAdminChallenge,
-} from "@/lib/auth-session";
-import { getApiErrorMessage, getUnknownErrorMessage } from "@/lib/error-utils";
-import { EMPLOYER_PORTAL_ENABLED } from "@/lib/employer-portal";
-import { evaluatePasswordStrength } from "@/lib/password-strength";
-import { getTurnstileToken, mountTurnstile } from "@/lib/turnstile";
+import { establishApplicationSession } from "@/lib/neon-auth-bridge";
+import { neonAuthClient } from "@/lib/neon-auth-client";
+import { resolvePostAuthRoute } from "@/lib/auth-session";
+import { getUnknownErrorMessage } from "@/lib/error-utils";
+import { AUTH_FETCH_OPTIONS } from "@/lib/auth-network";
 
-type AuthStep = "email" | "otp" | "password" | "forgot-email" | "forgot-reset";
-type AccountType = "candidate" | "employer";
-
-type OAuthProviderStatus = {
-  google: boolean;
-  linkedin: boolean;
-  microsoft: boolean;
-};
-
-type PasswordLoginResponse = {
-  access_token?: string;
-  token_type?: string;
-  requires_password_setup?: boolean;
-  requires_admin_verification?: boolean;
-  admin_challenge_token?: string;
-  admin_verification_path?: string;
-  otp_delivery?: "email" | "debug";
-  otp_expires_in_seconds?: number;
-  otp_cooldown_seconds?: number;
-  debug_otp?: string | null;
-  totp_setup_required?: boolean;
-  totp_setup_secret?: string | null;
-  totp_setup_uri?: string | null;
-  totp_setup_issuer?: string | null;
-  totp_setup_account_name?: string | null;
-};
-
-const LOGIN_VISUALS = {
-  candidate: {
-    title: "Compete, learn, and get hired.",
-    subtitle: "Sign in with OTP or your password, whichever is faster for you.",
-    image: "/auth/login-candidate.jpg",
-  },
-  employer: {
-    title: "Hire top campus talent faster.",
-    subtitle: "Access recruiter workflows with secure authentication.",
-    image: "/auth/login-employer.jpg",
-  },
-};
-
-/**
- * Where to send the user after a successful sign-in.
- *
- * A protected page that 401s redirects here with ?next=<path>, so an expired
- * session returns the user to the page they were on rather than dropping them
- * on the dashboard. Only same-origin paths are accepted - an absolute or
- * protocol-relative value would make this an open redirect.
- */
-function resolveNextParam(raw: string | null): string | null {
-  const value = (raw || "").trim();
-  if (!value.startsWith("/") || value.startsWith("//")) {
-    return null;
-  }
-  return value;
+function safeNext(value: string | null): string {
+  const candidate = String(value || "").trim();
+  return candidate.startsWith("/") && !candidate.startsWith("//") && !/[\\\u0000-\u001f]/.test(candidate) ? candidate : "/dashboard";
 }
 
-/** mm:ss, so a long cooldown reads as a clock rather than "Resend in 96s". */
-function formatCooldown(seconds: number): string {
-  const total = Math.max(0, Math.floor(seconds));
-  const mins = Math.floor(total / 60);
-  const secs = total % 60;
-  return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+function readableAuthError(error: unknown, fallback: string): string {
+  if (error && typeof error === "object" && "message" in error) {
+    const message = String(error.message || "").trim();
+    if (message) return message;
+  }
+  return getUnknownErrorMessage(error, fallback);
 }
 
 export default function LoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const defaultOtpCooldownSeconds = 60;
-  const [accountType, setAccountType] = useState<AccountType>("candidate");
-  const [step, setStep] = useState<AuthStep>("email");
-  // Token from the visible widget below. Held in state so the form can show the
-  // challenge and refuse to submit until it is solved, instead of solving
-  // invisibly at submit time where a failure looks like a dead button.
-  // The token is stored with the step it was issued for, and read back only when
-  // those match. That derives the "clear the token when the step changes" rule
-  // instead of enforcing it with a setState in the effect body, which triggers a
-  // cascading render and is what react-hooks/set-state-in-effect flags. A token
-  // minted for `password` can never be submitted against `forgot`, because the
-  // comparison below yields null rather than relying on a reset having run.
-  // token is nullable because mountTurnstile's callback also fires with null
-  // when a solved challenge expires, which must clear the stored token.
-  const [issuedToken, setIssuedToken] = useState<{ step: string; token: string | null } | null>(null);
-  const turnstileToken = issuedToken?.step === step ? issuedToken.token : null;
-
-  useEffect(() => {
-    let dispose: (() => void) | null = null;
-    let cancelled = false;
-    const node = document.getElementById("turnstile-mount");
-    if (!node) {
-      return;
-    }
-    const action =
-      step === "password" ? "login_password" : step.startsWith("forgot") ? "forgot_password" : "login_otp";
-    mountTurnstile(node, action, (token) => {
-      if (!cancelled) {
-        setIssuedToken({ step, token });
-      }
-    })
-      .then((cleanup) => {
-        dispose = cleanup;
-      })
-      .catch(() => {
-        // No key configured, or the widget failed to load. The submit handlers
-        // already fall back to getTurnstileToken(action), so there is nothing to
-        // record here.
-      });
-    return () => {
-      cancelled = true;
-      if (dispose) {
-        dispose();
-      }
-    };
-  }, [step]);
-  const [email, setEmail] = useState("");
-  const [otp, setOtp] = useState("");
+  const [email, setEmail] = useState(() => String(searchParams.get("email") || "").trim().toLowerCase());
   const [password, setPassword] = useState("");
-  const [resetEmail, setResetEmail] = useState("");
-  const [resetOtp, setResetOtp] = useState("");
-  const [resetPassword, setResetPassword] = useState("");
-  const [resetConfirmPassword, setResetConfirmPassword] = useState("");
-  const [otpCooldownSeconds, setOtpCooldownSeconds] = useState(0);
-  const [otpCooldownKey, setOtpCooldownKey] = useState<string | null>(null);
-  const [resetCooldownSeconds, setResetCooldownSeconds] = useState(0);
-  const [resetCooldownKey, setResetCooldownKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [checkingSession, setCheckingSession] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [info, setInfo] = useState<string | null>(null);
-  const [providers, setProviders] = useState<OAuthProviderStatus>({
-    google: false,
-    linkedin: false,
-    microsoft: false,
-  });
+  const [canRetrySession, setCanRetrySession] = useState(false);
+  const requestedNext = searchParams.get("next");
+  const destination = safeNext(requestedNext);
 
-  const visual = useMemo(() => LOGIN_VISUALS[accountType], [accountType]);
-  const normalizedEmail = useMemo(() => email.trim().toLowerCase(), [email]);
-  const normalizedResetEmail = useMemo(() => resetEmail.trim().toLowerCase(), [resetEmail]);
-  const currentOtpKey = useMemo(() => `${accountType}:${normalizedEmail}`, [accountType, normalizedEmail]);
-  const currentResetKey = useMemo(() => `${accountType}:${normalizedResetEmail}`, [accountType, normalizedResetEmail]);
-  const resetPasswordStrength = useMemo(() => evaluatePasswordStrength(resetPassword), [resetPassword]);
+  async function resolveDestination(token: string): Promise<string> {
+    return resolvePostAuthRoute(
+      token,
+      requestedNext && safeNext(requestedNext) !== "/dashboard" ? destination : null,
+    );
+  }
 
-  useEffect(() => {
-    const token = getAccessToken();
-    if (!token && !hasAuthSession()) {
-      return;
-    }
-    void resolvePostAuthRoute(token || null).then((nextRoute) => router.replace(nextRoute));
-  }, [router]);
-
-  useEffect(() => {
-    const run = async () => {
-      try {
-        const res = await fetch(apiUrl("/api/v1/auth/oauth/providers"));
-        if (!res.ok) {
-          return;
-        }
-        const payload = (await res.json()) as OAuthProviderStatus;
-        setProviders(payload);
-      } catch {
-        // Ignore provider discovery issues in local fallback mode.
-      }
-    };
-    void run();
-  }, []);
-
-  useEffect(() => {
-    if (otpCooldownSeconds <= 0) {
-      return;
-    }
-    const timer = window.setInterval(() => {
-      setOtpCooldownSeconds((current) => (current > 0 ? current - 1 : 0));
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [otpCooldownSeconds]);
-
-  useEffect(() => {
-    if (resetCooldownSeconds <= 0) {
-      return;
-    }
-    const timer = window.setInterval(() => {
-      setResetCooldownSeconds((current) => (current > 0 ? current - 1 : 0));
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [resetCooldownSeconds]);
-
-  useEffect(() => {
-    if (step !== "email") {
-      return;
-    }
-    if (!otpCooldownKey || otpCooldownKey === currentOtpKey) {
-      return;
-    }
-    const timeoutId = window.setTimeout(() => {
-      setOtpCooldownSeconds(0);
-      setOtpCooldownKey(null);
-    }, 0);
-    return () => window.clearTimeout(timeoutId);
-  }, [currentOtpKey, otpCooldownKey, step]);
-
-  useEffect(() => {
-    if (step !== "forgot-email") {
-      return;
-    }
-    if (!resetCooldownKey || resetCooldownKey === currentResetKey) {
-      return;
-    }
-    const timeoutId = window.setTimeout(() => {
-      setResetCooldownSeconds(0);
-      setResetCooldownKey(null);
-    }, 0);
-    return () => window.clearTimeout(timeoutId);
-  }, [currentResetKey, resetCooldownKey, step]);
-
-  const resetMessages = () => {
+  async function continueExistingSession() {
+    setCheckingSession(true);
     setError(null);
-    setInfo(null);
-  };
-
-  const resolveCooldownSeconds = (response: Response, payload: Record<string, unknown>) => {
-    const fromBody = Number(payload.cooldown_seconds);
-    if (Number.isFinite(fromBody) && fromBody > 0) {
-      return Math.floor(fromBody);
-    }
-    const retryAfter = Number(response.headers.get("retry-after"));
-    if (Number.isFinite(retryAfter) && retryAfter > 0) {
-      return Math.floor(retryAfter);
-    }
-    const detail = String(payload.detail || "");
-    const matched = detail.match(/(\d+)/);
-    if (matched) {
-      return Math.max(1, Number(matched[1]));
-    }
-    return defaultOtpCooldownSeconds;
-  };
-
-  const requestOtp = async () => {
-    if (otpCooldownSeconds > 0 && otpCooldownKey === currentOtpKey) {
-      throw new Error(`Please wait ${otpCooldownSeconds}s before requesting another OTP.`);
-    }
-
-    setLoading(true);
-    resetMessages();
-
     try {
-      const verificationToken = turnstileToken ?? (await getTurnstileToken("login_otp"));
-      const res = await fetch(apiUrl("/api/v1/auth/send-otp"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: normalizedEmail,
-          purpose: "signin",
-          account_type: accountType,
-          turnstile_token: verificationToken,
-        }),
-      });
-      const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-      if (!res.ok) {
-        const detail = getApiErrorMessage(payload, "");
-        if (res.status === 429) {
-          const remaining = resolveCooldownSeconds(res, payload);
-          setOtpCooldownSeconds(remaining);
-          setOtpCooldownKey(currentOtpKey);
-          setStep("otp");
-          setInfo(`OTP already sent. Check inbox/spam and retry in ${remaining}s.`);
-          return;
-        }
-        throw new Error(detail || "Failed to send OTP");
+      const { data, error: sessionError } = await neonAuthClient.getSession({ query: { disableCookieCache: true }, fetchOptions: AUTH_FETCH_OPTIONS });
+      if (sessionError || !data?.user) {
+        setCanRetrySession(false);
+        throw new Error("Your secure sign-in session has expired. Please sign in again.");
       }
-
-      const cooldown = resolveCooldownSeconds(res, payload);
-      setOtpCooldownSeconds(cooldown);
-      setOtpCooldownKey(currentOtpKey);
-      if (typeof payload.debug_otp === "string" && payload.debug_otp.length === 6) {
-        setOtp(payload.debug_otp);
-        setInfo(`Debug OTP: ${payload.debug_otp} (local fallback)`);
-      } else {
-        setInfo("OTP sent to your email. It expires in 5 minutes.");
-        setOtp("");
-      }
-      setStep("otp");
-    } catch (err) {
-      setError(getUnknownErrorMessage(err, "Unable to send OTP"));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSendOtp = async (event: React.FormEvent) => {
-    event.preventDefault();
-    await requestOtp();
-  };
-
-  const handleVerifyOtp = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setLoading(true);
-    resetMessages();
-
-    try {
-      const res = await fetch(apiUrl("/api/v1/auth/verify-otp"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, otp, purpose: "signin", account_type: accountType }),
-      });
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(getApiErrorMessage(payload, "OTP verification failed"));
-      }
-      const token = String(payload.access_token || "");
-      if (!token) {
-        throw new Error("Auth token missing from response");
-      }
-      setAccessToken(token);
-      const requestedNext = resolveNextParam(searchParams.get("next"));
-      const nextRoute = requestedNext ?? (await resolvePostAuthRoute(token));
-      router.push(nextRoute);
-    } catch (err) {
-      setError(getUnknownErrorMessage(err, "Unable to verify OTP"));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handlePasswordLogin = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setLoading(true);
-    resetMessages();
-
-    try {
-      const body = new URLSearchParams();
-      body.set("username", email);
-      body.set("password", password);
-      const verificationToken = turnstileToken ?? (await getTurnstileToken("login_password"));
-      if (verificationToken) {
-        body.set("turnstile_token", verificationToken);
-      }
-
-      const res = await fetch(apiUrl("/api/v1/auth/login"), {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: body.toString(),
-      });
-      const payload = (await res.json().catch(() => ({}))) as PasswordLoginResponse;
-      if (!res.ok) {
-        throw new Error(getApiErrorMessage(payload, "Invalid email/password"));
-      }
-      if (payload.requires_admin_verification) {
-        const challengeToken = String(payload.admin_challenge_token || "");
-        if (!challengeToken) {
-          throw new Error("Admin verification session was not created");
-        }
-        setPendingAdminChallenge({
-          email: normalizedEmail,
-          adminChallengeToken: challengeToken,
-          adminTotpToken: null,
-          otpVerified: false,
-          otpDelivery: payload.otp_delivery,
-          otpCooldownSeconds: payload.otp_cooldown_seconds,
-          otpExpiresInSeconds: payload.otp_expires_in_seconds,
-          debugOtp: payload.debug_otp,
-          totpSetupRequired: Boolean(payload.totp_setup_required),
-          totpSetupSecret: payload.totp_setup_secret,
-          totpSetupUri: payload.totp_setup_uri,
-          totpSetupIssuer: payload.totp_setup_issuer,
-          totpSetupAccountName: payload.totp_setup_account_name,
-        });
-        setInfo(
-          payload.totp_setup_required
-            ? "Password verified. Set up your authenticator, then continue with OTP and TOTP."
-            : "Password verified. Continue with OTP and TOTP.",
-        );
-        router.push(payload.admin_verification_path || "/control/auth");
+      if (!data.user.emailVerified) {
+        router.replace(`/verify-email?email=${encodeURIComponent(data.user.email || "")}`);
         return;
       }
-      const token = String(payload.access_token || "");
-      if (!token) {
-        throw new Error("Auth token missing from response");
-      }
-      setAccessToken(token);
-      const requestedNext = resolveNextParam(searchParams.get("next"));
-      const nextRoute = requestedNext ?? (await resolvePostAuthRoute(token));
-      router.push(nextRoute);
-    } catch (err) {
-      setError(getUnknownErrorMessage(err, "Unable to login"));
+      setCanRetrySession(true);
+      const token = await establishApplicationSession();
+      router.replace(await resolveDestination(token));
+    } catch (cause) {
+      setError(readableAuthError(cause, "We could not finish preparing your account. Please retry."));
     } finally {
-      setLoading(false);
+      setCheckingSession(false);
     }
-  };
+  }
 
-  const requestPasswordResetOtp = async () => {
-    if (resetCooldownSeconds > 0 && resetCooldownKey === currentResetKey) {
-      throw new Error(`Please wait ${resetCooldownSeconds}s before requesting another OTP.`);
-    }
-
-    setLoading(true);
-    resetMessages();
-
-    try {
-      const verificationToken = turnstileToken ?? (await getTurnstileToken("forgot_password"));
-      const res = await fetch(apiUrl("/api/v1/auth/password/forgot/send-otp"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: normalizedResetEmail,
-          account_type: accountType,
-          turnstile_token: verificationToken,
-        }),
-      });
-      const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-      if (!res.ok) {
-        const detail = getApiErrorMessage(payload, "");
-        if (res.status === 429) {
-          const remaining = resolveCooldownSeconds(res, payload);
-          setResetCooldownSeconds(remaining);
-          setResetCooldownKey(currentResetKey);
-          setStep("forgot-reset");
-          setInfo(`Reset OTP already sent. Check inbox/spam and retry in ${remaining}s.`);
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const { data, error: sessionError } = await neonAuthClient.getSession({ query: { disableCookieCache: true }, fetchOptions: AUTH_FETCH_OPTIONS });
+        if (sessionError) throw sessionError;
+        if (active && data?.user) {
+          if (!data.user.emailVerified) {
+            router.replace(`/verify-email?email=${encodeURIComponent(data.user.email || "")}`);
+            return;
+          }
+          setCanRetrySession(true);
+          const token = await establishApplicationSession();
+          const next = await resolveDestination(token);
+          if (active) router.replace(next);
           return;
         }
-        throw new Error(detail || "Failed to send password reset OTP");
+      } catch (cause) {
+        if (active) {
+          setError(readableAuthError(cause, "We could not restore your secure session. Please retry."));
+        }
+      } finally {
+        if (active) setCheckingSession(false);
       }
+    })();
+    return () => { active = false; };
+  // `continueExistingSession` intentionally is not a dependency: making this
+  // effect depend on its state updates retried a bridge on every render.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [destination, requestedNext, router]);
 
-      const cooldown = resolveCooldownSeconds(res, payload);
-      setResetCooldownSeconds(cooldown);
-      setResetCooldownKey(currentResetKey);
-      if (typeof payload.debug_otp === "string" && payload.debug_otp.length === 6) {
-        setResetOtp(payload.debug_otp);
-        setInfo(`Debug OTP: ${payload.debug_otp} (local fallback)`);
-      } else {
-        setResetOtp("");
-        setInfo("Reset OTP sent to your email. It expires in 5 minutes.");
-      }
-      setStep("forgot-reset");
-    } catch (err) {
-      setError(getUnknownErrorMessage(err, "Unable to send password reset OTP"));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleForgotPasswordStart = async (event: React.FormEvent) => {
-    event.preventDefault();
-    await requestPasswordResetOtp();
-  };
-
-  const handleForgotPasswordReset = async (event: React.FormEvent) => {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
-    resetMessages();
-
+    setError(null);
+    setCanRetrySession(false);
     try {
-      if (resetPassword !== resetConfirmPassword) {
-        throw new Error("Password confirmation does not match");
+      const result = await neonAuthClient.signIn.email({ email: email.trim().toLowerCase(), password, fetchOptions: AUTH_FETCH_OPTIONS });
+      if (result.error?.code === "EMAIL_NOT_VERIFIED") {
+        router.replace(`/verify-email?email=${encodeURIComponent(email.trim().toLowerCase())}`);
+        return;
       }
-      if (!resetPasswordStrength.acceptable) {
-        throw new Error("Password is not strong enough yet.");
+      if (result.error) throw result.error;
+      if (!result.data?.user?.emailVerified) {
+        router.replace(`/verify-email?email=${encodeURIComponent(email.trim().toLowerCase())}`);
+        return;
       }
-
-      const res = await fetch(apiUrl("/api/v1/auth/password/forgot/reset"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: normalizedResetEmail,
-          otp: resetOtp,
-          password: resetPassword,
-          confirm_password: resetConfirmPassword,
-          account_type: accountType,
-        }),
-      });
-      const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-      if (!res.ok) {
-        throw new Error(getApiErrorMessage(payload, "Password reset failed"));
-      }
-      setEmail(normalizedResetEmail);
+      // Authentication succeeded even if the profile/database service fails.
+      // Keep a retry action that does not submit the password again.
+      setCanRetrySession(true);
       setPassword("");
-      setResetOtp("");
-      setResetPassword("");
-      setResetConfirmPassword("");
-      setStep("password");
-      setInfo(String(payload.message || "Password reset successfully. Sign in with your new password."));
-    } catch (err) {
-      setError(getUnknownErrorMessage(err, "Unable to reset password"));
+      const token = await establishApplicationSession();
+      router.replace(await resolveDestination(token));
+    } catch (cause) {
+      setError(readableAuthError(cause, "Unable to sign in. Check your email and password, then try again."));
     } finally {
       setLoading(false);
     }
-  };
+  }
 
-  const startGoogleOAuth = async () => {
+  async function continueWithGoogle() {
     setLoading(true);
-    resetMessages();
-
+    setError(null);
+    setCanRetrySession(false);
     try {
-      const params = new URLSearchParams({
-        account_type: accountType,
-        next: "/auth/callback",
-        frontend_origin: window.location.origin,
+      const result = await neonAuthClient.signIn.social({
+        provider: "google",
+        fetchOptions: AUTH_FETCH_OPTIONS,
+        callbackURL: `${window.location.origin}/auth/callback${requestedNext ? `?next=${encodeURIComponent(destination)}` : ""}`,
       });
-      const res = await fetch(apiUrl(`/api/v1/auth/oauth/google/start?${params.toString()}`));
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok || !payload.redirect_url) {
-        throw new Error(getApiErrorMessage(payload, "Google OAuth is unavailable. Configure Google OAuth env vars."));
-      }
-      window.location.href = String(payload.redirect_url);
-    } catch (err) {
-      setError(getUnknownErrorMessage(err, "Unable to start Google OAuth"));
+      if (result.error) throw result.error;
+    } catch (cause) {
+      setError(readableAuthError(cause, "Google sign-in could not be started. Please try again."));
       setLoading(false);
     }
-  };
+  }
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        display: "grid",
-        placeItems: "center",
-        padding: "1.5rem",
-        background:
-          "radial-gradient(circle at 20% 20%, rgba(59,130,246,0.08), transparent 30%), radial-gradient(circle at 80% 10%, rgba(34,197,94,0.08), transparent 24%), var(--bg-base)",
-      }}
-    >
-      <section
-        className="card-panel auth-shell"
-        style={{
-          width: "min(1100px, 100%)",
-          height: "min(720px, calc(100vh - 3rem))",
-          minHeight: "720px",
-          overflow: "hidden",
-          padding: 0,
-        }}
-      >
-        <aside
-          className="auth-left-pane"
-          style={{
-            background: "#f7c948",
-            padding: "1.25rem",
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: "space-between",
-            borderRight: "2px solid var(--border-subtle)",
-          }}
-        >
-          <BrandLogo size="md" />
-          <div
-            style={{
-              borderRadius: "var(--radius-md)",
-              overflow: "hidden",
-              border: "2px solid rgba(0,0,0,0.12)",
-              background: "#fff",
-              position: "relative",
-              height: "420px",
-            }}
-          >
-            <Image
-              src={visual.image}
-              alt="Auth visual"
-              fill
-              sizes="(max-width: 1100px) 100vw, 50vw"
-              style={{ objectFit: "cover", display: "block" }}
-            />
+    <main className="auth-page-shell">
+      <section className="card-panel auth-shell" aria-labelledby="login-heading">
+        <aside className="auth-left-pane">
+          <BrandLogo />
+          <div className="auth-image-frame">
+            <Image src="/auth/login-candidate.jpg" alt="Student boarding a flight toward a new opportunity" fill priority sizes="(max-width: 900px) 0px, 50vw" style={{ objectFit: "cover" }} />
           </div>
           <div>
-            <h2 style={{ fontSize: "2rem", marginBottom: "0.5rem", color: "#111" }}>{visual.title}</h2>
-            <p style={{ color: "rgba(0,0,0,0.78)", fontWeight: 600 }}>{visual.subtitle}</p>
+            <h1 id="login-heading">Compete, learn, and get hired.</h1>
+            <p>Sign in once, then keep your applications, saved opportunities, and progress in one place.</p>
           </div>
         </aside>
-
-        <div
-          className="auth-right-pane"
-          style={{ padding: "2rem", display: "flex", flexDirection: "column", gap: "1rem", overflowY: "auto" }}
-        >
-          <div>
-            <h1 style={{ fontSize: "2.2rem", marginBottom: "0.35rem" }}>Secure Sign In</h1>
-            <p style={{ color: "var(--text-secondary)" }}>Choose OTP or password sign-in</p>
-          </div>
-
-          {/* Account-type toggle is hidden while the employer portal is retired.
-              accountType stays pinned to "candidate", so every request below
-              keeps sending the field the API still expects. */}
-          {EMPLOYER_PORTAL_ENABLED && (
+        <section className="auth-right-pane">
+          <div className="auth-form-intro"><h2>Welcome back</h2><p>Sign in with the email and password you created for VidyaVerse.</p></div>
+          {searchParams.get("continue") === "setup" ? (
+            <p className="auth-message" role="status">Sign in to continue your account setup. If you just opened the verification link, use the password you chose at sign-up.</p>
+          ) : null}
+          {checkingSession ? <p className="auth-message" role="status">Checking your secure session…</p> : (
             <>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr",
-                gap: "0.5rem",
-                background: "var(--bg-surface-hover)",
-                padding: "0.3rem",
-                borderRadius: "999px",
-                border: "2px solid var(--border-subtle)",
-                maxWidth: "360px",
-              }}
-            >
-              <button
-                type="button"
-                className={accountType === "candidate" ? "btn-primary" : "btn-secondary"}
-                style={{ borderRadius: "999px", width: "100%" }}
-                disabled={loading || step === "otp" || step === "forgot-reset"}
-                onClick={() => setAccountType("candidate")}
-              >
-                Candidate
+              {error ? (
+                <div className="auth-message auth-message-error" role="alert">
+                  <p>{error}</p>
+                  {canRetrySession ? (
+                    <button type="button" className="auth-text-action" onClick={() => void continueExistingSession()} disabled={loading}>
+                      Retry secure sign-in
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+              <button type="button" className="auth-oauth-button" onClick={() => void continueWithGoogle()} disabled={loading}>
+                <span aria-hidden="true" className="auth-google-mark">G</span>
+                Continue with Google
               </button>
-              <button
-                type="button"
-                className={accountType === "employer" ? "btn-primary" : "btn-secondary"}
-                style={{ borderRadius: "999px", width: "100%" }}
-                disabled={loading || step === "otp" || step === "forgot-reset"}
-                onClick={() => setAccountType("employer")}
-              >
-                Employer
-              </button>
-            </div>
-            {accountType === "employer" && (
-              <p style={{ color: "var(--text-secondary)", fontWeight: 700 }}>
-                Employer sign-in requires a corporate email domain.
-              </p>
-            )}
+              <p className="auth-divider" aria-hidden="true"><span />or<span /></p>
+              <form onSubmit={handleSubmit} className="auth-form-stack">
+                <label>Email<input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} disabled={loading} required /></label>
+                <label>
+                  Password
+                  <input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} disabled={loading} required />
+                </label>
+                <Link className="auth-inline-link" href="/forgot-password">Forgot your password?</Link>
+                <button type="submit" className="auth-primary-button" disabled={loading}>{loading ? "Signing in..." : "Sign in"}</button>
+              </form>
             </>
           )}
-
-
-          {error && (
-            <div style={{ background: "rgba(239,68,68,0.08)", border: "2px solid #ef4444", color: "#b91c1c", borderRadius: "var(--radius-sm)", padding: "0.75rem" }}>
-              {error}
-            </div>
-          )}
-          {info && (
-            <div style={{ background: "rgba(34,197,94,0.08)", border: "2px solid #22c55e", color: "#15803d", borderRadius: "var(--radius-sm)", padding: "0.75rem" }}>
-              {info}
-            </div>
-          )}
-
-          <div style={{ display: "grid", gap: "0.6rem" }}>
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={() => void startGoogleOAuth()}
-              disabled={loading || !providers.google}
-              title={providers.google ? "Continue with Google" : "Google OAuth is not configured yet"}
-              style={{ width: "100%", justifyContent: "center" }}
-            >
-              Continue with Google
-            </button>
-          </div>
-
-          <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", color: "var(--text-secondary)" }}>
-            <div style={{ height: "1px", background: "var(--border-subtle)", flex: 1 }} />
-            <span>OR</span>
-            <div style={{ height: "1px", background: "var(--border-subtle)", flex: 1 }} />
-          </div>
-
-          {(step === "email" || step === "otp") && (
-            <form onSubmit={step === "email" ? handleSendOtp : handleVerifyOtp} style={{ display: "grid", gap: "0.85rem" }}>
-              <label style={{ fontWeight: 700 }}>Email</label>
-              <input
-                type="email"
-                className="input-base"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                placeholder={accountType === "employer" ? "name@company.com" : "Enter Email"}
-                required
-                disabled={loading || step === "otp"}
-              />
-
-              {step === "otp" && (
-                <>
-                  <label style={{ fontWeight: 700 }}>OTP</label>
-                  <input
-                    type="text"
-                    className="input-base"
-                    value={otp}
-                    onChange={(event) => setOtp(event.target.value)}
-                    placeholder="XXXXXX"
-                    maxLength={6}
-                    minLength={6}
-                    required
-                    disabled={loading}
-                    style={{ letterSpacing: "0.25em", textAlign: "center", fontWeight: 800 }}
-                  />
-                </>
-              )}
-
-              {/* Turnstile renders here: visible, inside the form, so a failed or
-                  pending challenge is obvious rather than silently blocking submit. */}
-              <div id="turnstile-mount" style={{ display: "grid", justifyContent: "center", minHeight: "1px" }} />
-              <button
-                type="submit"
-                className="btn-primary"
-                disabled={loading || (step === "email" && otpCooldownSeconds > 0)}
-                style={{ width: "100%", justifyContent: "center", marginTop: "0.25rem" }}
-              >
-                {loading
-                  ? "Please wait..."
-                  : step === "email"
-                    ? (otpCooldownSeconds > 0 ? `Continue with OTP (${otpCooldownSeconds}s)` : "Continue with OTP")
-                    : "Verify OTP & Sign In"}
-              </button>
-              {/* Resend is a secondary action, so it reads as one line of text
-                  under the primary button rather than a second full-width
-                  button competing with it. */}
-              {step === "otp" && (
-                <p className="auth-resend-row">
-                  Didn&apos;t receive code?{" "}
-                  {otpCooldownSeconds > 0 ? (
-                    <span className="auth-resend-wait">Resend in {formatCooldown(otpCooldownSeconds)}</span>
-                  ) : (
-                    <button
-                      type="button"
-                      className="auth-resend-link"
-                      disabled={loading}
-                      onClick={() => void requestOtp()}
-                    >
-                      Resend
-                    </button>
-                  )}
-                </p>
-              )}
-            </form>
-          )}
-
-          {step === "password" && (
-            <form onSubmit={handlePasswordLogin} style={{ display: "grid", gap: "0.85rem" }}>
-              <label style={{ fontWeight: 700 }}>Email</label>
-              <input
-                type="email"
-                className="input-base"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                placeholder={accountType === "employer" ? "name@company.com" : "Enter Email"}
-                required
-                disabled={loading}
-              />
-              <label style={{ fontWeight: 700 }}>Password</label>
-              <input
-                type="password"
-                className="input-base"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder="Enter password"
-                required
-                disabled={loading}
-              />
-              {/* Turnstile renders here: visible, inside the form, so a failed or
-                  pending challenge is obvious rather than silently blocking submit. */}
-              <div id="turnstile-mount" style={{ display: "grid", justifyContent: "center", minHeight: "1px" }} />
-              <button type="submit" className="btn-primary" disabled={loading} style={{ width: "100%", justifyContent: "center", marginTop: "0.25rem" }}>
-                {loading ? "Signing in..." : "Sign In with Password"}
-              </button>
-              <button
-                type="button"
-                style={{
-                  border: "none",
-                  background: "none",
-                  color: "var(--brand-primary)",
-                  fontWeight: 800,
-                  cursor: "pointer",
-                  justifySelf: "start",
-                  padding: 0,
-                }}
-                onClick={() => {
-                  resetMessages();
-                  setResetEmail(normalizedEmail);
-                  setResetOtp("");
-                  setResetPassword("");
-                  setResetConfirmPassword("");
-                  setStep("forgot-email");
-                }}
-              >
-                Forgot password?
-              </button>
-            </form>
-          )}
-
-          {step === "forgot-email" && (
-            <form onSubmit={handleForgotPasswordStart} style={{ display: "grid", gap: "0.85rem" }}>
-              <div>
-                <h2 style={{ fontSize: "1.45rem", marginBottom: "0.25rem" }}>Reset password</h2>
-                <p style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
-                  We will verify your account with an email OTP before setting a new password.
-                </p>
-              </div>
-              <label style={{ fontWeight: 700 }}>Email</label>
-              <input
-                type="email"
-                className="input-base"
-                value={resetEmail}
-                onChange={(event) => setResetEmail(event.target.value)}
-                placeholder={accountType === "employer" ? "name@company.com" : "Enter Email"}
-                required
-                disabled={loading}
-              />
-              {/* Turnstile renders here: visible, inside the form, so a failed or
-                  pending challenge is obvious rather than silently blocking submit. */}
-              <div id="turnstile-mount" style={{ display: "grid", justifyContent: "center", minHeight: "1px" }} />
-              <button
-                type="submit"
-                className="btn-primary"
-                disabled={loading || (resetCooldownSeconds > 0 && resetCooldownKey === currentResetKey)}
-                style={{ width: "100%", justifyContent: "center", marginTop: "0.25rem" }}
-              >
-                {loading
-                  ? "Please wait..."
-                  : resetCooldownSeconds > 0 && resetCooldownKey === currentResetKey
-                    ? `Send Reset OTP (${resetCooldownSeconds}s)`
-                    : "Send Reset OTP"}
-              </button>
-              <button
-                type="button"
-                className="btn-secondary"
-                disabled={loading}
-                onClick={() => {
-                  resetMessages();
-                  setStep("password");
-                }}
-                style={{ width: "100%", justifyContent: "center" }}
-              >
-                Back to Sign In
-              </button>
-            </form>
-          )}
-
-          {step === "forgot-reset" && (
-            <form onSubmit={handleForgotPasswordReset} style={{ display: "grid", gap: "0.85rem" }}>
-              <div>
-                <h2 style={{ fontSize: "1.45rem", marginBottom: "0.25rem" }}>Set new password</h2>
-                <p style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
-                  Enter the OTP and choose a password that meets the required strength parameters.
-                </p>
-              </div>
-              <label style={{ fontWeight: 700 }}>Email</label>
-              <input type="email" className="input-base" value={resetEmail} disabled />
-              <label style={{ fontWeight: 700 }}>OTP</label>
-              <input
-                type="text"
-                className="input-base"
-                value={resetOtp}
-                onChange={(event) => setResetOtp(event.target.value)}
-                placeholder="XXXXXX"
-                maxLength={6}
-                minLength={6}
-                required
-                disabled={loading}
-                style={{ letterSpacing: "0.25em", textAlign: "center", fontWeight: 800 }}
-              />
-              <label style={{ fontWeight: 700 }}>New Password</label>
-              <input
-                type="password"
-                className="input-base"
-                value={resetPassword}
-                onChange={(event) => setResetPassword(event.target.value)}
-                placeholder="Create a strong password"
-                required
-                disabled={loading}
-              />
-              <PasswordStrengthMeter strength={resetPasswordStrength} compact />
-              <label style={{ fontWeight: 700 }}>Confirm Password</label>
-              <input
-                type="password"
-                className="input-base"
-                value={resetConfirmPassword}
-                onChange={(event) => setResetConfirmPassword(event.target.value)}
-                placeholder="Confirm password"
-                required
-                disabled={loading}
-              />
-              <button
-                type="button"
-                className="btn-secondary"
-                disabled={loading || resetCooldownSeconds > 0}
-                onClick={() => void requestPasswordResetOtp()}
-                style={{ width: "100%", justifyContent: "center" }}
-              >
-                {resetCooldownSeconds > 0 ? `Resend OTP in ${resetCooldownSeconds}s` : "Resend OTP"}
-              </button>
-              <button
-                type="submit"
-                className="btn-primary"
-                disabled={loading || !resetPasswordStrength.acceptable || resetPassword !== resetConfirmPassword}
-                style={{ width: "100%", justifyContent: "center", marginTop: "0.25rem" }}
-              >
-                {loading ? "Resetting..." : "Reset Password"}
-              </button>
-            </form>
-          )}
-
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.75rem" }}>
-            <button
-              type="button"
-              style={{ border: "none", background: "none", color: "var(--brand-primary)", fontWeight: 700, cursor: "pointer" }}
-              onClick={() => {
-                resetMessages();
-                if (step === "otp" || step === "forgot-email" || step === "forgot-reset") {
-                  setStep("email");
-                  return;
-                }
-                setStep(step === "password" ? "email" : "password");
-              }}
-            >
-              {step === "password" ? "Login via OTP" : "Login via Password"}
-            </button>
-
-            <div style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
-              New here?{" "}
-              <Link href="/register" style={{ color: "var(--brand-primary)", fontWeight: 800 }}>
-                Create account
-              </Link>
-            </div>
-          </div>
-        </div>
+          <p className="auth-switch-row">New here? <Link href="/register">Create an account</Link></p>
+        </section>
       </section>
     </main>
   );

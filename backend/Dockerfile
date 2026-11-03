@@ -70,15 +70,21 @@ RUN set -eux; \
     fi
 ENV OBSCURA_BINARY_PATH=
 
-# Copy Python packages from builder
-COPY --from=builder /root/.local /root/.local
-ENV PATH=/root/.local/bin:$PATH
+# Copy Python packages into the runtime user's home. Dependencies are installed
+# with `pip --user` in the builder, so keeping them under `/root` makes the
+# executable entry points inaccessible after the image drops privileges.
+COPY --from=builder /root/.local /home/app/.local
+RUN chown -R app:app /home/app/.local
+ENV PATH=/home/app/.local/bin:$PATH
 
 # Copy project
 COPY . $APP_HOME
 
 # Chown all the files to the app user
-RUN chown -R app:app $APP_HOME
+# Seed writable upload/model directories before Docker initializes named volumes.
+# Otherwise an empty mount is created as root and resume uploads fail for app.
+RUN mkdir -p "$APP_HOME/storage/resumes" "$APP_HOME/models" \
+    && chown -R app:app $APP_HOME
 
 # Change to the app user
 USER app

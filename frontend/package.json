@@ -14,6 +14,7 @@
     "e2e:staging": "PLAYWRIGHT_INTEGRATED_AUTH=1 playwright test --project=chromium --grep \"Integrated staging auth|Live backend smoke|Staging role and failure\""
   },
   "dependencies": {
+    "@neon/auth": "^0.8.2",
     "@splinetool/react-spline": "^4.1.0",
     "framer-motion": "^12.34.3",
     "lucide-react": "^0.575.0",

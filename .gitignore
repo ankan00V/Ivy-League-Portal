@@ -102,3 +102,5 @@ backend/backups/
 # gstack security reports and local state. Findings name unfixed vulnerabilities
 # and their file locations, which is exactly the map an attacker would want.
 .gstack/
+.neon
+node_modules/

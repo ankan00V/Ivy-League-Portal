@@ -481,6 +481,21 @@ function hydrateOnboardingProfilePayload(payload: Record<string, unknown>, previ
   };
 }
 
+function hydrateResumePayload(payload: Record<string, unknown>, previous: ProfilePayload): ProfilePayload {
+  // Upload returns persisted data, which may predate edits on this step.
+  // Merge resume state and empty auto-fill fields without overwriting a draft.
+  const hydrated = hydrateOnboardingProfilePayload(payload, previous);
+  return {
+    ...previous,
+    resume_url: typeof payload.resume_url === "string" ? payload.resume_url : "",
+    resume_filename: typeof payload.resume_filename === "string" ? payload.resume_filename : "",
+    resume_uploaded_at: typeof payload.resume_uploaded_at === "string" ? payload.resume_uploaded_at : "",
+    skills: previous.skills.trim() ? previous.skills : hydrated.skills,
+    bio: previous.bio.trim() ? previous.bio : hydrated.bio,
+    education: previous.education.trim() ? previous.education : hydrated.education,
+  };
+}
+
 export default function OnboardingPage() {
   const [fieldOfStudySearch, setFieldOfStudySearch] = useState("");
   const [manualDegreeMode, setManualDegreeMode] = useState(false);
@@ -526,6 +541,7 @@ export default function OnboardingPage() {
   });
   const {
     loading,
+    profileLoaded,
     saving,
     step,
     setStep,
@@ -540,12 +556,14 @@ export default function OnboardingPage() {
     handleResumeUpload,
     handleResumeDelete,
     handleSave,
+    retry,
     logout,
   } = useOnboardingFlow<ProfilePayload, OnboardingUpdatePayload, OnboardingStatus>({
     profile,
     setProfile,
     hydrateProfilePayload: hydrateOnboardingProfilePayload,
     buildOnboardingPayload,
+    hydrateResumePayload,
     deriveUniversitySelection,
     employerRoleOptions: EMPLOYER_ROLE_OPTIONS,
     getAccountTypeFromProfile: getAccountTypeFromOnboardingProfile,
@@ -687,6 +705,25 @@ export default function OnboardingPage() {
     return <CenteredPageSkeleton paneHeight="760px" />;
   }
 
+  if (!profileLoaded) {
+    return (
+      <main className="auth-page-shell">
+        <section className="card-panel auth-shell auth-verify-shell onboarding-recovery-shell" aria-labelledby="onboarding-recovery-heading">
+          <section className="auth-right-pane">
+            <BrandLogo />
+            <div className="auth-form-intro">
+              <h1 id="onboarding-recovery-heading">Your setup is waiting for you</h1>
+              <p>We could not load your saved onboarding details just now. Nothing has been lost.</p>
+            </div>
+            {error ? <p className="auth-message auth-message-error" role="alert">{error}</p> : null}
+            <button type="button" className="auth-primary-button" onClick={retry}>Retry loading setup</button>
+            <button type="button" className="auth-text-action auth-text-action-left" onClick={logout}>Sign out</button>
+          </section>
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className="onboarding-page-root">
       <section className="card-panel auth-shell onboarding-shell">
@@ -712,11 +749,12 @@ export default function OnboardingPage() {
         <div className="auth-right-pane onboarding-right-pane">
           <div>
             <h1 className="onboarding-page-title">You&apos;re almost there</h1>
-            <div className="onboarding-progress-wrap">
+            <div className="onboarding-progress-wrap" aria-label={`Step ${step} of ${totalSteps}`}>
               {Array.from({ length: totalSteps }, (_, idx) => idx + 1).map((n) => (
                 <div
                   key={n}
                   className={`onboarding-progress-step ${n <= step ? "active" : "pending"}`}
+                  aria-hidden="true"
                 />
               ))}
               <span className="onboarding-progress-text">
@@ -726,7 +764,7 @@ export default function OnboardingPage() {
           </div>
 
           {error && (
-            <div className="onboarding-alert-error">
+            <div className="onboarding-alert-error" role="alert">
               {error}
             </div>
           )}
@@ -983,7 +1021,7 @@ export default function OnboardingPage() {
                   <FormSection
                     label="Resume / CV (Required)"
                     className="onboarding-upload-card"
-                    helper="Upload your resume so recommendations and shortlisting can be personalized from your profile + CV."
+                    helper="Upload a PDF, DOCX, DOC, or TXT file up to 8 MB to personalize your recommendations."
                   >
                     {profile.resume_filename ? (
                       <div className="onboarding-upload-status">
@@ -1006,7 +1044,7 @@ export default function OnboardingPage() {
                         <input
                           type="file"
                           accept=".txt,.pdf,.doc,.docx"
-                          disabled={resumeUploading}
+                          disabled={resumeUploading || saving}
                           className="vv-hidden-input"
                           onChange={(event) => {
                             const nextFile = event.target.files?.[0];
@@ -1019,7 +1057,7 @@ export default function OnboardingPage() {
                         />
                       </label>
                       {profile.resume_filename && (
-                        <button type="button" className="btn-secondary" disabled={resumeUploading} onClick={() => void handleResumeDelete()}>
+                        <button type="button" className="btn-secondary" disabled={resumeUploading || saving} onClick={() => void handleResumeDelete()}>
                           Remove Resume
                         </button>
                       )}
@@ -1246,12 +1284,13 @@ export default function OnboardingPage() {
               type="button"
               className="btn-secondary"
               onClick={logout}
+              disabled={saving || resumeUploading}
             >
               Logout
             </button>
             <div className="onboarding-footer-actions">
               {step > 1 && (
-                <button type="button" className="btn-secondary" onClick={() => setStep((current) => Math.max(1, current - 1))}>
+                <button type="button" className="btn-secondary" disabled={saving || resumeUploading} onClick={() => setStep((current) => Math.max(1, current - 1))}>
                   Back
                 </button>
               )}
@@ -1265,7 +1304,7 @@ export default function OnboardingPage() {
                   {saving ? "Saving..." : "Continue"}
                 </button>
               ) : (
-                <button type="button" className="btn-primary" disabled={saving} onClick={() => void handleSave(true, totalSteps)}>
+                <button type="button" className="btn-primary" disabled={saving || resumeUploading} onClick={() => void handleSave(true, totalSteps)}>
                   {saving ? "Finishing..." : "Finish"}
                 </button>
               )}

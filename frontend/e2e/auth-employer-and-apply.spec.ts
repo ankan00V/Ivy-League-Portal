@@ -3,107 +3,198 @@ import { expect, test, type Page } from "@playwright/test";
 const EMPLOYER_OPPORTUNITY_ID = "64b64b64b64b64b64b64b640";
 const OPPORTUNITY_URL = "https://example.com/internships/test-ml";
 
-async function stubOAuthProviders(page: Page) {
-  await page.route("**/api/v1/auth/oauth/providers", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ google: false, linkedin: false, microsoft: false }),
-    });
+async function stubNeonSignedOut(page: Page) {
+  await page.route("**/api/auth/get-session**", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ user: null, session: null }) });
   });
 }
 
-async function stubTurnstile(page: Page) {
-  await page.addInitScript(() => {
-    window.turnstile = {
-      render: (_container, options) => {
-        window.setTimeout(() => options.callback?.("playwright-turnstile-token"), 0);
-        return "playwright-widget";
-      },
-      execute: () => {},
-      remove: () => {},
-      reset: () => {},
-    };
+test("login and registration links reliably move between account entry screens", async ({ page }) => {
+  await stubNeonSignedOut(page);
+
+  await page.goto("/login");
+  await page.getByRole("link", { name: "Create an account" }).click();
+  await expect(page).toHaveURL(/\/register$/);
+  await expect(page.getByRole("heading", { name: "Create your account" })).toBeVisible();
+
+  await page.getByRole("link", { name: "Sign in" }).click();
+  await expect(page).toHaveURL(/\/login$/);
+  await expect(page.getByRole("heading", { name: "Welcome back" })).toBeVisible();
+});
+
+test("@smoke registration sends a verification link and lands on the recovery-safe verification screen", async ({ page }) => {
+  await stubNeonSignedOut(page);
+  let requestBody: Record<string, unknown> | null = null;
+  await page.route("**/api/auth/sign-up/email", async (route) => {
+    requestBody = route.request().postDataJSON() as Record<string, unknown>;
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ user: { email: "student@gmail.com", emailVerified: false } }) });
   });
-}
 
-test("@smoke login OTP request enforces 60s cooldown in UI", async ({ page }) => {
-  await stubOAuthProviders(page);
-  await stubTurnstile(page);
+  await page.goto("/register");
+  await page.getByLabel("Full name").fill("Test Student");
+  await page.getByLabel("Email").fill("student@gmail.com");
+  await page.getByLabel("Password", { exact: true }).fill("StrongPass1");
+  await page.getByLabel("Confirm password").fill("StrongPass1");
+  await page.getByRole("button", { name: "Create account", exact: true }).click();
 
-  await page.route("**/api/v1/auth/send-otp", async (route) => {
-    await route.fulfill({
-      status: 200,
-      headers: { "retry-after": "60" },
-      contentType: "application/json",
-      body: JSON.stringify({ message: "OTP sent", cooldown_seconds: 60 }),
-    });
+  await expect(page).toHaveURL(/\/verify-email\?email=student%40gmail\.com$/);
+  await expect(page.getByRole("heading", { name: "Verify your email" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Resend verification link" })).toBeVisible();
+  expect(requestBody).toMatchObject({
+    name: "Test Student",
+    email: "student@gmail.com",
+    callbackURL: `${new URL(page.url()).origin}/verify-email?email=student%40gmail.com&returned=1`,
+  });
+});
+
+test("@smoke an incomplete verified account always resumes onboarding instead of falling through to the dashboard", async ({ page }) => {
+  await stubNeonSignedOut(page);
+  await page.route("**/api/auth/sign-in/email", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ user: { id: "neon-user", email: "student@gmail.com", emailVerified: true } }) });
+  });
+  await page.route("**/api/auth/bridge", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ access_token: "test-token" }) });
+  });
+  await page.route("**/api/v1/users/me", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ id: "user-1", is_admin: false }) });
+  });
+  await page.route("**/api/v1/users/me/profile", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ account_type: "candidate", first_name: "Test", last_name: "Student", country_code: "+91" }) });
+  });
+  await page.route("**/api/v1/users/me/onboarding-status", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ completed: false, progress_percent: 8, missing_fields: ["mobile"], recommended_next_step: "identity" }) });
+  });
+  await page.route("**/api/v1/users/me/onboarding/mark-seen", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ onboarding_prompt_seen: true }) });
   });
 
   await page.goto("/login");
-  // Targeted by input type, not by placeholder text.
-  //
-  // The placeholder is role-dependent by design since the four-role sign-up
-  // rewrite - it is "student@college.edu" for a candidate, "name@company.com"
-  // for industry - so "Enter Email" is only the fallback for a role that could
-  // not be resolved. Matching on it made this test fail with a 60-second
-  // locator.fill timeout that named no cause.
-  await page.locator('form input[type="email"]').first().fill("student@example.com");
-  await page.getByRole("button", { name: /Continue with OTP/i }).click();
+  await page.getByLabel("Email").fill("student@gmail.com");
+  await page.getByLabel("Password").fill("StrongPass1");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
 
-  await expect(page.getByPlaceholder("XXXXXX")).toBeVisible();
-  await expect(page.getByText(/Didn't receive code\?/i)).toBeVisible();
-  await expect(page.getByText(/Resend in 0[01]:[0-5]\d/i)).toBeVisible();
+  await expect(page).toHaveURL(/\/onboarding$/);
+  await expect(page.getByRole("heading", { name: /You.?re almost there/ })).toBeVisible();
+  await expect(page.getByText("8% complete")).toBeVisible();
 });
 
-test("@smoke signup requests OTP with its visible Turnstile token and uses inline resend", async ({ page }) => {
-  await stubOAuthProviders(page);
-  await stubTurnstile(page);
-
+test("verification screen resends a link with a safe callback and applies cooldown copy", async ({ page }) => {
+  await stubNeonSignedOut(page);
   let requestBody: Record<string, unknown> | null = null;
-  await page.route("**/api/v1/auth/send-otp", async (route) => {
+  await page.route("**/api/auth/send-verification-email", async (route) => {
     requestBody = route.request().postDataJSON() as Record<string, unknown>;
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ status: true }) });
+  });
+
+  await page.goto("/verify-email?email=student@gmail.com");
+  await page.getByRole("button", { name: "Resend verification link" }).click();
+
+  await expect(page.getByText(/A fresh verification link is on its way/i)).toBeVisible();
+  await expect(page.getByRole("button", { name: /Resend in \d+s/ })).toBeDisabled();
+  expect(requestBody).toMatchObject({ email: "student@gmail.com", callbackURL: `${new URL(page.url()).origin}/verify-email?email=student%40gmail.com&returned=1` });
+});
+
+test("verification link opened in a new tab continues to prefilled sign-in without claiming a session", async ({ page }) => {
+  await stubNeonSignedOut(page);
+  await page.goto("/verify-email?email=student%40gmail.com&returned=1");
+  await expect(page).toHaveURL(/\/login\?continue=setup&email=student%40gmail.com$/);
+  await expect(page.getByLabel("Email")).toHaveValue("student@gmail.com");
+  await expect(page.getByText(/Sign in to continue your account setup/)).toBeVisible();
+  await expect(page.locator(".auth-message-error")).toHaveCount(0);
+});
+
+test("old verification links without tab storage still offer a working continue action", async ({ page }) => {
+  await stubNeonSignedOut(page);
+  await page.goto("/verify-email");
+  await page.getByRole("button", { name: "I verified my email — continue" }).click();
+  await expect(page).toHaveURL(/\/login\?continue=setup$/);
+  await expect(page.getByLabel("Password", { exact: true })).toBeVisible();
+});
+
+test("expired verification links stay on recovery instead of silently continuing", async ({ page }) => {
+  await stubNeonSignedOut(page);
+  await page.goto("/verify-email?email=student%40gmail.com&returned=1&error=TOKEN_EXPIRED");
+  await expect(page.locator(".auth-message-error")).toContainText("invalid or has expired");
+  await expect(page.getByRole("button", { name: "Resend verification link" })).toBeEnabled();
+  await expect(page).toHaveURL(/TOKEN_EXPIRED$/);
+});
+
+test("verification refresh bypasses the stale cookie cache and never bridges an unverified user", async ({ page }) => {
+  let bridgeCalls = 0;
+  let freshChecks = 0;
+  await page.route("**/api/auth/get-session**", async (route) => {
+    if (new URL(route.request().url()).searchParams.get("disableCookieCache") === "true") freshChecks += 1;
+    await route.fulfill({ json: { user: { email: "student@gmail.com", emailVerified: false } } });
+  });
+  await page.route("**/api/auth/bridge", async (route) => {
+    bridgeCalls += 1;
+    await route.fulfill({ status: 403, json: {} });
+  });
+  await page.goto("/verify-email?email=student%40gmail.com&returned=1");
+  await expect(page.getByText(/Your email is not verified yet/)).toBeVisible();
+  expect(freshChecks).toBeGreaterThan(0);
+  expect(bridgeCalls).toBe(0);
+});
+
+test("password recovery sends a safe reset link and accepts a replacement password", async ({ page }) => {
+  await stubNeonSignedOut(page);
+  let resetRequest: Record<string, unknown> | null = null;
+  let replacementRequest: Record<string, unknown> | null = null;
+  await page.route("**/api/auth/request-password-reset", async (route) => {
+    resetRequest = route.request().postDataJSON() as Record<string, unknown>;
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ status: true }) });
+  });
+  await page.route("**/api/auth/reset-password", async (route) => {
+    replacementRequest = route.request().postDataJSON() as Record<string, unknown>;
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ status: true }) });
+  });
+
+  await page.goto("/login");
+  await page.getByRole("link", { name: "Forgot your password?" }).click();
+  await expect(page).toHaveURL(/\/forgot-password$/);
+  await page.getByLabel("Email").fill("student@gmail.com");
+  await page.getByRole("button", { name: "Send reset link" }).click();
+  await expect(page.getByText(/If an account exists for that address/i)).toBeVisible();
+  expect(resetRequest).toMatchObject({
+    email: "student@gmail.com",
+    redirectTo: `${new URL(page.url()).origin}/reset-password`,
+  });
+
+  await page.goto("/reset-password?token=single-use-token");
+  await page.getByLabel("New password", { exact: true }).fill("StrongPass1");
+  await page.getByLabel("Confirm new password", { exact: true }).fill("StrongPass1");
+  await page.getByRole("button", { name: "Reset password" }).click();
+  await expect(page.getByText("Your password has been reset. You can sign in now.")).toBeVisible();
+  expect(replacementRequest).toMatchObject({ token: "single-use-token", newPassword: "StrongPass1" });
+});
+
+test("a verified managed-auth callback resumes required onboarding even when a dashboard next path is supplied", async ({ page }) => {
+  await page.route("**/api/auth/get-session**", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ message: "OTP sent", cooldown_seconds: 60 }),
+      body: JSON.stringify({ user: { id: "neon-user", email: "student@gmail.com", emailVerified: true } }),
     });
   });
-
-  await page.goto("/register");
-  await page.getByPlaceholder("Bob").fill("Test");
-  await page.getByPlaceholder("Builder").fill("Student");
-  await page.getByPlaceholder("student@college.edu").fill("student@lpu.in");
-  await page.getByPlaceholder("Create a password").fill("StrongPass1");
-  await page.getByPlaceholder("Re-enter password").fill("StrongPass1");
-  await page.getByRole("button", { name: "Send OTP", exact: true }).click();
-
-  await expect(page.getByPlaceholder("XXXXXX")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Verify OTP & Continue", exact: true })).toBeVisible();
-  await expect(page.getByText(/Didn't receive code\?/i)).toBeVisible();
-  await expect(page.getByText(/Resend in 0[01]:[0-5]\d/i)).toBeVisible();
-  expect(requestBody).toMatchObject({
-    email: "student@lpu.in",
-    purpose: "signup",
-    account_type: "candidate",
-    turnstile_token: "playwright-turnstile-token",
+  await page.route("**/api/auth/bridge", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ access_token: "test-token" }) });
   });
-});
+  await page.route("**/api/v1/users/me", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ id: "user-1", is_admin: false }) });
+  });
+  await page.route("**/api/v1/users/me/profile", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ account_type: "candidate", first_name: "Test", last_name: "Student" }) });
+  });
+  await page.route("**/api/v1/users/me/onboarding-status", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ completed: false, progress_percent: 8, missing_fields: ["mobile"], recommended_next_step: "identity" }) });
+  });
+  await page.route("**/api/v1/users/me/onboarding/mark-seen", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ onboarding_prompt_seen: true }) });
+  });
 
-test("signup reports a Turnstile load failure instead of leaving Send OTP pending", async ({ page }) => {
-  await stubOAuthProviders(page);
-  await page.route("https://challenges.cloudflare.com/**", async (route) => route.abort());
-
-  await page.goto("/register");
-  await page.getByPlaceholder("Bob").fill("Test");
-  await page.getByPlaceholder("Builder").fill("Student");
-  await page.getByPlaceholder("student@college.edu").fill("student@lpu.in");
-  await page.getByPlaceholder("Create a password").fill("StrongPass1");
-  await page.getByPlaceholder("Re-enter password").fill("StrongPass1");
-  await page.getByRole("button", { name: "Send OTP", exact: true }).click();
-
-  await expect(page.getByText("Unable to load Turnstile")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Send OTP", exact: true })).toBeEnabled();
+  await page.goto("/auth/callback?next=%2Fdashboard");
+  await expect(page).toHaveURL(/\/onboarding$/);
+  await expect(page.getByRole("heading", { name: /You.?re almost there/ })).toBeVisible();
 });
 
 test("@smoke unauthenticated users can view dashboard preview without forced login redirect", async ({ page }) => {
@@ -145,8 +236,6 @@ test("@smoke sidebar logout clears the local session and returns to login", asyn
     }
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ status: "ok" }) });
   });
-  await stubOAuthProviders(page);
-
   await page.goto("/opportunities");
   await page.getByRole("button", { name: "Logout", exact: true }).first().click();
 
