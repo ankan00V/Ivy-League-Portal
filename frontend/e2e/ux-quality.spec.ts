@@ -82,11 +82,11 @@ test.describe("@ux Frontend UX quality gates", () => {
 
   test("@ux visual snapshot login auth shell", async ({ page }) => {
     await page.goto("/login");
+    await page.addStyleTag({ content: "nextjs-portal { display: none !important; }" });
     await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
     const shell = page.locator("section.auth-shell");
     await expect(shell).toBeVisible();
     await expect(shell).toHaveScreenshot("ux-login-shell.png", {
-      style: "nextjs-portal { visibility: hidden; }",
       animations: "disabled",
       caret: "hide",
       scale: "css",
@@ -96,10 +96,10 @@ test.describe("@ux Frontend UX quality gates", () => {
 
   test("@ux visual snapshot register auth shell", async ({ page }) => {
     await page.goto("/register");
+    await page.addStyleTag({ content: "nextjs-portal { display: none !important; }" });
     const shell = page.locator("section.auth-shell");
     await expect(shell).toBeVisible();
     await expect(shell).toHaveScreenshot("ux-register-shell.png", {
-      style: "nextjs-portal { visibility: hidden; }",
       animations: "disabled",
       caret: "hide",
       scale: "css",
