@@ -744,44 +744,6 @@ select.input-base {
   overflow-y: auto;
 }
 
-.onboarding-page-root {
-  min-height: 100vh;
-  display: grid;
-  place-items: center;
-  background:
-    radial-gradient(circle at 10% 20%, rgba(251, 191, 36, 0.08), transparent 30%),
-    radial-gradient(circle at 85% 15%, rgba(59, 130, 246, 0.07), transparent 26%),
-    var(--bg-base);
-  padding: 1.5rem;
-}
-
-.onboarding-shell {
-  width: min(var(--onboarding-shell-max-width), 100%);
-  min-height: var(--onboarding-shell-min-height);
-  padding: 0;
-  overflow: hidden;
-}
-
-.onboarding-left-pane {
-  background: #f7c948;
-  padding: 1.25rem;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  border-right: 2px solid var(--border-subtle);
-}
-
-.onboarding-visual-frame {
-  border-radius: var(--radius-md);
-  overflow: hidden;
-  border: 2px solid rgba(0, 0, 0, 0.12);
-  background: #fff;
-  position: relative;
-  height: 420px;
-}
-
-.onboarding-hero-title {
-  font-size: 1.95rem;
 .auth-page-shell {
   min-height: 100vh;
   display: grid;
@@ -1037,6 +999,44 @@ select.input-base {
   text-underline-offset: 0.16em;
 }
 
+.onboarding-page-root {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(circle at 10% 20%, rgba(251, 191, 36, 0.08), transparent 30%),
+    radial-gradient(circle at 85% 15%, rgba(59, 130, 246, 0.07), transparent 26%),
+    var(--bg-base);
+  padding: 1.5rem;
+}
+
+.onboarding-shell {
+  width: min(var(--onboarding-shell-max-width), 100%);
+  min-height: var(--onboarding-shell-min-height);
+  padding: 0;
+  overflow: hidden;
+}
+
+.onboarding-left-pane {
+  background: #f7c948;
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  border-right: 2px solid var(--border-subtle);
+}
+
+.onboarding-visual-frame {
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  border: 2px solid rgba(0, 0, 0, 0.12);
+  background: #fff;
+  position: relative;
+  height: 420px;
+}
+
+.onboarding-hero-title {
+  font-size: 1.95rem;
   margin-bottom: 0.45rem;
   color: #111;
 }

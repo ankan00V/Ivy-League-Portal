@@ -90,8 +90,8 @@ def _check_env_contracts(failures: list[str]) -> None:
     # public hostname, certificate email, or managed Postgres credentials.
     production_only_keys = [
         "POSTGRES_ODM_ENABLED",
-        "SUPABASE_DATABASE_URL",
-        "SUPABASE_DATABASE_DIRECT_URL",
+        "DATABASE_URL",
+        "DATABASE_URL_UNPOOLED",
         "TRUSTED_PROXY_IPS",
         "APP_DOMAIN",
         "ACME_EMAIL",
