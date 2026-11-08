@@ -25,12 +25,14 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.11.2",
+    "@opennextjs/cloudflare": "1.20.12",
     "@playwright/test": "^1.54.2",
     "@types/node": "^24",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
-    "typescript": "^5"
+    "typescript": "^5",
+    "wrangler": "4.148.0"
   }
 }

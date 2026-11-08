@@ -1265,6 +1265,10 @@ def is_in_scope_opportunity(record: dict[str, Any]) -> bool:
 
 def is_probable_opportunity_posting(record: dict[str, Any]) -> bool:
     """Reject rows that are page furniture rather than an applyable posting."""
+    from app.services.feed_policy import listing_rejection_reason
+
+    if listing_rejection_reason(record):
+        return False
     url = str(record.get("apply_url") or record.get("url") or "").strip()
     if not is_valid_apply_url(url):
         return False
@@ -1276,8 +1280,6 @@ def is_probable_opportunity_posting(record: dict[str, Any]) -> bool:
 
     path = parsed.path or "/"
     # A bare host with no path cannot identify a specific posting.
-    if path in {"", "/"} and not parsed.query:
-        return False
     if any(re.search(pattern, path) for pattern in _NON_POSTING_PATH_PATTERNS):
         return False
 
@@ -1851,10 +1853,9 @@ def _resolve_listing_type(title: str, description: str, default_type: str | None
     Bounty reading overrides it: that is the case where the default is
     demonstrably wrong and the title is unambiguous.
     """
-    inferred = _infer_opportunity_type(title, description)
-    if inferred == "Bounty":
-        return inferred
-    return default_type or inferred
+    from app.services.feed_policy import resolved_type
+
+    return resolved_type(default_type, title)
 
 
 def is_early_career_opportunity(record: dict[str, Any]) -> bool:
@@ -4071,6 +4072,12 @@ async def _insert_and_broadcast(
     from app.services.opportunity_quality_service import opportunity_quality_scorer
 
     for opp_data in opportunity_rows:
+        from app.services.feed_policy import resolved_type, resolve_portal
+
+        opp_data = dict(opp_data)
+        opp_data["title"] = _clean_description(opp_data.get("title"))
+        opp_data["opportunity_type"] = resolved_type(opp_data.get("opportunity_type"), opp_data["title"])
+        opp_data["portal_category"] = resolve_portal(opp_data["opportunity_type"], opp_data["title"])
         # Rejected before the scope check so a nav link or newsroom article is
         # never counted as an out-of-scope *opportunity*.
         if not is_probable_opportunity_posting(opp_data):

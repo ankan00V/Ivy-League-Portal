@@ -26,11 +26,19 @@ class DummyOpportunity:
 
 
 class TestOpportunityQualityService(unittest.TestCase):
+    def test_remote_mode_does_not_invent_or_overwrite_geography(self) -> None:
+        scorer = OpportunityQualityScorer()
+        self.assertEqual(scorer.normalize_location("Remote"), (None, "remote"))
+        self.assertEqual(scorer.normalize_location("New York, USA", "Fully remote role"), ("New York, USA", "remote"))
+        self.assertEqual(scorer.normalize_location("Bengaluru", "Remote role"), ("Bangalore, India", "remote"))
+        self.assertEqual(scorer.normalize_location("Berlin", "Hybrid, partially remote role"), ("Berlin", "hybrid"))
+        self.assertEqual(scorer.normalize_location("Paris", "This role is not remote"), ("Paris", None))
+
     def test_normalization_extracts_remote_stipend_duration_and_tags(self) -> None:
         scorer = OpportunityQualityScorer()
         normalized = scorer.normalize_payload(DummyOpportunity())
 
-        self.assertEqual(normalized["location"], "India")
+        self.assertIsNone(normalized["location"])
         self.assertEqual(normalized["work_mode"], "remote")
         self.assertEqual(normalized["stipend_min"], 10000)
         self.assertEqual(normalized["stipend_max"], 10000)

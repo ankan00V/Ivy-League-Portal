@@ -136,18 +136,19 @@ class AIEngine:
         for domain, keywords in self.domain_keywords.items():
             score = 0
             for keyword in keywords:
-                if keyword in head:
+                pattern = rf"(?<![a-z0-9]){re.escape(keyword.strip())}(?![a-z0-9])"
+                if re.search(pattern, head):
                     score += TITLE_WEIGHT
-                elif keyword in body:
+                elif re.search(pattern, body):
                     score += 1
             if score:
-                scored_domains.append((domain, min(0.95, 0.25 + score * 0.06)))
+                scored_domains.append((domain, score))
 
         if scored_domains:
             scored_domains.sort(key=lambda item: item[1], reverse=True)
             return {
                 "primary_domain": scored_domains[0][0],
-                "relevant_domains": {domain: round(score, 2) for domain, score in scored_domains},
+                "relevant_domains": {domain: round(min(0.95, 0.25 + score * 0.06), 2) for domain, score in scored_domains},
             }
 
         return {"primary_domain": "Other", "relevant_domains": {"Other": 0.4}}

@@ -17,6 +17,8 @@ const bridgeSecret = randomBytes(32).toString('hex');
 let verified = false;
 let callbackURL;
 let bridgeCount = 0;
+let credentialPassword = 'StrongPass1';
+let resetCode;
 const user = () => ({ id: 'transport-test', name: 'Transport Test', email: 'transport@example.com', emailVerified: verified });
 const session = () => ({ user: user(), session: { id: 'test-session', token: 'fixture-session', userId: 'transport-test', expiresAt: new Date(Date.now() + 3600000).toISOString() } });
 const json = (res, data, status = 200) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(data)); };
@@ -47,9 +49,35 @@ try {
       return res.end();
     }
     if (path === '/auth/sign-in/email') {
+      let body = '';
+      for await (const chunk of req) body += chunk;
+      if (JSON.parse(body).password !== credentialPassword) return json(res, { code: 'INVALID_EMAIL_OR_PASSWORD', message: 'Invalid credentials' }, 401);
       if (!verified) return json(res, { code: 'EMAIL_NOT_VERIFIED', message: 'Verify your email first.' }, 403);
       res.setHeader('set-cookie', '__Secure-neon-auth.session_token=fixture-session; Path=/; HttpOnly; Secure; SameSite=Lax');
       return json(res, { user: user(), token: 'fixture-session' });
+    }
+    if (path.startsWith('/auth/email-otp/')) {
+      let raw = '';
+      for await (const chunk of req) raw += chunk;
+      const body = JSON.parse(raw);
+      if (path === '/auth/email-otp/request-password-reset') {
+        assert.equal(body.email, user().email);
+        assert.equal(body.redirectTo, undefined, 'OTP recovery must not request a reset link');
+        resetCode = '012345'; // Controlled email fixture, never a production code.
+        return json(res, { success: true });
+      }
+      if (!resetCode || body.otp !== resetCode || body.email !== user().email) return json(res, { code: 'INVALID_OTP', message: 'Invalid code' }, 400);
+      if (path === '/auth/email-otp/check-verification-otp') {
+        assert.equal(body.type, 'forget-password');
+        return json(res, { success: true });
+      }
+      if (path === '/auth/email-otp/reset-password') {
+        assert(body.password.length >= 8);
+        credentialPassword = body.password;
+        resetCode = undefined;
+        return json(res, { success: true });
+      }
+      return json(res, {}, 404);
     }
     if (path === '/api/v1/auth/neon/exchange') {
       const [payload, signature] = String(req.headers['x-neon-bridge-credential'] || '').split('.');
@@ -121,11 +149,42 @@ try {
   assert(bridgeCount > 0);
   console.log('PASS WebKit HTTPS: signup -> email link in new tab -> sign-in -> real SDK/bridge -> onboarding; HttpOnly cookies survive reload');
 
+  const recoveryContext = await browser.newContext({ ignoreHTTPSErrors: true });
+  const recovery = await recoveryContext.newPage();
+  await recovery.goto(`${origin}/forgot-password`);
+  await recovery.getByLabel('Email', { exact: true }).fill(user().email);
+  await recovery.getByRole('button', { name: 'Send reset code' }).click();
+  await recovery.getByLabel('Reset code', { exact: true }).fill('999999');
+  await recovery.getByRole('button', { name: 'Verify code' }).click();
+  await recovery.getByRole('alert').filter({ hasText: 'invalid or has expired' }).waitFor();
+  assert.equal(await recovery.getByLabel('New password', { exact: true }).count(), 0);
+  await recovery.getByLabel('Reset code', { exact: true }).fill(resetCode);
+  await recovery.getByRole('button', { name: 'Verify code' }).click();
+  await recovery.getByLabel('New password', { exact: true }).fill('ReplacementPass2');
+  await recovery.getByLabel('Confirm new password', { exact: true }).fill('ReplacementPass2');
+  await recovery.getByRole('button', { name: 'Reset password', exact: true }).click();
+  await recovery.getByText('Your password has been reset. You can sign in now.', { exact: true }).waitFor();
+  const replay = await recovery.evaluate(async () => (await fetch('/api/auth/email-otp/reset-password', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email: 'transport@example.com', otp: '012345', password: 'ReplayPass3' }),
+  })).status);
+  assert.equal(replay, 400, 'Consumed codes must not reset a password twice');
+  await recovery.getByRole('link', { name: 'Go to sign in' }).click();
+  await recovery.getByLabel('Email', { exact: true }).fill(user().email);
+  await recovery.getByLabel('Password', { exact: true }).fill('StrongPass1');
+  await recovery.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await recovery.getByRole('alert').filter({ hasText: 'Invalid credentials' }).waitFor();
+  await recovery.getByLabel('Password', { exact: true }).fill('ReplacementPass2');
+  await recovery.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await recovery.waitForURL(/\/onboarding$/);
+  console.log('PASS WebKit HTTPS OTP recovery: real SDK/routes -> request -> reject wrong code -> verify -> reset -> reject replay/old password -> new password -> onboarding (controlled upstream, not live SMTP)');
+  await recoveryContext.close();
+
   const httpContext = await browser.newContext();
   const httpPage = await httpContext.newPage();
   await httpPage.goto(`http://127.0.0.1:${appPort}/login`);
   const httpStatus = await httpPage.evaluate(async () => {
-    await fetch('/api/auth/sign-in/email', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'transport@example.com', password: 'StrongPass1' }) });
+    await fetch('/api/auth/sign-in/email', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'transport@example.com', password: 'ReplacementPass2' }) });
     return (await fetch('/api/auth/bridge', { method: 'POST' })).status;
   });
   assert.equal(httpStatus, 401, 'WebKit must reject the Secure session cookie on HTTP');

@@ -78,7 +78,10 @@ class TestExportHonoursLookback(unittest.IsolatedAsyncioTestCase):
         patches = [
             patch.object(export_mod, name, _RecordingModel(sink, name)) for name in names
         ]
-        with patch.object(export_mod.settings, "ANALYTICS_WAREHOUSE_EXPORT_ENABLED", True):
+        with (
+            patch.object(export_mod.settings, "ANALYTICS_WAREHOUSE_EXPORT_ENABLED", True),
+            patch.object(export_mod.settings, "ANALYTICS_WAREHOUSE_EXPORT_FORMAT", "duckdb_parquet"),
+        ):
             for p in patches:
                 p.start()
             try:
@@ -130,7 +133,10 @@ class TestExportHonoursLookback(unittest.IsolatedAsyncioTestCase):
             with self.subTest(requested=requested):
                 sink.clear()
                 patches = [patch.object(export_mod, n, _RecordingModel(sink, n)) for n in names]
-                with patch.object(export_mod.settings, "ANALYTICS_WAREHOUSE_EXPORT_ENABLED", True):
+                with (
+                    patch.object(export_mod.settings, "ANALYTICS_WAREHOUSE_EXPORT_ENABLED", True),
+                    patch.object(export_mod.settings, "ANALYTICS_WAREHOUSE_EXPORT_FORMAT", "duckdb_parquet"),
+                ):
                     for p in patches:
                         p.start()
                     try:
@@ -162,7 +168,10 @@ class TestExportHonoursLookback(unittest.IsolatedAsyncioTestCase):
             "AnalyticsDailyAggregate", "AnalyticsFunnelAggregate", "AnalyticsCohortAggregate",
         ]
         patches = [patch.object(export_mod, n, _RecordingModel(sink, n)) for n in names]
-        with patch.object(export_mod.settings, "ANALYTICS_WAREHOUSE_EXPORT_ENABLED", True):
+        with (
+            patch.object(export_mod.settings, "ANALYTICS_WAREHOUSE_EXPORT_ENABLED", True),
+            patch.object(export_mod.settings, "ANALYTICS_WAREHOUSE_EXPORT_FORMAT", "duckdb_parquet"),
+        ):
             for p in patches:
                 p.start()
             try:

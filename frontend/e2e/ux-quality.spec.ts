@@ -18,6 +18,7 @@ async function analyzeWithRetry(page: Page, attempts = 3) {
       await page.waitForLoadState("domcontentloaded");
       return await new AxeBuilder({ page })
         // Ignore framework dev overlays so the gate evaluates only product UI.
+        .exclude("nextjs-portal")
         .exclude('[aria-label="Open Next.js Dev Tools"]')
         .exclude('[aria-label="Open issues overlay"]')
         .exclude('[aria-label="Collapse issues badge"]')
@@ -57,7 +58,10 @@ test.describe("@ux Frontend UX quality gates", () => {
       const contrastViolations = actionableViolations.filter((violation) => violation.id === "color-contrast");
       const ariaHiddenFocusViolations = actionableViolations.filter((violation) => violation.id === "aria-hidden-focus");
       expect(
-        blockingViolations.map((violation) => `${violation.id}:${violation.impact}`),
+        blockingViolations.map(
+          (violation) =>
+            `${route}:${violation.id}:${violation.impact}:${violation.nodes.map((node) => node.target.join(" ")).join(",")}`,
+        ),
       ).toEqual([]);
       // Keep contrast checks active while allowing a small temporary budget during the redesign pass.
       expect(contrastViolations.length).toBeLessThanOrEqual(1);
@@ -129,5 +133,20 @@ test.describe("@ux Frontend UX quality gates", () => {
         }
       }
     }
+  });
+
+  test("@ux unknown routes show a branded recovery path", async ({ page }) => {
+    const response = await page.goto("/this-route-does-not-exist", { waitUntil: "domcontentloaded" });
+
+    expect(response?.status()).toBe(404);
+    await expect(page.getByRole("heading", { name: "This route is not in the Verse." })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Browse opportunities" })).toHaveAttribute("href", "/opportunities");
+    await expect(page.getByRole("link", { name: "Return home" })).toHaveAttribute("href", "/");
+
+    const results = await analyzeWithRetry(page);
+    const blockingViolations = results.violations.filter((violation) =>
+      ["serious", "critical"].includes(violation.impact || ""),
+    );
+    expect(blockingViolations.map((violation) => `${violation.id}:${violation.impact}`)).toEqual([]);
   });
 });

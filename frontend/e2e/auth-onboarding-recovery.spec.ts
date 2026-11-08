@@ -109,11 +109,11 @@ test("verification for another email cannot silently continue with the signed-in
   expect(bridges).toBe(0);
 });
 
-test("password reset without a valid link provides recovery before accepting a new password", async ({ page }) => {
+test("old password reset links start code recovery instead of accepting URL tokens", async ({ page }) => {
   await page.goto("/reset-password?error=INVALID_TOKEN");
-  await expect(page.locator("main [role=alert]")).toContainText("missing or expired");
+  await expect(page.getByLabel("Email", { exact: true })).toBeVisible();
   await expect(page.getByLabel("New password", { exact: true })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "Request a new reset link" })).toHaveAttribute("href", "/forgot-password");
+  await expect(page.getByRole("button", { name: "Send reset code" })).toBeVisible();
 });
 
 test("resume upload and removal preserve unsaved profile details and clear removed file state", async ({ page }) => {

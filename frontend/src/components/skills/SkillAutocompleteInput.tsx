@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useId, useMemo, useRef, useState } from "react";
+import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
 
 import FormSection from "@/components/ui/FormSection";
@@ -24,6 +24,7 @@ type SkillAutocompleteInputProps = {
 };
 
 const SKILLS_INDEX_URL = "/data/skills-taxonomy/skills_autocomplete.json";
+const SEARCH_DEBOUNCE_MS = 250;
 
 function normalizeKey(value: string): string {
   return value.toLocaleLowerCase("en-IN").replace(/[^a-z0-9+#.]+/g, " ").trim();
@@ -50,6 +51,17 @@ function joinSkills(values: string[]): string {
   return values.map((item) => item.trim()).filter(Boolean).join(", ");
 }
 
+function useDebouncedValue(value: string, delayMs: number): string {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => setDebouncedValue(value), delayMs);
+    return () => window.clearTimeout(timeoutId);
+  }, [delayMs, value]);
+
+  return debouncedValue;
+}
+
 export default function SkillAutocompleteInput({
   label,
   value,
@@ -67,33 +79,43 @@ export default function SkillAutocompleteInput({
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const loadedRef = useRef(false);
+  const pendingLoadRef = useRef<Promise<void> | null>(null);
 
   const selectedSkills = useMemo(() => splitCommaValues(value), [value]);
   const selectedKeys = useMemo(() => new Set(selectedSkills.map(normalizeKey)), [selectedSkills]);
+  const debouncedQuery = useDebouncedValue(query, SEARCH_DEBOUNCE_MS);
 
   const loadOptions = async () => {
-    if (loadedRef.current || isLoading) {
+    if (loadedRef.current) {
       return;
     }
-    setIsLoading(true);
-    setLoadError(false);
-    try {
-      const response = await fetch(SKILLS_INDEX_URL, { cache: "force-cache" });
-      if (!response.ok) {
-        throw new Error(`Failed to load skills index: ${response.status}`);
-      }
-      const payload = (await response.json()) as SkillOption[];
-      setOptions(payload);
-      loadedRef.current = true;
-    } catch {
-      setLoadError(true);
-    } finally {
-      setIsLoading(false);
+    if (pendingLoadRef.current) {
+      return pendingLoadRef.current;
     }
+    const request = (async () => {
+      setIsLoading(true);
+      setLoadError(false);
+      try {
+        const response = await fetch(SKILLS_INDEX_URL, { cache: "force-cache" });
+        if (!response.ok) {
+          throw new Error(`Failed to load skills index: ${response.status}`);
+        }
+        const payload = (await response.json()) as SkillOption[];
+        setOptions(payload);
+        loadedRef.current = true;
+      } catch {
+        setLoadError(true);
+      } finally {
+        setIsLoading(false);
+        pendingLoadRef.current = null;
+      }
+    })();
+    pendingLoadRef.current = request;
+    return request;
   };
 
   const suggestions = useMemo(() => {
-    const normalizedQuery = normalizeKey(query);
+    const normalizedQuery = normalizeKey(debouncedQuery);
     if (!normalizedQuery) {
       return [];
     }
@@ -123,7 +145,7 @@ export default function SkillAutocompleteInput({
       }
     }
     return [...exact, ...prefix, ...contains].slice(0, 8);
-  }, [options, query, selectedKeys]);
+  }, [debouncedQuery, options, selectedKeys]);
 
   const addSkill = (name: string) => {
     const cleanName = name.trim();

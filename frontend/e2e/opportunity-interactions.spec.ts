@@ -19,6 +19,7 @@ const TEST_OPPORTUNITY = {
   description: "Hands-on buildathon for NLP + RAG systems in Bengaluru.",
   url: "https://example.com/internships/test-ml",
   opportunity_type: "Hackathon",
+  portal_category: "competitive",
   university: "Example Labs",
   domain: "AI",
   source: "test_feed",
@@ -40,6 +41,7 @@ const TEST_CAREER_OPPORTUNITY = {
   id: "75c75c75c75c75c75c75c75f",
   title: "Test ML Internship Bangalore",
   opportunity_type: "Internship",
+  portal_category: "career",
 };
 
 async function stubOpportunityRoutes(
@@ -268,6 +270,78 @@ test.describe("Opportunity interaction contracts", () => {
     await page.getByRole("button", { name: `Hide ${TEST_CAREER_OPPORTUNITY.title}` }).click();
     await expect(page.getByRole("heading", { name: TEST_CAREER_OPPORTUNITY.title })).toHaveCount(0);
     await expect.poll(() => captured.some((event) => event.interaction_type === "dismiss")).toBeTruthy();
+  });
+
+  test("events mentioning hiring and engineers remain visible in opportunities", async ({ page }) => {
+    const workshop = {
+      ...TEST_OPPORTUNITY,
+      title: "International AI Workshop for Engineers",
+      opportunity_type: "Workshop",
+      description: "Meet engineering leaders, explore internships and build AI applications in this workshop.",
+    };
+    await stubOpportunityRoutes(page, [], [workshop]);
+    await page.goto("/opportunities");
+    await expect(page.getByRole("heading", { name: workshop.title, exact: true })).toBeVisible();
+  });
+
+  test("career cards honor server routing and do not show source names as employers", async ({ page }) => {
+    const programme = {
+      ...TEST_CAREER_OPPORTUNITY,
+      title: "2027 Graduate Programme",
+      description: "Participate in workshops and international competitions with your team.",
+      source: "example_board",
+      university: "Example Board",
+    };
+    await stubOpportunityRoutes(page, [], [programme]);
+    await page.goto("/internships-jobs");
+    await expect(page.getByRole("heading", { name: programme.title, exact: true })).toBeVisible();
+    await expect(page.getByText("Organisation not listed", { exact: true })).toBeVisible();
+  });
+
+  test("opportunities retain recommendation order and collapse repeated ids", async ({ page }) => {
+    const first = { ...TEST_OPPORTUNITY, title: "Recommended Python Hackathon", last_seen_at: "2026-01-01T00:00:00Z" };
+    const second = { ...TEST_OPPORTUNITY, id: "85c75c75c75c75c75c75c75f", title: "Recent Data Hackathon", last_seen_at: "2026-11-01T00:00:00Z" };
+    await stubOpportunityRoutes(page, [], [first, second, first]);
+    await page.goto("/opportunities");
+    const cards = page.locator("article");
+    await expect(cards).toHaveCount(2);
+    await expect(cards.first()).toContainText(first.title);
+    await expect(cards.last()).toContainText(second.title);
+  });
+
+  test("a slow earlier filter response cannot replace the current career feed", async ({ page }) => {
+    await stubOpportunityRoutes(page, [], [TEST_CAREER_OPPORTUNITY]);
+    let releaseEarlier: () => void = () => {};
+    const earlierGate = new Promise<void>((resolve) => { releaseEarlier = resolve; });
+    let earlierRequested: () => void = () => {};
+    const requestStarted = new Promise<void>((resolve) => { earlierRequested = resolve; });
+    await page.route("**/api/v1/opportunities/page?**", async (route) => {
+      const track = new URL(route.request().url()).searchParams.get("role_track");
+      if (track === "technical") {
+        earlierRequested();
+        await earlierGate;
+      }
+      const title = track === "technical" ? "Python Developer Internship" : track === "non_technical" ? "Marketing Internship" : TEST_CAREER_OPPORTUNITY.title;
+      await route.fulfill({ json: {
+        items: [{ ...TEST_CAREER_OPPORTUNITY, title }], total: 1, pages: 1,
+        facets: { tracks: { all: 2, technical: 1, non_technical: 1 }, placements: { all: 1 } },
+      } });
+    });
+    await page.goto("/internships-jobs");
+    await expect(page.getByRole("heading", { name: TEST_CAREER_OPPORTUNITY.title, exact: true })).toBeVisible();
+    try {
+      await page.getByRole("tab", { name: /^Technical/ }).click();
+      await requestStarted;
+      await page.getByRole("tab", { name: /^Non-technical/i }).click();
+      await expect(page.getByRole("heading", { name: "Marketing Internship", exact: true })).toBeVisible();
+      const earlierResponse = page.waitForResponse((response) => response.url().includes("role_track=technical"));
+      releaseEarlier();
+      await earlierResponse;
+      await expect(page.getByRole("heading", { name: "Marketing Internship", exact: true })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Python Developer Internship", exact: true })).toHaveCount(0);
+    } finally {
+      releaseEarlier();
+    }
   });
 
   test("logs Ask AI impressions and citation clicks with experiment metadata", async ({ page }) => {

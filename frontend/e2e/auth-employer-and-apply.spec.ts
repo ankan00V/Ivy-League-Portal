@@ -136,36 +136,39 @@ test("verification refresh bypasses the stale cookie cache and never bridges an 
   expect(bridgeCalls).toBe(0);
 });
 
-test("password recovery sends a safe reset link and accepts a replacement password", async ({ page }) => {
+test("password recovery verifies an emailed code before accepting a replacement password", async ({ page }) => {
   await stubNeonSignedOut(page);
   let resetRequest: Record<string, unknown> | null = null;
   let replacementRequest: Record<string, unknown> | null = null;
-  await page.route("**/api/auth/request-password-reset", async (route) => {
+  await page.route("**/api/auth/email-otp/request-password-reset", async (route) => {
     resetRequest = route.request().postDataJSON() as Record<string, unknown>;
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ status: true }) });
+    await route.fulfill({ json: { success: true } });
   });
-  await page.route("**/api/auth/reset-password", async (route) => {
+  await page.route("**/api/auth/email-otp/check-verification-otp", async (route) => {
+    expect(route.request().postDataJSON()).toEqual({ email: "student@gmail.com", otp: "012345", type: "forget-password" });
+    await route.fulfill({ json: { success: true } });
+  });
+  await page.route("**/api/auth/email-otp/reset-password", async (route) => {
     replacementRequest = route.request().postDataJSON() as Record<string, unknown>;
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ status: true }) });
+    await route.fulfill({ json: { success: true } });
   });
 
   await page.goto("/login");
   await page.getByRole("link", { name: "Forgot your password?" }).click();
   await expect(page).toHaveURL(/\/forgot-password$/);
-  await page.getByLabel("Email").fill("student@gmail.com");
-  await page.getByRole("button", { name: "Send reset link" }).click();
+  await page.getByLabel("Email").fill("Student@Gmail.com");
+  await page.getByRole("button", { name: "Send reset code" }).click();
   await expect(page.getByText(/If an account exists for that address/i)).toBeVisible();
-  expect(resetRequest).toMatchObject({
-    email: "student@gmail.com",
-    redirectTo: `${new URL(page.url()).origin}/reset-password`,
-  });
-
-  await page.goto("/reset-password?token=single-use-token");
+  expect(resetRequest).toEqual({ email: "student@gmail.com" });
+  await expect(page.getByLabel("New password", { exact: true })).toHaveCount(0);
+  await page.getByLabel("Reset code", { exact: true }).fill("012345");
+  await page.getByRole("button", { name: "Verify code" }).click();
   await page.getByLabel("New password", { exact: true }).fill("StrongPass1");
   await page.getByLabel("Confirm new password", { exact: true }).fill("StrongPass1");
   await page.getByRole("button", { name: "Reset password" }).click();
   await expect(page.getByText("Your password has been reset. You can sign in now.")).toBeVisible();
-  expect(replacementRequest).toMatchObject({ token: "single-use-token", newPassword: "StrongPass1" });
+  expect(replacementRequest).toEqual({ email: "student@gmail.com", otp: "012345", password: "StrongPass1" });
+  await expect(page.getByRole("link", { name: "Go to sign in" })).toHaveAttribute("href", "/login");
 });
 
 test("a verified managed-auth callback resumes required onboarding even when a dashboard next path is supplied", async ({ page }) => {

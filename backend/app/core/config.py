@@ -805,8 +805,8 @@ class Settings(BaseSettings):
 
     # Embeddings / semantic ranking
     EMBEDDING_PROVIDER: str = "sentence_transformers"  # sentence_transformers | openai | auto
-    EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
-    EMBEDDING_MODEL_VERSION: str = "sentence-transformers/all-MiniLM-L6-v2@v1"
+    EMBEDDING_MODEL: str = "BAAI/bge-small-en-v1.5"
+    EMBEDDING_MODEL_VERSION: str = "BAAI/bge-small-en-v1.5@5c38ec7c405ec4b44b94cc5a9bb96e735b38267a"
     OPENAI_API_KEY: Optional[str] = None
     OPENAI_API_BASE_URL: Optional[str] = None
     OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"

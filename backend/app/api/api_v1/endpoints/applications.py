@@ -24,19 +24,32 @@ router = APIRouter()
 #: Strong references to in-flight confirmation emails. The event loop only keeps
 #: weak references to tasks, so an unreferenced one can be collected mid-send.
 _confirmation_tasks: set[asyncio.Task] = set()
+_confirmation_in_flight: set[str] = set()
 
 
-def _queue_application_confirmation(*, user: User, opportunity: Opportunity, application: Application) -> None:
-    """Send the thank-you email without holding up the redirect.
+def _automation_log_payload(application: Application) -> dict[str, Any]:
+    raw_log = getattr(application, "automation_log", None)
+    if not raw_log:
+        return {}
+    try:
+        payload = json.loads(raw_log)
+    except (TypeError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
-    The student is on their way to the company's page; making them wait on an
-    SMTP handshake would put our email in front of their application.
-    """
+
+def _confirmation_was_accepted(application: Application) -> bool:
+    confirmation = _automation_log_payload(application).get("confirmation_email")
+    return isinstance(confirmation, dict) and confirmation.get("status") == "accepted"
+
+
+async def _send_and_record_application_confirmation(
+    *, user: User, opportunity: Opportunity, application: Application
+) -> bool:
     email = str(getattr(user, "email", "") or "").strip()
-    if not email:
-        return
-    task = asyncio.create_task(
-        send_application_confirmation(
+    sent = False
+    try:
+        sent = await send_application_confirmation(
             to_email=email,
             full_name=getattr(user, "full_name", None),
             position=opportunity.title,
@@ -44,9 +57,58 @@ def _queue_application_confirmation(*, user: User, opportunity: Opportunity, app
             application_id=str(application.id),
             opportunity_url=opportunity.url,
         )
+    except Exception:
+        logger.exception(
+            "Application confirmation raised unexpectedly (application_id=%s)",
+            application.id,
+        )
+
+    payload = _automation_log_payload(application)
+    payload["confirmation_email"] = {
+        "status": "accepted" if sent else "failed",
+        "updated_at_utc": datetime.now(timezone.utc).isoformat(),
+    }
+    application.automation_log = json.dumps(payload, ensure_ascii=True)
+    try:
+        await application.save()
+    except Exception:
+        logger.exception(
+            "Failed to persist application confirmation status (application_id=%s)",
+            application.id,
+        )
+    return sent
+
+
+def _queue_application_confirmation(*, user: User, opportunity: Opportunity, application: Application) -> bool:
+    """Send the thank-you email without holding up the redirect.
+
+    The student is on their way to the company's page; making them wait on an
+    SMTP handshake would put our email in front of their application.
+    """
+    email = str(getattr(user, "email", "") or "").strip()
+    if not email or _confirmation_was_accepted(application):
+        return False
+
+    task_key = str(application.id)
+    if task_key in _confirmation_in_flight:
+        return False
+
+    _confirmation_in_flight.add(task_key)
+    task = asyncio.create_task(
+        _send_and_record_application_confirmation(
+            user=user,
+            opportunity=opportunity,
+            application=application,
+        )
     )
     _confirmation_tasks.add(task)
-    task.add_done_callback(_confirmation_tasks.discard)
+
+    def _release(completed_task: asyncio.Task) -> None:
+        _confirmation_tasks.discard(completed_task)
+        _confirmation_in_flight.discard(task_key)
+
+    task.add_done_callback(_release)
+    return True
 
 class ApplicationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -152,6 +214,10 @@ async def apply_to_opportunity(
     # Treat repeated apply clicks as idempotent so the frontend can still redirect.
     existing = await Application.find_one(Application.user_id == current_user.id, Application.opportunity_id == opportunity_id)
     if existing:
+        # A prior provider failure must not permanently suppress the receipt.
+        # Once the provider has accepted it, the marker keeps repeated clicks
+        # idempotent; an absent/failed marker permits a retry.
+        _queue_application_confirmation(user=current_user, opportunity=opp, application=existing)
         return _serialize_application_response(application=existing, opportunity=opp)
 
     application = Application(
@@ -206,8 +272,6 @@ async def apply_to_opportunity(
             application.id,
         )
 
-    # Only for a new application: the idempotent early return above means a
-    # second click on Apply does not send a second thank-you.
     _queue_application_confirmation(user=current_user, opportunity=opp, application=application)
 
     return _serialize_application_response(application=application, opportunity=opp)

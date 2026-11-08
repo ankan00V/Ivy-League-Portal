@@ -169,7 +169,7 @@ def _validate_crawlee(*, production: bool) -> list[CheckResult]:
 
 def _validate_primary_database(*, production: bool) -> list[CheckResult]:
     postgres_odm_enabled = _bool_env("POSTGRES_ODM_ENABLED", default=True)
-    supabase_dsn = not _is_placeholder("SUPABASE_DATABASE_URL")
+    database_url = not _is_placeholder("DATABASE_URL")
     neon_dsn = not _is_placeholder("NEON_DATABASE_URL")
     return [
         CheckResult(
@@ -180,11 +180,11 @@ def _validate_primary_database(*, production: bool) -> list[CheckResult]:
         ),
         CheckResult(
             name="Serving Postgres DSN",
-            ok=supabase_dsn or neon_dsn,
+            ok=database_url or neon_dsn,
             severity="fatal",
             detail=(
-                "SUPABASE_DATABASE_URL=set"
-                if supabase_dsn
+                "DATABASE_URL=set"
+                if database_url
                 else "NEON_DATABASE_URL=set"
                 if neon_dsn
                 else "missing"

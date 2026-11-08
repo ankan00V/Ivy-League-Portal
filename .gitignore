@@ -75,6 +75,7 @@ ruvector.db-*
 .codex/
 .chatgpt/
 .agents/
+skills-lock.json
 CLAUDE.md
 frontend/CLAUDE.md
 

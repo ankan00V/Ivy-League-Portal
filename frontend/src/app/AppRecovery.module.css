@@ -1,0 +1,58 @@
+.shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: clamp(1.25rem, 4vw, 3rem);
+  background:
+    radial-gradient(circle at 18% 18%, color-mix(in srgb, var(--brand-primary) 24%, transparent), transparent 34%),
+    radial-gradient(circle at 82% 78%, color-mix(in srgb, var(--brand-accent) 18%, transparent), transparent 30%),
+    var(--bg-base);
+}
+
+.card {
+  width: min(100%, 680px);
+  padding: clamp(1.4rem, 4vw, 2.6rem);
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.eyebrow {
+  display: inline-flex;
+  margin-top: 2rem;
+  padding: 0.35rem 0.7rem;
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  background: var(--brand-primary);
+  color: #000;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.title {
+  max-width: 12ch;
+  margin-top: 1rem;
+  font-size: clamp(2.5rem, 8vw, 5rem);
+}
+
+.message {
+  max-width: 54ch;
+  color: var(--text-muted);
+  font-size: clamp(1rem, 2vw, 1.12rem);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem;
+  margin-top: 1.8rem;
+}
+
+@media (max-width: 540px) {
+  .actions > * {
+    width: 100%;
+  }
+}

@@ -44,3 +44,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+/freebuff-sites-build/
+/freebuff.*
+/.open-next/
+/.wrangler/

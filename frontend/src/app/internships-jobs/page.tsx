@@ -8,6 +8,7 @@ import { motion } from "framer-motion";
 import { ArrowRight, Bookmark, Calendar, ChevronDown, ExternalLink, EyeOff, MapPin, Send, X } from "lucide-react";
 import Image from "next/image";
 import { apiUrl } from "@/lib/api";
+import { opportunityPortal, listingOrganisation } from "@/lib/opportunity-routing";
 import { createAuthenticatedFetchInit, getAccessToken } from "@/lib/auth-session";
 import { logTrackedOpportunityEvent, useOpportunityFeedImpressions } from "@/lib/opportunity-feed-tracker";
 /* classifyRoleTrack and matchesTrackFilter are deliberately not imported.
@@ -41,6 +42,7 @@ interface Opportunity {
     description: string;
     url: string;
     opportunity_type: string;
+    portal_category?: string;
     university: string;
     domain: string;
     source?: string;
@@ -81,23 +83,11 @@ interface Opportunity {
 const NOTICE_AUTO_DISMISS_MS = 10_000;
 const FEED_REFRESH_MS = 60 * 1000;
 const FEED_RETRY_MS = 15 * 1000;
-// Must exceed the Next proxy's own upstream timeout, or the client abandons a
-// request the proxy is still happily waiting on and silently drops to the
-// unpersonalised list. It was 2500ms against a 5000ms proxy.
-const PERSONALIZED_FETCH_TIMEOUT_MS = 8000;
-const FALLBACK_FETCH_TIMEOUT_MS = 8000;
-const COMPETITIVE_KEYWORDS = [
-    "hackathon",
-    "competition",
-    "challenge",
-    "quiz",
-    "conference",
-    "workshop",
-    "bootcamp",
-    "webinar",
-    "buildathon",
-    "ctf",
-];
+// A cold local Postgres pool can take several seconds to establish its first
+// connections. Keep this below the proxy's 30s ceiling while avoiding a false
+// empty state during that one-time startup cost.
+const PERSONALIZED_FETCH_TIMEOUT_MS = 15_000;
+const FALLBACK_FETCH_TIMEOUT_MS = 15_000;
 /* Rows requested per page.
 
    The grid used to map over every filtered listing, so switching a chip asked
@@ -110,7 +100,6 @@ const DEFAULT_PER_PAGE = 12;
 /** Offered in the "Records per page" control. Capped at 100 by the API. */
 const PER_PAGE_OPTIONS = [12, 24, 48, 96];
 
-const CAREER_KEYWORDS = ["internship", "intern", "job", "hiring", "developer", "engineer", "lead"];
 
 /* Deadlines render identically on the server and in the browser.
 
@@ -136,15 +125,7 @@ function formatDeadline(
     return parsed.toLocaleDateString(DEADLINE_LOCALE, { timeZone: "UTC", ...options });
 }
 
-const buildOpportunitiesSignature = (items: Opportunity[]): string =>
-    items
-        .map(
-            (item) =>
-                `${item.id}:${item.created_at || ""}:${item.updated_at || ""}:${item.last_seen_at || ""}:${
-                    item.deadline || ""
-                }:${item.title}:${item.source || ""}`
-        )
-        .join("|");
+const buildOpportunitiesSignature = (items: Opportunity[]): string => JSON.stringify(items);
 
 async function fetchJsonWithTimeout<T>(
     path: string,
@@ -239,6 +220,7 @@ export default function InternshipsJobsPage() {
 
        Collapsing identical in-flight requests breaks that loop at the source. */
     const inFlightKeyRef = useRef<string | null>(null);
+    const requestSequenceRef = useRef(0);
     /* When the same request last completed, so an identical one cannot be issued
        again immediately.
 
@@ -317,6 +299,7 @@ export default function InternshipsJobsPage() {
         let ownsInFlight = false;
         // requestKey is built inside the try; the finally needs it too.
         let requestKeyForRelease = "";
+        let requestSequence = 0;
         try {
             /* One page, filtered and counted by the API.
 
@@ -344,6 +327,8 @@ export default function InternshipsJobsPage() {
             inFlightKeyRef.current = requestKey;
             requestKeyForRelease = requestKey;
             ownsInFlight = true;
+            requestSequence = ++requestSequenceRef.current;
+            if (previous.key !== requestKey) setLoading(true);
 
             const token = getAccessToken();
             const paged = await fetchJsonWithTimeout<{
@@ -356,6 +341,7 @@ export default function InternshipsJobsPage() {
                 token ? createAuthenticatedFetchInit({}, token) : { credentials: "include" },
                 token ? PERSONALIZED_FETCH_TIMEOUT_MS : FALLBACK_FETCH_TIMEOUT_MS,
             );
+            if (requestSequence !== requestSequenceRef.current) return;
             if (paged && Array.isArray(paged.items)) {
                 const data: Opportunity[] = paged.items.map((item, idx) => ({
                     ...item,
@@ -405,6 +391,7 @@ export default function InternshipsJobsPage() {
                 void triggerLiveRefresh();
             }
         } catch (error) {
+            if (requestSequence !== requestSequenceRef.current) return;
             const message = error instanceof Error ? error.message : "unknown error";
             console.warn(`[Opportunities] Fetch failed: ${message}`);
             setNotice("Backend API is unavailable. Retrying...");
@@ -418,11 +405,11 @@ export default function InternshipsJobsPage() {
             // falls through, the catch handles a thrown error - and a key left
             // set on any one of them would block every later refresh of the same
             // page for the life of the component.
-            if (ownsInFlight) {
+            if (ownsInFlight && requestSequence === requestSequenceRef.current) {
                 inFlightKeyRef.current = null;
                 lastFetchRef.current = { key: requestKeyForRelease, at: Date.now() };
+                setLoading(false);
             }
-            setLoading(false);
         }
     });
 
@@ -513,17 +500,10 @@ export default function InternshipsJobsPage() {
             }
             return true;
         });
-        const getSortTimestamp = (opportunity: Opportunity) =>
-            new Date(opportunity.last_seen_at || opportunity.updated_at || opportunity.created_at || 0).getTime();
-        return [...source].sort(
-            (a, b) => getSortTimestamp(b) - getSortTimestamp(a)
-        );
+        return source;
     }, [hiddenOpportunityIds, opportunities]);
 
     const grouped = useMemo(() => {
-        const matchesKeyword = (value: string, keywords: string[]) =>
-            keywords.some((keyword) => value.includes(keyword));
-
         const groups: Record<"competitive" | "career" | "other", Opportunity[]> = {
             competitive: [],
             career: [],
@@ -535,22 +515,7 @@ export default function InternshipsJobsPage() {
                 ...filtered[idx],
                 rank_position: filtered[idx].rank_position ?? idx + 1,
             };
-            const typeValue = (opportunity.opportunity_type || "").toLowerCase().trim();
-            const titleValue = (opportunity.title || "").toLowerCase().trim();
-            const descriptionValue = (opportunity.description || "").toLowerCase().trim();
-            const haystack = `${typeValue} ${titleValue} ${descriptionValue}`;
-
-            if (matchesKeyword(haystack, CAREER_KEYWORDS)) {
-                groups.career.push(opportunity);
-                continue;
-            }
-
-            if (matchesKeyword(haystack, COMPETITIVE_KEYWORDS)) {
-                groups.competitive.push(opportunity);
-                continue;
-            }
-
-            groups.other.push(opportunity);
+            groups[opportunityPortal(opportunity)].push(opportunity);
         }
 
         return groups;
@@ -1000,7 +965,7 @@ export default function InternshipsJobsPage() {
                     >
                         <div style={{ display: "grid", gap: "0.45rem" }}>
                             <span style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.9rem", fontWeight: 700 }}>
-                                <MapPin size={14} /> {opp.university || "Global"}
+                                <MapPin size={14} /> {listingOrganisation(opp)}
                             </span>
                             <span style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.9rem", color: "var(--text-secondary)", fontWeight: 700 }}>
                                 <Calendar size={14} />
@@ -1113,7 +1078,7 @@ export default function InternshipsJobsPage() {
                             </h2>
                             <div style={{ display: "flex", flexWrap: "wrap", gap: "0.8rem", color: "var(--text-secondary)", fontWeight: 700, fontSize: "0.88rem" }}>
                                 <span style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
-                                    <MapPin size={14} /> {opp.university || "Global"}
+                                    <MapPin size={14} /> {listingOrganisation(opp)}
                                 </span>
                                 <span>{formatSourceLabel(opp.source)}</span>
                             </div>
@@ -1315,7 +1280,7 @@ export default function InternshipsJobsPage() {
                             </h2>
                             <div style={{ display: "flex", flexWrap: "wrap", gap: "0.8rem", color: "var(--text-secondary)", fontWeight: 700, fontSize: "0.9rem" }}>
                                 <span style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
-                                    <MapPin size={14} /> {opp.university || "Global"}
+                                    <MapPin size={14} /> {listingOrganisation(opp)}
                                 </span>
                                 <span>{formatSourceLabel(opp.source)}</span>
                             </div>

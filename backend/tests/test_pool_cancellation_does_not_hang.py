@@ -89,6 +89,7 @@ class _SlowIndex:
 
         self._service = OpportunityVectorService.__new__(OpportunityVectorService)
         self._service._last_build_at = None
+        self._service._model_version = None
         self.builds = 0
         self._seconds = build_seconds
 
@@ -96,6 +97,9 @@ class _SlowIndex:
             self.builds += 1
             await asyncio.sleep(self._seconds)
             self._service._last_build_at = 1.0
+            from app.services.embedding_pipeline import embedding_pipeline
+
+            self._service._model_version = embedding_pipeline.model_version
 
         self._service.rebuild = rebuild
 

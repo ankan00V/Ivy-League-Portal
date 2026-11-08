@@ -116,6 +116,7 @@ body {
   -moz-osx-font-smoothing: grayscale;
   overflow-x: hidden;
   transition: background-color 0.3s ease;
+  scroll-behavior: smooth;
 }
 
 h1,
@@ -147,6 +148,11 @@ button {
   transition: var(--standard-transition);
 }
 
+:focus-visible {
+  outline: 3px solid var(--brand-primary);
+  outline-offset: 3px;
+}
+
 /* Base Layouts */
 .layout-container {
   display: flex;
@@ -162,6 +168,7 @@ button {
   min-width: 0;
   position: relative;
   z-index: 1;
+  animation: vvPageEnter 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .app-shell-nav-root {
@@ -320,11 +327,23 @@ button {
   transition: var(--bounce-transition);
   position: relative;
   overflow: hidden;
+  will-change: transform, box-shadow;
 }
 
 .card-panel:hover {
   transform: translate(-2px, -2px);
   box-shadow: var(--shadow-md);
+}
+
+@keyframes vvPageEnter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* Brutalist Buttons */
@@ -683,6 +702,25 @@ button {
   pointer-events: none;
   z-index: 0;
   animation: floatOrb 20s infinite ease-in-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .main-content,
+  .card-panel:hover,
+  .btn-primary:hover,
+  .btn-secondary:hover,
+  .btn-accent:hover {
+    transform: none;
+  }
 }
 
 /* Premium Inputs */
@@ -1079,6 +1117,10 @@ select.input-base {
   padding: 0.75rem;
 }
 
+.onboarding-recovery-shell {
+  max-width: 620px;
+}
+
 .onboarding-form-body {
   flex: 1;
   overflow-y: auto;
@@ -1117,10 +1159,6 @@ select.input-base {
 .onboarding-progress-step.pending {
   background: var(--border-subtle);
 }
-.onboarding-recovery-shell {
-  max-width: 620px;
-}
-
 
 .onboarding-account-type-chip {
   display: inline-flex;

@@ -28,6 +28,18 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
+        source: "/data/skills-taxonomy/:path*",
+        headers: [
+          {
+            // The taxonomy is public, generated at release time, and its URL
+            // is intentionally stable. Keep repeat visits fast without using
+            // an immutable year-long cache for an un-hashed filename.
+            key: "Cache-Control",
+            value: "public, max-age=3600, stale-while-revalidate=86400",
+          },
+        ],
+      },
+      {
         source: "/(.*)",
         headers: securityHeaders,
       },

@@ -6,6 +6,7 @@ delaying the redirect) as much as what it says.
 """
 
 import asyncio
+import json
 import sys
 import unittest
 from datetime import datetime, timezone
@@ -53,6 +54,7 @@ class TestApplyQueuesConfirmation(unittest.TestCase):
     def setUp(self) -> None:
         FakeApplication.existing = None
         FakeApplication.created_instances = []
+        applications_endpoint._confirmation_in_flight.clear()
 
     def _apply(self, send: AsyncMock) -> None:
         async def run() -> None:
@@ -81,8 +83,12 @@ class TestApplyQueuesConfirmation(unittest.TestCase):
         self.assertEqual(kwargs["company"], "Coinbase")
         self.assertEqual(kwargs["application_id"], str(FakeApplication.created_instances[0].id))
         self.assertEqual(kwargs["opportunity_url"], "https://jobs.lever.co/example/analytics-intern")
+        application = FakeApplication.created_instances[0]
+        application.save.assert_awaited_once()
+        self.assertEqual(json.loads(application.automation_log)["confirmation_email"]["status"], "accepted")
 
-    def test_second_click_on_apply_sends_nothing(self) -> None:
+    def test_second_click_retries_when_no_email_was_accepted(self) -> None:
+        save = AsyncMock()
         FakeApplication.existing = SimpleNamespace(
             id=PydanticObjectId("69e111317cdc2b7901074b83"),
             user_id=USER_ID,
@@ -92,10 +98,41 @@ class TestApplyQueuesConfirmation(unittest.TestCase):
             automation_log="{}",
             submitted_at=None,
             created_at=datetime.now(timezone.utc),
+            save=save,
+        )
+        send = AsyncMock(return_value=True)
+        self._apply(send)
+        send.assert_awaited_once()
+        save.assert_awaited_once()
+        self.assertEqual(
+            json.loads(FakeApplication.existing.automation_log)["confirmation_email"]["status"],
+            "accepted",
+        )
+
+    def test_second_click_sends_nothing_after_provider_acceptance(self) -> None:
+        FakeApplication.existing = SimpleNamespace(
+            id=PydanticObjectId("69e111317cdc2b7901074b83"),
+            user_id=USER_ID,
+            opportunity_id=OPPORTUNITY_ID,
+            status="In Progress",
+            automation_mode="manual_redirect",
+            automation_log=json.dumps({"confirmation_email": {"status": "accepted"}}),
+            submitted_at=None,
+            created_at=datetime.now(timezone.utc),
+            save=AsyncMock(),
         )
         send = AsyncMock(return_value=True)
         self._apply(send)
         send.assert_not_awaited()
+        FakeApplication.existing.save.assert_not_awaited()
+
+    def test_failed_delivery_is_recorded_for_a_later_retry(self) -> None:
+        send = AsyncMock(return_value=False)
+        self._apply(send)
+
+        application = FakeApplication.created_instances[0]
+        application.save.assert_awaited_once()
+        self.assertEqual(json.loads(application.automation_log)["confirmation_email"]["status"], "failed")
 
 
 class TestConfirmationEmail(unittest.IsolatedAsyncioTestCase):

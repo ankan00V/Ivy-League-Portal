@@ -25,8 +25,39 @@ const instrumentSerif = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "VidyaVerse - Ivy League Opportunity Intelligence",
-  description: "Real-Time Academic Intelligence Network powered by AI to connect students with elite opportunities.",
+  applicationName: "VidyaVerse",
+  title: {
+    default: "VidyaVerse - Student Opportunity Intelligence",
+    template: "%s | VidyaVerse",
+  },
+  description:
+    "Discover verified internships, jobs, hackathons, competitions, and workshops matched to your student profile.",
+  keywords: [
+    "student opportunities",
+    "internships",
+    "graduate jobs",
+    "hackathons",
+    "competitions",
+    "career recommendations",
+  ],
+  category: "education",
+  manifest: "/manifest.webmanifest",
+  icons: {
+    icon: "/icon.svg",
+  },
+  openGraph: {
+    type: "website",
+    siteName: "VidyaVerse",
+    title: "VidyaVerse - Student Opportunity Intelligence",
+    description:
+      "A verified, continuously refreshed opportunity network for students.",
+  },
+  twitter: {
+    card: "summary",
+    title: "VidyaVerse - Student Opportunity Intelligence",
+    description:
+      "A verified, continuously refreshed opportunity network for students.",
+  },
 };
 
 export default async function RootLayout({

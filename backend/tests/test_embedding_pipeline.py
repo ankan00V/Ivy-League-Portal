@@ -7,6 +7,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.services.embedding_pipeline import EmbeddingPipeline  # noqa: E402
+from app.services.embedding_pipeline import embedding_pipeline  # noqa: E402
 from app.services.vector_service import OpportunityVectorService  # noqa: E402
 from app.core.time import utc_now  # noqa: E402
 
@@ -17,6 +18,7 @@ class TestEmbeddingPipeline(unittest.TestCase):
 
         self.assertFalse(service.is_ready())
         service._last_build_at = utc_now()
+        service._model_version = embedding_pipeline.model_version
         self.assertTrue(service.is_ready())
 
     def test_opportunity_text_uses_rich_structured_representation(self) -> None:

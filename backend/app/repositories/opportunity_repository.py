@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Optional
 
 import asyncpg
@@ -31,6 +32,7 @@ import asyncpg
 from app.db.pg_documents import acquire_timeout
 
 from app.core.config import settings, resolve_postgres_dsn, postgres_connect_args
+from app.services.feed_policy import listing_quality_sql, portal_sql, resolved_type, resolve_portal
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +122,12 @@ def _to_model(record: asyncpg.Record):
     payload.setdefault("description", "")
     payload.setdefault("url", "")
 
+    from app.services.scraper import _clean_description
+
+    payload["title"] = _clean_description(payload["title"])
+    payload["description"] = _clean_description(payload["description"])
+    payload["opportunity_type"] = resolved_type(payload.get("opportunity_type"), payload["title"])
+    payload["portal_category"] = resolve_portal(payload["opportunity_type"], payload["title"], payload.get("portal_category"))
     model = Opportunity.model_construct(**payload)
     # Preserve identity so saved/applied lookups keyed on the old id still work.
     legacy = record.get("legacy_mongo_id")
@@ -129,6 +137,16 @@ def _to_model(record: asyncpg.Record):
         except Exception:
             model.id = None
     return model
+
+
+def _append_portal_filter(*, clauses: list[str], params: list[Any], portal: str | None) -> None:
+    normalized_portal = str(portal or "").strip().lower()
+    if normalized_portal not in {"career", "competitive", "other"}:
+        return
+
+    params.append(normalized_portal)
+    parameter = f"${len(params)}"
+    clauses.append(f"({portal_sql()}) = {parameter}")
 
 
 async def load_active_opportunities(
@@ -145,22 +163,19 @@ async def load_active_opportunities(
     applied here, so far less is fetched only to be discarded.
     """
     pool = await get_pool()
-    clauses = ["opportunity_status <> 'removed'"]
+    clauses = ["opportunity_status IN ('active', 'closing_soon')", *STUDENT_VISIBILITY_CLAUSES, *listing_quality_sql(settings.OPPORTUNITY_SCOPE_TYPES)]
     params: list[Any] = []
 
     if domain:
         params.append(domain)
         clauses.append(f"domain = ${len(params)}")
-    normalized_portal = str(portal or "").strip().lower()
-    if normalized_portal in {"career", "competitive", "other"}:
-        params.append(normalized_portal)
-        clauses.append(f"portal_category = ${len(params)}")
+    _append_portal_filter(clauses=clauses, params=params, portal=portal)
 
     params.append(max(1, limit) * max(1, window_multiplier))
     sql = (
         f"SELECT {_SELECT} FROM app.opportunities "
         f"WHERE {' AND '.join(clauses)} "
-        f"ORDER BY last_seen_at DESC NULLS LAST, created_at DESC "
+        f"ORDER BY last_seen_at DESC NULLS LAST, created_at DESC, legacy_mongo_id "
         f"LIMIT ${len(params)}"
     )
     async with pool.acquire(timeout=acquire_timeout()) as conn:
@@ -218,17 +233,14 @@ async def load_opportunity_page(
     and keeps the row query's plan simple.
     """
     pool = await get_pool()
-    clauses = ["opportunity_status = 'active'", *STUDENT_VISIBILITY_CLAUSES]
+    clauses = ["opportunity_status IN ('active', 'closing_soon')", *STUDENT_VISIBILITY_CLAUSES, *listing_quality_sql(settings.OPPORTUNITY_SCOPE_TYPES)]
     params: list[Any] = []
 
     if domain:
         params.append(domain)
         clauses.append(f"domain = ${len(params)}")
 
-    normalized_portal = str(portal or "").strip().lower()
-    if normalized_portal in {"career", "competitive", "other"}:
-        params.append(normalized_portal)
-        clauses.append(f"portal_category = ${len(params)}")
+    _append_portal_filter(clauses=clauses, params=params, portal=portal)
 
     normalized_track = str(role_track or "").strip().lower()
     if normalized_track in {"technical", "non_technical"}:
@@ -251,8 +263,8 @@ async def load_opportunity_page(
         # change exists to remove.
         ors = []
         for keyword in keywords:
-            params.append(f"%{keyword}%")
-            ors.append(f"lower(title) LIKE ${len(params)}")
+            params.append(r"\m" + re.escape(keyword) + r"\M" if keyword[-1:].isalnum() else r"\m" + re.escape(keyword) + r"(?=$|[^a-z0-9])")
+            ors.append(f"lower(title) ~ ${len(params)}")
         clauses.append("(" + " OR ".join(ors) + ")")
 
     where = " AND ".join(clauses)
@@ -266,7 +278,7 @@ async def load_opportunity_page(
         params.extend([safe_per_page, offset])
         rows = await conn.fetch(
             f"SELECT {_SELECT} FROM app.opportunities WHERE {where} "
-            f"ORDER BY last_seen_at DESC NULLS LAST, created_at DESC "
+            f"ORDER BY last_seen_at DESC NULLS LAST, created_at DESC, legacy_mongo_id "
             f"LIMIT ${len(params)-1} OFFSET ${len(params)}",
             *params,
         )
@@ -287,13 +299,10 @@ async def feed_facet_counts(
     many are showing now.
     """
     pool = await get_pool()
-    clauses = ["opportunity_status = 'active'", *STUDENT_VISIBILITY_CLAUSES]
+    clauses = ["opportunity_status IN ('active', 'closing_soon')", *STUDENT_VISIBILITY_CLAUSES, *listing_quality_sql(settings.OPPORTUNITY_SCOPE_TYPES)]
     params: list[Any] = []
 
-    normalized_portal = str(portal or "").strip().lower()
-    if normalized_portal in {"career", "competitive", "other"}:
-        params.append(normalized_portal)
-        clauses.append(f"portal_category = ${len(params)}")
+    _append_portal_filter(clauses=clauses, params=params, portal=portal)
     where = " AND ".join(clauses)
 
     track_params = list(params)

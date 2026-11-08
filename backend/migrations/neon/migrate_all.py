@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -31,7 +32,11 @@ from motor.motor_asyncio import AsyncIOMotorClient
 
 BACKEND = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND))
-ENV = dotenv_values(BACKEND / ".env")
+ENV = {
+    **dotenv_values(BACKEND / ".env"),
+    **dotenv_values(BACKEND.parent / ".env"),
+    **os.environ,
+}
 
 from app.bootstrap import DOCUMENT_MODELS  # noqa: E402
 
@@ -42,13 +47,17 @@ SKIP = {"opportunities"}
 def target_dsn() -> str:
     """Connection string for the migration target.
 
-    Supabase first, Neon second: Neon has no India region and measured 130ms per
-    query from Singapore against 44ms here, so Supabase took over as the target.
-    The Neon entries stay in .env, commented, so that project remains usable.
+    Neon CLI writes DATABASE_URL_UNPOOLED to the repository-root .env. It is
+    deliberately preferred for DDL and bulk migration work; pooled URLs are for
+    serving short application queries.
     """
-    dsn = ENV.get("SUPABASE_DATABASE_DIRECT_URL") or ENV.get("NEON_DATABASE_DIRECT_URL")
+    dsn = (
+        ENV.get("DATABASE_URL_UNPOOLED")
+        or ENV.get("NEON_DATABASE_DIRECT_URL")
+        or ENV.get("SUPABASE_DATABASE_DIRECT_URL")
+    )
     if not dsn:
-        raise SystemExit("no SUPABASE_DATABASE_DIRECT_URL or NEON_DATABASE_DIRECT_URL in .env")
+        raise SystemExit("no DATABASE_URL_UNPOOLED or legacy direct Postgres URL in environment")
     return dsn.replace("?sslmode=require", "")
 
 def table_name(model) -> str:

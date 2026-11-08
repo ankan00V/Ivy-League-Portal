@@ -124,6 +124,7 @@ class OpportunityVectorService:
         self._metas: list[dict[str, Any]] = []
         self._last_build_count = -1
         self._last_build_at: datetime | None = None
+        self._model_version: str | None = None
         self._ttl = timedelta(hours=max(1, int(settings.VECTOR_INDEX_STALE_HOURS)))
 
     def provider_name(self) -> str:
@@ -135,7 +136,10 @@ class OpportunityVectorService:
 
     def is_ready(self) -> bool:
         """Whether this process already has a usable in-memory opportunity index."""
-        return self._last_build_at is not None
+        return (
+            self._last_build_at is not None
+            and getattr(self, "_model_version", None) == embedding_pipeline.model_version
+        )
 
     def _score_to_similarity(self, score: float) -> float:
         return float(max(-1.0, min(1.0, score)))
@@ -462,6 +466,7 @@ class OpportunityVectorService:
             waited_for_lock = True
             logger.info("vector rebuild: another rebuild holds the lock; waiting")
         async with self._lock:
+            target_model_version = embedding_pipeline.model_version
             if waited_for_lock:
                 logger.info(
                     "vector rebuild: acquired lock after %.1fs", time.monotonic() - started
@@ -471,6 +476,7 @@ class OpportunityVectorService:
             if (
                 not force
                 and self._last_build_at is not None
+                and self._model_version == target_model_version
                 and now - self._last_build_at <= self._ttl
             ):
                 count = await Opportunity.find_many().count()
@@ -493,6 +499,7 @@ class OpportunityVectorService:
                 self._index = None
                 self._last_build_count = 0
                 self._last_build_at = now
+                self._model_version = target_model_version
                 return
 
             texts = [_opportunity_to_text(opportunity) for opportunity in opportunities]
@@ -544,6 +551,7 @@ class OpportunityVectorService:
             self._index = index
             self._last_build_count = len(opportunities)
             self._last_build_at = now
+            self._model_version = target_model_version
             logger.info(
                 "vector rebuild: complete, %s vectors in %.1fs total",
                 len(vectors),
@@ -591,6 +599,7 @@ class OpportunityVectorService:
                     "created_at": 1,
                     "updated_at": 1,
                     "last_seen_at": 1,
+                    "embedding_model_version": 1,
                     "similarity": {"$meta": "vectorSearchScore"},
                 }
             },
@@ -598,6 +607,8 @@ class OpportunityVectorService:
         rows = await collection.aggregate(pipeline).to_list(length=max(top_k * 4, top_k))
         results: list[dict[str, Any]] = []
         for row in rows:
+            if row.get("embedding_model_version") != embedding_pipeline.model_version:
+                continue
             meta = {
                 "id": str(row.get("_id")),
                 "title": row.get("title"),
@@ -634,7 +645,7 @@ class OpportunityVectorService:
     ) -> list[dict[str, Any]]:
         await self._ensure_index()
 
-        if not self._metas:
+        if not self.is_ready() or not self._metas:
             return []
 
         safe_top_k = max(1, min(top_k, 200))
@@ -732,6 +743,7 @@ class OpportunityVectorService:
 
         cache_key_value = cache_key(
             "vector_search",
+            embedding_pipeline.model_version,
             cache_version,
             str(safe_top_k),
             filter_key,

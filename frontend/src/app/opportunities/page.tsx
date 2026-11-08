@@ -9,6 +9,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { MapPin, Calendar, Send, Bookmark, EyeOff } from "lucide-react";
 import Image from "next/image";
 import { staleSince } from "@/lib/listing-freshness";
+import { listingOrganisation } from "@/lib/opportunity-routing";
 import { Opportunity, useOpportunityFeed } from "@/hooks/useOpportunityFeed";
 import { useOpportunityFeedImpressions } from "@/lib/opportunity-feed-tracker";
 
@@ -357,7 +358,7 @@ export default function OpportunitiesPage() {
                     >
                         <div style={{ display: "grid", gap: "0.45rem" }}>
                             <span style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.9rem", fontWeight: 700 }}>
-                                <MapPin size={14} /> {opp.university || "Global"}
+                                <MapPin size={14} /> {listingOrganisation(opp)}
                             </span>
                             <span style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.9rem", color: "var(--text-secondary)", fontWeight: 700 }}>
                                 <Calendar size={14} />
@@ -475,7 +476,7 @@ export default function OpportunitiesPage() {
                             </h2>
                             <div style={{ display: "flex", flexWrap: "wrap", gap: "0.8rem", color: "var(--text-secondary)", fontWeight: 700, fontSize: "0.88rem" }}>
                                 <span style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
-                                    <MapPin size={14} /> {opp.university || "Global"}
+                                    <MapPin size={14} /> {listingOrganisation(opp)}
                                 </span>
                                 <span>{formatSourceLabel(opp.source)}</span>
                             </div>
