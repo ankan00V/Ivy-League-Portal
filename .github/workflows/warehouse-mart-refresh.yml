@@ -10,12 +10,25 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     services:
-      mongo:
-        image: mongo:7
+      # Postgres, not Mongo. The same correction release-blocking-ml-gates.yml
+      # already carries: the app moved to Postgres, this job kept provisioning a
+      # Mongo container, and it ran green only because nothing asked it for a
+      # DSN. Once seed_release_ml_gate_fixture.py began resolving one it failed
+      # on every scheduled run - three in a row before anyone looked, because a
+      # cron job that nobody watches fails quietly.
+      #
+      # pgvector rather than plain postgres: the schema declares
+      # CREATE EXTENSION vector alongside pg_trgm.
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ivy_league_warehouse_ci
         ports:
-          - 27017:27017
+          - 5432:5432
         options: >-
-          --health-cmd "mongosh --quiet --eval 'db.adminCommand(\"ping\").ok' || exit 1"
+          --health-cmd "pg_isready -U postgres"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
@@ -33,8 +46,10 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      MONGODB_URL: mongodb://localhost:27017
-      MONGODB_DB_NAME: ivy_league_warehouse_ci
+      # sslmode=disable because a CI container speaks plain TCP. Neon carries no
+      # sslmode in its DSN and so still defaults to require.
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ivy_league_warehouse_ci?sslmode=disable
+      POSTGRES_ODM_ENABLED: "true"
       ANALYTICS_WAREHOUSE_CLICKHOUSE_ENABLED: "true"
       ANALYTICS_WAREHOUSE_CLICKHOUSE_HOST: localhost
       ANALYTICS_WAREHOUSE_CLICKHOUSE_PORT: "8123"
@@ -60,17 +75,32 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r backend/requirements.lock.txt
 
+      - name: Apply Postgres schema
+        run: |
+          for file in backend/migrations/neon/*.sql; do
+            echo "applying $file"
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$file"
+          done
+
       - name: Seed deterministic warehouse fixture
         run: python backend/scripts/seed_release_ml_gate_fixture.py --days 30 --reset
 
+      # simulated, not real. This job seeds its own deterministic fixture and
+      # runs on a CI runner that has never seen a student, so "real" is empty by
+      # construction: the parity gate read candidate=0, baseline=0 against a
+      # minimum of 200 and failed every six hours. What this job can prove is
+      # that the mart machinery computes correctly over known input, which is
+      # what 'simulated' means here. Real traffic is answered by
+      # real-traffic-rollout-readiness.yml, which reads production and seeds
+      # nothing.
       - name: Rebuild analytics warehouse marts
-        run: python backend/scripts/rebuild_analytics_warehouse.py --lookback-days 30 --traffic-type real
+        run: python backend/scripts/rebuild_analytics_warehouse.py --lookback-days 30 --traffic-type simulated
 
       - name: Enforce mart freshness gate
         run: python backend/scripts/check_warehouse_release_gate.py --json
 
       - name: Run DS release gates
-        run: python backend/scripts/check_ds_release_gates.py --lookback-days 30 --fail-on-not-ready
+        run: python backend/scripts/check_ds_release_gates.py --lookback-days 30 --traffic-type simulated --fail-on-not-ready
 
       - name: Upload warehouse artifacts
         if: always()

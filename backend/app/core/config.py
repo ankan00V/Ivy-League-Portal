@@ -124,6 +124,18 @@ class Settings(BaseSettings):
     NEON_AUTH_BRIDGE_SECRET: Optional[str] = None
     NEON_REALTIME_URL: Optional[str] = None
     NEON_REALTIME_SECRET: Optional[str] = None
+    # Declared here but consumed elsewhere: NEON_AUTH_COOKIE_SECRET is read by
+    # the Next.js server (lib/neon-auth-server.ts) and NEON_BRANCH is written by
+    # the Neon CLI. Neither is used by this API.
+    #
+    # They are declared because the backend and the frontend share one env file
+    # and this model forbids extra inputs, so a variable belonging to a sibling
+    # tool stops the API from starting at all - which is how a working Neon
+    # configuration still failed to boot. Forbidding extras is worth keeping for
+    # 450-odd settings where a typo would otherwise pass silently, so the fix is
+    # to name the foreign variables rather than to stop checking.
+    NEON_AUTH_COOKIE_SECRET: Optional[str] = None
+    NEON_BRANCH: Optional[str] = None
     # Backwards-compatible aliases for manually configured Neon deployments.
     NEON_DATABASE_URL: Optional[str] = None
     NEON_DATABASE_DIRECT_URL: Optional[str] = None
@@ -1094,16 +1106,28 @@ def resolve_postgres_dsn() -> str:
     """The serving Postgres DSN, chosen out loud instead of guessed.
 
     DATABASE_URL is the canonical Neon CLI variable and is deliberately first.
-    The legacy names are only a transition path for existing deployments.
+    NEON_DATABASE_URL remains for deployments configured by hand.
 
-    Now: no DSN is a hard failure, more than one is a warning naming both, and
-    the resolved host is always logged so the serving database is visible in the
+    SUPABASE_DATABASE_URL is deliberately no longer consulted. The product has
+    left Supabase, and leaving a dead name last in the chain is not harmless: it
+    only ever takes effect when the two Neon names are absent, which is exactly
+    the moment the app should refuse to start rather than quietly serve from
+    whatever Supabase URL an old env file still carries. That is not
+    hypothetical - a stale SUPABASE_DATABASE_URL in backend/.env pointed this
+    app at a deleted project for three weeks, and every diagnosis blamed the
+    database for being down rather than the config for choosing it.
+
+    The setting itself stays declared; this model forbids extra inputs, so
+    deleting the field would stop the app booting against any env file that
+    still mentions the name.
+
+    No DSN is a hard failure, more than one is a warning naming both, and the
+    resolved host is always logged so the serving database is visible in the
     first lines of startup.
     """
     candidates = [
         ("DATABASE_URL", settings.DATABASE_URL),
         ("NEON_DATABASE_URL", settings.NEON_DATABASE_URL),
-        ("SUPABASE_DATABASE_URL", settings.SUPABASE_DATABASE_URL),
     ]
     configured = [(name, str(value).strip()) for name, value in candidates if str(value or "").strip()]
 
