@@ -49,10 +49,12 @@ class TestPostgresDsnResolution(unittest.TestCase):
             self.assertLogs(config_mod.logger, level="WARNING") as logs,
         ):
             resolve_postgres_dsn()
-        self.assertIn("DATABASE_URL", "\n".join(logs.output))
         joined = "\n".join(logs.output)
-        self.assertIn("SUPABASE_DATABASE_URL", joined)
+        self.assertIn("DATABASE_URL", joined)
         self.assertIn("NEON_DATABASE_URL", joined)
+        # Supabase is not named: it is no longer a candidate, so its presence
+        # cannot make the configuration ambiguous.
+        self.assertNotIn("SUPABASE_DATABASE_URL", joined)
 
     def test_no_dsn_raises_instead_of_starting(self) -> None:
         with (
@@ -67,8 +69,7 @@ class TestPostgresDsnResolution(unittest.TestCase):
     def test_single_dsn_is_used_without_warning(self) -> None:
         for name, value, other in (
             ("DATABASE_URL", NEON, "NEON_DATABASE_URL"),
-            ("NEON_DATABASE_URL", NEON, "SUPABASE_DATABASE_URL"),
-            ("SUPABASE_DATABASE_URL", SUPA, "NEON_DATABASE_URL"),
+            ("NEON_DATABASE_URL", NEON, "DATABASE_URL"),
         ):
             with self.subTest(name=name):
                 with (
@@ -112,3 +113,38 @@ class TestPostgresDsnResolution(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSupabaseIsNoLongerConsulted(unittest.TestCase):
+    """Leaving a dead name last in the chain is not harmless.
+
+    It only takes effect when both Neon names are absent, which is exactly the
+    moment the app should refuse to start rather than quietly serve from
+    whatever Supabase URL an old env file still carries. That is not
+    hypothetical: a stale SUPABASE_DATABASE_URL in backend/.env pointed this
+    application at a deleted project for three weeks, and every diagnosis
+    blamed the database for being down rather than the config for choosing it.
+    """
+
+    def test_a_supabase_url_alone_refuses_to_start(self) -> None:
+        with (
+            patch.object(settings, "DATABASE_URL", None),
+            patch.object(settings, "NEON_DATABASE_URL", None),
+            patch.object(settings, "SUPABASE_DATABASE_URL", SUPA),
+        ):
+            with self.assertRaises(RuntimeError) as caught:
+                resolve_postgres_dsn()
+        self.assertIn("No Postgres DSN", str(caught.exception))
+
+    def test_a_stale_supabase_url_cannot_override_neon(self) -> None:
+        with (
+            patch.object(settings, "DATABASE_URL", NEON),
+            patch.object(settings, "NEON_DATABASE_URL", None),
+            patch.object(settings, "SUPABASE_DATABASE_URL", SUPA),
+        ):
+            self.assertEqual(resolve_postgres_dsn(), NEON)
+
+    def test_the_setting_is_still_declared(self) -> None:
+        """Deleting the field would stop the app booting against any env file
+        that still mentions the name, because the model forbids extra inputs."""
+        self.assertTrue(hasattr(settings, "SUPABASE_DATABASE_URL"))

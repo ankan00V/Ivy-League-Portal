@@ -31,9 +31,14 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      # sslmode=disable because a CI container speaks plain TCP. Supabase and
-      # Neon carry no sslmode and so still default to require.
-      SUPABASE_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ivy_league_release_gate_ci?sslmode=disable
+      # sslmode=disable because a CI container speaks plain TCP. Neon carries
+      # no sslmode in its DSN and so still defaults to require.
+      #
+      # Named DATABASE_URL, not SUPABASE_DATABASE_URL. This is a local throwaway
+      # container, so the old name worked only because the DSN resolver still
+      # accepted it as a last fallback - a CI job quietly depending on the
+      # legacy path for a product that has left Supabase.
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ivy_league_release_gate_ci?sslmode=disable
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -59,7 +64,7 @@ jobs:
         run: |
           for file in backend/migrations/neon/*.sql; do
             echo "applying $file"
-            psql "$SUPABASE_DATABASE_URL" -v ON_ERROR_STOP=1 -f "$file"
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$file"
           done
 
       - name: Seed deterministic ML release gate fixture
