@@ -306,6 +306,7 @@ class RAGService:
         results: list[dict[str, Any]],
         *,
         retrieval_error: Optional[str] = None,
+        degraded_reason: Optional[str] = None,
     ) -> dict[str, Any]:
         if not results:
             # "Top 0 opportunities retrieved for: data science internships in
@@ -341,6 +342,8 @@ class RAGService:
                     "hallucination_checks_passed": False,
                     "failed_checks": [retrieval_error or "no_retrieval_results"],
                 },
+                "degraded": bool(degraded_reason),
+                "degraded_reason": degraded_reason,
                 "contract_version": "rag_insights.v1",
             }
 
@@ -380,12 +383,24 @@ class RAGService:
             failed_checks.append("no_retrieved_sources_to_cite")
 
         return {
-            "summary": f"Top {len(top_opportunities)} opportunities retrieved for: {query}",
+            # Said plainly when the model did not run. These rows come from
+            # retrieval alone, which is worth showing - but the previous wording
+            # ("Top 3 opportunities retrieved for: <your query>") reads like an
+            # answer, and during a provider outage Ask AI looked like it was
+            # working for as long as the outage lasted.
+            "summary": (
+                f"Showing the {len(top_opportunities)} closest matches by keyword and similarity. "
+                "The AI summary is unavailable right now, so these have not been read or ranked by it."
+                if degraded_reason
+                else f"Top {len(top_opportunities)} opportunities retrieved for: {query}"
+            ),
             "top_opportunities": top_opportunities,
             "deadline_urgency": "Prioritize items with nearest deadline first.",
             "recommended_action": "Shortlist the top matches and apply in priority order.",
             "citations": citations,
             "safety": {"hallucination_checks_passed": checks_passed, "failed_checks": failed_checks},
+            "degraded": bool(degraded_reason),
+            "degraded_reason": degraded_reason,
             "contract_version": "rag_insights.v1",
         }
 
@@ -678,7 +693,8 @@ class RAGService:
 
         if not self._llm_configured():
             return self._heuristic_insight(
-                query, retrieval_payload.get("results", []), retrieval_error=retrieval_error
+                query, retrieval_payload.get("results", []), retrieval_error=retrieval_error,
+                degraded_reason="llm_not_configured",
             )
 
         # If nothing was retrieved, skip expensive LLM invocation and return deterministic fallback.
@@ -772,10 +788,10 @@ class RAGService:
                     content = response.choices[0].message.content or ""
         except asyncio.TimeoutError:
             logger.warning("RAG LLM generation timed out; serving heuristic fallback.")
-            return self._heuristic_insight(query, retrieval_payload.get("results", []))
+            return self._heuristic_insight(query, retrieval_payload.get("results", []), degraded_reason="llm_timeout")
         except Exception as exc:
             logger.warning("RAG LLM generation failed; serving heuristic fallback: %s", exc)
-            return self._heuristic_insight(query, retrieval_payload.get("results", []))
+            return self._heuristic_insight(query, retrieval_payload.get("results", []), degraded_reason="llm_unavailable")
 
         # Every fallback below is logged with its reason. This block previously
         # swallowed all three failure modes in silence, so a truncated completion
@@ -789,20 +805,20 @@ class RAGService:
                 "A truncated tail usually means RAG_LLM_MAX_TOKENS is too low for the schema.",
                 len(content or ""),
             )
-            return self._heuristic_insight(query, retrieval_payload.get("results", []))
+            return self._heuristic_insight(query, retrieval_payload.get("results", []), degraded_reason="llm_unparseable_response")
 
         parsed = self._resolve_refs(parsed, top_candidates)
         if not parsed.get("top_opportunities"):
             logger.warning(
                 "RAG LLM returned no resolvable candidate refs; serving heuristic fallback."
             )
-            return self._heuristic_insight(query, retrieval_payload.get("results", []))
+            return self._heuristic_insight(query, retrieval_payload.get("results", []), degraded_reason="llm_no_resolvable_refs")
 
         try:
             insights = RAGInsights.model_validate(parsed)
         except Exception as exc:
             logger.warning("RAG LLM JSON failed schema validation; serving heuristic fallback: %s", exc)
-            return self._heuristic_insight(query, retrieval_payload.get("results", []))
+            return self._heuristic_insight(query, retrieval_payload.get("results", []), degraded_reason="llm_schema_invalid")
 
         insights = self._apply_hallucination_checks(insights, retrieval_payload.get("results", []))
         if insights.safety.hallucination_checks_passed:
@@ -812,7 +828,7 @@ class RAGService:
             "RAG LLM answer failed hallucination checks %s; serving heuristic fallback.",
             list(insights.safety.failed_checks or []),
         )
-        return self._heuristic_insight(query, retrieval_payload.get("results", []))
+        return self._heuristic_insight(query, retrieval_payload.get("results", []), degraded_reason="llm_failed_grounding_checks")
 
     async def ask(
         self,
