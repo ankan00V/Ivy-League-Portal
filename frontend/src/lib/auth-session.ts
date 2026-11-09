@@ -1,6 +1,7 @@
 import { apiUrl } from "@/lib/api";
 import { ADMIN_DASHBOARD_PATH } from "@/lib/admin-routes";
 import { landingPathForAccountType } from "@/lib/employer-portal";
+import { fetchWithTimeout } from "@/lib/auth-network";
 
 // Kept for backward cleanup compatibility only. Tokens are no longer persisted.
 export const ACCESS_TOKEN_KEY = "access_token";
@@ -26,6 +27,14 @@ type CurrentUser = {
   is_admin?: boolean;
   needs_password_setup?: boolean;
 };
+
+function safeInternalPath(value?: string | null): string | null {
+  const candidate = String(value || "").trim();
+  if (!candidate || !candidate.startsWith("/") || candidate.startsWith("//") || /[\\\u0000-\u001f]/.test(candidate)) {
+    return null;
+  }
+  return candidate;
+}
 
 type PendingAdminChallenge = {
   email: string;
@@ -142,6 +151,23 @@ export function clearAccessToken(reason: AuthStateReason = "logout"): void {
     return;
   }
   volatileAccessToken = null;
+  // Revalidate managed auth on app-session expiry; do not race a remote logout
+  // against the fresh exchange. Explicit logout still revokes both sessions.
+  if (reason === "expired") {
+    clearStoredAuth(reason);
+    return;
+  }
+  // Managed Auth owns its HttpOnly session independently of the short-lived
+  // application API token. Revoke it too so signing out cannot silently leave
+  // a browser authenticated at the Next.js BFF.
+  void fetch("/api/auth/sign-out", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  }).catch(() => {
+    // Best-effort managed-session invalidation; local state is cleared below.
+  });
   void fetch(apiUrl("/api/v1/auth/logout"), {
     method: "POST",
     credentials: "include",
@@ -182,22 +208,30 @@ export function getAuthStateEventName(): string {
   return AUTH_STATE_EVENT;
 }
 
-export async function resolvePostAuthRoute(token?: string | null): Promise<string> {
+/**
+ * Resolve the first page after a successful application-session exchange.
+ *
+ * An unfinished profile is deliberately never bypassed. The earlier router
+ * treated `onboarding_prompt_seen` as permission to send an incomplete account
+ * to the dashboard. A refresh, a failed redirect, or simply returning later
+ * therefore made the required student-details flow appear to have vanished.
+ */
+export async function resolvePostAuthRoute(token?: string | null, requestedPath?: string | null): Promise<string> {
   const normalizedToken = token && token !== COOKIE_SESSION_SENTINEL ? token : null;
   const headers = normalizedToken ? { Authorization: `Bearer ${normalizedToken}` } : undefined;
   try {
     const [userRes, profileRes] = await Promise.all([
-      fetch(apiUrl("/api/v1/users/me"), {
+      fetchWithTimeout(apiUrl("/api/v1/users/me"), {
         credentials: "include",
         headers,
       }),
-      fetch(apiUrl("/api/v1/users/me/profile"), {
+      fetchWithTimeout(apiUrl("/api/v1/users/me/profile"), {
         credentials: "include",
         headers,
       }),
     ]);
     if (!userRes.ok || !profileRes.ok) {
-      return "/dashboard";
+      throw new Error("We could not load your VidyaVerse profile. Please try again.");
     }
     markAuthSessionPresentInternal();
     const currentUser = (await userRes.json()) as CurrentUser;
@@ -207,24 +241,20 @@ export async function resolvePostAuthRoute(token?: string | null): Promise<strin
     const status = (await profileRes.json()) as OnboardingStatus;
     const accountType = String(status.account_type || "candidate").toLowerCase();
     const onboardingCompleted = Boolean(status.onboarding_completed);
-    const onboardingPromptSeen = Boolean(status.onboarding_prompt_seen);
     if (!onboardingCompleted) {
-      if (!onboardingPromptSeen) {
-        try {
-          await fetch(apiUrl("/api/v1/users/me/onboarding/mark-seen"), {
-            method: "POST",
-            credentials: "include",
-            headers,
-          });
-        } catch {
-          // Non-blocking best effort.
-        }
-        return "/onboarding";
-      }
-      return landingPathForAccountType(accountType);
+      // Keep the analytics marker, but never use it to bypass required setup.
+      // It is intentionally non-blocking because the next route is stable.
+      void fetch(apiUrl("/api/v1/users/me/onboarding/mark-seen"), {
+        method: "POST",
+        credentials: "include",
+        headers,
+      }).catch(() => undefined);
+      return "/onboarding";
     }
-    return landingPathForAccountType(accountType);
-  } catch {
-    return "/dashboard";
+    return safeInternalPath(requestedPath) || landingPathForAccountType(accountType);
+  } catch (error) {
+    throw error instanceof Error
+      ? error
+      : new Error("We could not prepare your VidyaVerse session. Please try again.");
   }
 }

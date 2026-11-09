@@ -24,35 +24,39 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.core import config as config_mod
-from app.core.config import _dsn_host, resolve_postgres_dsn, settings
+from app.core.config import _dsn_host, postgres_connect_args, resolve_postgres_dsn, settings
 
 SUPA = "postgresql://u:p@aws-0-ap-south-1.pooler.supabase.com:6543/postgres"
 NEON = "postgresql://u:p@ep-x-pooler.ap-southeast-1.aws.neon.tech/neondb"
 
 
 class TestPostgresDsnResolution(unittest.TestCase):
-    def test_prefers_supabase_when_both_present(self) -> None:
+    def test_prefers_canonical_neon_url_when_legacy_urls_are_present(self) -> None:
         with (
+            patch.object(settings, "DATABASE_URL", NEON),
             patch.object(settings, "SUPABASE_DATABASE_URL", SUPA),
-            patch.object(settings, "NEON_DATABASE_URL", NEON),
+            patch.object(settings, "NEON_DATABASE_URL", "postgresql://u:p@legacy-neon.example/neondb"),
         ):
-            self.assertEqual(resolve_postgres_dsn(), SUPA)
+            self.assertEqual(resolve_postgres_dsn(), NEON)
 
     def test_warns_when_both_are_configured(self) -> None:
         # Ambiguity is the dangerous state: it is the one where deleting a line
         # changes which database serves traffic. It must be audible.
         with (
+            patch.object(settings, "DATABASE_URL", NEON),
             patch.object(settings, "SUPABASE_DATABASE_URL", SUPA),
-            patch.object(settings, "NEON_DATABASE_URL", NEON),
+            patch.object(settings, "NEON_DATABASE_URL", "postgresql://u:p@legacy-neon.example/neondb"),
             self.assertLogs(config_mod.logger, level="WARNING") as logs,
         ):
             resolve_postgres_dsn()
+        self.assertIn("DATABASE_URL", "\n".join(logs.output))
         joined = "\n".join(logs.output)
         self.assertIn("SUPABASE_DATABASE_URL", joined)
         self.assertIn("NEON_DATABASE_URL", joined)
 
     def test_no_dsn_raises_instead_of_starting(self) -> None:
         with (
+            patch.object(settings, "DATABASE_URL", None),
             patch.object(settings, "SUPABASE_DATABASE_URL", None),
             patch.object(settings, "NEON_DATABASE_URL", None),
         ):
@@ -62,13 +66,15 @@ class TestPostgresDsnResolution(unittest.TestCase):
 
     def test_single_dsn_is_used_without_warning(self) -> None:
         for name, value, other in (
-            ("SUPABASE_DATABASE_URL", SUPA, "NEON_DATABASE_URL"),
+            ("DATABASE_URL", NEON, "NEON_DATABASE_URL"),
             ("NEON_DATABASE_URL", NEON, "SUPABASE_DATABASE_URL"),
+            ("SUPABASE_DATABASE_URL", SUPA, "NEON_DATABASE_URL"),
         ):
             with self.subTest(name=name):
                 with (
                     patch.object(settings, name, value),
                     patch.object(settings, other, None),
+                    patch.object(settings, "DATABASE_URL", None) if name != "DATABASE_URL" else patch.object(settings, "SUPABASE_DATABASE_URL", None),
                     self.assertLogs(config_mod.logger, level="INFO") as logs,
                 ):
                     self.assertEqual(resolve_postgres_dsn(), value)
@@ -81,17 +87,27 @@ class TestPostgresDsnResolution(unittest.TestCase):
         # The incident was invisible because nothing ever named the database in
         # use. The host must appear in the logs on every resolution.
         with (
+            patch.object(settings, "DATABASE_URL", NEON),
             patch.object(settings, "SUPABASE_DATABASE_URL", SUPA),
             patch.object(settings, "NEON_DATABASE_URL", None),
             self.assertLogs(config_mod.logger, level="INFO") as logs,
         ):
             resolve_postgres_dsn()
-        self.assertIn("aws-0-ap-south-1.pooler.supabase.com:6543", "\n".join(logs.output))
+        self.assertIn("ep-x-pooler.ap-southeast-1.aws.neon.tech", "\n".join(logs.output))
 
     def test_logged_host_never_leaks_credentials(self) -> None:
         host = _dsn_host("postgresql://postgres.abc:sup3rs3cret@host.example.com:6543/postgres")
         self.assertEqual(host, "host.example.com:6543")
         self.assertNotIn("sup3rs3cret", host)
+
+    def test_asyncpg_dsn_strips_libpq_only_options(self) -> None:
+        dsn, ssl = postgres_connect_args(
+            "postgresql://u:p@host.example/neondb?sslmode=require&channel_binding=require&application_name=vidyaverse"
+        )
+        self.assertEqual(ssl, "require")
+        self.assertNotIn("sslmode", dsn)
+        self.assertNotIn("channel_binding", dsn)
+        self.assertIn("application_name=vidyaverse", dsn)
 
 
 if __name__ == "__main__":

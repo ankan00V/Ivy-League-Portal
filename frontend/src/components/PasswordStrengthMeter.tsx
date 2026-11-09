@@ -24,7 +24,7 @@ export default function PasswordStrengthMeter({ strength, compact = false }: Pas
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem" }}>
         <span style={{ fontWeight: 800 }}>Password strength</span>
-        <span style={{ color: strength.color, fontWeight: 900 }}>{strength.label}</span>
+        <span style={{ color: "var(--text-primary)", fontWeight: 900 }}>{strength.label}</span>
       </div>
       <div
         aria-hidden="true"

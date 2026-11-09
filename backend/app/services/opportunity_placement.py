@@ -101,10 +101,10 @@ def _explicit_mode(value: str) -> str | None:
     compact = _tokens(value)
     if not compact or compact in _NON_MODE_VALUES:
         return None
-    if _has_any(compact, _REMOTE_TERMS):
-        return "remote"
     if _has_any(compact, _HYBRID_TERMS):
         return "hybrid"
+    if _mentions(compact, _REMOTE_TERMS):
+        return "remote"
     if _has_any(compact, _ONSITE_TERMS):
         return "onsite"
     return None
@@ -287,10 +287,10 @@ def classify_placement(
         # those values carry no place name.
         mode = _explicit_mode(location_text)
     if mode is None and body:
-        if _mentions(body, _REMOTE_TERMS):
-            mode = "remote"
-        elif _mentions(body, _HYBRID_TERMS):
+        if _mentions(body, _HYBRID_TERMS):
             mode = "hybrid"
+        elif _mentions(body, _REMOTE_TERMS):
+            mode = "remote"
 
     if mode in {"remote", "hybrid"}:
         categories.add(mode)

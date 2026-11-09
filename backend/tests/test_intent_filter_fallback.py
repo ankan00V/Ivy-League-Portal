@@ -29,6 +29,8 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.services.vector_service import OpportunityVectorService
+from app.services.embedding_pipeline import embedding_pipeline
+from app.core.time import utc_now
 
 
 def _meta(title: str, description: str = "", location: str = "") -> dict:
@@ -61,6 +63,8 @@ class IntentFilterFallbackTests(unittest.IsolatedAsyncioTestCase):
         for row in range(5):
             self.service._vectors[row] = np.array([1.0 - row * 0.01, 0.0, 0.0, 0.0], dtype=np.float32)
         self.service._index = None
+        self.service._last_build_at = utc_now()
+        self.service._model_version = embedding_pipeline.model_version
         self.query = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
         self.dim = dim
 

@@ -79,6 +79,7 @@ class OpportunityResponse(OpportunityCreate):
     model_config = ConfigDict(from_attributes=True)
 
     id: PydanticObjectId
+    university: Optional[str] = None
     domain: Optional[str] = None
     source: Optional[str] = None
     canonical_key: Optional[str] = None
@@ -1303,7 +1304,7 @@ async def read_opportunity_page(
     # Keyed by the two inputs that change the answer. 120s is short enough that a
     # scrape shows up within the same visit and long enough to collapse a burst
     # of clicks into one scan.
-    facet_cache_key = cache_key("feed_facets", str(portal or "all"), str(role_track or "all"))
+    facet_cache_key = cache_key("feed_facets_v2", str(portal or "all"), str(role_track or "all"))
     facets = await cache_get_json(facet_cache_key)
     if not facets:
         facets = await opportunity_repository.feed_facet_counts(portal=portal, role_track=role_track)
@@ -1550,7 +1551,10 @@ async def semantic_search_opportunities(
         profile_user = await User.get(resolved_user_id)
         if profile_user is None:
             raise HTTPException(status_code=404, detail="User not found")
-        if not profile_user.profile_embedding:
+        if (
+            not profile_user.profile_embedding
+            or profile_user.profile_embedding_model_version != embedding_pipeline.model_version
+        ):
             await embedding_pipeline.recompute_user_embedding(user_id=resolved_user_id, force=True)
             profile_user = await User.get(resolved_user_id)
         if profile_user is None or not profile_user.profile_embedding:

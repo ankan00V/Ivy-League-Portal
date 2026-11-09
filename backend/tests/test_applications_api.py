@@ -37,6 +37,7 @@ class FakeApplication:
         self.submitted_at = kwargs["submitted_at"]
         self.created_at = datetime.now(timezone.utc)
         self.insert = AsyncMock()
+        self.save = AsyncMock()
         FakeApplication.created_instances.append(self)
 
     @classmethod

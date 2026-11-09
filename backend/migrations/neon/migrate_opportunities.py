@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,7 +25,17 @@ from dotenv import dotenv_values
 from motor.motor_asyncio import AsyncIOMotorClient
 
 BACKEND = Path(__file__).resolve().parents[2]
-ENV = dotenv_values(BACKEND / ".env")
+sys.path.insert(0, str(BACKEND))
+ENV = {
+    **dotenv_values(BACKEND / ".env"),
+    **dotenv_values(BACKEND.parent / ".env"),
+    **os.environ,
+}
+
+from app.services.opportunity_placement import classify_placement  # noqa: E402
+from app.services.feed_policy import resolved_type  # noqa: E402
+from app.services.opportunity_visibility import resolve_opportunity_portal  # noqa: E402
+from app.services.role_classification import classify_role_track  # noqa: E402
 
 # Columns that exist in app.opportunities, in insert order.
 COLUMNS = [
@@ -33,7 +44,8 @@ COLUMNS = [
     "title", "description", "normalized_title", "normalized_organization",
     "university", "location", "work_mode", "stipend", "eligibility",
     "ppo_available",
-    "opportunity_type", "domain", "portal_category", "source", "source_id",
+    "opportunity_type", "domain", "portal_category", "role_track",
+    "feed_categories", "source", "source_id",
     "opportunity_status", "lifecycle_status", "trust_status",
     "url_liveness_status", "is_employer_post", "quality_review_required",
     "trust_score", "risk_score", "quality_score", "freshness_score",
@@ -55,13 +67,17 @@ MAPPED = set(COLUMNS) - {"legacy_mongo_id", "extras"}
 def target_dsn() -> str:
     """Connection string for the migration target.
 
-    Supabase first, Neon second: Neon has no India region and measured 130ms per
-    query from Singapore against 44ms here, so Supabase took over as the target.
-    The Neon entries stay in .env, commented, so that project remains usable.
+    Neon CLI writes DATABASE_URL_UNPOOLED to the repository-root .env. It is
+    deliberately preferred for DDL and bulk migration work; pooled URLs are for
+    serving short application queries.
     """
-    dsn = ENV.get("SUPABASE_DATABASE_DIRECT_URL") or ENV.get("NEON_DATABASE_DIRECT_URL")
+    dsn = (
+        ENV.get("DATABASE_URL_UNPOOLED")
+        or ENV.get("NEON_DATABASE_DIRECT_URL")
+        or ENV.get("SUPABASE_DATABASE_DIRECT_URL")
+    )
     if not dsn:
-        raise SystemExit("no SUPABASE_DATABASE_DIRECT_URL or NEON_DATABASE_DIRECT_URL in .env")
+        raise SystemExit("no DATABASE_URL_UNPOOLED or legacy direct Postgres URL in environment")
     return dsn.replace("?sslmode=require", "")
 
 def _dt(value: Any) -> datetime | None:
@@ -111,6 +127,29 @@ def to_row(doc: dict[str, Any]) -> tuple | None:
     # Keep it JSON-clean: ObjectId and datetime are not JSON types.
     extras = json.loads(json.dumps(extras, default=str))
 
+    opportunity_type = resolved_type(doc.get("opportunity_type"), title)
+    portal_category = resolve_opportunity_portal(
+        opportunity_type=opportunity_type,
+        title=title,
+        description=doc.get("description"),
+        portal_category=doc.get("portal_category"),
+    )
+    role_track = classify_role_track(
+        title=title,
+        description=doc.get("description"),
+        tags=doc.get("tags"),
+        opportunity_type=opportunity_type,
+    )
+    feed_categories = list(
+        classify_placement(
+            location=doc.get("location"),
+            work_mode=doc.get("work_mode"),
+            title=title,
+            description=doc.get("description"),
+            source=doc.get("source"),
+        )
+    )
+
     return (
         str(doc.get("_id")),
         url,
@@ -128,9 +167,11 @@ def to_row(doc: dict[str, Any]) -> tuple | None:
         doc.get("stipend"),
         doc.get("eligibility"),
         doc.get("ppo_available"),
-        doc.get("opportunity_type"),
+        opportunity_type,
         doc.get("domain"),
-        doc.get("portal_category"),
+        portal_category,
+        role_track,
+        feed_categories,
         doc.get("source"),
         doc.get("source_id"),
         str(doc.get("opportunity_status") or "active"),

@@ -145,17 +145,21 @@ class Opportunity(Document):
 
     @model_validator(mode="after")
     def _derive_feed_facets(self) -> "Opportunity":
-        """Fill role_track and feed_categories when they are not already set.
+        """Normalize routing and fill missing placement and role facets.
 
         Runs on every construction, which includes rows rebuilt from the
-        database, so an existing value is never recomputed - a stored
-        classification stays stable even if the keyword lists later change, and
-        the backfill script remains the one place that re-decides them.
+        database. Type and portal must agree; placement and role facets retain
+        stored values until explicitly backfilled.
 
         Failures are swallowed on purpose. These power two filter chips; a
         classifier raising on an odd listing must not stop that listing being
         saved at all.
         """
+        from app.services.feed_policy import resolved_type, resolve_portal
+
+        object.__setattr__(self, "opportunity_type", resolved_type(self.opportunity_type, self.title))
+        object.__setattr__(self, "portal_category", resolve_portal(self.opportunity_type, self.title, self.portal_category))
+
         if self.role_track is None:
             try:
                 from app.services.role_classification import classify_role_track

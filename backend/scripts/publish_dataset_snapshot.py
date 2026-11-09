@@ -16,7 +16,7 @@ REPO_ROOT = BACKEND_ROOT.parent
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from app.core.config import settings
+from app.core.config import postgres_connect_args, resolve_postgres_dsn, settings
 from app.core.time import utc_now
 from app.models.application import Application
 from app.models.experiment import Experiment, ExperimentAssignment
@@ -45,13 +45,8 @@ async def _collect_snapshot_postgres() -> dict[str, Any]:
     import asyncpg
 
     generated_at = utc_now()
-    conn = await asyncpg.connect(
-        settings.SUPABASE_DATABASE_URL,
-        timeout=30,
-        # The Supabase pooler runs pgbouncer in transaction mode, which does not
-        # support prepared statements.
-        statement_cache_size=0,
-    )
+    dsn, ssl = postgres_connect_args(resolve_postgres_dsn())
+    conn = await asyncpg.connect(dsn, ssl=ssl, timeout=30, statement_cache_size=0)
     try:
         async def scalar(sql: str) -> int:
             return int(await conn.fetchval(sql) or 0)

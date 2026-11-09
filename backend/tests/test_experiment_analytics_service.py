@@ -9,9 +9,10 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
+from app.core.config import settings
+from app.core.time import utc_now
 from app.models.experiment import ExperimentVariant
 from app.services.experiment_analytics_service import ExperimentAnalyticsService, VariantCounts, VariantMetricCounts
-from app.core.time import utc_now
 
 
 class TestExperimentAnalyticsService(unittest.IsolatedAsyncioTestCase):
@@ -237,18 +238,21 @@ class TestExperimentAnalyticsService(unittest.IsolatedAsyncioTestCase):
         )
         service = ExperimentAnalyticsService()
 
-        with patch.object(
-            service,
-            "results",
-            new=AsyncMock(
-                return_value={
-                    "primary_metric": "ctr",
-                    "recommendation": {
-                        "code": "significant_lift_consider_graduating",
-                        "winning_variant": "ml",
-                        "ready_for_graduation": True,
+        with (
+            patch.object(settings, "EXPERIMENT_AUTO_GRADUATION_ENABLED", True),
+            patch.object(
+                service,
+                "results",
+                new=AsyncMock(
+                    return_value={
+                        "primary_metric": "ctr",
+                        "recommendation": {
+                            "code": "significant_lift_consider_graduating",
+                            "winning_variant": "ml",
+                            "ready_for_graduation": True,
+                        },
                     },
-                }
+                ),
             ),
         ):
             result = await service.maybe_graduate(experiment=experiment, days=14, traffic_type="real")

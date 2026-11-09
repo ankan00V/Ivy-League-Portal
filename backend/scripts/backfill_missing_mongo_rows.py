@@ -49,7 +49,7 @@ import asyncpg  # noqa: E402
 from motor.motor_asyncio import AsyncIOMotorClient  # noqa: E402
 
 from app.bootstrap import mongo_client_kwargs  # noqa: E402
-from app.core.config import settings  # noqa: E402
+from app.core.config import postgres_connect_args, resolve_postgres_dsn, settings  # noqa: E402
 from migrate_all import _json_safe, coerce, column_types  # noqa: E402
 
 #: Accounts that exist only to exercise the product. `example.edu` is a reserved
@@ -132,7 +132,8 @@ async def main() -> int:
     kw = dict(mongo_client_kwargs())
     kw["serverSelectionTimeoutMS"] = 25000
     mongo = AsyncIOMotorClient(settings.MONGODB_URL, **kw)
-    pg = await asyncpg.connect(settings.SUPABASE_DATABASE_URL, timeout=60, statement_cache_size=0)
+    dsn, ssl = postgres_connect_args(resolve_postgres_dsn())
+    pg = await asyncpg.connect(dsn, ssl=ssl, timeout=60, statement_cache_size=0)
 
     report: dict[str, Any] = {"mode": "apply" if args.apply else "dry-run", "users": {}, "children": {}}
     try:

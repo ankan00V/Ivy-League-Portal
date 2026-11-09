@@ -134,6 +134,38 @@ services:
     command: ["uvicorn", "app.main:app", "--reload", "--host", "0.0.0.0", "--port", "8000"]
     environment:
       ENVIRONMENT: local
+      # The frontend's server-side bridge calls http://backend:8000. Keep the
+      # Docker-only hostname trusted without weakening public Host validation.
+      ALLOWED_HOSTS: '["localhost","127.0.0.1","backend"]'
+      # Local auth/session checks must use the local dependency declared by
+      # this Compose stack, never a stale developer-specific Upstash endpoint.
+      REDIS_URL: redis://redis:6379/0
+      # Neon CLI writes these to the ignored root .env. Local Docker uses the
+      # same pooled database path as deployment rather than a stale Supabase
+      # or Atlas URL from backend/.env.
+      DATABASE_URL: ${DATABASE_URL:-}
+      DATABASE_URL_UNPOOLED: ${DATABASE_URL_UNPOOLED:-}
+      NEON_POOL_MAX_SIZE: "4"
+      NEON_AUTH_BASE_URL: ${NEON_AUTH_BASE_URL:-}
+      NEON_AUTH_JWKS_URL: ${NEON_AUTH_JWKS_URL:-}
+      NEON_AUTH_BRIDGE_SECRET: ${NEON_AUTH_BRIDGE_SECRET:-}
+      NEON_REALTIME_URL: ${NEON_REALTIME_URL:-}
+      NEON_REALTIME_SECRET: ${NEON_REALTIME_SECRET:-}
+      POSTGRES_ODM_ENABLED: "true"
+      OPPORTUNITY_READ_BACKEND: postgres
+      # A local UI preview must not trigger a production-sized scrape, paid
+      # provider calls, model retraining, or outbound link validation. Those
+      # jobs run from the production worker/scheduler, not the API container
+      # a developer opens on localhost.
+      SCRAPER_AUTORUN_ENABLED: "false"
+      SCRAPER_ON_DEMAND_REFRESH_ENABLED: "false"
+      OPPORTUNITY_STATUS_AUTORUN_ENABLED: "false"
+      MLOPS_AUTORUN_ENABLED: "false"
+      ANALYTICS_WAREHOUSE_AUTORUN_ENABLED: "false"
+      EMBEDDING_AUTORUN_ENABLED: "false"
+      DESCRIPTION_ENRICHMENT_ENABLED: "false"
+      DISCOVERY_ENABLED: "false"
+      EXPERIMENT_AUTO_GRADUATION_ENABLED: "false"
       AUTH_COOKIE_ONLY_MODE: "false"
       AUTH_SESSION_COOKIE_SECURE: "false"
       METRICS_REQUIRE_AUTH: "false"
@@ -164,6 +196,12 @@ services:
       - ./backend/.env
     environment:
       ENVIRONMENT: local
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: ${DATABASE_URL:-}
+      DATABASE_URL_UNPOOLED: ${DATABASE_URL_UNPOOLED:-}
+      NEON_POOL_MAX_SIZE: "4"
+      POSTGRES_ODM_ENABLED: "true"
+      OPPORTUNITY_READ_BACKEND: postgres
       LEARNED_RANKER_REQUIRE_ARTIFACT_IN_PRODUCTION: "false"
       LEARNED_RANKER_REQUIRE_LOADED_IN_PRODUCTION: "false"
       MLOPS_ENFORCE_LIVE_ALERT_CHANNELS_IN_PRODUCTION: "false"
@@ -177,6 +215,9 @@ services:
     environment:
       NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
       BACKEND_INTERNAL_URL: http://backend:8000
+      NEON_AUTH_BASE_URL: ${NEON_AUTH_BASE_URL:-}
+      NEON_AUTH_COOKIE_SECRET: ${NEON_AUTH_COOKIE_SECRET:-}
+      NEON_AUTH_BRIDGE_SECRET: ${NEON_AUTH_BRIDGE_SECRET:-}
     ports:
       - "3000:3000"
 

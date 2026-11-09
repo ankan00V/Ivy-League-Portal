@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import json
 import logging
 import re
 import secrets
+import time
 from datetime import datetime, timedelta
 from typing import Any, Literal, Optional
 from urllib.parse import urlencode, urlsplit, urlunsplit
@@ -65,6 +68,7 @@ ADMIN_CHALLENGE_SCOPE = "admin:challenge"
 ADMIN_TOTP_SCOPE = "admin:totp"
 PASSWORD_MIN_LENGTH = 8
 PASSWORDLESS_HASH_MARKERS = {"OTP_NO_PASSWORD", "OAUTH_GOOGLE_NO_PASSWORD"}
+NEON_BRIDGE_AUDIENCE = "vidyaverse-backend"
 
 
 def _scopes_for_user(user: User) -> list[str]:
@@ -565,6 +569,50 @@ class PasswordLoginResponse(BaseModel):
     totp_setup_account_name: str | None = None
 
 
+class NeonBridgeClaims(BaseModel):
+    aud: Literal["vidyaverse-backend"]
+    sub: str
+    email: EmailStr
+    name: str | None = None
+    iat: int
+    exp: int
+
+
+def _decode_neon_bridge_credential(value: str | None) -> NeonBridgeClaims:
+    """Validate a short-lived BFF credential without trusting browser input.
+
+    Managed Auth keeps its session cookie HttpOnly at the Next.js origin. The
+    BFF reads that session and signs this payload for the FastAPI service. The
+    HMAC binds the Neon user id/email to a sixty-second, single-purpose bridge
+    request; the browser cannot mint a profile for another address.
+    """
+    secret = str(settings.NEON_AUTH_BRIDGE_SECRET or "").strip()
+    credential = str(value or "").strip()
+    if not secret:
+        raise HTTPException(status_code=503, detail="Neon Auth bridge is not configured")
+    try:
+        encoded_payload, encoded_signature = credential.split(".", 1)
+        expected_signature = hmac.new(
+            secret.encode("utf-8"), encoded_payload.encode("ascii"), hashlib.sha256
+        ).digest()
+        supplied_signature = base64.urlsafe_b64decode(encoded_signature + "=" * (-len(encoded_signature) % 4))
+        if not hmac.compare_digest(expected_signature, supplied_signature):
+            raise ValueError("invalid signature")
+        payload = json.loads(
+            base64.urlsafe_b64decode(encoded_payload + "=" * (-len(encoded_payload) % 4)).decode("utf-8")
+        )
+        claims = NeonBridgeClaims.model_validate(payload)
+    except (TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=401, detail="Invalid Neon Auth session bridge") from exc
+
+    now = int(time.time())
+    # The BFF's clock can move a little ahead of the API, but credentials are
+    # deliberately never accepted if they were minted more than two minutes ago.
+    if claims.exp < now or claims.iat > now + 30 or claims.exp - claims.iat > 120:
+        raise HTTPException(status_code=401, detail="Expired Neon Auth session bridge")
+    return claims
+
+
 class PasswordSetupRequest(BaseModel):
     password: str
     confirm_password: str
@@ -854,6 +902,40 @@ async def register_user(
     await user.insert()
     await ensure_system_username(user)
     return user
+
+
+@router.post("/neon/exchange", response_model=Token, include_in_schema=False)
+async def exchange_neon_auth_session(
+    request: Request,
+    response: Response,
+) -> Any:
+    """Start the application's protected-API session from Managed Better Auth.
+
+    This accepts only a credential signed by the same-origin Next.js BFF after
+    it read Neon's HttpOnly session cookie. It never accepts an email or user
+    id from the browser, and it deliberately does not issue a local password.
+    """
+    claims = _decode_neon_bridge_credential(request.headers.get("X-Neon-Bridge-Credential"))
+    normalized_email = str(claims.email).strip().lower()
+    _reject_reserved_admin_identity_for_public_auth(normalized_email)
+
+    user = await User.find_one(User.email == normalized_email)
+    if user is None:
+        user = User(
+            email=normalized_email,
+            full_name=(claims.name or normalized_email.split("@", 1)[0]).strip() or None,
+            hashed_password="NEON_AUTH_MANAGED",
+            account_type="candidate",
+            auth_provider="neon",
+            is_active=True,
+        )
+        await user.insert()
+        await ensure_system_username(user)
+    elif not user.is_active:
+        raise HTTPException(status_code=403, detail="Inactive user account")
+
+    token = await _issue_user_session_token(user=user, request=request, response=response)
+    return Token(access_token=token, token_type="bearer", requires_password_setup=False)
 
 
 @router.post("/login", response_model=PasswordLoginResponse)

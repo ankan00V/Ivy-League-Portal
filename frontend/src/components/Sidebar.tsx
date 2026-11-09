@@ -8,6 +8,7 @@ import {
   FileText,
   Globe,
   LayoutDashboard,
+  LogIn,
   LogOut,
   Menu,
   Moon,
@@ -20,7 +21,13 @@ import {
 import BrandLogo from "@/components/BrandLogo";
 import { useTheme } from "@/context/ThemeContext";
 import { apiUrl } from "@/lib/api";
-import { clearAccessToken, createAuthenticatedFetchInit, getAccessToken } from "@/lib/auth-session";
+import {
+  clearAccessToken,
+  createAuthenticatedFetchInit,
+  getAccessToken,
+  getAuthStateEventName,
+  hasAuthSession,
+} from "@/lib/auth-session";
 import { formatTopPercent, type RankingSummary } from "@/lib/ranking-summary";
 
 type NavLink = {
@@ -47,6 +54,21 @@ const links: NavLink[] = [
   { name: "Leaderboard", href: "/leaderboard", icon: <Trophy size={18} />, roles: STUDENT_ONLY },
 ];
 
+const subscribeToAuthState = (callback: () => void) => {
+  const authStateEventName = getAuthStateEventName();
+  window.addEventListener(authStateEventName, callback);
+  window.addEventListener("storage", callback);
+  window.addEventListener("focus", callback);
+  return () => {
+    window.removeEventListener(authStateEventName, callback);
+    window.removeEventListener("storage", callback);
+    window.removeEventListener("focus", callback);
+  };
+};
+
+const getAuthSnapshot = () => hasAuthSession();
+const getServerAuthSnapshot = () => false;
+
 // Intentionally NOT computed here.
 //
 // This was `links.slice(0, 5)` - the full list, before role filtering - so the
@@ -60,6 +82,11 @@ export default function Sidebar() {
   const [rankingSummary, setRankingSummary] = useState<RankingSummary | null>(null);
   const [accountType, setAccountType] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const isAuthenticated = useSyncExternalStore(
+    subscribeToAuthState,
+    getAuthSnapshot,
+    getServerAuthSnapshot,
+  );
   const isHydrated = useSyncExternalStore(
     () => () => {},
     () => true,
@@ -74,7 +101,12 @@ export default function Sidebar() {
     // wrong only briefly for the rest.
     const loadAccountType = async () => {
       const token = getAccessToken();
-      if (!token) return;
+      if (!token) {
+        if (!cancelled) {
+          setAccountType(null);
+        }
+        return;
+      }
       try {
         const res = await fetch(
           apiUrl("/api/v1/users/me/profile"),
@@ -139,7 +171,7 @@ export default function Sidebar() {
       window.removeEventListener("focus", handleRefresh);
       document.removeEventListener("visibilitychange", handleRefresh);
     };
-  }, []);
+  }, [isAuthenticated]);
 
   useEffect(() => {
     if (!drawerOpen) {
@@ -195,6 +227,9 @@ export default function Sidebar() {
   // smaller failure than every user losing their navigation.
   const effectiveRole = accountType || "candidate";
   const visibleLinks = links.filter((link) => {
+    if (!isAuthenticated) {
+      return link.href === "/dashboard";
+    }
     if (!link.roles || link.roles.length === 0) return true;
     return link.roles.includes(effectiveRole);
   });
@@ -231,17 +266,28 @@ export default function Sidebar() {
               <span className="sidebar-link-icon">{theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}</span>
               <span>{themeLabel}</span>
             </button>
-            <div className="sidebar-rank-card">
-              <div className="sidebar-rank-title">Your cohort</div>
-              <div className="sidebar-rank-value">{globalRankTitle}</div>
-              <div className="sidebar-rank-detail">{globalRankSubtitle}</div>
-            </div>
-            <button type="button" onClick={handleLogout} className="sidebar-logout-btn">
-              <span className="sidebar-link-icon">
-                <LogOut size={18} />
-              </span>
-              <span>Logout</span>
-            </button>
+            {isAuthenticated ? (
+              <>
+                <div className="sidebar-rank-card">
+                  <div className="sidebar-rank-title">Your cohort</div>
+                  <div className="sidebar-rank-value">{globalRankTitle}</div>
+                  <div className="sidebar-rank-detail">{globalRankSubtitle}</div>
+                </div>
+                <button type="button" onClick={handleLogout} className="sidebar-logout-btn">
+                  <span className="sidebar-link-icon">
+                    <LogOut size={18} />
+                  </span>
+                  <span>Logout</span>
+                </button>
+              </>
+            ) : (
+              <Link href="/login?next=%2Fdashboard" className="sidebar-logout-btn">
+                <span className="sidebar-link-icon">
+                  <LogIn size={18} />
+                </span>
+                <span>Sign In</span>
+              </Link>
+            )}
           </div>
         </aside>
       </div>
@@ -296,17 +342,32 @@ export default function Sidebar() {
         </nav>
 
         <div className="mobile-drawer-foot">
-          <div className="sidebar-rank-card">
-            <div className="sidebar-rank-title">Your cohort</div>
-            <div className="sidebar-rank-value">{globalRankTitle}</div>
-            <div className="sidebar-rank-detail">{globalRankSubtitle}</div>
-          </div>
-          <button type="button" onClick={handleLogout} className="sidebar-logout-btn">
-            <span className="sidebar-link-icon">
-              <LogOut size={18} />
-            </span>
-            <span>Logout</span>
-          </button>
+          {isAuthenticated ? (
+            <>
+              <div className="sidebar-rank-card">
+                <div className="sidebar-rank-title">Your cohort</div>
+                <div className="sidebar-rank-value">{globalRankTitle}</div>
+                <div className="sidebar-rank-detail">{globalRankSubtitle}</div>
+              </div>
+              <button type="button" onClick={handleLogout} className="sidebar-logout-btn">
+                <span className="sidebar-link-icon">
+                  <LogOut size={18} />
+                </span>
+                <span>Logout</span>
+              </button>
+            </>
+          ) : (
+            <Link
+              href="/login?next=%2Fdashboard"
+              className="sidebar-logout-btn"
+              onClick={() => setDrawerOpen(false)}
+            >
+              <span className="sidebar-link-icon">
+                <LogIn size={18} />
+              </span>
+              <span>Sign In</span>
+            </Link>
+          )}
         </div>
       </aside>
 

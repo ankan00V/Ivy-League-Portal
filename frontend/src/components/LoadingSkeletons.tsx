@@ -34,7 +34,7 @@ type CenteredPageSkeletonProps = {
 
 export function CenteredPageSkeleton({ paneHeight = "520px" }: CenteredPageSkeletonProps) {
   return (
-    <main style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "var(--bg-base)", padding: "1.5rem" }}>
+    <main aria-busy="true" aria-live="polite" aria-label="Loading content" style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "var(--bg-base)", padding: "1.5rem" }}>
       <section className="card-panel" style={{ width: "min(980px, 100%)", minHeight: paneHeight, display: "grid", gap: "1rem" }}>
         <SkeletonBlock width="220px" height="30px" />
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
@@ -57,7 +57,7 @@ type OpportunityCardsSkeletonProps = {
 
 export function OpportunityCardsSkeleton({ count = 6 }: OpportunityCardsSkeletonProps) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: "2rem" }}>
+    <div role="status" aria-busy="true" aria-label="Loading opportunities" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: "2rem" }}>
       {Array.from({ length: count }).map((_, idx) => (
         <div key={`opp-skeleton-${idx}`} className="card-panel" style={{ padding: 0, height: "420px", display: "flex", flexDirection: "column" }}>
           <SkeletonBlock height="160px" borderRadius="0" />
@@ -102,7 +102,7 @@ export function LeaderboardRowsSkeleton({ rows = 8 }: LeaderboardRowsSkeletonPro
 
 export function DashboardPageSkeleton() {
   return (
-    <div style={{ minHeight: "100vh", display: "flex", background: "var(--bg-base)" }}>
+    <div role="status" aria-busy="true" aria-label="Loading dashboard" style={{ minHeight: "100vh", display: "flex", background: "var(--bg-base)" }}>
       <div style={{ width: "var(--sidebar-width)", borderRight: "2px solid var(--border-subtle)", background: "var(--bg-sidebar)", padding: "1.25rem", display: "grid", gap: "1rem" }}>
         <SkeletonBlock width="150px" height="36px" />
         <SkeletonBlock height="48px" />

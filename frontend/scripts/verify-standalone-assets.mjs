@@ -6,7 +6,9 @@ import { spawn } from "node:child_process";
 
 const __filename = fileURLToPath(import.meta.url);
 const projectRoot = path.resolve(path.dirname(__filename), "..");
-const standaloneRoot = path.join(projectRoot, ".next", "standalone", "frontend");
+const standaloneBase = path.join(projectRoot, ".next", "standalone");
+const standaloneRoots = [standaloneBase, path.join(standaloneBase, "frontend")];
+const standaloneRoot = standaloneRoots.find((candidate) => existsSync(path.join(candidate, "server.js"))) ?? standaloneBase;
 const standaloneServer = path.join(standaloneRoot, "server.js");
 const port = Number.parseInt(process.env.STANDALONE_VERIFY_PORT || "3102", 10);
 const baseUrl = `http://127.0.0.1:${port}`;

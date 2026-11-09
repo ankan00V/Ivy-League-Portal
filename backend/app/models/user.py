@@ -43,4 +43,9 @@ class User(Document):
     @property
     def needs_password_setup(self) -> bool:
         hashed = str(self.hashed_password or "").strip()
+        # Password ownership lives with Neon Auth for accounts created through
+        # the managed Better Auth flow. Offering this user the legacy password
+        # setup modal would create a second credential with ambiguous authority.
+        if hashed == "NEON_AUTH_MANAGED":
+            return False
         return not hashed or hashed in {"OTP_NO_PASSWORD", "OAUTH_GOOGLE_NO_PASSWORD"} or hashed.endswith("_NO_PASSWORD")

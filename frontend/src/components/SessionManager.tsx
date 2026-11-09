@@ -17,8 +17,8 @@ import {
 
 // `/dashboard` stays publicly viewable as a product-preview surface.
 // Interactive user-specific actions inside it remain sign-in gated.
-const PUBLIC_PATHS = new Set(["/", "/dashboard", "/login", "/register", "/auth/callback", ADMIN_LOGIN_PATH]);
-const PASSWORD_PROMPT_EXCLUDED_PATHS = new Set(["/login", "/register", "/auth/callback", ADMIN_LOGIN_PATH]);
+const PUBLIC_PATHS = new Set(["/", "/dashboard", "/login", "/register", "/verify-email", "/forgot-password", "/reset-password", "/auth/callback", ADMIN_LOGIN_PATH]);
+const PASSWORD_PROMPT_EXCLUDED_PATHS = new Set(["/login", "/register", "/verify-email", "/forgot-password", "/reset-password", "/auth/callback", ADMIN_LOGIN_PATH]);
 
 type CurrentUserSummary = {
   needs_password_setup?: boolean;
@@ -66,7 +66,9 @@ export default function SessionManager() {
 
     const redirectIfProtected = () => {
       if (!isPublicPath(pathname)) {
-        router.replace("/login");
+        // Preserve the original destination. The post-auth router will still
+        // take incomplete profiles through onboarding before restoring it.
+        router.replace(`/login?next=${encodeURIComponent(pathname)}`);
       }
     };
 

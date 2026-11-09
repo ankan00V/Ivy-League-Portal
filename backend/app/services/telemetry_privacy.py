@@ -34,7 +34,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
-from app.core.config import settings
+from app.core.config import postgres_connect_args, resolve_postgres_dsn, settings
 
 logger = logging.getLogger(__name__)
 
@@ -144,12 +144,8 @@ async def _purge_aged_telemetry_postgres(*, apply: bool, cutoff: datetime) -> di
     """
     import asyncpg
 
-    conn = await asyncpg.connect(
-        settings.SUPABASE_DATABASE_URL,
-        timeout=60,
-        # Supabase's pooler is pgbouncer in transaction mode.
-        statement_cache_size=0,
-    )
+    dsn, ssl = postgres_connect_args(resolve_postgres_dsn())
+    conn = await asyncpg.connect(dsn, ssl=ssl, timeout=60, statement_cache_size=0)
     report: dict[str, Any] = {
         "status": "ok",
         "backend": "postgres",

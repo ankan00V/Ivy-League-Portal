@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState, useEffect, useCallback } from "react";
 import BrandLogo from "@/components/BrandLogo";
 import { clearAccessToken, getAuthStateEventName, hasAuthSession } from "@/lib/auth-session";
+import styles from "./Navbar.module.css";
 
 export default function Navbar() {
     const [scrolled, setScrolled] = useState(false);
@@ -50,57 +51,39 @@ export default function Navbar() {
 
     return (
         <nav
-            style={{
-                position: "fixed",
-                top: 0,
-                left: 0,
-                right: 0,
-                zIndex: 50,
-                transition: "all 0.3s ease",
-                background: scrolled ? "rgba(10, 10, 11, 0.8)" : "transparent",
-                backdropFilter: scrolled ? "blur(12px)" : "none",
-                borderBottom: scrolled ? "1px solid var(--border-subtle)" : "1px solid transparent",
-                padding: scrolled ? "1rem 2rem" : "1.5rem 2rem",
-            }}
+            className={styles.nav}
+            data-scrolled={scrolled}
         >
-            <div
-                style={{
-                    width: "min(1680px, calc(100vw - 3rem))",
-                    margin: "0 auto",
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    gap: "1rem",
-                }}
-            >
-                <BrandLogo size="lg" />
-                <div style={{ display: "flex", gap: "2rem", alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }} suppressHydrationWarning>
-                    <Link href="#features" style={{ fontSize: "0.95rem", color: "var(--text-secondary)" }}>Features</Link>
-                    <Link href="#incoscore" style={{ fontSize: "0.95rem", color: "var(--text-secondary)" }}>InCoScore</Link>
+            <div className={styles.inner}>
+                <div className={styles.brand}>
+                    <BrandLogo size="lg" />
+                </div>
+                <div className={styles.links} suppressHydrationWarning>
+                    <Link className={styles.discoveryLink} href="#features">Features</Link>
+                    <Link className={styles.discoveryLink} href="#incoscore">InCoScore</Link>
                     {!hasMounted ? (
                         // Show unauthenticated state during SSR to match server render
                         <>
-                            <Link href="/login" style={{ fontSize: "0.95rem", fontWeight: 500, color: "var(--text-primary)" }}>Sign In</Link>
-                            <Link href="/register" className="btn-primary">Get Early Access</Link>
+                            <Link className={styles.authLink} href="/login">Sign In</Link>
+                            <Link href="/register" className={`${styles.earlyAccess} btn-primary`}>Get Early Access</Link>
                         </>
                     ) : isAuthenticated ? (
                         <>
-                            <Link href="/profile" style={{ fontSize: "0.95rem", fontWeight: 700, color: "var(--text-primary)" }}>
+                            <Link className={`${styles.authLink} ${styles.profileLink}`} href="/profile">
                                 Profile
                             </Link>
                             <button
                                 type="button"
-                                className="btn-secondary"
+                                className={`${styles.logout} btn-secondary`}
                                 onClick={handleLogout}
-                                style={{ padding: "0.75rem 1.15rem" }}
                             >
                                 Logout
                             </button>
                         </>
                     ) : (
                         <>
-                            <Link href="/login" style={{ fontSize: "0.95rem", fontWeight: 500, color: "var(--text-primary)" }}>Sign In</Link>
-                            <Link href="/register" className="btn-primary">Get Early Access</Link>
+                            <Link className={styles.authLink} href="/login">Sign In</Link>
+                            <Link href="/register" className={`${styles.earlyAccess} btn-primary`}>Get Early Access</Link>
                         </>
                     )}
                 </div>

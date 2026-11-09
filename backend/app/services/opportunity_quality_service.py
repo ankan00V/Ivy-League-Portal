@@ -116,11 +116,19 @@ class OpportunityQualityScorer:
         raw = _text(location)
         haystack = _norm(" ".join([raw, _text(description)]))
         compact = re.sub(r"[^a-z0-9]+", " ", raw.lower()).strip()
-        if compact in REMOTE_LOCATION_PATTERNS or any(pattern in haystack for pattern in REMOTE_LOCATION_PATTERNS):
-            return "India", "remote"
+        from app.services.opportunity_placement import _explicit_mode, _mentions, _REMOTE_TERMS, _HYBRID_TERMS
+
+        mode = _explicit_mode(raw)
+        if mode is None:
+            if _mentions(haystack, _HYBRID_TERMS):
+                mode = "hybrid"
+            elif _mentions(haystack, _REMOTE_TERMS):
+                mode = "remote"
+        if compact in REMOTE_LOCATION_PATTERNS or compact in {"hybrid", "onsite", "on site", "in office"}:
+            return None, mode
         if compact in LOCATION_ALIASES:
-            return LOCATION_ALIASES[compact], None
-        return raw or None, None
+            return LOCATION_ALIASES[compact], mode
+        return raw or None, mode
 
     def normalize_stipend(self, stipend: Any) -> dict[str, Any]:
         raw = _text(stipend)

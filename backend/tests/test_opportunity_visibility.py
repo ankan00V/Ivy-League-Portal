@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from app.core.time import utc_now
+from app.models.opportunity import Opportunity
 from app.services.opportunity_visibility import (
     canonical_opportunity_type,
     is_opportunity_expired,
@@ -17,18 +18,52 @@ class TestOpportunityVisibility(unittest.TestCase):
         self.assertEqual(canonical_opportunity_type(" hiring challenge "), "Hiring Challenge")
         self.assertEqual(canonical_opportunity_type("hackathon"), "Hackathon")
 
-    def test_resolve_opportunity_portal_prefers_explicit_portal_category(self) -> None:
+    def test_resolve_opportunity_portal_corrects_conflicting_stored_portal(self) -> None:
         portal = resolve_opportunity_portal(
             opportunity_type="Job",
             title="Backend Engineer",
             description="Career role",
             portal_category="competitive",
         )
-        self.assertEqual(portal, "competitive")
+        self.assertEqual(portal, "career")
 
     def test_resolve_opportunity_portal_uses_explicit_types(self) -> None:
         self.assertEqual(resolve_opportunity_portal(opportunity_type="Internship"), "career")
         self.assertEqual(resolve_opportunity_portal(opportunity_type="Hackathon"), "competitive")
+
+    def test_opportunity_model_persists_derived_portal_category(self) -> None:
+        opportunity = Opportunity._derive_feed_facets(Opportunity.model_construct(
+            title="Student AI Hackathon",
+            description="Build an AI project with your team.",
+            url="https://example.com/hackathon",
+            opportunity_type="Hackathon",
+            portal_category=None,
+            role_track=None,
+            feed_categories=[],
+            tags=[],
+            location=None,
+            work_mode=None,
+            source=None,
+        ))
+
+        self.assertEqual(opportunity.portal_category, "competitive")
+
+    def test_opportunity_model_corrects_explicit_portal_category(self) -> None:
+        opportunity = Opportunity._derive_feed_facets(Opportunity.model_construct(
+            title="Hiring Challenge",
+            description="A hiring event for software engineers.",
+            url="https://example.com/hiring-challenge",
+            opportunity_type="Hiring Challenge",
+            portal_category="competitive",
+            role_track=None,
+            feed_categories=[],
+            tags=[],
+            location=None,
+            work_mode=None,
+            source=None,
+        ))
+
+        self.assertEqual(opportunity.portal_category, "career")
 
     def test_is_student_visible_opportunity_rejects_expired_or_unpublished_rows(self) -> None:
         now = utc_now()

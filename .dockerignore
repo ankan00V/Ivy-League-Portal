@@ -1,0 +1,39 @@
+# Build context for Dockerfile.antideploy (repository root).
+# Compose builds use the backend/ and frontend/ contexts, which keep their own
+# .dockerignore files, so this does not affect them.
+.git
+.github
+.gitignore
+**/node_modules
+**/.next
+**/.next-verify
+**/venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/test-results
+
+# Never ship environment files or credentials into a build context. The service
+# variables are supplied by the platform at runtime instead.
+.env
+.env.*
+**/.env
+**/.env.*
+!**/*.env.example
+
+# Machine-specific and local-only artifacts.
+backend/models
+backend/bin
+backend/backups
+backend/storage
+backend/backend
+backend/server_logs.txt
+backend/uvicorn*.log
+data
+ruvector.db
+.local-runtime
+docs
+**/*.log
+**/*.duckdb
+**/*.jsonl
+.DS_Store

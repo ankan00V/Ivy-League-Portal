@@ -78,6 +78,9 @@ export function getApiErrorMessage(payload: unknown, fallback: string): string {
 }
 
 export function getUnknownErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
+    return "The request took too long. Check your connection and retry to confirm your account's current status.";
+  }
   if (error instanceof Error && error.message.trim().length > 0) {
     return error.message.trim();
   }

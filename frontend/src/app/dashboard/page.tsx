@@ -185,10 +185,12 @@ const normalizeOpportunityCards = (items: OpportunityCard[]) =>
         rank_position: item.rank_position ?? idx + 1,
     }));
 
-/** Set when any request this render came back 401. See useDashboardAuthGuard below. */
-let sawUnauthorized = false;
-
-const fetchJsonWithTimeout = async <T,>(path: string, init: RequestInit = {}, timeoutMs = 4500): Promise<T | null> => {
+const fetchJsonWithTimeout = async <T,>(
+    path: string,
+    init: RequestInit = {},
+    timeoutMs = 15000,
+    onUnauthorized?: () => void,
+): Promise<T | null> => {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -205,7 +207,7 @@ const fetchJsonWithTimeout = async <T,>(path: string, init: RequestInit = {}, ti
             // the real credential is an HttpOnly cookie that had already
             // expired. The user cannot tell that signing in again is the fix.
             if (response.status === 401) {
-                sawUnauthorized = true;
+                onUnauthorized?.();
             }
             return null;
         }
@@ -240,38 +242,63 @@ export default function DashboardPage() {
         try {
             setDashboardNotice(null);
             setBackendHealthy(true);
-            sawUnauthorized = false;
             setRecommendationsLoading(!hasRecommendationsRef.current);
             const token = getAccessToken();
             const hasAuth = Boolean(token);
+            let sawAuthenticatedRequestUnauthorized = false;
+            const markAuthenticatedRequestUnauthorized = () => {
+                sawAuthenticatedRequestUnauthorized = true;
+            };
             setIsAuthenticated(hasAuth);
             const authHeaders = token && token !== COOKIE_SESSION_SENTINEL ? { Authorization: `Bearer ${token}` } : undefined;
 
             const authInit = authHeaders ? { headers: authHeaders } : {};
             const profilePromise = hasAuth
-                ? fetchJsonWithTimeout<ProfileSummary>("/api/v1/users/me/profile", authInit, 3500)
+                ? fetchJsonWithTimeout<ProfileSummary>(
+                    "/api/v1/users/me/profile",
+                    authInit,
+                    15000,
+                    markAuthenticatedRequestUnauthorized,
+                )
                 : Promise.resolve(null);
             const appsPromise = hasAuth
-                ? fetchJsonWithTimeout<unknown[]>("/api/v1/applications/", authInit, 3500)
+                ? fetchJsonWithTimeout<unknown[]>(
+                    "/api/v1/applications/",
+                    authInit,
+                    15000,
+                    markAuthenticatedRequestUnauthorized,
+                )
                 : Promise.resolve(null);
             const rankingPromise = hasAuth
-                ? fetchJsonWithTimeout<RankingSummary>("/api/v1/users/me/ranking-summary", authInit, 3500)
+                ? fetchJsonWithTimeout<RankingSummary>(
+                    "/api/v1/users/me/ranking-summary",
+                    authInit,
+                    15000,
+                    markAuthenticatedRequestUnauthorized,
+                )
                 : Promise.resolve(null);
             const strengthPromise = hasAuth
-                ? fetchJsonWithTimeout<ProfileStrengthSummary>("/api/v1/users/me/profile-strength", authInit, 3500)
+                ? fetchJsonWithTimeout<ProfileStrengthSummary>(
+                    "/api/v1/users/me/profile-strength",
+                    authInit,
+                    15000,
+                    markAuthenticatedRequestUnauthorized,
+                )
                 : Promise.resolve(null);
             const personalizedRecommendationsPromise = hasAuth
                 ? fetchJsonWithTimeout<OpportunityCard[]>(
                     "/api/v1/opportunities/recommended/me?limit=6&ranking_mode=ab&portal=competitive",
                     authInit,
-                    2500,
+                    15000,
+                    markAuthenticatedRequestUnauthorized,
                 )
                 : Promise.resolve(null);
-            const opportunitiesPromise = fetchJsonWithTimeout<OpportunityCard[]>("/api/v1/opportunities/?limit=6", {}, 3500);
+            const opportunitiesPromise = fetchJsonWithTimeout<OpportunityCard[]>("/api/v1/opportunities/?limit=6");
             const postsPromise = fetchJsonWithTimeout<ActivityPost[]>(
                 "/api/v1/social/posts?limit=2",
                 authInit,
-                3500,
+                15000,
+                hasAuth ? markAuthenticatedRequestUnauthorized : undefined,
             );
 
             const [profileData, appsData, rankingData, strengthData, personalizedData, fallbackData, postsData] = await Promise.all([
@@ -288,7 +315,7 @@ export default function DashboardPage() {
             // of rendering a signed-in shell with a dash in every tile - the
             // client's "logged in" flag is a localStorage marker plus a 24h
             // clock, so it stays true long after the HttpOnly cookie is gone.
-            if (sawUnauthorized) {
+            if (hasAuth && sawAuthenticatedRequestUnauthorized) {
                 clearAccessToken("expired");
                 setIsAuthenticated(false);
                 router.replace(`/login?next=${encodeURIComponent("/dashboard")}`);

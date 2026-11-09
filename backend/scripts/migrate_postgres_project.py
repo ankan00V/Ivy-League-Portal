@@ -294,7 +294,7 @@ async def main() -> int:
         print(f"  all {len(source_counts)} tables match ({sum(after.values()):,} rows)")
         print(
             "\nCopy verified. The app still points at the source: update "
-            "SUPABASE_DATABASE_URL in backend/.env to switch."
+            "DATABASE_URL in the deployment environment to switch."
         )
         return 0
     finally:

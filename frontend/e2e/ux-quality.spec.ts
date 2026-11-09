@@ -1,12 +1,13 @@
 import { expect, test, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
-async function stubOAuthProviders(page: Page) {
-  await page.route("**/api/v1/auth/oauth/providers", async (route) => {
+async function stubAnonymousSession(page: Page) {
+  // UI checks do not depend on a live Neon tenant or production credentials.
+  await page.route("**/api/auth/get-session**", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ google: false, linkedin: false, microsoft: false }),
+      body: JSON.stringify({ session: null, user: null }),
     });
   });
 }
@@ -17,6 +18,7 @@ async function analyzeWithRetry(page: Page, attempts = 3) {
       await page.waitForLoadState("domcontentloaded");
       return await new AxeBuilder({ page })
         // Ignore framework dev overlays so the gate evaluates only product UI.
+        .exclude("nextjs-portal")
         .exclude('[aria-label="Open Next.js Dev Tools"]')
         .exclude('[aria-label="Open issues overlay"]')
         .exclude('[aria-label="Collapse issues badge"]')
@@ -39,7 +41,7 @@ async function analyzeWithRetry(page: Page, attempts = 3) {
 
 test.describe("@ux Frontend UX quality gates", () => {
   test.beforeEach(async ({ page }) => {
-    await stubOAuthProviders(page);
+    await stubAnonymousSession(page);
     await page.setViewportSize({ width: 1366, height: 900 });
   });
 
@@ -56,7 +58,10 @@ test.describe("@ux Frontend UX quality gates", () => {
       const contrastViolations = actionableViolations.filter((violation) => violation.id === "color-contrast");
       const ariaHiddenFocusViolations = actionableViolations.filter((violation) => violation.id === "aria-hidden-focus");
       expect(
-        blockingViolations.map((violation) => `${violation.id}:${violation.impact}`),
+        blockingViolations.map(
+          (violation) =>
+            `${route}:${violation.id}:${violation.impact}:${violation.nodes.map((node) => node.target.join(" ")).join(",")}`,
+        ),
       ).toEqual([]);
       // Keep contrast checks active while allowing a small temporary budget during the redesign pass.
       expect(contrastViolations.length).toBeLessThanOrEqual(1);
@@ -67,21 +72,22 @@ test.describe("@ux Frontend UX quality gates", () => {
 
   test("@ux keyboard navigation reaches auth action controls", async ({ page }) => {
     await page.goto("/login");
-
+    // Start in the product form, not browser/framework development controls.
+    await page.getByRole("button", { name: "Continue with Google" }).focus();
     await page.keyboard.press("Tab");
+    await expect(page.getByLabel("Email", { exact: true })).toBeFocused();
     await page.keyboard.press("Tab");
+    await expect(page.getByLabel("Password", { exact: true })).toBeFocused();
     await page.keyboard.press("Tab");
-
-    const focusedText = await page.evaluate(() => {
-      const target = document.activeElement as HTMLElement | null;
-      return target?.textContent?.trim() || target?.getAttribute("aria-label") || "";
-    });
-
-    expect(focusedText.length).toBeGreaterThan(0);
+    await expect(page.getByRole("link", { name: "Forgot your password?" })).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeFocused();
   });
 
   test("@ux visual snapshot login auth shell", async ({ page }) => {
     await page.goto("/login");
+    await page.addStyleTag({ content: "nextjs-portal { display: none !important; }" });
+    await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
     const shell = page.locator("section.auth-shell");
     await expect(shell).toBeVisible();
     await expect(shell).toHaveScreenshot("ux-login-shell.png", {
@@ -89,18 +95,12 @@ test.describe("@ux Frontend UX quality gates", () => {
       caret: "hide",
       scale: "css",
       maxDiffPixelRatio: 0.02,
-      /* Turnstile is masked because it is not deterministic. Cloudflare renders
-         a spinner, then "Verifying...", then a success badge, on its own
-         schedule and over the network - so the same page screenshots
-         differently run to run, and the diff that exposed this had one capture
-         mid-verify and the baseline settled. Masking the widget keeps the
-         snapshot about our own layout, which is what it is for. */
-      mask: [page.locator("#turnstile-mount")],
     });
   });
 
   test("@ux visual snapshot register auth shell", async ({ page }) => {
     await page.goto("/register");
+    await page.addStyleTag({ content: "nextjs-portal { display: none !important; }" });
     const shell = page.locator("section.auth-shell");
     await expect(shell).toBeVisible();
     await expect(shell).toHaveScreenshot("ux-register-shell.png", {
@@ -108,8 +108,45 @@ test.describe("@ux Frontend UX quality gates", () => {
       caret: "hide",
       scale: "css",
       maxDiffPixelRatio: 0.02,
-      // Same non-deterministic widget as the login shell above.
-      mask: [page.locator("#turnstile-mount")],
     });
+  });
+
+  test("@ux auth artwork stays contained and never covers form actions", async ({ page }) => {
+    for (const width of [1366, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const path of ["/login", "/register"]) {
+        await page.goto(path);
+        const submit = page.getByRole("button", {
+          name: path === "/login" ? "Sign in" : "Create account", exact: true,
+        });
+        // Trial clicks check hit testing without submitting or bypassing overlays.
+        await submit.click({ trial: true });
+        await page.getByRole("button", { name: "Continue with Google" }).click({ trial: true });
+        if (width > 900) {
+          const frame = page.locator(".auth-image-frame");
+          await expect(frame).toHaveCSS("position", "relative");
+          const imageBox = await frame.locator("img").boundingBox();
+          const formBox = await page.locator(".auth-right-pane").boundingBox();
+          expect(imageBox).not.toBeNull();
+          expect(formBox).not.toBeNull();
+          expect(imageBox!.x + imageBox!.width).toBeLessThanOrEqual(formBox!.x);
+        }
+      }
+    }
+  });
+
+  test("@ux unknown routes show a branded recovery path", async ({ page }) => {
+    const response = await page.goto("/this-route-does-not-exist", { waitUntil: "domcontentloaded" });
+
+    expect(response?.status()).toBe(404);
+    await expect(page.getByRole("heading", { name: "This route is not in the Verse." })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Browse opportunities" })).toHaveAttribute("href", "/opportunities");
+    await expect(page.getByRole("link", { name: "Return home" })).toHaveAttribute("href", "/");
+
+    const results = await analyzeWithRetry(page);
+    const blockingViolations = results.violations.filter((violation) =>
+      ["serious", "critical"].includes(violation.impact || ""),
+    );
+    expect(blockingViolations.map((violation) => `${violation.id}:${violation.impact}`)).toEqual([]);
   });
 });

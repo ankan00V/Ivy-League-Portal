@@ -3,6 +3,7 @@
 import { apiUrl } from "@/lib/api";
 import { createAuthenticatedFetchInit, getAccessToken } from "@/lib/auth-session";
 import { logTrackedOpportunityEvent } from "@/lib/opportunity-feed-tracker";
+import { opportunityPortal } from "@/lib/opportunity-routing";
 import { startTransition, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
 export interface Opportunity {
@@ -11,6 +12,7 @@ export interface Opportunity {
   description: string;
   url: string;
   opportunity_type: string;
+  portal_category?: string;
   university: string;
   domain: string;
   source?: string;
@@ -47,29 +49,9 @@ type OpportunityInteraction = "impression" | "click" | "save" | "apply" | "dismi
 const FEED_REFRESH_MS = 60 * 1000;
 const FEED_RETRY_MS = 15 * 1000;
 const NOTICE_AUTO_DISMISS_MS = 10_000;
-const PERSONALIZED_FETCH_TIMEOUT_MS = 2500;
-const DEFAULT_FETCH_TIMEOUT_MS = 3500;
-const COMPETITIVE_KEYWORDS = [
-  "hackathon",
-  "competition",
-  "challenge",
-  "quiz",
-  "conference",
-  "workshop",
-  "bootcamp",
-  "webinar",
-  "buildathon",
-  "ctf",
-];
-const CAREER_KEYWORDS = ["internship", "intern", "job", "hiring", "developer", "engineer", "lead"];
-
-const buildOpportunitiesSignature = (items: Opportunity[]): string =>
-  items
-    .map(
-      (item) =>
-        `${item.id}:${item.created_at || ""}:${item.updated_at || ""}:${item.last_seen_at || ""}:${item.deadline || ""}:${item.title}:${item.source || ""}`,
-    )
-    .join("|");
+const PERSONALIZED_FETCH_TIMEOUT_MS = 15_000;
+const DEFAULT_FETCH_TIMEOUT_MS = 15_000;
+const buildOpportunitiesSignature = (items: Opportunity[]): string => JSON.stringify(items);
 
 const enrichOpportunity = (item: Opportunity, index: number): Opportunity => ({
   ...item,
@@ -284,15 +266,15 @@ export function useOpportunityFeed() {
   );
 
   const filtered = useMemo(() => {
-    const source = selectOpportunitiesForTab(activeTab).filter((item) => !hiddenOpportunityIds[item.id]);
-    const getSortTimestamp = (opportunity: Opportunity) =>
-      new Date(opportunity.last_seen_at || opportunity.updated_at || opportunity.created_at || 0).getTime();
-    return [...source].sort((a, b) => getSortTimestamp(b) - getSortTimestamp(a));
+    const seen = new Set<string>();
+    return selectOpportunitiesForTab(activeTab).filter((item) => {
+      if (!item.id || hiddenOpportunityIds[item.id] || seen.has(item.id)) return false;
+      seen.add(item.id);
+      return true;
+    });
   }, [activeTab, hiddenOpportunityIds, selectOpportunitiesForTab]);
 
   const grouped = useMemo<OpportunityGroups>(() => {
-    const matchesKeyword = (value: string, keywords: string[]) => keywords.some((keyword) => value.includes(keyword));
-
     const groups: OpportunityGroups = {
       competitive: [],
       career: [],
@@ -301,20 +283,7 @@ export function useOpportunityFeed() {
 
     for (let idx = 0; idx < filtered.length; idx += 1) {
       const opportunity = enrichOpportunity(filtered[idx], idx);
-      const typeValue = (opportunity.opportunity_type || "").toLowerCase().trim();
-      const titleValue = (opportunity.title || "").toLowerCase().trim();
-      const descriptionValue = (opportunity.description || "").toLowerCase().trim();
-      const haystack = `${typeValue} ${titleValue} ${descriptionValue}`;
-
-      if (matchesKeyword(haystack, CAREER_KEYWORDS)) {
-        groups.career.push(opportunity);
-        continue;
-      }
-      if (matchesKeyword(haystack, COMPETITIVE_KEYWORDS)) {
-        groups.competitive.push(opportunity);
-        continue;
-      }
-      groups.other.push(opportunity);
+      groups[opportunityPortal(opportunity)].push(opportunity);
     }
 
     return groups;
