@@ -85,14 +85,22 @@ jobs:
       - name: Seed deterministic warehouse fixture
         run: python backend/scripts/seed_release_ml_gate_fixture.py --days 30 --reset
 
+      # simulated, not real. This job seeds its own deterministic fixture and
+      # runs on a CI runner that has never seen a student, so "real" is empty by
+      # construction: the parity gate read candidate=0, baseline=0 against a
+      # minimum of 200 and failed every six hours. What this job can prove is
+      # that the mart machinery computes correctly over known input, which is
+      # what 'simulated' means here. Real traffic is answered by
+      # real-traffic-rollout-readiness.yml, which reads production and seeds
+      # nothing.
       - name: Rebuild analytics warehouse marts
-        run: python backend/scripts/rebuild_analytics_warehouse.py --lookback-days 30 --traffic-type real
+        run: python backend/scripts/rebuild_analytics_warehouse.py --lookback-days 30 --traffic-type simulated
 
       - name: Enforce mart freshness gate
         run: python backend/scripts/check_warehouse_release_gate.py --json
 
       - name: Run DS release gates
-        run: python backend/scripts/check_ds_release_gates.py --lookback-days 30 --fail-on-not-ready
+        run: python backend/scripts/check_ds_release_gates.py --lookback-days 30 --traffic-type simulated --fail-on-not-ready
 
       - name: Upload warehouse artifacts
         if: always()
