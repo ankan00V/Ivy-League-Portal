@@ -412,6 +412,37 @@ def _filter_active_opportunities(opportunities: list[Opportunity]) -> list[Oppor
     return active
 
 
+#: Bookkeeping that runs after the response has been produced.
+#:
+#: The personalised feed finished ranking and then awaited two things the
+#: response does not depend on: impression logging, which reads recent
+#: impressions and writes new ones, and a telemetry insert. Counted against the
+#: live database a warm request made six round trips at roughly 0.3s each - the
+#: database is in another region - and half of them were this. The student was
+#: waiting for rows about their own request to be written before being shown
+#: the feed.
+#:
+#: References are held here because the event loop keeps only weak ones: a task
+#: nobody refers to can be collected before it runs. Failures are logged at
+#: error level rather than raised, since by then there is no caller to raise to.
+_background_bookkeeping: set[asyncio.Task] = set()
+
+
+def _after_response(coro: Any, *, label: str) -> None:
+    task = asyncio.get_running_loop().create_task(coro)
+    _background_bookkeeping.add(task)
+
+    def _done(finished: asyncio.Task) -> None:
+        _background_bookkeeping.discard(finished)
+        if finished.cancelled():
+            return
+        error = finished.exception()
+        if error is not None:
+            logger.error("%s failed after the response was sent: %r", label, error)
+
+    task.add_done_callback(_done)
+
+
 #: The visible corpus, shared by every request for a few seconds.
 #:
 #: The personalised feed read the entire opportunities table on every single
@@ -1627,7 +1658,7 @@ async def get_personalized_recommendations(
             item["experiment_variant"] = experiment_variant
 
         if ranked:
-            await interaction_service.log_impressions(
+            impressions_logged = interaction_service.log_impressions(
                 user_id=current_user.id,
                 impressions=[
                     {
@@ -1657,8 +1688,9 @@ async def get_personalized_recommendations(
                 ],
                 traffic_type="real",
             )
+            _after_response(impressions_logged, label="feed impression logging")
 
-        await ranking_request_telemetry_service.log(
+        telemetry = ranking_request_telemetry_service.log(
             request_kind="recommended",
             surface="recommended_me",
             latency_ms=(time.perf_counter() - started_at) * 1000.0,
@@ -1679,6 +1711,7 @@ async def get_personalized_recommendations(
             freshness_seconds=_freshness_seconds([item["opportunity"] for item in ranked]),
             traffic_type="real",
         )
+        _after_response(telemetry, label="feed telemetry")
         return [_to_recommended_response(item) for item in ranked]
     except Exception as exc:
         await ranking_request_telemetry_service.log(
