@@ -17,6 +17,7 @@ from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 import xml.etree.ElementTree as ET
 
 import numpy as np
+import asyncpg
 import pymongo
 import requests
 from bs4 import BeautifulSoup
@@ -4391,7 +4392,29 @@ async def _insert_and_broadcast(
                     domain=opportunity.domain or "General",
                     content=post_content,
                 ).insert()
-        except pymongo.errors.DuplicateKeyError:
+        except (pymongo.errors.DuplicateKeyError, asyncpg.exceptions.UniqueViolationError):
+            # Two jobs can reach the same listing at once - the job runner runs
+            # two at a time, and a hackathon syndicated to Unstop, Devfolio and
+            # Hack2Skill arrives from three sources. Both see no row during the
+            # preload above; the second insert hits the unique url constraint.
+            #
+            # This handler was written for MongoDB and caught only pymongo's
+            # DuplicateKeyError. Postgres raises asyncpg's UniqueViolationError,
+            # which slipped past into the generic handler below and was counted
+            # as a failed upsert - 55 of them in one worker log, every one a
+            # listing that already existed and was being seen again.
+            #
+            # Being seen again is the useful part, so it is recorded rather
+            # than skipped: last_seen_at is what keeps a live listing from
+            # ageing into "unconfirmed" and eventually looking stale.
+            try:
+                already = await Opportunity.find_one({"url": url})
+                if already is not None:
+                    already.last_seen_at = _to_naive_utc(utc_now())
+                    await already.save()
+                    updated_count += 1
+            except Exception as refresh_exc:
+                logger.warning("[ScraperInsert] could not refresh %r after a duplicate: %s", url[:120], refresh_exc)
             continue
         except Exception as exc:
             failed_count += 1
