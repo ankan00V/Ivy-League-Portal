@@ -31,6 +31,33 @@ def _status_bucket(value: str | None) -> str:
     return "failed"
 
 
+def _source_status(
+    source: dict, *, errors: list[str], fetched: int, inserted: int, updated: int
+) -> str:
+    """One source's outcome, judged by that source's own counters.
+
+    This used to fall back to the status of the whole run, and per-source
+    reports never carry a status of their own, so every source inherited it.
+    The run is partial whenever any one of roughly forty sources reports an
+    error - and with several boards that routinely refuse automated requests,
+    one always does. So every source was logged partial on every run: measured
+    on the live database, 295 partial, 47 failed and not one success across a
+    day, including sources that fetched and inserted cleanly. A health view in
+    which the broken source and the working ones look identical cannot point at
+    the broken one.
+
+    An explicit per-source status still wins if one is ever supplied.
+    """
+    explicit = source.get("status")
+    if explicit:
+        return _status_bucket(explicit)
+    if not errors:
+        return "success"
+    if fetched + inserted + updated > 0:
+        return "partial"
+    return "failed"
+
+
 def _percentile(values: list[float], percentile: float) -> float | None:
     if not values:
         return None
@@ -70,7 +97,7 @@ class ScraperHealthService:
             deduplicated = max(0, int(deduplicated_raw)) if deduplicated_raw is not None else 0
             out_of_scope = max(0, int(source.get("out_of_scope") or 0))
             non_posting = max(0, int(source.get("non_posting") or 0))
-            status = _status_bucket("failed" if errors and fetched == 0 else source.get("status") or report.get("status"))
+            status = _source_status(source, errors=errors, fetched=fetched, inserted=inserted, updated=updated)
             parse_error_count = max(failed, int(source.get("parse_error_count") or 0), len(errors))
             parse_times = [float(item) for item in list(source.get("parse_times_ms") or []) if item is not None]
             if not parse_times and fetched > 0:
