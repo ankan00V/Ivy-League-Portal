@@ -4,6 +4,7 @@ import asyncio
 from bisect import bisect_left
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from time import monotonic
 from typing import Any, Optional
 
 from beanie.odm.operators.find.comparison import In
@@ -59,7 +60,20 @@ def _profile_query(profile: Profile) -> str:
     return " ".join(value for value in values if value).strip()
 
 
+#: How long a user's behaviour priors stay warm. Aggregates over 120 days, so a
+#: minute of staleness cannot meaningfully move them.
+_BEHAVIOR_CACHE_TTL_SECONDS = 60.0
+#: Bounded so a long-running process cannot accumulate one entry per user ever
+#: seen. Evicts the oldest; at this size the eviction scan is cheaper than the
+#: query it saves.
+_BEHAVIOR_CACHE_MAX_USERS = 2048
+
+
 class RecommendationService:
+    def __init__(self) -> None:
+        self._behavior_cache: dict[str, tuple[float, dict[str, dict[str, float]]]] = {}
+        self._behavior_locks: dict[str, asyncio.Lock] = {}
+
     def eligibility_warnings(self, *, profile: Profile, opportunity: Opportunity) -> list[str]:
         batch_years = sorted({int(year) for year in list(getattr(opportunity, "batch_years", []) or []) if str(year).isdigit()})
         profile_year = getattr(profile, "graduation_year", None) or getattr(profile, "passout_year", None)
@@ -228,6 +242,45 @@ class RecommendationService:
         }
 
     async def _build_behavior_map(self, user_id) -> dict[str, dict[str, float]]:
+        """Behaviour priors for one user, computed at most once a minute.
+
+        This reads 120 days of that user's interactions and aggregates them in
+        Python, and it ran on every feed request. Profiled against the live
+        database it cost 1.0-1.3s each time, and a warm ranking call measured
+        2.0s of which essentially all was I/O wait - the scoring itself is under
+        half a second. One round trip to a database in another region, repeated
+        per request, was the feed.
+
+        A minute of staleness is immaterial here: these are aggregates over four
+        months, so one more click cannot meaningfully move them. A student
+        refreshing the feed twice in ten seconds gets the same priors either
+        way, which is the case this exists for.
+
+        Process-local, like the corpus cache. Redis would mean serialising the
+        map on every miss, which is part of the cost being removed.
+        """
+        key = str(user_id)
+        now = monotonic()
+        hit = self._behavior_cache.get(key)
+        if hit is not None and (now - hit[0]) < _BEHAVIOR_CACHE_TTL_SECONDS:
+            return hit[1]
+
+        lock = self._behavior_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            # Re-checked inside the lock so a burst of concurrent requests for
+            # one user runs the query once rather than once each.
+            hit = self._behavior_cache.get(key)
+            if hit is not None and (monotonic() - hit[0]) < _BEHAVIOR_CACHE_TTL_SECONDS:
+                return hit[1]
+            built = await self._compute_behavior_map(user_id)
+            self._behavior_cache[key] = (monotonic(), built)
+            if len(self._behavior_cache) > _BEHAVIOR_CACHE_MAX_USERS:
+                oldest = min(self._behavior_cache, key=lambda k: self._behavior_cache[k][0])
+                self._behavior_cache.pop(oldest, None)
+                self._behavior_locks.pop(oldest, None)
+            return built
+
+    async def _compute_behavior_map(self, user_id) -> dict[str, dict[str, float]]:
         since = utc_now() - timedelta(days=120)
         interactions = await OpportunityInteraction.find_many(
             OpportunityInteraction.user_id == user_id,

@@ -77,7 +77,7 @@ class TestPoolIsBuiltWithTheGuards(unittest.IsolatedAsyncioTestCase):
         # is deliberate and correct, so the test supplies a value instead of
         # weakening it - and this is what made the test pass on any machine
         # with a backend/.env and fail in CI, which has none.
-        with patch.object(settings, "SUPABASE_DATABASE_URL", "postgresql://user:pw@127.0.0.1:5432/unit-test"):
+        with patch.object(settings, "DATABASE_URL", "postgresql://user:pw@127.0.0.1:5432/unit-test"):
             try:
                 await pg_documents.get_pool()
             finally:

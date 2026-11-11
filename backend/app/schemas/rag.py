@@ -58,6 +58,21 @@ class RAGInsights(BaseModel):
     # similarity, which is why it can support a threshold at all.
     top_relevance_score: Optional[float] = None
 
+    # Whether the generated answer is actually generated.
+    #
+    # When the model call fails, retrieval has still produced a shortlist, so
+    # the service returns a deterministic summary over those rows. That is the
+    # right behaviour - rows the student can use beat an error page - but the
+    # response was indistinguishable from a real one: same shape, same fields,
+    # a confident "Top 3 opportunities retrieved for: ..." and nothing saying
+    # the AI had not run. Measured against a provider outage, Ask AI looked
+    # like it was working for as long as the outage lasted.
+    #
+    # The caller can now tell, and the UI can say so instead of presenting a
+    # keyword fallback as an answer.
+    degraded: bool = Field(default=False)
+    degraded_reason: Optional[str] = None
+
     contract_version: str = Field(default="rag_insights.v1")
 
 

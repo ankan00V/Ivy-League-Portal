@@ -10,7 +10,7 @@ def _complete_production_overrides() -> dict[str, object]:
         "ENVIRONMENT": "production",
         "SECRET_KEY": "not-a-placeholder",
         "POSTGRES_ODM_ENABLED": True,
-        "SUPABASE_DATABASE_URL": "postgresql://user:pw@db.example.com:5432/postgres",
+        "DATABASE_URL": "postgresql://user:pw@db.example.com:5432/postgres",
         "AUTH_SESSION_REQUIRE_SERVER_STATE": True,
         "SCRAPLING_ENABLED": False,
         "CRAWLEE_ENABLED": False,
